@@ -11,3 +11,11 @@ For feature work in this repository, use this order:
 The primary objective is to make the requested function work. Focus on the feature implementation itself and avoid over-design; safety, guardrails, and testing must not dominate the work or turn the feature into a surrounding engineering project. This rule supersedes the earlier standing instruction that every feature must be developed test-first. Test-first language in older issues does not apply unless the user restates it for that issue after this rule.
 
 This ordering does not waive higher-priority safety or security requirements. Keep validation that is necessary at real external boundaries, such as user input or external APIs, but do not expand it into hypothetical protection beyond the requested path.
+
+## Fork maintenance
+
+Before completing work that adds, changes, or removes intentional fork behavior, or that merges upstream, invoke `$fork-doc`. If that skill is unavailable, follow the maintenance contract in `FORK.md` manually.
+
+Reuse decisions in `FORK.md` while current evidence still supports them. Reconsider a decision only when new evidence adds, contradicts, invalidates, or leaves it unresolved.
+
+Every fork release must use `<upstream-version>-fork.<N>`. Reset to `fork.1` when the merged upstream version changes, and increment `N` for later releases on the same upstream version. This rule does not override the test-authorization requirements above.
