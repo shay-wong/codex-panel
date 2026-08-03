@@ -88,6 +88,8 @@ CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex
 
 This starts the local Taskboard service when needed, launches the official macOS Codex app with a loopback-only CDP port, injects a native-looking Taskboard entry after Plugins, and keeps watching both the service and replacement renderers. Opening Taskboard asks this launcher to health-check the fixed local service, restart it when needed, and rebuild a failed iframe. Keep this command running while using the embedded panel. The launcher does not modify `ChatGPT.app` or its `app.asar`.
 
+After CDP becomes reachable, the launcher waits up to 30 seconds for Codex to create its main renderer before injecting Taskboard, ignoring auxiliary renderers such as the avatar overlay. This avoids startup failures when Electron exposes the debugging endpoint before the Codex page is ready.
+
 Codex 26.715.52143 ships a renderer CSP that blocks arbitrary HTTP iframes. The launcher therefore enables CDP CSP bypass, reloads that renderer once, installs the document-start script, and waits until the Taskboard OOPIF is actually loaded. CDP is unauthenticated to other processes on the same machine, so only run trusted local code while the launcher is active.
 
 To inject into a Codex instance that was already launched with CDP by another method, run:

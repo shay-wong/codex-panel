@@ -88,6 +88,8 @@ CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex
 
 该命令会在需要时启动本地 Taskboard 服务，以仅监听回环地址的 CDP 端口启动官方 macOS Codex 应用，注入一个位于 Plugins 之后、外观与原生界面一致的 Taskboard 入口，并持续监控服务及替换后的渲染进程。打开 Taskboard 时，启动器会检查固定本地服务的健康状态，在需要时重启服务，并在 iframe 加载失败时重新构建。使用期间请保持该命令运行。启动器不会修改 `ChatGPT.app` 或其 `app.asar`。
 
+CDP 可以访问后，启动器会等待最多 30 秒，让 Codex 创建主 renderer，再注入 Taskboard，并忽略头像浮层等辅助 renderer。这样可以避免 Electron 已开放调试端点、但 Codex 页面尚未就绪时启动失败。
+
 Codex 26.715.52143 自带的渲染器 CSP 会阻止任意 HTTP iframe。因此，启动器会通过 CDP 绕过 CSP，重新加载一次渲染器，安装 document-start 脚本，并等待 Taskboard OOPIF 真正加载完成。同一台设备上的其他进程无需认证即可访问 CDP，因此仅应在启动器运行期间执行可信的本地代码。
 
 如果 Codex 已通过其他方式启用了 CDP，可运行：

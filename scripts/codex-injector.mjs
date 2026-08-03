@@ -306,8 +306,21 @@ async function codexTargets(port) {
       target.type === "page" &&
       target.webSocketDebuggerUrl &&
       !target.url?.includes("initialRoute=%2Fglobal-dictation") &&
+      !target.url?.includes("initialRoute=%2Favatar-overlay") &&
       (target.url?.startsWith("app://") || target.title === "Codex"),
   );
+}
+
+async function waitForCodexTargets(port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const targets = await codexTargets(port);
+      if (targets.length > 0) return targets;
+    } catch (_) {}
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("Timed out waiting for a Codex renderer target");
 }
 
 function codexDebuggingPorts(preferredPort) {
@@ -1147,8 +1160,9 @@ async function injectAll(
   supervisor,
   attachExisting,
   startupToken,
+  targets = null,
 ) {
-  const targets = await codexTargets(port);
+  targets ??= await codexTargets(port);
   if (targets.length === 0) throw new Error("No Codex renderer target found");
 
   const activeIds = new Set(targets.map((target) => target.id));
@@ -1264,6 +1278,7 @@ async function main() {
 
     const { source, sourceHash } = await currentInjectionSource();
     const injectedTargets = new Map();
+    const firstTargets = await waitForCodexTargets(options.port, 30_000);
     const firstResults = await injectAll(
       options.port,
       source,
@@ -1275,6 +1290,7 @@ async function main() {
       supervisor,
       options.attachExisting,
       options.startupToken,
+      firstTargets,
     );
     console.log(JSON.stringify({ injected: firstResults }, null, 2));
 
@@ -1329,7 +1345,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exitCode = 1;
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === injectorPath) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+}
+
+export { waitForCodexTargets };

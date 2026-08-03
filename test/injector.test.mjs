@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { test } from "node:test";
+
+import { waitForCodexTargets } from "../scripts/codex-injector.mjs";
 
 const source = await readFile(new URL("../scripts/codex-injector.mjs", import.meta.url), "utf8");
 const runtimeSource = await readFile(
@@ -10,6 +13,39 @@ const runtimeSource = await readFile(
 const packageJson = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
 );
+
+test("the launcher waits for and selects a delayed main Codex renderer", async (t) => {
+  let listRequests = 0;
+  const server = createServer((request, response) => {
+    assert.equal(request.url, "/json/list");
+    response.setHeader("content-type", "application/json");
+    listRequests += 1;
+    response.end(JSON.stringify(listRequests < 3
+      ? []
+      : [{
+          id: "codex-avatar-overlay",
+          type: "page",
+          title: "Codex",
+          url: "app://-/index.html?initialRoute=%2Favatar-overlay",
+          webSocketDebuggerUrl: "ws://127.0.0.1/devtools/page/codex-avatar-overlay",
+        }, {
+          id: "codex-main",
+          type: "page",
+          title: "Codex",
+          url: "app://-/index.html",
+          webSocketDebuggerUrl: "ws://127.0.0.1/devtools/page/codex-main",
+        }]));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  assert(address && typeof address === "object");
+  const targets = await waitForCodexTargets(address.port, 1_000);
+
+  assert.equal(listRequests, 3);
+  assert.deepEqual(targets.map((target) => target.id), ["codex-main"]);
+});
 
 test("the resident injector supervises the fixed local Taskboard service", () => {
   assert.match(source, /function createTaskboardSupervisor/);
