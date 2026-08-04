@@ -453,6 +453,10 @@ export async function deleteAttachment(attachment: Attachment): Promise<void> {
   });
 }
 
-export function attachmentContentUrl(attachment: Attachment): string {
+export function attachmentContentPath(attachment: Attachment): string {
   return `/api/attachments/${encodeURIComponent(attachment.id)}/content`;
+}
+
+export function attachmentContentUrl(attachment: Attachment): string {
+  return attachmentContentPath(attachment);
 }

@@ -8,7 +8,7 @@ import {
   type KeyboardEventHandler,
 } from "react";
 import type { Attachment } from "../types";
-import { attachmentContentUrl } from "../api";
+import { attachmentContentPath } from "../api";
 import { clipboardImages, fileKey, MAX_ATTACHMENT_SIZE } from "./PendingAttachments";
 import { LinearIcon } from "./LinearIcon";
 
@@ -93,7 +93,7 @@ export function resolveInlineMediaMarkdown(
     const alt = image.file.name.replace(/[\\[\]]/g, "\\$&");
     return markdown.replace(
       image.token,
-      `![${alt}](${attachmentContentUrl(attachment)})`,
+      `![${alt}](${attachmentContentPath(attachment)})`,
     );
   }, value);
 }

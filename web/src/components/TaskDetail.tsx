@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   ApiError,
+  attachmentContentPath,
   attachmentContentUrl,
   createComment,
   deleteAttachment,
@@ -567,7 +568,7 @@ export function TaskDetail({
       actors.findIndex((candidate) => actorKey(candidate) === actorKey(actor)) === index
     ));
   const visibleTaskAttachments = attachments.filter(
-    (attachment) => !description.includes(attachmentContentUrl(attachment)),
+    (attachment) => !description.includes(attachmentContentPath(attachment)),
   );
 
   return (
@@ -851,11 +852,11 @@ export function TaskDetail({
                         comment.body && <div className="comment-body"><DescriptionDocument value={comment.body} /></div>
                       )}
                       {comment.attachments.some(
-                        (attachment) => !comment.body.includes(attachmentContentUrl(attachment)),
+                        (attachment) => !comment.body.includes(attachmentContentPath(attachment)),
                       ) && (
                         <ul className="comment-attachment-list" aria-label="评论附件">
                           {comment.attachments
-                            .filter((attachment) => !comment.body.includes(attachmentContentUrl(attachment)))
+                            .filter((attachment) => !comment.body.includes(attachmentContentPath(attachment)))
                             .map((attachment) => (
                               <li key={attachment.id}>
                                 <a
