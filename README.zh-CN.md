@@ -1,6 +1,6 @@
 # Codex Taskboard
 
-[English](README.md)
+[English](README.md) | [Fork 能力（英文）](docs/fork-capabilities.md)
 
 一个本地优先的 Issue 看板，可在浏览器中运行，也可以通过独立 CDP 启动器或注入脚本嵌入 Codex。React UI 与随附 Codex Skill 使用的 `taskctl` CLI 共用同一套 HTTP API。
 
@@ -101,6 +101,8 @@ npm run codex:inject -- --port 9229 --open
 该命令也会持续运行，以便注入的标签页在服务退出后重新启动 Taskboard。使用 `Ctrl-C` 停止。
 
 脚本会在 Codex 侧边栏中添加 Taskboard 入口，并让 iframe 覆盖 Codex 的整个主工作区，包括上下文标题栏区域，从而避免 Taskboard 自身标题栏上方出现空白。完整的矩形标题栏位于 Electron 可拖拽层之上，并标记为 `no-drag`；Taskboard 激活时会隐藏原生上下文操作，因此其自身操作可以保持正常的边缘间距，不需要额外的右侧留白。原生侧边栏会继续保留，之前的页面选择和上下文标题栏会暂时隐藏；选择其他 Codex 页面后会恢复。
+
+无论当前位于会话页，还是 Plugins、Sites 等原生页面，都可以直接点击 Taskboard 入口打开任务面板。
 
 “在对话中打开”会在存在对应项目时选择原生 Codex 项目，并打开一个尚未发送、内容为 `$manage-taskboard ISSUE-ID` 的原生输入框。只有当某个对话实际处理了 Issue 后，才会建立关联：`taskctl` 读取 Codex 的 `CODEX_THREAD_ID`，并在 Issue 或评论变更中记录该 ID。记录的 ID 可通过 Codex 原生路由桥接点击打开。每个 Issue 可以绑定一个 Git 分支或一个 worktree；选项从所选 Codex 项目的仓库中扫描，而不是手工输入。该集成复用 Codex 现有的项目、输入框和路由标记，不会修改 React、替换 `fetch`、加载私有代码块或编辑 Codex 数据文件。
 

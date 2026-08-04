@@ -46,6 +46,34 @@ test("entry clones the native Plugins row and the page covers the complete Codex
   assert.doesNotMatch(source, /aria-modal/);
 });
 
+test("conversation content frames can host Taskboard when they include the native header", () => {
+  const findPageHostSource = source.slice(
+    source.indexOf("function findPageHost"),
+    source.indexOf("function findPageMount"),
+  );
+  const conversationFrame = {
+    kind: "conversation-frame",
+    getBoundingClientRect: () => ({ top: 0, width: 1_000, height: 800 }),
+  };
+  const viewport = {
+    children: [conversationFrame],
+    getBoundingClientRect: () => ({ top: 0, width: 1_000, height: 800 }),
+  };
+  const nativeHeader = {
+    getBoundingClientRect: () => ({ bottom: 48 }),
+  };
+  const document = {
+    querySelector: (selector) => {
+      if (selector === "[data-app-shell-main-content-layout]") return viewport;
+      if (selector === "main > header") return nativeHeader;
+      return null;
+    },
+  };
+  const findPageHost = vm.runInNewContext(`(${findPageHostSource})`, { document });
+
+  assert.equal(findPageHost().kind, "conversation-frame");
+});
+
 test("opening Taskboard suppresses native selection and contextual header until close", () => {
   assert.match(source, /aside nav\[role="navigation"\] \[aria-current\]/);
   assert.match(source, /node\.removeAttribute\("aria-current"\)/);

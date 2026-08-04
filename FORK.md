@@ -14,7 +14,7 @@
 
 ### 文档职责
 
-根级用户入口同时维护英文 `README.md` 和简体中文 `README.zh-CN.md`，两者必须保持功能、命令、默认值和风险说明一致。详细用户指南暂时仅维护英文，位于 `docs/`；中文 README 可以链接到对应英文指南，因此简体中文当前属于详细文档的链接型语言入口。本文档使用中文，负责 Fork 维护和上游合并；`CHANGELOG.md` 使用英文，记录当前对用户可见的 Fork 变更。当公开的 Fork 能力达到多项时，应在 `docs/` 下维护英文能力索引，并从中英文 README 链接过去。
+根级用户入口同时维护英文 `README.md` 和简体中文 `README.zh-CN.md`，两者必须保持功能、命令、默认值和风险说明一致。详细用户指南暂时仅维护英文，位于 `docs/`；中文 README 可以链接到对应英文指南，因此简体中文当前属于详细文档的链接型语言入口。英文 Fork 能力索引位于 `docs/fork-capabilities.md`，并由中英文 README 共同链接。本文档使用中文，负责 Fork 维护和上游合并；`CHANGELOG.md` 使用英文，记录当前对用户可见的 Fork 变更。
 
 当前没有其他完整维护或链接型语言入口。
 
@@ -29,7 +29,7 @@
 - 精确 Fork 创建基线：`677b54451db707ae6132486b6593b7be11e4ee09`
 - 比较范围：`677b54451db707ae6132486b6593b7be11e4ee09..HEAD`
 
-持续移动的 `upstream/main` 是待合并候选，不是本文档的基线。本次审计时，本地 `main`、`origin/main` 和实时查询的 `upstream/main` 均指向上述精确基线。
+持续移动的 `upstream/main` 是待合并候选，不是本文档的基线。当前本地 `origin/main` 和 `upstream/main` 均指向上述精确基线；本地 `main` 已包含 Fork 提交，并继续以该基线计算比较范围。
 
 基线提交本身是一个上游合并提交，父提交分别为 `c9fe427d91e5be1a96b8eae7ec66fa48806379bd` 和 `d02b834d28e6b63b03c3ee3e0c66b65aeb32d56a`。该提交早于本 Fork 创建，不属于“上游合并到 Fork”的提交，两个父提交都不是 Fork 比较基线。
 
@@ -53,7 +53,7 @@
 - 原始目的：让浏览器标题和中英文仓库入口使用 Fork 项目名 `Codex Taskboard`，避免继续显示上游的通用名称。
 - 行为不变量：`web/index.html` 的文档标题以及 `README.md`、`README.zh-CN.md` 的主标题都保持为 `Codex Taskboard`。
 - 代码和测试路径：`web/index.html`；该静态标题没有独立自动化测试。
-- 用户文档：`README.md` 和 `README.zh-CN.md`；这是命名差异，不需要独立详细指南。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
 - 来源：Fork 初始定制；可用 `git log -S'<title>Codex Taskboard</title>' -- web/index.html` 定位。
 - 合并指引：合并上游 HTML 入口改动时保留 `Codex Taskboard` 标题，除非 Fork 本身再次更名。
 - 移除条件：Fork 更名或停止作为独立产品维护时同步更新或移除。
@@ -65,11 +65,23 @@
 - 原始目的：修复 Electron 已开放 CDP `/json/version`、但 `/json/list` 尚未出现主 Codex 页面，或头像浮层 renderer 先出现时，独立启动器报错且未完成嵌入的问题。
 - 行为不变量：首次注入最多等待 30 秒，排除全局听写和头像浮层等辅助 renderer，并复用找到的主 renderer 完成注入；后续驻留监控仍按原有节奏处理替换后的 renderer。
 - 代码和测试路径：`scripts/codex-injector.mjs`、`test/injector.test.mjs`。
-- 用户文档：`README.md` 和 `README.zh-CN.md` 的“Embed in Codex”/“嵌入 Codex”章节；两种语言都记录 30 秒等待行为。
+- 用户文档：`README.md` 和 `README.zh-CN.md` 的“Embed in Codex”/“嵌入 Codex”章节，以及 `docs/fork-capabilities.md`；两种入口都记录 30 秒等待行为。
 - 来源：本次 Fork 修复；可用 `git log -S'waitForCodexTargets' -- scripts/codex-injector.mjs test/injector.test.mjs` 定位。
 - 合并指引：若上游重构启动器，必须保留“CDP 就绪不等于主 renderer 就绪”以及“辅助 renderer 不能作为注入目标”的不变量，并用辅助窗口先出现、主窗口延迟出现的检查验证。
 - 移除条件：上游实现等价的主 renderer 等待和辅助窗口过滤逻辑，并包含能覆盖该启动顺序的回归测试。
 - 针对性验证：运行 `node --test test/injector.test.mjs`，再运行 `CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex` 验证真实首次嵌入。
+
+### 从会话页打开任务面板
+
+- 生命周期：`等待上游吸收`
+- 原始目的：修复 Codex 会话页的主内容 frame 覆盖原生标题栏时，Taskboard 入口变为选中但页面没有挂载的问题。
+- 行为不变量：主内容 frame 只要覆盖大部分 viewport 就可以作为挂载锚点，不得因其顶部位于原生标题栏上方而拒绝；会话页、Plugins 和 Sites 均能直接切换到 Taskboard。
+- 代码和测试路径：`inject/codex-taskboard.user.js`、`test/inject.test.mjs`。
+- 用户文档：`README.md` 和 `README.zh-CN.md` 的“Embed in Codex”/“嵌入 Codex”章节，以及 `docs/fork-capabilities.md`。
+- 来源：本次 Fork 修复；可用 `git log -S'conversation content frames can host Taskboard' -- test/inject.test.mjs` 定位。
+- 合并指引：上游调整 Codex 主内容 DOM 识别时，应以页面实际覆盖范围为准，不能重新要求 frame 位于原生标题栏下方。
+- 移除条件：上游提供等价的跨会话页和原生页面挂载逻辑，并覆盖会话 frame 从 viewport 顶部开始的场景。
+- 针对性验证：运行 `node --test --test-name-pattern='conversation content frames' test/inject.test.mjs`，并从实际 Codex 会话点击 Taskboard，确认页面可见且 iframe 已挂载。
 
 ## 上游合并检查清单
 
