@@ -441,14 +441,14 @@ async function waitForResidentInjectorReady(port, pid, startupToken, expectedSou
   throw new Error(`Timed out waiting for resident Taskboard injector ${pid}`);
 }
 
-async function restartResidentInjectorForRefresh(port) {
+async function restartResidentInjectorForRefresh(port, shouldOpen = false) {
   const { sourceHash } = await currentInjectionSource();
   return restartResidentInjector(port, {
     findResidents: residentInjectorPids,
     stopResident: stopResidentInjector,
     createStartupToken: randomUUID,
     startResident: (targetPort, startupToken) => (
-      startResidentInjector(targetPort, false, true, startupToken)
+      startResidentInjector(targetPort, shouldOpen, true, startupToken)
     ),
     waitUntilReady: (targetPort, pid, startupToken) => (
       waitForResidentInjectorReady(targetPort, pid, startupToken, sourceHash)
@@ -1086,13 +1086,20 @@ async function injectTarget(
           returnByValue: true,
         }),
       });
+      const shouldRemainOpen = shouldOpen || reconciled.shouldRemainOpen;
+      if (shouldOpen && !reconciled.shouldRemainOpen) {
+        await cdp.send("Runtime.evaluate", {
+          expression: "window.__codexTaskboardInjection__?.open()",
+          returnByValue: true,
+        });
+      }
       cdp.on("Page.loadEventFired", () => (
         publishInjectionScriptIdentifier(cdp, reconciled.scriptIdentifier)
       ));
       await publishHostHeartbeat(cdp, startupToken);
       const status = await waitForInjectionStatus(
         cdp,
-        reconciled.shouldRemainOpen,
+        shouldRemainOpen,
         sourceHash,
         15_000,
       );
@@ -1227,7 +1234,10 @@ async function main() {
       if (!activePort) throw new Error("No debuggable Codex window found");
       port = activePort;
     }
-    console.log(JSON.stringify({ launcher: startResidentInjector(port, options.open), port }, null, 2));
+    const launcher = residentInjectorPids(port).length > 0
+      ? await restartResidentInjectorForRefresh(port, options.open)
+      : startResidentInjector(port, options.open, true);
+    console.log(JSON.stringify({ launcher, port }, null, 2));
     return;
   }
 
@@ -1309,6 +1319,7 @@ async function main() {
 
     while (true) {
       await new Promise((resolve) => setTimeout(resolve, 2_000));
+      if (options.attachExisting && !(await isReachable(cdpVersionUrl))) break;
       try {
         await supervisor.ensure();
       } catch (error) {
@@ -1338,6 +1349,7 @@ async function main() {
         console.error(`Waiting for Codex renderer: ${error.message}`);
       }
     }
+    injectedTargets.forEach((connection) => connection.close());
     supervisor.stop();
   } catch (error) {
     supervisor.stop();

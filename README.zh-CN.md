@@ -59,7 +59,33 @@ ln -s /absolute/path/to/codex-panel/skills/manage-taskboard \
 
 ## 嵌入 Codex
 
-### 推荐：保留当前窗口并单独打开 Taskboard 窗口
+### 推荐：使用自动生成的 Codex 启动器
+
+`npm ci` 会自动重建 `~/Applications` 中现有的 `Codex.app` 启动器，保留它的 Codex 名称和图标，同时更新为当前仓库与 Node.js 路径。完全退出所有正在运行的 Codex 窗口，然后从现有 Dock 图标、Finder 或明确的命令行路径打开该启动器：
+
+```bash
+open "$HOME/Applications/Codex.app"
+```
+
+启动器会以仅监听回环地址的 CDP 端口启动官方 `/Applications/ChatGPT.app` Codex 应用，启动本地 Panel 服务，注入 Taskboard 侧边栏入口，并跟随这次 Codex 的生命周期运行。由它启动的 Codex 退出后，其启动的本地服务也会退出。它不会修改官方应用或其 `app.asar`。
+
+如果 Codex 已经通过该启动器的 CDP 端口运行，再次点击 `Codex.app` 会刷新 resident injector，在需要时恢复 Panel 入口，并聚焦现有 Codex 窗口。
+
+移动仓库或替换该 Node.js 安装后，请运行 `npm run launcher:install` 重新生成。最近一次启动日志位于 `~/Library/Logs/Codex Panel.log`。
+
+正常打开且未启用 CDP 的 Codex 无法在运行中补开 CDP。如果 Codex 已经以这种方式运行，请完全退出后再打开生成的 `Codex.app`。
+
+### 备选：在终端运行启动器
+
+完全退出所有正在运行的 Codex 窗口，然后运行：
+
+```bash
+CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex
+```
+
+该命令会在前台运行同一套生命周期。使用嵌入面板期间请保持命令运行。
+
+### 高级用法：保留当前窗口并单独打开 Taskboard 窗口
 
 保持现有 Codex 窗口开启。在 Taskboard 仓库中，以独立 CDP 端口启动第二个 Codex 实例：
 
@@ -77,16 +103,6 @@ npm run codex:inject -- --port 9231 --open
 ```
 
 使用嵌入面板期间，请保持注入器终端运行。原 Codex 窗口不会受到影响，新窗口会显示 Taskboard 侧边栏入口。如果端口 `9231` 已被占用，请在两条命令中使用同一个其他端口。
-
-### 备选：使用独立启动器重启 Codex
-
-退出所有正在运行的 Codex 窗口，然后运行：
-
-```bash
-CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex
-```
-
-该命令会在需要时启动本地 Taskboard 服务，以仅监听回环地址的 CDP 端口启动官方 macOS Codex 应用，注入一个位于 Plugins 之后、外观与原生界面一致的 Taskboard 入口，并持续监控服务及替换后的渲染进程。打开 Taskboard 时，启动器会检查固定本地服务的健康状态，在需要时重启服务，并在 iframe 加载失败时重新构建。使用期间请保持该命令运行。启动器不会修改 `ChatGPT.app` 或其 `app.asar`。
 
 CDP 可以访问后，启动器会等待最多 30 秒，让 Codex 创建主 renderer，再注入 Taskboard，并忽略头像浮层等辅助 renderer。这样可以避免 Electron 已开放调试端点、但 Codex 页面尚未就绪时启动失败。
 

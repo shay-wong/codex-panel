@@ -59,7 +59,33 @@ The Skill teaches Codex to inspect an issue, move it to `in_progress`, use optim
 
 ## Embed in Codex
 
-### Recommended: keep your current window and open a separate Taskboard window
+### Recommended: use the generated Codex launcher
+
+`npm ci` automatically rebuilds the existing `Codex.app` launcher in `~/Applications`, preserving its Codex name and icon while updating it to the current repository and Node.js paths. Quit every running Codex window, then open that launcher from its existing Dock item, Finder, or the explicit command-line path:
+
+```bash
+open "$HOME/Applications/Codex.app"
+```
+
+The launcher starts the official `/Applications/ChatGPT.app` Codex installation with a loopback-only CDP port, starts the local Panel service, injects the Taskboard sidebar entry, and stays attached to that Codex lifecycle. When the Codex instance launched by it exits, the local service it started exits as well. It does not modify the official app or its `app.asar`.
+
+If Codex is already running with the launcher's CDP port, clicking `Codex.app` refreshes the resident injector, restores the Panel entry when needed, and focuses the existing Codex window.
+
+Run `npm run launcher:install` after moving the repository or replacing that Node.js installation. The latest launcher log is written to `~/Library/Logs/Codex Panel.log`.
+
+A normally opened Codex instance cannot gain CDP after startup. If Codex is already running without the launcher's CDP port, quit it completely and open the generated `Codex.app` again.
+
+### Alternative: run the launcher in a terminal
+
+Quit every running Codex window, then run:
+
+```bash
+CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex
+```
+
+This runs the same lifecycle in the foreground. Keep the command running while using the embedded panel.
+
+### Advanced: keep your current window and open a separate Taskboard window
 
 Keep the existing Codex window open. From the Taskboard repository, start a second Codex instance with a dedicated CDP port:
 
@@ -77,16 +103,6 @@ npm run codex:inject -- --port 9231 --open
 ```
 
 Keep the injector terminal running while using the embedded panel. The original Codex window remains unchanged, and the new window receives the Taskboard sidebar entry. If port `9231` is occupied, use another port in both commands.
-
-### Alternative: restart Codex with the standalone launcher
-
-Quit every running Codex window, then run:
-
-```bash
-CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex
-```
-
-This starts the local Taskboard service when needed, launches the official macOS Codex app with a loopback-only CDP port, injects a native-looking Taskboard entry after Plugins, and keeps watching both the service and replacement renderers. Opening Taskboard asks this launcher to health-check the fixed local service, restart it when needed, and rebuild a failed iframe. Keep this command running while using the embedded panel. The launcher does not modify `ChatGPT.app` or its `app.asar`.
 
 After CDP becomes reachable, the launcher waits up to 30 seconds for Codex to create its main renderer before injecting Taskboard, ignoring auxiliary renderers such as the avatar overlay. This avoids startup failures when Electron exposes the debugging endpoint before the Codex page is ready.
 

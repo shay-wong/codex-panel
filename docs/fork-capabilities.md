@@ -6,6 +6,20 @@ This page indexes the user-visible differences maintained by `shay-wong/codex-pa
 
 The browser title and repository entry points use the `Codex Panel` name, and the repository is named `codex-panel`. This is a long-lived fork identity difference. Existing `CODEX_TASKBOARD_*` environment variables and Taskboard integration identifiers remain unchanged for compatibility.
 
+## Generated macOS launcher
+
+On macOS, `npm ci` rebuilds the existing `~/Applications/Codex.app` launcher with its Codex name and icon. Opening it runs the repository's existing launcher flow, so the official `/Applications/ChatGPT.app` installation starts with CDP, the local Panel service starts, and the embedded sidebar entry opens without a terminal command. The service started by this launcher stops after that Codex instance exits.
+
+Clicking the launcher while its CDP-enabled Codex is already running refreshes the resident injector and restores the embedded Panel entry before focusing the existing window.
+
+Regenerate the app after moving the repository or changing the Node.js installation:
+
+```bash
+npm run launcher:install
+```
+
+The launcher never modifies the official `ChatGPT.app`. A Codex instance already running without CDP must still be quit before using the generated `Codex.app`.
+
 ## Reliable initial Codex injection
 
 The standalone launcher waits up to 30 seconds for Codex's main renderer after CDP becomes reachable. It ignores auxiliary renderers such as global dictation and the avatar overlay.
