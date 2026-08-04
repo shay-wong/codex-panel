@@ -520,6 +520,7 @@ test("configured server proxies business APIs without touching local rows and ad
       realtime: { transport: "poll", intervalMs: 2000 },
       localCapabilities: { available: true },
       manageTaskboardSkillPath: app.options.skillPath,
+      capabilities: { localAiChat: true },
     });
     const session = await fetch(`${baseUrl}/api/local/cloud-session`)
       .then((response) => response.json());
