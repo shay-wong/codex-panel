@@ -1,4 +1,4 @@
-# Codex Taskboard
+# Codex Panel
 
 [简体中文](README.zh-CN.md) | [Fork capabilities](docs/fork-capabilities.md)
 
@@ -51,7 +51,7 @@ Use `npm link` if you want `taskctl` on your shell path. Set `CODEX_TASKBOARD_UR
 Copy or symlink `skills/manage-taskboard` into the Codex skills directory, then start a new Codex task:
 
 ```bash
-ln -s /absolute/path/to/codex-taskboard/skills/manage-taskboard \
+ln -s /absolute/path/to/codex-panel/skills/manage-taskboard \
   ~/.codex/skills/manage-taskboard
 ```
 

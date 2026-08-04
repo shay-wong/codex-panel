@@ -1,10 +1,10 @@
 # Fork capabilities
 
-This page indexes the user-visible differences maintained by `shay-wong/codex-taskboard` relative to `chuspeeism/dashi-taskboard`.
+This page indexes the user-visible differences maintained by `shay-wong/codex-panel` relative to `chuspeeism/dashi-taskboard`.
 
-## Codex Taskboard product name
+## Codex Panel product and repository name
 
-The browser title and repository entry points use the `Codex Taskboard` name. This is a long-lived fork identity difference and requires no configuration or migration.
+The browser title and repository entry points use the `Codex Panel` name, and the repository is named `codex-panel`. This is a long-lived fork identity difference. Existing `CODEX_TASKBOARD_*` environment variables and Taskboard integration identifiers remain unchanged for compatibility.
 
 ## Reliable initial Codex injection
 

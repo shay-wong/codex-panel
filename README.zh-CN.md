@@ -1,4 +1,4 @@
-# Codex Taskboard
+# Codex Panel
 
 [English](README.md) | [Fork 能力（英文）](docs/fork-capabilities.md)
 
@@ -51,7 +51,7 @@ npm run taskctl -- issue create \
 将 `skills/manage-taskboard` 复制或软链接到 Codex Skills 目录，然后启动一个新的 Codex 任务：
 
 ```bash
-ln -s /absolute/path/to/codex-taskboard/skills/manage-taskboard \
+ln -s /absolute/path/to/codex-panel/skills/manage-taskboard \
   ~/.codex/skills/manage-taskboard
 ```
 

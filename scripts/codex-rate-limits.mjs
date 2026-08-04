@@ -9,7 +9,7 @@ export async function readCodexQuotaStatus(model) {
     const session = startAppServer();
     try {
       await session.request("initialize", {
-        clientInfo: { name: "codex-taskboard", version: "0.1.0" },
+        clientInfo: { name: "codex-panel", version: "0.1.0" },
       });
       session.notify("initialized", {});
       const account = await session.request("account/read", { refreshToken: false });

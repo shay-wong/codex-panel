@@ -1,6 +1,6 @@
 # Fork 维护说明
 
-本文档是 `shay-wong/codex-taskboard` 面向维护者和 AI 编码代理的活跃差异台账，只记录相对于 `chuspeeism/dashi-taskboard` 有意保留的行为差异。
+本文档是 `shay-wong/codex-panel` 面向维护者和 AI 编码代理的活跃差异台账，只记录相对于 `chuspeeism/dashi-taskboard` 有意保留的行为差异。
 
 ## 维护约定
 
@@ -47,17 +47,17 @@
 
 ## 活跃 Fork 能力
 
-### 使用 Codex Taskboard 产品名
+### 使用 Codex Panel 产品与仓库名
 
 - 生命周期：`长期保留`
-- 原始目的：让浏览器标题和中英文仓库入口使用 Fork 项目名 `Codex Taskboard`，避免继续显示上游的通用名称。
-- 行为不变量：`web/index.html` 的文档标题以及 `README.md`、`README.zh-CN.md` 的主标题都保持为 `Codex Taskboard`。
-- 代码和测试路径：`web/index.html`；该静态标题没有独立自动化测试。
-- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
-- 来源：Fork 初始定制；可用 `git log -S'<title>Codex Taskboard</title>' -- web/index.html` 定位。
-- 合并指引：合并上游 HTML 入口改动时保留 `Codex Taskboard` 标题，除非 Fork 本身再次更名。
+- 原始目的：让浏览器标题、中英文仓库入口和 GitHub 仓库使用 Fork 项目名 `Codex Panel` / `codex-panel`，避免继续显示旧 Fork 名或上游通用名称。
+- 行为不变量：`web/index.html` 的文档标题以及 `README.md`、`README.zh-CN.md` 的主标题都保持为 `Codex Panel`，Fork 仓库保持为 `shay-wong/codex-panel`；现有 `CODEX_TASKBOARD_*` 环境变量、Taskboard 集成标识和云资源名继续兼容，不随产品改名破坏性迁移。
+- 代码和测试路径：`web/index.html`、`package.json`、`package-lock.json`、`server/index.mjs`、`server/app.mjs`、`server/ai-chat-catalog.mjs`、`scripts/codex-rate-limits.mjs` 和 `cloud/src/index.mjs`；该命名能力没有独立自动化测试。
+- 用户文档：`README.md`、`README.zh-CN.md`、`docs/fork-capabilities.md` 和 `docs/cloud-collaboration.md`。
+- 来源：Fork 初始定制及本次改名；可用 `git log -S'<title>Codex Panel</title>' -- web/index.html` 定位。
+- 合并指引：合并上游 HTML、包清单和服务入口改动时保留 `Codex Panel` / `codex-panel` 命名以及旧兼容标识，除非 Fork 本身再次更名或另行授权破坏性迁移。
 - 移除条件：Fork 更名或停止作为独立产品维护时同步更新或移除。
-- 针对性验证：运行 `npm run build:web`，并确认 `dist/web/index.html` 包含 `<title>Codex Taskboard</title>`。
+- 针对性验证：运行 `npm run build:web`，确认 `dist/web/index.html` 包含 `<title>Codex Panel</title>`，并确认 GitHub 仓库与本地目录都使用 `codex-panel`。
 
 ### 启动时等待 Codex renderer
 

@@ -1,6 +1,6 @@
 # Cloud collaboration
 
-Codex Taskboard can run as a small shared Cloudflare deployment for two trusted collaborators:
+Codex Panel can run as a small shared Cloudflare deployment for two trusted collaborators:
 
 - one Worker serves the built UI and the JSON API;
 - D1 is the authoritative business database;
