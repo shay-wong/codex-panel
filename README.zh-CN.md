@@ -69,7 +69,7 @@ open "$HOME/Applications/Codex.app"
 
 启动器会以仅监听回环地址的 CDP 端口启动官方 `/Applications/ChatGPT.app` Codex 应用，启动本地 Panel 服务，注入 Taskboard 侧边栏入口，并跟随这次 Codex 的生命周期运行。由它启动的 Codex 退出后，其启动的本地服务也会退出。它不会修改官方应用或其 `app.asar`。
 
-如果 Codex 已经通过该启动器的 CDP 端口运行，再次点击 `Codex.app` 会刷新 resident injector，在需要时恢复 Panel 入口，并聚焦现有 Codex 窗口。
+如果 Codex 已经通过该启动器的 CDP 端口运行，再次点击 `Codex.app` 会复用健康的 resident injector、打开 Panel 入口并聚焦现有 Codex 窗口。缺失或过期的 injector 会被替换；恢复过程会在启用 CSP bypass 后重载一次 Codex renderer，确保内嵌 frame 仍可用。退役的本地服务会关闭活跃连接，不会继续占用 SQLite 数据库。
 
 移动仓库或替换该 Node.js 安装后，请运行 `npm run launcher:install` 重新生成。最近一次启动日志位于 `~/Library/Logs/Codex Panel.log`。
 

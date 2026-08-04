@@ -93,6 +93,7 @@ export async function reconcileInjectionRuntime({
   sourceHash,
   removeRegisteredSource,
   registerCurrentSource,
+  reloadRenderer,
   evaluateCurrentSource,
   publishRegistration,
   reopen,
@@ -103,11 +104,12 @@ export async function reconcileInjectionRuntime({
     } catch {}
   }
   const scriptIdentifier = await registerCurrentSource(source);
+  await reloadRenderer();
   await evaluateCurrentSource(source);
   await publishRegistration(scriptIdentifier);
   const replaced = currentStatus.sourceHash !== sourceHash;
   const shouldRemainOpen = currentStatus.pageVisible === true;
-  if (replaced && shouldRemainOpen) await reopen();
+  if (shouldRemainOpen) await reopen();
   return { replaced, scriptIdentifier, shouldRemainOpen };
 }
 
@@ -153,6 +155,17 @@ export async function restartResidentInjector(port, handlers) {
     pid: started.pid,
     restarted: true,
   };
+}
+
+export function sameFrameDocumentUrl(candidate, expected) {
+  try {
+    const candidateUrl = new URL(candidate);
+    const expectedUrl = new URL(expected);
+    return candidateUrl.origin === expectedUrl.origin
+      && candidateUrl.pathname === expectedUrl.pathname;
+  } catch {
+    return false;
+  }
 }
 
 function commandPort(command, defaultPort) {

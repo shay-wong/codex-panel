@@ -16,6 +16,7 @@ import {
   handleHostBindingPayload,
   reconcileInjectionRuntime,
   restartResidentInjector,
+  sameFrameDocumentUrl,
 } from "./codex-injector-runtime.mjs";
 import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
 
@@ -456,6 +457,37 @@ async function restartResidentInjectorForRefresh(port, shouldOpen = false) {
   });
 }
 
+async function openResidentTaskboard(port, expectedSourceHash) {
+  const targets = await codexTargets(port);
+  for (const target of targets) {
+    const cdp = new CdpConnection(target.webSocketDebuggerUrl);
+    await cdp.open();
+    try {
+      await cdp.send("Runtime.enable");
+      const opened = await cdp.send("Runtime.evaluate", {
+        expression: `(() => {
+          const taskboard = window.__codexTaskboardInjection__;
+          if (taskboard?.sourceHash !== ${JSON.stringify(expectedSourceHash)}) return false;
+          taskboard.open();
+          return true;
+        })()`,
+        returnByValue: true,
+      });
+      if (opened.result.value !== true) continue;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const status = await readInjectionStatus(cdp);
+      if (
+        status.pageVisible
+        && status.frameUrl
+        && await waitForFrameDocument(cdp, status.frameUrl, 5_000)
+      ) return true;
+    } finally {
+      cdp.close();
+    }
+  }
+  return false;
+}
+
 async function refreshTaskboardFrames(port) {
   const targets = await codexTargets(port);
   const results = [];
@@ -517,6 +549,31 @@ async function waitForFrame(cdp, expectedUrl, timeoutMs) {
     ) {
       return true;
     }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return false;
+}
+
+function frameTreeContainsDocument(frameTree, expectedUrl) {
+  if (sameFrameDocumentUrl(frameTree.frame?.url, expectedUrl)) return true;
+  return frameTree.childFrames?.some((child) => (
+    frameTreeContainsDocument(child, expectedUrl)
+  )) || false;
+}
+
+async function waitForFrameDocument(cdp, expectedUrl, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const [{ targetInfos }, { frameTree }] = await Promise.all([
+      cdp.send("Target.getTargets"),
+      cdp.send("Page.getFrameTree"),
+    ]);
+    if (
+      targetInfos.some((target) => (
+        target.type === "iframe" && sameFrameDocumentUrl(target.url, expectedUrl)
+      ))
+      || frameTreeContainsDocument(frameTree, expectedUrl)
+    ) return true;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   return false;
@@ -1079,6 +1136,11 @@ async function injectTarget(
           { identifier },
         ),
         registerCurrentSource: (currentSource) => registerInjectionSource(cdp, currentSource),
+        reloadRenderer: async () => {
+          const reloaded = cdp.waitFor("Page.loadEventFired", 15_000);
+          await cdp.send("Page.reload");
+          await reloaded;
+        },
         evaluateCurrentSource: (currentSource) => evaluateInjectionSource(cdp, currentSource),
         publishRegistration: (identifier) => publishInjectionScriptIdentifier(cdp, identifier),
         reopen: () => cdp.send("Runtime.evaluate", {
@@ -1234,7 +1296,14 @@ async function main() {
       if (!activePort) throw new Error("No debuggable Codex window found");
       port = activePort;
     }
-    const launcher = residentInjectorPids(port).length > 0
+    const residentPids = residentInjectorPids(port);
+    let launcher = null;
+    if (residentPids.length === 1) {
+      const { sourceHash } = await currentInjectionSource();
+      const opened = !options.open || await openResidentTaskboard(port, sourceHash);
+      if (opened) launcher = { pid: residentPids[0], started: false, opened: options.open };
+    }
+    launcher ??= residentPids.length > 0
       ? await restartResidentInjectorForRefresh(port, options.open)
       : startResidentInjector(port, options.open, true);
     console.log(JSON.stringify({ launcher, port }, null, 2));

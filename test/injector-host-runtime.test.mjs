@@ -6,6 +6,7 @@ import {
   handleHostBindingPayload,
   reconcileInjectionRuntime,
   restartResidentInjector,
+  sameFrameDocumentUrl,
 } from "../scripts/codex-injector-runtime.mjs";
 
 const currentAutomationRequest = {
@@ -69,6 +70,7 @@ test("attach replaces an old runtime with the current source and restores an ope
       calls.push(["register", source]);
       return "current-registration";
     },
+    reloadRenderer: async () => calls.push(["reload"]),
     evaluateCurrentSource: async (source) => calls.push(["evaluate", source]),
     publishRegistration: async (identifier) => calls.push(["publish", identifier]),
     reopen: async () => calls.push(["open"]),
@@ -82,6 +84,7 @@ test("attach replaces an old runtime with the current source and restores an ope
   assert.deepEqual(calls, [
     ["remove", "old-registration"],
     ["register", "current-source"],
+    ["reload"],
     ["evaluate", "current-source"],
     ["publish", "current-registration"],
     ["open"],
@@ -104,6 +107,7 @@ test("attach is idempotent for the same source hash and does not open a closed p
       calls.push(["register", source]);
       return "current-registration";
     },
+    reloadRenderer: async () => calls.push(["reload"]),
     evaluateCurrentSource: async (source) => calls.push(["evaluate", source]),
     publishRegistration: async (identifier) => calls.push(["publish", identifier]),
     reopen: async () => calls.push(["open"]),
@@ -117,8 +121,46 @@ test("attach is idempotent for the same source hash and does not open a closed p
   assert.deepEqual(calls, [
     ["remove", "old-registration"],
     ["register", "current-source"],
+    ["reload"],
     ["evaluate", "current-source"],
     ["publish", "current-registration"],
+  ]);
+});
+
+test("attach reloads the renderer and restores an open page even when the source is current", async () => {
+  const calls = [];
+  const result = await reconcileInjectionRuntime({
+    currentStatus: {
+      version: "0.6.8",
+      sourceHash: "current-hash",
+      pageVisible: true,
+      scriptIdentifier: "current-registration",
+    },
+    source: "current-source",
+    sourceHash: "current-hash",
+    removeRegisteredSource: async (identifier) => calls.push(["remove", identifier]),
+    registerCurrentSource: async (source) => {
+      calls.push(["register", source]);
+      return "replacement-registration";
+    },
+    reloadRenderer: async () => calls.push(["reload"]),
+    evaluateCurrentSource: async (source) => calls.push(["evaluate", source]),
+    publishRegistration: async (identifier) => calls.push(["publish", identifier]),
+    reopen: async () => calls.push(["open"]),
+  });
+
+  assert.deepEqual(result, {
+    replaced: false,
+    scriptIdentifier: "replacement-registration",
+    shouldRemainOpen: true,
+  });
+  assert.deepEqual(calls, [
+    ["remove", "current-registration"],
+    ["register", "current-source"],
+    ["reload"],
+    ["evaluate", "current-source"],
+    ["publish", "replacement-registration"],
+    ["open"],
   ]);
 });
 
@@ -184,4 +226,19 @@ test("refresh stops every stale resident before starting one token-verified repl
     ["start", 9231, startupToken],
     ["ready", 9231, 9876, startupToken],
   ]);
+});
+
+test("resident frame matching accepts Panel route queries but rejects other documents", () => {
+  assert.equal(sameFrameDocumentUrl(
+    "http://127.0.0.1:47823/?host=codex&project=local&issue=LOCAL-1",
+    "http://127.0.0.1:47823/?host=codex",
+  ), true);
+  assert.equal(sameFrameDocumentUrl(
+    "http://127.0.0.1:47824/?host=codex",
+    "http://127.0.0.1:47823/?host=codex",
+  ), false);
+  assert.equal(sameFrameDocumentUrl(
+    "chrome-error://chromewebdata/",
+    "http://127.0.0.1:47823/?host=codex",
+  ), false);
 });

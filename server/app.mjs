@@ -2078,6 +2078,7 @@ export function createTaskboardServer(options = {}) {
       events.close();
       for (const response of aiEventResponses) response.end();
       aiEventResponses.clear();
+      server.closeAllConnections();
       await aiChat.close();
       await serverClosed;
       listening = false;

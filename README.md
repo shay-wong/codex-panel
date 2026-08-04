@@ -69,7 +69,7 @@ open "$HOME/Applications/Codex.app"
 
 The launcher starts the official `/Applications/ChatGPT.app` Codex installation with a loopback-only CDP port, starts the local Panel service, injects the Taskboard sidebar entry, and stays attached to that Codex lifecycle. When the Codex instance launched by it exits, the local service it started exits as well. It does not modify the official app or its `app.asar`.
 
-If Codex is already running with the launcher's CDP port, clicking `Codex.app` refreshes the resident injector, restores the Panel entry when needed, and focuses the existing Codex window.
+If Codex is already running with the launcher's CDP port, clicking `Codex.app` reuses a healthy resident injector, opens the Panel entry, and focuses the existing Codex window. A missing or stale injector is replaced; that recovery reloads the Codex renderer once after enabling the CSP bypass so the embedded frame remains available. Retired local-service processes close their active connections instead of remaining attached to the SQLite database.
 
 Run `npm run launcher:install` after moving the repository or replacing that Node.js installation. The latest launcher log is written to `~/Library/Logs/Codex Panel.log`.
 

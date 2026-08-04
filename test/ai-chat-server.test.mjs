@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { chmod, mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
+import { connect } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -322,5 +324,43 @@ test("server close stops accepting requests before AI shutdown completes", async
     } else {
       await fixture.close();
     }
+  }
+});
+
+test("server close terminates active HTTP sockets instead of leaking a retired process", async () => {
+  const fixture = await createServerFixture();
+  const address = fixture.app.server.address();
+  assert(address && typeof address === "object");
+  const socket = connect({ host: "127.0.0.1", port: address.port });
+  let closing = null;
+  let appClosed = false;
+  try {
+    await once(socket, "connect");
+    socket.write("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n");
+    const socketClosed = new Promise((resolve, reject) => {
+      socket.once("close", resolve);
+      socket.once("error", (error) => {
+        if (error.code === "ECONNRESET") resolve();
+        else reject(error);
+      });
+    });
+    closing = fixture.app.close();
+    await Promise.race([
+      socketClosed,
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error("active socket outlived server close")),
+        500,
+      )),
+    ]);
+    await closing;
+    appClosed = true;
+  } finally {
+    socket.destroy();
+    if (closing && !appClosed) {
+      await closing;
+      appClosed = true;
+    }
+    if (appClosed) await rm(fixture.directory, { recursive: true, force: true });
+    else await fixture.close();
   }
 });

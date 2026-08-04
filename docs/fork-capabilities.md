@@ -10,7 +10,7 @@ The browser title and repository entry points use the `Codex Panel` name, and th
 
 On macOS, `npm ci` rebuilds the existing `~/Applications/Codex.app` launcher with its Codex name and icon. Opening it runs the repository's existing launcher flow, so the official `/Applications/ChatGPT.app` installation starts with CDP, the local Panel service starts, and the embedded sidebar entry opens without a terminal command. The service started by this launcher stops after that Codex instance exits.
 
-Clicking the launcher while its CDP-enabled Codex is already running refreshes the resident injector and restores the embedded Panel entry before focusing the existing window.
+Clicking the launcher while its CDP-enabled Codex is already running reuses a healthy resident injector and opens the embedded Panel before focusing the existing window. A missing or stale resident is replaced; the recovery reloads the Codex renderer once after enabling the CSP bypass, and the retired local service closes active connections before releasing SQLite.
 
 Regenerate the app after moving the repository or changing the Node.js installation:
 
