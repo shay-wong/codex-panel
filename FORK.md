@@ -51,11 +51,11 @@
 
 - 生命周期：`长期保留`
 - 原始目的：让浏览器标题、中英文仓库入口和 GitHub 仓库使用 Fork 项目名 `Codex Panel` / `codex-panel`，避免继续显示旧 Fork 名或上游通用名称。
-- 行为不变量：`web/index.html` 的文档标题以及 `README.md`、`README.zh-CN.md` 的主标题都保持为 `Codex Panel`，Fork 仓库保持为 `shay-wong/codex-panel`；现有 `CODEX_TASKBOARD_*` 环境变量、Taskboard 集成标识和云资源名继续兼容，不随产品改名破坏性迁移。
-- 代码和测试路径：`web/index.html`、`package.json`、`package-lock.json`、`server/index.mjs`、`server/app.mjs`、`server/ai-chat-catalog.mjs`、`scripts/codex-rate-limits.mjs` 和 `cloud/src/index.mjs`；该命名能力没有独立自动化测试。
+- 行为不变量：`web/index.html`、中英文 README、Skill、CLI、环境变量、注入协议、本地存储、SQLite 和尚未部署的 Cloudflare 资源统一使用 `Codex Panel` / `panel` / `manage-panel` / `panelctl` / `CODEX_PANEL_*`；旧浏览器键、环境变量、自动任务名称及本仓库管理的旧链接必须自动迁移或兼容读取，不能因改名丢失本地状态。数据库只使用已完成改名的 `panel.sqlite`，不再保留旧数据库文件名迁移逻辑；用户级默认数据位置统一为固定支持目录，首次自包含安装只做一次在线快照且保留仓库源数据。
+- 代码和测试路径：`web/index.html`、`package.json`、`package-lock.json`、`skills/manage-panel`、`cli/panelctl.mjs`、`server/index.mjs`、`server/app.mjs`、`shared/panel-paths.mjs`、`web/src/storageMigration.ts`、`scripts/install-macos-launcher.mjs`、`scripts/managed-install.mjs`、`scripts/codex-rate-limits.mjs`、`cloud/src/index.mjs`、`test/integration-installer.test.mjs` 和 `test/panel-naming.test.mjs`。
 - 用户文档：`README.md`、`README.zh-CN.md`、`docs/fork-capabilities.md` 和 `docs/cloud-collaboration.md`。
 - 来源：Fork 初始定制及本次改名；可用 `git log -S'<title>Codex Panel</title>' -- web/index.html` 定位。
-- 合并指引：合并上游 HTML、包清单和服务入口改动时保留 `Codex Panel` / `codex-panel` 命名以及旧兼容标识，除非 Fork 本身再次更名或另行授权破坏性迁移。
+- 合并指引：合并上游 HTML、包清单和服务入口改动时保留 Panel 主命名和上述单向迁移边界；旧名称不能重新成为新写入或用户文档的主入口。
 - 移除条件：Fork 更名或停止作为独立产品维护时同步更新或移除。
 - 针对性验证：运行 `npm run build:web`，确认 `dist/web/index.html` 包含 `<title>Codex Panel</title>`，并确认 GitHub 仓库与本地目录都使用 `codex-panel`。
 
@@ -63,13 +63,25 @@
 
 - 生命周期：`长期保留`
 - 原始目的：让项目自动重建用户现有的 `~/Applications/Codex.app` 启动器，保留 Codex 名称、图标和原有 Dock 入口，并在点击它时启动带内嵌 Panel 的官方 Codex，不必先打开终端运行注入器。
-- 行为不变量：macOS 上的 `npm ci` 通过 `postinstall` 原位重建 `~/Applications/Codex.app`，保留兼容 bundle id `com.shay.codex-taskboard-launcher`；生成的 AppleScript 应按 9229 CDP 状态调用当前仓库的 `codex:daemon` 或 `codex` 入口。已有健康 resident 时必须直接复用并打开 Panel；接管或刷新 resident 时，必须在同一 CDP 会话启用 CSP bypass 后重载 renderer，避免 iframe 变成 `ERR_BLOCKED_BY_CSP`。保持现有回环 CDP、服务监督和随 Codex 退出的生命周期，退役服务必须关闭仍活跃的 HTTP/SSE 连接且不继续持有 SQLite；不修改官方 `/Applications/ChatGPT.app` 或 `app.asar`。非 macOS 环境应成功跳过生成。
+- 行为不变量：macOS 上由显式 `npm run codex:install` 原位重建 `~/Applications/Codex.app`；`npm ci` 只安装项目依赖，不得写入用户应用或全局集成。启动器保留兼容 bundle id `com.shay.codex-taskboard-launcher` 以维持现有 Dock 应用身份；生成的 AppleScript 必须直接使用 Node 运行固定用户目录中的 injector，不得依赖源仓库或 npm 工作目录，并按 9229 CDP 状态选择 `--daemon --open` 或 `--launch --watch --open`。已有健康 resident 时必须直接复用并打开 Panel；接管或刷新 resident 时，必须在同一 CDP 会话启用 CSP bypass 后重载 renderer，避免 iframe 变成 `ERR_BLOCKED_BY_CSP`。保持现有回环 CDP、服务监督和随 Codex 退出的生命周期，退役服务必须关闭仍活跃的 HTTP/SSE 连接且不继续持有 SQLite；不修改官方 `/Applications/ChatGPT.app` 或 `app.asar`。非 macOS 环境应成功跳过生成。
 - 代码和测试路径：`scripts/install-macos-launcher.mjs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-runtime.mjs`、`server/app.mjs`、`test/injector-host-runtime.test.mjs`、`test/ai-chat-server.test.mjs` 和 `package.json`。
 - 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
 - 来源：本次 Fork 能力；可用 `git log -S'launcher:install' -- package.json scripts/install-macos-launcher.mjs` 定位。
-- 合并指引：上游调整安装脚本或注入器入口时，保留“安装后重建现有用户级 `Codex.app`，AppleScript 只选择并调用现有 npm 入口，健康 resident 直接复用，接管时重载以应用 CSP bypass，官方 Codex 与本地服务生命周期绑定”的不变量，不把注入实现复制进应用包。
+- 合并指引：上游调整安装脚本或注入器入口时，保留“显式安装命令重建现有用户级 `Codex.app`，AppleScript 只调用已安装 runtime，健康 resident 直接复用，接管时重载以应用 CSP bypass，官方 Codex 与本地服务生命周期绑定”的不变量，不把注入实现复制进应用包，也不能重新依赖源仓库路径。
 - 移除条件：Fork 不再支持 macOS Codex 内嵌，或上游提供等价的自动生成本地启动器能力时同步移除。
-- 针对性验证：运行 `npm ci`，确认 `~/Applications/Codex.app/Contents/Info.plist` 可由 `plutil -lint` 解析，bundle id 保持兼容且 marker 和反编译后的 AppleScript 指向当前仓库；完全退出 Codex 后打开该应用，确认 Panel 已嵌入。运行一次 resident refresh 后确认 iframe target 仍为 Panel URL 而不是 `chrome-error://chromewebdata/`；再次点击启动器时确认复用同一 resident PID；最后退出 Codex 并确认本地服务及退役进程全部停止。
+- 针对性验证：先运行 `npm ci`，确认没有创建或修改 Skills、CLI 及 `~/Applications/Codex.app`；再运行 `npm run codex:install`，确认 `~/Applications/Codex.app/Contents/Info.plist` 可由 `plutil -lint` 解析，bundle id 保持兼容，且 marker 和反编译后的 AppleScript 只指向固定 runtime 与数据目录，不包含源仓库路径或 `npm run`。完全退出 Codex 后打开该应用，确认 Panel 已嵌入；运行一次 resident refresh 后确认 iframe target 仍为 Panel URL 而不是 `chrome-error://chromewebdata/`；再次点击启动器时确认复用同一 resident PID；最后退出 Codex 并确认本地服务及退役进程全部停止。
+
+### 自包含安装 Panel runtime、Skills 与 CLI
+
+- 生命周期：`长期保留`
+- 原始目的：让用户通过一个明确的集成安装命令得到不依赖 Git 仓库路径的可运行副本，无需手工复制 Skill 或执行 `npm link`；新的 Codex 任务可以直接调用 `$manage-panel` 和 `$handoff-panel`，并能从 shell 找到两者依赖的 `panelctl`。
+- 行为不变量：`npm ci` 只安装项目依赖，不得调用集成安装器。显式 `npm run codex:install` 必须先构建最小生产 runtime 并原子复制到固定用户支持目录，再把 `manage-panel` 与 `handoff-panel` 作为真实受管副本安装到标准 `~/.agents/skills`，把真实受管 wrapper 安装到 `~/.local/bin/panelctl`，最后清理确认属于本项目的旧 `~/.codex/skills`、`taskctl` 和 Node-bin 软链接。runtime、Skills、CLI 和启动器均不得指回源仓库；重复安装只更新带 Panel 所有权标记的目标，其他软链接、真实文件和目录必须保留或拒绝覆盖。首次安装且固定数据目录不存在时，必须使用 SQLite 在线备份复制仓库现有数据，并保留源数据；已有目标数据不得覆盖。`handoff-panel` 只读取 `~/.agents/skills/handoff/SKILL.md`，不得复制或修改第三方 `$handoff`；必须先完成基础 Skill 并保留其临时文档，再校验和发布 Panel 评论，评论中的文档内容不得裁剪或重写，后续失败不得破坏基础交接结果。
+- 代码和测试路径：`scripts/install-macos-launcher.mjs`、`scripts/managed-install.mjs`、`shared/panel-paths.mjs`、`package.json`、`skills/manage-panel/SKILL.md`、`skills/handoff-panel/SKILL.md`、`skills/handoff-panel/scripts/publish-handoff.mjs`、`test/integration-installer.test.mjs`、`test/handoff-panel-skill.test.mjs` 和 `cli/panelctl.mjs`。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：本次 Fork 能力；可用 `git log -S'handoff-panel' -- scripts/install-macos-launcher.mjs skills/handoff-panel package.json` 定位。
+- 合并指引：上游修改依赖或启动器安装时，保留“依赖安装不触发用户级写入”“runtime、两个 Panel Skills、CLI、启动器由显式同一入口安装”“安装副本不依赖仓库路径”“受管目标可原子刷新”“用户目标不覆盖”“第三方 `$handoff` 不修改”六个不变量，不能只保留启动器生成。
+- 移除条件：上游提供等价的自包含 Panel runtime、Skills 与 CLI 安装能力，或 Fork 不再通过本地 Skill 管理及交接 Issue 时同步移除。
+- 针对性验证：运行 `node --test test/integration-installer.test.mjs test/handoff-panel-skill.test.mjs test/panel-naming.test.mjs`，确认包清单没有 `postinstall` 且仍保留 `codex:install`；使用临时用户目录运行两次安装逻辑，确认 runtime、两个 Skill 和 `panelctl` 都是可原子更新的真实副本，旧托管链接被清理，用户自有同名目录被保留，并确认在线 SQLite 快照不覆盖已有目标数据。最后检查安装结果和生成的 AppleScript 均不含源仓库路径。
 
 ### 启动时等待 Codex renderer
 
@@ -81,19 +93,55 @@
 - 来源：本次 Fork 修复；可用 `git log -S'waitForCodexTargets' -- scripts/codex-injector.mjs test/injector.test.mjs` 定位。
 - 合并指引：若上游重构启动器，必须保留“CDP 就绪不等于主 renderer 就绪”以及“辅助 renderer 不能作为注入目标”的不变量，并用辅助窗口先出现、主窗口延迟出现的检查验证。
 - 移除条件：上游实现等价的主 renderer 等待和辅助窗口过滤逻辑，并包含能覆盖该启动顺序的回归测试。
-- 针对性验证：运行 `node --test test/injector.test.mjs`，再运行 `CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex` 验证真实首次嵌入。
+- 针对性验证：运行 `node --test test/injector.test.mjs`，再运行 `CODEX_PANEL_HOST=127.0.0.1 npm run codex` 验证真实首次嵌入。
 
 ### 从会话页打开任务面板
 
 - 生命周期：`等待上游吸收`
-- 原始目的：修复 Codex 会话页的主内容 frame 覆盖原生标题栏时，Taskboard 入口变为选中但页面没有挂载的问题。
-- 行为不变量：主内容 frame 只要覆盖大部分 viewport 就可以作为挂载锚点，不得因其顶部位于原生标题栏上方而拒绝；会话页、Plugins 和 Sites 均能直接切换到 Taskboard。
-- 代码和测试路径：`inject/codex-taskboard.user.js`、`test/inject.test.mjs`。
+- 原始目的：修复 Codex 会话页的主内容 frame 覆盖原生标题栏时，Panel 入口变为选中但页面没有挂载的问题。
+- 行为不变量：主内容 frame 只要覆盖大部分 viewport 就可以作为挂载锚点，不得因其顶部位于原生标题栏上方而拒绝；会话页、Plugins 和 Sites 均能直接切换到 Panel。
+- 代码和测试路径：`inject/codex-panel.user.js`、`test/inject.test.mjs`。
 - 用户文档：`README.md` 和 `README.zh-CN.md` 的“Embed in Codex”/“嵌入 Codex”章节，以及 `docs/fork-capabilities.md`。
-- 来源：本次 Fork 修复；可用 `git log -S'conversation content frames can host Taskboard' -- test/inject.test.mjs` 定位。
+- 来源：本次 Fork 修复；可用 `git log -S'conversation content frames can host Panel' -- test/inject.test.mjs` 定位。
 - 合并指引：上游调整 Codex 主内容 DOM 识别时，应以页面实际覆盖范围为准，不能重新要求 frame 位于原生标题栏下方。
 - 移除条件：上游提供等价的跨会话页和原生页面挂载逻辑，并覆盖会话 frame 从 viewport 顶部开始的场景。
-- 针对性验证：运行 `node --test --test-name-pattern='conversation content frames' test/inject.test.mjs`，并从实际 Codex 会话点击 Taskboard，确认页面可见且 iframe 已挂载。
+- 针对性验证：运行 `node --test --test-name-pattern='conversation content frames' test/inject.test.mjs`，并从实际 Codex 会话点击 Panel，确认页面可见且 iframe 已挂载。
+
+### 内嵌 AI 对话关联议题
+
+- 生命周期：`等待上游吸收`
+- 原始目的：允许已有本地 AI 对话在创建后继续关联、改绑或取消关联 Issue，让 Issue 活动时间线直接显示和打开处理它的内嵌对话，并把讨论结论可靠交接给后续原生 Codex 任务。
+- 行为不变量：只允许把空闲对话关联到其原始项目中的活跃 Issue，运行中的对话不能改绑；打开关联菜单时必须按对话原始项目直接加载活跃 Issue，不得复用当前看板项目的任务数组。关联同时持久化 Issue ID 和编号。Issue 活动时间线只显示实际关联到当前 Issue 的本地对话，按最近活动时间与评论排序并计入活动数量，点击时必须打开对应线程；对话历史应显示关联编号。内嵌聊天中的 `/handoff` 和 `/交接` 必须复用同一 Codex 线程总结既有上下文，只在该轮成功并返回摘要后，以带稳定标记的 Codex Agent 评论写入 Issue 并广播活动更新；`--issue ISSUE-ID` 可以覆盖默认的关联 Issue。原 `$handoff` 在所有位置都只保留临时文档行为；独立的全局 `$handoff-panel --issue ISSUE-ID` 必须先完整执行原 Skill，再校验目标 Issue，并把同一份临时文档逐字通过 `panelctl` 写入 Issue；校验或写入失败时保留文档并报告部分失败。打开原生对话时必须预填 Issue 编号、标题、最新交接和 `panelctl` 读取位置；未发送的输入框不算任务，第一次发送产生新 thread ID 后才自动写回 Issue。
+- 代码和测试路径：`server/ai-chat.mjs`、`server/app.mjs`、`server/database.mjs`、`inject/codex-panel.user.js`、`skills/manage-panel/SKILL.md`、`skills/handoff-panel/SKILL.md`、`skills/handoff-panel/scripts/publish-handoff.mjs`、`web/src/api.ts`、`web/src/App.tsx`、`web/src/components/AiChat.tsx`、`web/src/components/TaskDetail.tsx`、`web/src/styles.css`、`test/ai-chat-runner.test.mjs` 和 `test/handoff-panel-skill.test.mjs`。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：本次 Fork 能力；可用 `git log -S'bindThreadToIssue' -- web/src/components/AiChat.tsx server/ai-chat.mjs` 定位。
+- 合并指引：上游调整 AI 对话模型、Issue 活动时间线或原生任务创建协议时，保留“按对话原项目加载活跃 Issue、运行时只读、双字段持久化、活动时间线反向入口、同线程交接摘要、显式目标路由、原 `$handoff` 不变、全局 `$handoff-panel` 基础优先且逐字复用临时文档、最新交接预填和新 thread 自动写回”的完整路径，不能只保留创建时关联。
+- 移除条件：上游提供等价的对话改绑、取消关联、Issue 反向展示、交接记录、上下文预填和原生 thread 自动关联能力后同步移除。
+- 针对性验证：运行 `node --test test/ai-chat-runner.test.mjs test/handoff-panel-skill.test.mjs`、`npm run typecheck` 和 `npm run build`；在任意 Codex 对话中发送 `$handoff-panel --issue ISSUE-ID 重点说明`，确认原 `$handoff` 临时文档照常生成，随后目标 Issue 收到内容一致的交接评论；点击“在对话中打开”，确认输入框包含最新交接，第一次发送后 Issue 自动显示新原生任务关联。
+
+### 受管 iframe 的 Codex 原生权限边界
+
+- 生命周期：`长期保留`
+- 原始目的：允许用户替换 Panel UI 来源，同时避免任意自定义 HTTP(S) iframe 获取本机 Codex 用户、项目、thread 和绝对路径，或调用原生任务与自动化能力。
+- 行为不变量：只有 `frameOrigin === managedPanelOrigin()` 的启动器受管来源可以接收 `panel:host-context` 和 thread 关联消息，并请求打开原生任务、创建任务、展开侧边栏或操作自动化；其他自定义来源只可接收主题和标题栏拖拽区域消息并显示看板。Cloud 模式仍通过本地 companion 提供的受管来源使用原生能力，不能以“来源可显示”替代“来源受信任”的判断。
+- 代码和测试路径：`inject/codex-panel.user.js` 和 `test/inject.test.mjs`。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：本次 Fork 安全修复；可用 `git log -S'isTrustedPanelOrigin' -- inject/codex-panel.user.js test/inject.test.mjs` 定位。
+- 合并指引：上游调整 iframe URL、自定义来源或原生消息协议时，继续把显示层消息与 Codex 原生权限分开；新增原生能力必须放在受管来源检查之后，宿主上下文不得发往普通自定义来源。
+- 移除条件：上游提供等价或更严格的显式来源授权模型，并覆盖宿主上下文与每项原生消息能力后同步移除。
+- 针对性验证：运行 `node --test test/inject.test.mjs`；分别使用默认受管来源和不同来源的 `window.__CODEX_PANEL_URL__`，确认前者可以接收宿主上下文并操作原生能力，后者只能收到主题和拖拽区域消息。
+
+### 主题化 Issue 属性菜单
+
+- 生命周期：`等待上游吸收`
+- 原始目的：替换 Chromium 原生下拉层，修复暗黑模式下菜单变白且视觉与 Codex / Panel 不一致的问题。
+- 行为不变量：状态、优先级、负责人、工作流、开发上下文和重复周期使用同一套 Panel 菜单；菜单必须使用现有主题变量，保留选中图标、键盘导航、点击外部关闭和上下自适应定位，并在桌面与窄屏视口内完整显示。`Escape` 只关闭当前菜单，不关闭 Issue 详情。
+- 代码和测试路径：`web/src/components/DetailPropertySelect.tsx`、`web/src/components/TaskDetail.tsx` 和 `web/src/styles.css`。本次按仓库直接路径确认规则未新增自动化测试。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：本次 Fork 修复；可用 `git log -S'DetailPropertySelect' -- web/src/components/TaskDetail.tsx web/src/components/DetailPropertySelect.tsx` 定位。
+- 合并指引：上游调整 Issue 侧栏属性控件时，不得退回依赖浏览器原生 `<select>` 弹层；继续复用主题变量和紧凑属性行布局，并验证暗色、窄屏和 `Escape` 行为。
+- 移除条件：上游提供等价的主题化属性选择控件及明暗主题、键盘和响应式行为后同步移除。
+- 针对性验证：运行 `npm run typecheck` 和 `npm run build`；在暗色 Issue 详情中打开状态菜单，确认浮层颜色、图标和间距与 Panel 一致，再按 `Escape` 确认只关闭菜单；以 600px 宽视口确认菜单不溢出。
 
 ## 上游合并检查清单
 

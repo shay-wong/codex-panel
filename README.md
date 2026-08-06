@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md) | [Fork capabilities](docs/fork-capabilities.md)
 
-A local-first issue board that runs in a browser and can be embedded in Codex through the standalone CDP launcher or its injection script. The same HTTP API powers the React UI and the `taskctl` CLI used by the bundled Codex Skill.
+A local-first issue board that runs in a browser and can be embedded in Codex through the standalone CDP launcher or its injection script. The same HTTP API powers the React UI and the `panelctl` CLI used by the bundled Codex Skill.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ npm run build
 npm start
 ```
 
-Open <http://127.0.0.1:47823>. The SQLite database is stored at `.data/taskboard.sqlite`.
+Open <http://127.0.0.1:47823>. On macOS, the SQLite database is stored at `~/Library/Application Support/Codex Panel/data/panel.sqlite` by default.
 
 For development with live frontend reload:
 
@@ -31,12 +31,12 @@ The Vite UI runs at <http://127.0.0.1:5173> and proxies API requests to the loca
 Run it from the project:
 
 ```bash
-npm run taskctl -- project create \
+npm run panelctl -- project create \
   --id my-project \
   --name "My project" \
   --workspace-path /absolute/path/to/repository
 
-npm run taskctl -- issue create \
+npm run panelctl -- issue create \
   --project my-project \
   --title "Implement the next slice" \
   --status todo \
@@ -44,34 +44,42 @@ npm run taskctl -- issue create \
   --labels product,mvp
 ```
 
-Use `npm link` if you want `taskctl` on your shell path. Set `CODEX_TASKBOARD_URL` to point the CLI at another local or LAN service. Cloud deployments are configured through the loopback companion with `taskctl cloud login`.
+`npm run panelctl -- ...` works without installing a user command. Run `npm run codex:install` to install a managed `panelctl` launcher at `~/.local/bin/panelctl`; this also installs the Codex Skills, standalone runtime, and generated app described below. Set `CODEX_PANEL_URL` to point the CLI at another local or LAN service. Cloud deployments are configured through the loopback companion with `panelctl cloud login`.
 
-## Install the Codex Skill
+## Install the Codex Skills
 
-Copy or symlink `skills/manage-taskboard` into the Codex skills directory, then start a new Codex task:
+Install dependencies first, then explicitly install the Codex integration:
 
 ```bash
-ln -s /absolute/path/to/codex-panel/skills/manage-taskboard \
-  ~/.codex/skills/manage-taskboard
+npm ci
+npm run codex:install
 ```
 
-The Skill teaches Codex to inspect an issue, move it to `in_progress`, use optimistic versions, verify the work, and then move it to `in_review`; it moves the issue to `done` only after the user explicitly confirms acceptance or asks to mark it complete.
+The integration command builds and copies a standalone runtime to `~/Library/Application Support/Codex Panel/runtime`, copies `manage-panel` and `handoff-panel` into the standard user Skill directory at `~/.agents/skills`, installs `panelctl` in `~/.local/bin`, and generates the macOS launcher. The installed files are real managed copies, not symbolic links back to the Git repository. Plain `npm ci` only installs project dependencies and does not write these user-level integrations. Start a new Codex task after installation to use `$manage-panel` and `$handoff-panel`.
+
+On the first install, if the fixed data directory does not exist, the installer snapshots the existing repository `.data/panel.sqlite` and copies its attachments and local configuration without deleting the source. It also removes old repository-managed `~/.codex/skills` and Node-bin links. Re-running the command atomically refreshes only files carrying the Codex Panel ownership marker; user-managed files and directories are never overwritten. Moving or deleting the repository does not break the already installed runtime. Run the command again after pulling code updates or replacing Node.js to install a new version.
+
+Existing browser settings and drafts are migrated from `taskboard.*` keys to `panel.*`. Legacy `CODEX_TASKBOARD_*` environment variables remain fallback aliases, but new configuration should use `CODEX_PANEL_*`.
+
+`$manage-panel` teaches Codex to inspect an issue, move it to `in_progress`, use optimistic versions, verify the work, and then move it to `in_review`; it moves the issue to `done` only after the user explicitly confirms acceptance or asks to mark it complete.
+
+`$handoff-panel --issue PROJECT-123 preserve the acceptance decisions` works from any Codex conversation. It first follows the installed `~/.agents/skills/handoff/SKILL.md` contract to create the normal temporary handoff document, then validates the target Issue and attaches that document verbatim to the Issue as an `AI 对话交接` Codex Agent comment. The original `$handoff` Skill remains unchanged, and a later Panel validation or publication failure does not remove its temporary document.
 
 ## Embed in Codex
 
 ### Recommended: use the generated Codex launcher
 
-`npm ci` automatically rebuilds the existing `Codex.app` launcher in `~/Applications`, preserving its Codex name and icon while updating it to the current repository and Node.js paths. Quit every running Codex window, then open that launcher from its existing Dock item, Finder, or the explicit command-line path:
+`npm run codex:install` rebuilds the existing `Codex.app` launcher in `~/Applications`, preserving its Codex name and icon while pointing it at the installed runtime and data directory. Quit every running Codex window, then open that launcher from its existing Dock item, Finder, or the explicit command-line path:
 
 ```bash
 open "$HOME/Applications/Codex.app"
 ```
 
-The launcher starts the official `/Applications/ChatGPT.app` Codex installation with a loopback-only CDP port, starts the local Panel service, injects the Taskboard sidebar entry, and stays attached to that Codex lifecycle. When the Codex instance launched by it exits, the local service it started exits as well. It does not modify the official app or its `app.asar`.
+The launcher starts the official `/Applications/ChatGPT.app` Codex installation with a loopback-only CDP port, starts the local Panel service, injects the Panel sidebar entry, and stays attached to that Codex lifecycle. When the Codex instance launched by it exits, the local service it started exits as well. It does not modify the official app or its `app.asar`.
 
 If Codex is already running with the launcher's CDP port, clicking `Codex.app` reuses a healthy resident injector, opens the Panel entry, and focuses the existing Codex window. A missing or stale injector is replaced; that recovery reloads the Codex renderer once after enabling the CSP bypass so the embedded frame remains available. Retired local-service processes close their active connections instead of remaining attached to the SQLite database.
 
-Run `npm run launcher:install` after moving the repository or replacing that Node.js installation. The latest launcher log is written to `~/Library/Logs/Codex Panel.log`.
+Repository moves do not affect the installed launcher. Re-run `npm run codex:install` after updating the repository or replacing that Node.js installation. `npm run launcher:install` remains available as a compatibility alias. The latest launcher log is written to `~/Library/Logs/Codex Panel.log`.
 
 A normally opened Codex instance cannot gain CDP after startup. If Codex is already running without the launcher's CDP port, quit it completely and open the generated `Codex.app` again.
 
@@ -80,14 +88,14 @@ A normally opened Codex instance cannot gain CDP after startup. If Codex is alre
 Quit every running Codex window, then run:
 
 ```bash
-CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex
+CODEX_PANEL_HOST=127.0.0.1 npm run codex
 ```
 
 This runs the same lifecycle in the foreground. Keep the command running while using the embedded panel.
 
-### Advanced: keep your current window and open a separate Taskboard window
+### Advanced: keep your current window and open a separate Panel window
 
-Keep the existing Codex window open. From the Taskboard repository, start a second Codex instance with a dedicated CDP port:
+Keep the existing Codex window open. From the Panel repository, start a second Codex instance with a dedicated CDP port:
 
 ```bash
 open -n -a /Applications/ChatGPT.app --args \
@@ -98,15 +106,15 @@ open -n -a /Applications/ChatGPT.app --args \
 After the new Codex window appears, run the injector in another terminal:
 
 ```bash
-CODEX_TASKBOARD_HOST=127.0.0.1 \
+CODEX_PANEL_HOST=127.0.0.1 \
 npm run codex:inject -- --port 9231 --open
 ```
 
-Keep the injector terminal running while using the embedded panel. The original Codex window remains unchanged, and the new window receives the Taskboard sidebar entry. If port `9231` is occupied, use another port in both commands.
+Keep the injector terminal running while using the embedded panel. The original Codex window remains unchanged, and the new window receives the Panel sidebar entry. If port `9231` is occupied, use another port in both commands.
 
-After CDP becomes reachable, the launcher waits up to 30 seconds for Codex to create its main renderer before injecting Taskboard, ignoring auxiliary renderers such as the avatar overlay. This avoids startup failures when Electron exposes the debugging endpoint before the Codex page is ready.
+After CDP becomes reachable, the launcher waits up to 30 seconds for Codex to create its main renderer before injecting Panel, ignoring auxiliary renderers such as the avatar overlay. This avoids startup failures when Electron exposes the debugging endpoint before the Codex page is ready.
 
-Codex 26.715.52143 ships a renderer CSP that blocks arbitrary HTTP iframes. The launcher therefore enables CDP CSP bypass, reloads that renderer once, installs the document-start script, and waits until the Taskboard OOPIF is actually loaded. CDP is unauthenticated to other processes on the same machine, so only run trusted local code while the launcher is active.
+Codex 26.715.52143 ships a renderer CSP that blocks arbitrary HTTP iframes. The launcher therefore enables CDP CSP bypass, reloads that renderer once, installs the document-start script, and waits until the Panel OOPIF is actually loaded. CDP is unauthenticated to other processes on the same machine, so only run trusted local code while the launcher is active.
 
 To inject into a Codex instance that was already launched with CDP by another method, run:
 
@@ -114,32 +122,39 @@ To inject into a Codex instance that was already launched with CDP by another me
 npm run codex:inject -- --port 9229 --open
 ```
 
-This command also stays resident so the injected tab can restart Taskboard after a service exit. Stop it with `Ctrl-C`.
+This command also stays resident so the injected tab can restart Panel after a service exit. Stop it with `Ctrl-C`.
 
-The script adds a Taskboard entry to the Codex sidebar and renders the iframe across Codex's complete main workspace, including the contextual titlebar area so Taskboard's own header does not leave an empty strip. That full rectangular header is placed above Electron's draggable layer and marked `no-drag`; because the native contextual actions are suppressed while Taskboard is active, its own actions use their normal edge padding without an artificial right-side gap. The native sidebar stays mounted, while the previous page selection and contextual header are temporarily suppressed; choosing another Codex page restores them.
+The script adds a Panel entry to the Codex sidebar and renders the iframe across Codex's complete main workspace, including the contextual titlebar area so Panel's own header does not leave an empty strip. That full rectangular header is placed above Electron's draggable layer and marked `no-drag`; because the native contextual actions are suppressed while Panel is active, its own actions use their normal edge padding without an artificial right-side gap. The native sidebar stays mounted, while the previous page selection and contextual header are temporarily suppressed; choosing another Codex page restores them.
 
-The Taskboard entry can be opened directly from a conversation as well as from native pages such as Plugins and Sites.
+The Panel entry can be opened directly from a conversation as well as from native pages such as Plugins and Sites.
 
-“在对话中打开” selects the corresponding native Codex project when one is available and opens an unsent native composer with `$manage-taskboard ISSUE-ID`. A conversation is attributed only after it actually processes the issue: `taskctl` reads Codex's `CODEX_THREAD_ID` and records that ID on the issue or comment mutation. Recorded IDs are clickable through Codex's native route bridge. Each issue can bind either one Git branch or one worktree; the options are scanned from the selected Codex project's repository instead of being typed by hand. The integration uses Codex's existing project, composer, and route markers; it does not patch React, replace `fetch`, load private chunks, or edit Codex data files.
+“Open in conversation” selects the corresponding native Codex project when one is available and opens an unsent native composer with a `$manage-panel` prompt. Panel first reads the issue's latest “AI conversation handoff” comment and prefills the issue identifier, title, read location, and handoff content; the new task still refreshes the latest issue and every comment through `panelctl` before acting. An unsent composer is not yet a Codex task, so Panel writes the new native thread ID back to the issue immediately after the first message creates that thread. Recorded IDs are clickable through Codex's native route bridge. Each issue can bind either one Git branch or one worktree; the options are scanned from the selected Codex project's repository instead of being typed by hand. The integration uses Codex's existing project, composer, and route markers; it does not patch React, replace `fetch`, load private chunks, or edit Codex data files.
 
-To use a different UI origin, set `window.__CODEX_TASKBOARD_URL__` before the user script runs.
+Local embedded AI conversations can also be linked to an issue from the link menu in the chat header. When opened, the menu loads active issues directly from the conversation's original project, even if another project is currently visible, and can switch or remove the link while Codex is idle. Linked conversations appear in the issue activity stream and open the exact local chat when selected. Send `/handoff` or `/交接` to have the same Codex thread summarize the discussion; optional text after the command tells it what to emphasize. Add `--issue ISSUE-ID` to record the handoff on a specific active issue instead of the linked issue, for example `/交接 --issue PROJECT-123 preserve the acceptance decisions`.
+
+The original `$handoff` Skill always keeps its existing temporary-document-only behavior. Use `$handoff-panel --issue ISSUE-ID [handoff focus]` when the same handoff must also be attached to a Panel Issue, whether the current conversation is native or embedded. The base Skill runs first, and the resulting document is embedded without trimming or rewriting. If later Issue validation or publication fails, the temporary document remains available and the command reports the partial failure. Successful handoffs are recorded in the activity stream for the next Codex task. Issue status, priority, assignee, workflow, development context, and recurrence use themed menus that follow the Panel's light or dark appearance instead of browser-native dropdowns.
+
+To use a different UI origin, set `window.__CODEX_PANEL_URL__` before the user script runs. A custom origin is display-only: it receives theme updates and may report its titlebar drag regions to the host, but it does not receive Codex projects, user identity, thread IDs, absolute workspace paths, native thread navigation or creation, sidebar expansion, or automation access. Those native capabilities are available only to the launcher-managed origin in `window.__CODEX_PANEL_MANAGED_ORIGIN__` (the local Panel origin by default).
 
 ## Configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `CODEX_TASKBOARD_HOST` | `0.0.0.0` | HTTP bind address; use `127.0.0.1` to disable LAN access |
-| `CODEX_TASKBOARD_PORT` | `47823` | Local HTTP port |
-| `CODEX_TASKBOARD_DATA_DIR` | `.data` | SQLite data directory |
-| `CODEX_TASKBOARD_URL` | `http://127.0.0.1:47823` | CLI API origin |
+| `CODEX_PANEL_HOST` | `0.0.0.0` | HTTP bind address; use `127.0.0.1` to disable LAN access |
+| `CODEX_PANEL_PORT` | `47823` | Local HTTP port |
+| `CODEX_PANEL_HOME` | `~/Library/Application Support/Codex Panel` on macOS | Installed runtime and default data root |
+| `CODEX_PANEL_DATA_DIR` | `$CODEX_PANEL_HOME/data` | SQLite data directory |
+| `CODEX_PANEL_URL` | `http://127.0.0.1:47823` | CLI API origin |
 
-`npm start` prints both the local URL and the available LAN URLs. Teammates on the same trusted network can open one of those LAN URLs and use the same taskboard service. Task, comment, and attachment changes are broadcast to every open client through server-sent events; reconnecting clients perform a full refresh so changes made while disconnected are not missed. A teammate using `taskctl` can point it at the shared service with `CODEX_TASKBOARD_URL=http://<host-ip>:47823`.
+`npm start` prints both the local URL and the available LAN URLs. Teammates on the same trusted network can open one of those LAN URLs and use the same panel service. Task, comment, and attachment changes are broadcast to every open client through server-sent events; reconnecting clients perform a full refresh so changes made while disconnected are not missed. A teammate using `panelctl` can point it at the shared service with `CODEX_PANEL_URL=http://<host-ip>:47823`.
 
-LAN mode has no account authentication: anyone on the trusted local network who can reach the URL can read and write the taskboard. Public internet and cloud deployment require an authenticated deployment boundary.
+LAN mode has no account authentication: anyone on the trusted local network who can reach the URL can read and write the panel. Public internet and cloud deployment require an authenticated deployment boundary.
 
 ## Share through Cloudflare
 
-For two trusted collaborators, the taskboard can run on Cloudflare with Worker Static Assets and API routes, D1 as the authoritative business database, and a private R2 bucket for attachments. The deployment uses HTTPS Basic Authentication with a shared password and refreshes open boards after a global revision changes.
+For two trusted collaborators, the panel can run on Cloudflare with Worker Static Assets and API routes, D1 as the authoritative business database, and a private R2 bucket for attachments. The deployment uses HTTPS Basic Authentication with a shared password and refreshes open boards after a global revision changes.
+
+No usable remote resource ID or custom domain is preconfigured. The committed Wrangler file is a local/dry-run template; provision your own Cloudflare resources and replace its all-zero D1 ID before any remote migration or deployment.
 
 Each device keeps its own project checkout mapping and continues to use a local companion for Codex, Git/worktree, Skill, and MCP capabilities. Cloud mode never falls back to or double-writes the local SQLite database.
 
