@@ -29,7 +29,9 @@ import {
   deleteWorkflowNode,
   deriveWorkflowLayout,
   findWorkflowItem,
+  getWorkflowSequence,
   insertWorkflowNode,
+  moveWorkflowNode,
   normalizeWorkflowSnapshot,
   serializeWorkflowSnapshot,
   workflowNodeIds,
@@ -120,6 +122,14 @@ interface WorkflowTabMenu {
   y: number;
 }
 
+interface SequenceDragPreview {
+  nodeId: string;
+  sequenceRef: WorkflowSequenceRef;
+  sourceOrderIds: string[];
+  sourceIndex: number;
+  targetIndex: number;
+}
+
 interface PlanDragPreview {
   nodeId: string;
   parentId: string;
@@ -130,6 +140,7 @@ interface PlanDragPreview {
 
 const WORKFLOW_STEP_WIDTH = 250;
 const WORKFLOW_STEP_HEIGHT = 138;
+const WORKFLOW_STEP_GAP = 58;
 const PLAN_ITEM_WIDTH = 230;
 const PLAN_ITEM_HEIGHT = 34;
 const PLAN_ITEM_GAP = 4;
@@ -487,6 +498,22 @@ function planDragShift(
   return 0;
 }
 
+function sequenceDragShift(
+  nodeId: string,
+  preview: SequenceDragPreview | null,
+): number {
+  if (!preview || nodeId === preview.nodeId) return 0;
+  const nodeIndex = preview.sourceOrderIds.indexOf(nodeId);
+  const distance = WORKFLOW_STEP_HEIGHT + WORKFLOW_STEP_GAP;
+  if (preview.targetIndex > preview.sourceIndex) {
+    return nodeIndex > preview.sourceIndex && nodeIndex <= preview.targetIndex ? -distance : 0;
+  }
+  if (preview.targetIndex < preview.sourceIndex) {
+    return nodeIndex >= preview.targetIndex && nodeIndex < preview.sourceIndex ? distance : 0;
+  }
+  return 0;
+}
+
 export function WorkflowBoard({
   projectId,
   projectName,
@@ -507,6 +534,7 @@ export function WorkflowBoard({
   const [workflowNameDraft, setWorkflowNameDraft] = useState("");
   const [workflowTabMenu, setWorkflowTabMenu] = useState<WorkflowTabMenu | null>(null);
   const [pickerTarget, setPickerTarget] = useState<StepPickerTarget | null>(null);
+  const [sequenceDragPreview, setSequenceDragPreview] = useState<SequenceDragPreview | null>(null);
   const [planDragPreview, setPlanDragPreview] = useState<PlanDragPreview | null>(null);
   const [settlingNodeId, setSettlingNodeId] = useState<string | null>(null);
   const [workflowCapabilities, setWorkflowCapabilities] = useState<WorkflowCapabilities | null>(null);
@@ -529,6 +557,7 @@ export function WorkflowBoard({
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const mountedRef = useRef(true);
   const settleTimerRef = useRef<number | null>(null);
+  const sequenceDragSessionRef = useRef<SequenceDragPreview | null>(null);
   const planDragSessionRef = useRef<PlanDragPreview | null>(null);
 
   const layout = useMemo(() => deriveWorkflowLayout(flow, nodes), [flow, nodes]);
@@ -957,10 +986,12 @@ export function WorkflowBoard({
       : null;
     const enriched = nodes.map((node) => {
       const stepIndex = orderedIds.indexOf(node.id);
-      const dragShiftY = node.parentId ? planDragShift(node.id, planDragPreview) : 0;
+      const dragShiftY = node.parentId
+        ? planDragShift(node.id, planDragPreview)
+        : sequenceDragShift(node.id, sequenceDragPreview);
       return {
         ...node,
-        draggable: Boolean(node.parentId),
+        draggable: node.id !== pinnedTriggerId,
         data: {
           ...node.data,
           displayTitle: workflowNodeDisplayTitle(node.data),
@@ -978,7 +1009,7 @@ export function WorkflowBoard({
           isTrigger: node.id === pinnedTriggerId,
           childCount: childCounts.get(node.id) ?? 0,
           dragShiftY,
-          dragActive: planDragPreview?.nodeId === node.id,
+          dragActive: sequenceDragPreview?.nodeId === node.id || planDragPreview?.nodeId === node.id,
           settleActive: settlingNodeId === node.id,
           onDuplicate: () => duplicateNode(node.id),
           onDelete: () => deleteNode(node.id),
@@ -1025,6 +1056,7 @@ export function WorkflowBoard({
     openPlanStepPicker,
     planDragPreview,
     rootStepIds,
+    sequenceDragPreview,
     settlingNodeId,
     workflowCapabilities,
     workflowCapabilitiesFailed,
@@ -1107,22 +1139,39 @@ export function WorkflowBoard({
   }, []);
 
   const onNodeDragStart = useCallback<OnNodeDrag<WorkflowCanvasNode>>((_, node) => {
-    if (!node.parentId) return;
-    const sourceOrderIds = nodes
-      .filter((candidate) => candidate.parentId === node.parentId)
-      .sort((left, right) => left.position.y - right.position.y)
-      .map((candidate) => candidate.id);
-    const preview = {
-      nodeId: node.id,
-      parentId: node.parentId,
-      sourceOrderIds,
-      sourceIndex: sourceOrderIds.indexOf(node.id),
-      targetIndex: sourceOrderIds.indexOf(node.id),
-    };
-    planDragSessionRef.current = preview;
-    setPlanDragPreview(preview);
+    if (isVirtualWorkflowNodeId(node.id)) return;
+    if (node.parentId) {
+      const sourceOrderIds = nodes
+        .filter((candidate) => candidate.parentId === node.parentId)
+        .sort((left, right) => left.position.y - right.position.y)
+        .map((candidate) => candidate.id);
+      const preview = {
+        nodeId: node.id,
+        parentId: node.parentId,
+        sourceOrderIds,
+        sourceIndex: sourceOrderIds.indexOf(node.id),
+        targetIndex: sourceOrderIds.indexOf(node.id),
+      };
+      planDragSessionRef.current = preview;
+      setPlanDragPreview(preview);
+    } else {
+      const found = findWorkflowItem(flow, node.id);
+      if (!found) return;
+      const sourceOrderIds = getWorkflowSequence(flow, found.sequenceRef)
+        .items
+        .map((item) => item.nodeId);
+      const preview = {
+        nodeId: node.id,
+        sequenceRef: found.sequenceRef,
+        sourceOrderIds,
+        sourceIndex: found.index,
+        targetIndex: found.index,
+      };
+      sequenceDragSessionRef.current = preview;
+      setSequenceDragPreview(preview);
+    }
     setSettlingNodeId(null);
-  }, [nodes]);
+  }, [flow, nodes]);
 
   const onNodeDrag = useCallback<OnNodeDrag<WorkflowCanvasNode>>((_, node) => {
     const instance = flowRef.current;
@@ -1142,19 +1191,50 @@ export function WorkflowBoard({
       ));
       const targetIndex = index < 0 ? siblings.length : index;
       setPlanDragPreview({ ...session, targetIndex });
+      return;
     }
+    const session = sequenceDragSessionRef.current;
+    if (!session || session.nodeId !== node.id) return;
+    const siblings = session.sourceOrderIds
+      .filter((id) => id !== node.id)
+      .map((id) => instance.getInternalNode(id))
+      .filter((candidate) => candidate !== undefined);
+    const index = siblings.findIndex((candidate) => (
+      centerY < candidate.internals.positionAbsolute.y
+        + (candidate.measured.height ?? WORKFLOW_STEP_HEIGHT) / 2
+    ));
+    const targetIndex = index < 0 ? siblings.length : index;
+    setSequenceDragPreview({ ...session, targetIndex });
   }, []);
 
   const onNodeDragStop = useCallback<OnNodeDrag<WorkflowCanvasNode>>((_, node) => {
-    if (!node.parentId || planDragSessionRef.current?.nodeId !== node.id) return;
-    const session = planDragSessionRef.current;
-    reorderPlanItem(session.parentId, node.id, planDragPreview?.targetIndex ?? session.sourceIndex);
-    planDragSessionRef.current = null;
-    setPlanDragPreview(null);
+    if (node.parentId && planDragSessionRef.current?.nodeId === node.id) {
+      const session = planDragSessionRef.current;
+      reorderPlanItem(session.parentId, node.id, planDragPreview?.targetIndex ?? session.sourceIndex);
+      planDragSessionRef.current = null;
+      setPlanDragPreview(null);
+    } else if (sequenceDragSessionRef.current?.nodeId === node.id) {
+      const session = sequenceDragSessionRef.current;
+      const requestedIndex = sequenceDragPreview?.targetIndex ?? session.sourceIndex;
+      const targetIndex = session.sequenceRef.length === 0
+        ? Math.max(1, requestedIndex)
+        : requestedIndex;
+      const nextFlow = moveWorkflowNode(
+        flow,
+        node.id,
+        session.sequenceRef,
+        targetIndex,
+      );
+      commitFlow(nodes, nextFlow);
+      sequenceDragSessionRef.current = null;
+      setSequenceDragPreview(null);
+    } else {
+      return;
+    }
     setSettlingNodeId(node.id);
     if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
     settleTimerRef.current = window.setTimeout(() => setSettlingNodeId(null), 220);
-  }, [planDragPreview, reorderPlanItem]);
+  }, [commitFlow, flow, nodes, planDragPreview, sequenceDragPreview]);
 
   function activateWorkflow(workflowId: string) {
     setWorkflowTabMenu(null);

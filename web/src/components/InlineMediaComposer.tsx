@@ -59,7 +59,7 @@ function imageSegment(file: File): InlineImageSegment {
   return {
     id,
     type: "pending-image",
-    token: `<!--taskboard-inline-image:${id}-->`,
+    token: `<!--panel-inline-image:${id}-->`,
     file,
   };
 }

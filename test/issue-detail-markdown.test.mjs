@@ -64,7 +64,7 @@ test("the configured markdown renderer produces CommonMark and GFM elements", ()
     "",
     "| 名称 | 状态 |",
     "| --- | --- |",
-    "| Taskboard | Ready |",
+    "| Panel | Ready |",
     "",
     "```js",
     "const ready = true;",

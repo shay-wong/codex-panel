@@ -334,11 +334,12 @@ function unauthorized() {
 }
 
 async function authenticate(request, env) {
-  if (typeof env.TASKBOARD_SHARED_SECRET !== "string" || env.TASKBOARD_SHARED_SECRET === "") {
+  const sharedSecret = env.PANEL_SHARED_SECRET;
+  if (typeof sharedSecret !== "string" || sharedSecret === "") {
     throw new ApiError(
       500,
       "SERVER_MISCONFIGURED",
-      "TASKBOARD_SHARED_SECRET is not configured",
+      "PANEL_SHARED_SECRET is not configured",
     );
   }
   const credentials = decodeBasicCredentials(request.headers.get("authorization"));
@@ -346,7 +347,7 @@ async function authenticate(request, env) {
   const encoder = new TextEncoder();
   const [providedSecret, configuredSecret] = await Promise.all([
     crypto.subtle.digest("SHA-256", encoder.encode(credentials.password)),
-    crypto.subtle.digest("SHA-256", encoder.encode(env.TASKBOARD_SHARED_SECRET)),
+    crypto.subtle.digest("SHA-256", encoder.encode(sharedSecret)),
   ]);
   if (!crypto.subtle.timingSafeEqual(providedSecret, configuredSecret)) return null;
   const username = stringField(credentials.username, "Basic username", {
@@ -354,7 +355,10 @@ async function authenticate(request, env) {
     maxLength: 120,
   });
   const userId = `basic:${encodeURIComponent(username.toLowerCase())}`;
-  if (request.headers.get("x-taskboard-client") === "taskctl") {
+  if (
+    request.headers.get("x-panel-client") === "panelctl"
+    || request.headers.get("x-taskboard-client") === "taskctl"
+  ) {
     return {
       type: "agent",
       id: `${userId}:codex-agent`,
@@ -420,9 +424,10 @@ async function readAttachment(request) {
 }
 
 function parseAttachmentHeaders(request) {
-  const encodedFilename = request.headers.get("x-taskboard-filename");
+  const encodedFilename = request.headers.get("x-panel-filename")
+    ?? request.headers.get("x-taskboard-filename");
   if (encodedFilename === null) {
-    throw new ApiError(400, "INVALID_FILENAME", "X-Taskboard-Filename is required");
+    throw new ApiError(400, "INVALID_FILENAME", "X-Panel-Filename is required");
   }
   let filename;
   try {
@@ -1859,7 +1864,7 @@ async function routeApi(request, env, actor, url) {
     requireNoQuery(url, "GET /api/meta");
     return json(200, {
       mode: "cloud",
-      manageTaskboardSkillPath: null,
+      managePanelSkillPath: null,
       realtime: { transport: "poll", intervalMs: 2000 },
       localCapabilities: { available: false },
     });

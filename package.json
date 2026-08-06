@@ -7,15 +7,15 @@
     "node": ">=22.5"
   },
   "bin": {
-    "taskctl": "./cli/taskctl.mjs"
+    "panelctl": "./cli/panelctl.mjs"
   },
   "scripts": {
     "codex": "node scripts/codex-injector.mjs --launch --watch --open",
     "codex:inject": "node scripts/codex-injector.mjs --watch",
     "codex:daemon": "node scripts/codex-injector.mjs --daemon --open",
     "codex:refresh": "node scripts/codex-injector.mjs --refresh",
+    "codex:install": "node scripts/install-macos-launcher.mjs",
     "launcher:install": "node scripts/install-macos-launcher.mjs",
-    "postinstall": "node scripts/install-macos-launcher.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:server": "node --watch server/index.mjs --dev",
     "dev:web": "vite --config web/vite.config.ts",
@@ -24,11 +24,11 @@
     "build:web": "vite build --config web/vite.config.ts",
     "typecheck": "tsc -p web/tsconfig.json --noEmit",
     "start": "node server/index.mjs",
-    "taskctl": "node cli/taskctl.mjs",
+    "panelctl": "node cli/panelctl.mjs",
     "test": "node --test",
     "test:cloud": "node --test test/cloud-shared-worker.test.mjs",
-    "cloud:migrate:local": "wrangler d1 migrations apply codex-taskboard-db --local",
-    "cloud:migrate": "wrangler d1 migrations apply codex-taskboard-db --remote",
+    "cloud:migrate:local": "wrangler d1 migrations apply codex-panel-db --local",
+    "cloud:migrate": "wrangler d1 migrations apply codex-panel-db --remote",
     "cloud:deploy:dry-run": "npm run build:web && wrangler deploy --dry-run",
     "cloud:deploy": "npm run build:web && wrangler deploy",
     "cloud:data": "node scripts/migrate-to-cloud.mjs",

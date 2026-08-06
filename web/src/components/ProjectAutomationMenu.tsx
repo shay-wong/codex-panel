@@ -6,7 +6,7 @@ import {
   withAutomationModel,
   type AutomationModel,
   type AutomationReasoningEffort,
-} from "../../../shared/taskboard-automation-options.mjs";
+} from "../../../shared/panel-automation-options.mjs";
 import { LinearIcon } from "./LinearIcon";
 
 type AutomationStatus = "ACTIVE" | "PAUSED";

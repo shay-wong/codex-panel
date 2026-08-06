@@ -7,10 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { createTaskboardServer } from "../server/index.mjs";
+import { createPanelServer } from "../server/index.mjs";
 
 async function createServerFixture(host = "127.0.0.1") {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-ai-server-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "panel-ai-server-"));
   const workspacePath = path.join(directory, "workspace");
   await mkdir(workspacePath);
   const workspace = await realpath(workspacePath);
@@ -42,11 +42,11 @@ if (args[0] === "debug") {
   await writeFile(codexStatePath, JSON.stringify({
     "local-projects": { local: { rootPaths: [workspace] } },
   }));
-  const app = createTaskboardServer({
+  const app = createPanelServer({
     dataDirectory: directory,
     codexExecutable,
     codexStatePath,
-    skillPath: "/fixture/manage-taskboard/SKILL.md",
+    skillPath: "/fixture/manage-panel/SKILL.md",
   });
   const address = await app.listen({ host, port: 0 });
   return {
@@ -136,14 +136,14 @@ test("loopback AI API freezes server-owned origin and rejects injected execution
 
     const invalidSkill = await request(fixture.baseUrl, `/api/local/ai/threads/${threadId}/turns`, {
       method: "POST",
-      body: { message: "hello", skillIds: ["invented-skill"] },
+      body: { message: "\uFFFC hello", skillIds: ["invented-skill"] },
     });
     assert.equal(invalidSkill.response.status, 400);
     assert.equal(invalidSkill.body.error.code, "INVALID_SKILL");
 
     const turn = await request(fixture.baseUrl, `/api/local/ai/threads/${threadId}/turns`, {
       method: "POST",
-      body: { message: "hello", skillIds: ["real-skill"] },
+      body: { message: "\uFFFC hello", skillIds: ["real-skill"] },
     });
     assert.equal(turn.response.status, 202);
     assert.equal(turn.body.run.threadId, threadId);

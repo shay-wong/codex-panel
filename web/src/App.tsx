@@ -17,18 +17,19 @@ import {
   isSupportedModelEffort,
   type AutomationModel,
   type AutomationReasoningEffort,
-} from "../../shared/taskboard-automation-options.mjs";
+} from "../../shared/panel-automation-options.mjs";
 import {
   ApiError,
   addTaskRelation,
   archiveTask as archiveTaskRequest,
   createProject as createProjectRequest,
   createTask as createTaskRequest,
-  getTaskboardRevision,
+  getPanelRevision,
   getWorkflowWorkspace,
-  getTaskboardMetadata,
+  getPanelMetadata,
   listDevelopmentContexts,
   listDeviceWorkspaces,
+  listComments,
   listProjects,
   listTasks,
   moveTask as moveTaskRequest,
@@ -69,12 +70,14 @@ import {
 import {
   TASK_STATUSES,
   type ActorIdentity,
+  type AiChatThread,
+  type Comment,
   type DevelopmentScan,
   type HostContext,
   type IssueRelationType,
   type Project,
   type Task,
-  type TaskboardMetadata,
+  type PanelMetadata,
   type TaskDraft,
   type TaskStatus,
   type WorkflowOption,
@@ -92,6 +95,8 @@ type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
 type BoardView = "issues" | "workflow";
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
+const AI_CHAT_HANDOFF_COMMENT_MARKER = "<!-- codex-panel:ai-chat-handoff:v1 -->";
+const NATIVE_HANDOFF_CONTEXT_LIMIT = 12_000;
 
 const WorkflowBoard = lazy(() => import("./components/WorkflowBoard").then((module) => ({
   default: module.WorkflowBoard,
@@ -106,6 +111,11 @@ interface ContextMenuState {
   taskId: string;
   x: number;
   y: number;
+}
+
+interface AiChatOpenRequest {
+  threadId: string;
+  sequence: number;
 }
 
 interface ProjectChoice {
@@ -191,12 +201,12 @@ const DEFAULT_USER_ACTOR: ActorIdentity = {
   avatarUrl: null,
 };
 
-const LAST_PROJECT_KEY = "taskboard.lastProjectId";
-const FAVORITE_PROJECTS_KEY = "taskboard.favoriteProjectIds";
-const DEVICE_WORKSPACE_PATHS_KEY = "taskboard.deviceWorkspacePaths.v1";
-const SHOW_EMPTY_COLUMNS_KEY = "taskboard.showEmptyColumns.v1";
-const COLUMN_VISIBILITY_KEY = "taskboard.columnVisibility.v1";
-const PROJECT_AUTOMATIONS_KEY = "taskboard.projectAutomations.v1";
+const LAST_PROJECT_KEY = "panel.lastProjectId";
+const FAVORITE_PROJECTS_KEY = "panel.favoriteProjectIds";
+const DEVICE_WORKSPACE_PATHS_KEY = "panel.deviceWorkspacePaths.v1";
+const SHOW_EMPTY_COLUMNS_KEY = "panel.showEmptyColumns.v1";
+const COLUMN_VISIBILITY_KEY = "panel.columnVisibility.v1";
+const PROJECT_AUTOMATIONS_KEY = "panel.projectAutomations.v1";
 const DEFAULT_AUTOMATION_OPTIONS = {
   enabledByUser: false,
   quotaAware: false,
@@ -228,7 +238,7 @@ function isTheme(value: unknown): value is Theme {
 function getInitialTheme(): Theme {
   const fromQuery = new URLSearchParams(window.location.search).get("theme");
   if (isTheme(fromQuery)) return fromQuery;
-  const stored = window.localStorage.getItem("taskboard.theme");
+  const stored = window.localStorage.getItem("panel.theme");
   if (isTheme(stored)) return stored;
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
@@ -385,7 +395,7 @@ function isAutomationHostItem(value: unknown): value is AutomationHostItem {
   );
 }
 
-function isLocalTaskboardOrigin(origin: string): boolean {
+function isLocalPanelOrigin(origin: string): boolean {
   try {
     const { protocol, hostname } = new URL(origin);
     return (protocol === "http:" || protocol === "https:")
@@ -413,6 +423,27 @@ function taskToDraft(task: Task): TaskDraft {
     dueDate: task.dueDate,
     recurrence: task.recurrence,
   };
+}
+
+function latestAiChatHandoff(comments: Comment[]): string | null {
+  const comment = [...comments].reverse().find((candidate) => (
+    candidate.body.startsWith(AI_CHAT_HANDOFF_COMMENT_MARKER)
+  ));
+  if (!comment) return null;
+  const body = comment.body.slice(AI_CHAT_HANDOFF_COMMENT_MARKER.length).trim();
+  return body.length <= NATIVE_HANDOFF_CONTEXT_LIMIT
+    ? body
+    : `${body.slice(0, NATIVE_HANDOFF_CONTEXT_LIMIT).trimEnd()}\n\n[交接内容已截断，请使用 panelctl 读取完整评论]`;
+}
+
+function issueThreadInstruction(task: Task, handoff: string | null): string {
+  return [
+    `e-panel Continue work on issue ${task.identifier}: ${task.title}`,
+    `Before acting, use panelctl to read the latest issue content and every comment for ${task.identifier}. Treat the latest \"AI 对话交接\" comment as the handoff from the prior Codex conversation; newer issue content or comments take precedence.`,
+    handoff
+      ? `Latest conversation handoff for immediate context:\n\n${handoff}`
+      : "No conversation handoff is currently recorded. Read the issue and comments directly before proceeding.",
+  ].join("\n\n");
 }
 
 interface LocalRealtimeSyncProps {
@@ -536,9 +567,11 @@ export function App() {
   const [hostContext, setHostContext] = useState<HostContext | null>(null);
   const [developmentScan, setDevelopmentScan] = useState<DevelopmentScan>({ workspacePath: null, contexts: [] });
   const [developmentScanLoading, setDevelopmentScanLoading] = useState(false);
-  const [manageTaskboardSkillPath, setManageTaskboardSkillPath] = useState("");
-  const [taskboardMetadata, setTaskboardMetadata] = useState<TaskboardMetadata | null>(null);
+  const [managePanelSkillPath, setManagePanelSkillPath] = useState("");
+  const [panelMetadata, setPanelMetadata] = useState<PanelMetadata | null>(null);
   const [localAiChatAvailable, setLocalAiChatAvailable] = useState(false);
+  const [aiChatThreads, setAiChatThreads] = useState<AiChatThread[]>([]);
+  const [aiChatOpenRequest, setAiChatOpenRequest] = useState<AiChatOpenRequest | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -578,6 +611,7 @@ export function App() {
   const [announcement, setAnnouncementValue] = useState("");
   const [undoNotice, setUndoNotice] = useState<UndoNotice | null>(null);
   const tasksRequestRef = useRef(0);
+  const aiChatOpenSequenceRef = useRef(0);
   const tasksRef = useRef<Task[]>([]);
   const undoSequenceRef = useRef(0);
   const undoStackRef = useRef<UndoOperation[]>([]);
@@ -586,7 +620,7 @@ export function App() {
   const selectedProjectIdRef = useRef(selectedProjectId);
   selectedProjectIdRef.current = selectedProjectId;
 
-  const revisionPollingInterval = getRevisionPollingInterval(taskboardMetadata);
+  const revisionPollingInterval = getRevisionPollingInterval(panelMetadata);
   const pendingAutomationRequestsRef = useRef(new Map<string, PendingAutomationRequest>());
   const automationRequestInFlightRef = useRef(false);
   const projectAutomationsRef = useRef(projectAutomations);
@@ -618,7 +652,7 @@ export function App() {
     if (!embedded || window.parent === window) {
       return { unavailableReason: "仅可在 Codex App 中使用" };
     }
-    if (!isLocalTaskboardOrigin(window.location.origin)) {
+    if (!isLocalPanelOrigin(window.location.origin)) {
       return { unavailableReason: "仅本地任务面板可用" };
     }
     if (!selectedProject) return { unavailableReason: "请先选择项目" };
@@ -642,7 +676,7 @@ export function App() {
     if (!workspacePath || !codexProjectId) {
       return { unavailableReason: "请先在 Codex 中添加并映射该项目目录" };
     }
-    if (!manageTaskboardSkillPath) {
+    if (!managePanelSkillPath) {
       return { unavailableReason: "任务面板还没有读取到 Skill 路径" };
     }
     return { workspacePath, codexProjectId, unavailableReason: null };
@@ -650,7 +684,7 @@ export function App() {
     deviceWorkspacePaths,
     embedded,
     hostContext,
-    manageTaskboardSkillPath,
+    managePanelSkillPath,
     selectedProject,
   ]);
   const detailTask = detailTaskIdentifier
@@ -760,15 +794,15 @@ export function App() {
       pendingAutomationRequestsRef.current.set(requestId, { resolve, reject, timeoutId });
     });
     window.parent.postMessage({
-      type: "taskboard:automation-request",
+      type: "panel:automation-request",
       payload: {
         requestId,
         operation,
-        taskboardProjectId: selectedProjectId,
+        panelProjectId: selectedProjectId,
         codexProjectId: automationProjectContext.codexProjectId,
         projectName: selectedProject.name,
         workspacePath: automationProjectContext.workspacePath,
-        skillPath: manageTaskboardSkillPath,
+        skillPath: managePanelSkillPath,
         ...(automationId ? { automationId } : {}),
         enabledByUser: options.enabledByUser,
         quotaAware: options.quotaAware,
@@ -780,7 +814,7 @@ export function App() {
     return response;
   }, [
     automationProjectContext,
-    manageTaskboardSkillPath,
+    managePanelSkillPath,
     selectedProject,
     selectedProjectId,
   ]);
@@ -929,6 +963,11 @@ export function App() {
     window.history.pushState(window.history.state, "", detailUrl);
   }
 
+  function openAiChatThread(threadId: string) {
+    aiChatOpenSequenceRef.current += 1;
+    setAiChatOpenRequest({ threadId, sequence: aiChatOpenSequenceRef.current });
+  }
+
   function closeTaskDetail() {
     setDetailTaskIdentifier(null);
     const url = buildIssueUrl(window.location.href, selectedProjectId || null, null);
@@ -955,7 +994,7 @@ export function App() {
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.embedded = String(embedded);
     document.documentElement.style.colorScheme = theme;
-    if (!embedded) window.localStorage.setItem("taskboard.theme", theme);
+    if (!embedded) window.localStorage.setItem("panel.theme", theme);
   }, [embedded, theme]);
 
   useEffect(() => {
@@ -995,7 +1034,7 @@ export function App() {
       if (event.source !== window.parent || !event.data || typeof event.data !== "object") return;
       const message = event.data as { type?: string; payload?: unknown; theme?: unknown };
 
-      if (message.type === "taskboard:automation-response" && message.payload) {
+      if (message.type === "panel:automation-response" && message.payload) {
         const payload = message.payload as Partial<AutomationHostResponse>;
         if (typeof payload.requestId !== "string") return;
         const pending = pendingAutomationRequestsRef.current.get(payload.requestId);
@@ -1009,24 +1048,45 @@ export function App() {
         return;
       }
 
-      if (message.type === "taskboard:theme" && isTheme(message.theme)) {
+      if (message.type === "panel:theme" && isTheme(message.theme)) {
         setTheme(message.theme);
         return;
       }
 
-      if (message.type === "taskboard:thread-prepared") {
+      if (message.type === "panel:thread-prepared") {
         setOpeningThreadTaskId(null);
         return;
       }
 
-      if (message.type === "taskboard:thread-create-error" && message.payload) {
+      if (message.type === "panel:thread-created" && message.payload) {
+        const payload = message.payload as { taskId?: unknown; threadId?: unknown };
+        if (typeof payload.taskId !== "string" || typeof payload.threadId !== "string") return;
+        const task = tasksRef.current.find((candidate) => candidate.id === payload.taskId);
+        const threadId = payload.threadId.trim();
+        if (!task || !threadId || task.threadId === threadId) return;
+        void updateTaskRequest(task, taskToDraft(task), threadId)
+          .then((updated) => {
+            setTasks((current) => sortTasks(current.map((candidate) => (
+              candidate.id === updated.id ? updated : candidate
+            ))));
+            setAnnouncement(`${updated.identifier} 已关联到新 Codex 任务。`);
+          })
+          .catch((error) => {
+            setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
+              ? "新 Codex 任务已创建，但议题同时发生了变化，未能自动关联。"
+              : `新 Codex 任务已创建，但自动关联失败：${errorMessage(error)}`);
+          });
+        return;
+      }
+
+      if (message.type === "panel:thread-create-error" && message.payload) {
         const payload = message.payload as { taskId?: unknown; error?: unknown };
         setOpeningThreadTaskId(null);
         setActionError(typeof payload.error === "string" ? payload.error : "无法在 Codex 中创建对话。");
         return;
       }
 
-      if (message.type !== "taskboard:host-context" || !message.payload) return;
+      if (message.type !== "panel:host-context" || !message.payload) return;
       const payload = message.payload as HostContext;
       setHostContext(payload);
       setCurrentUserActor(payload.user);
@@ -1034,7 +1094,7 @@ export function App() {
     }
 
     window.addEventListener("message", receiveHostMessage);
-    window.parent.postMessage({ type: "taskboard:ready" }, "*");
+    window.parent.postMessage({ type: "panel:ready" }, "*");
     return () => {
       window.removeEventListener("message", receiveHostMessage);
       for (const pending of pendingAutomationRequestsRef.current.values()) {
@@ -1050,7 +1110,7 @@ export function App() {
     const publish = () => {
       const rect = region.getBoundingClientRect();
       window.parent.postMessage({
-        type: "taskboard:drag-region",
+        type: "panel:drag-region",
         payload: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
       }, "*");
     };
@@ -1061,7 +1121,7 @@ export function App() {
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", publish);
-      window.parent.postMessage({ type: "taskboard:drag-region", payload: null }, "*");
+      window.parent.postMessage({ type: "panel:drag-region", payload: null }, "*");
     };
   }, [detailTaskId, embedded, selectedProjectId]);
 
@@ -1071,20 +1131,20 @@ export function App() {
     try {
       const [nextProjects, metadata, workspaces] = await Promise.all([
         listProjects(signal),
-        getTaskboardMetadata(signal),
+        getPanelMetadata(signal),
         listDeviceWorkspaces(signal),
       ]);
-      setTaskboardMetadata((current) => (
+      setPanelMetadata((current) => (
         current
         && current.mode === metadata.mode
         && current.realtime?.transport === metadata.realtime?.transport
         && current.realtime?.intervalMs === metadata.realtime?.intervalMs
-        && current.manageTaskboardSkillPath === metadata.manageTaskboardSkillPath
+        && current.managePanelSkillPath === metadata.managePanelSkillPath
         && current.localCapabilities?.available === metadata.localCapabilities?.available
           ? current
           : metadata
       ));
-      setManageTaskboardSkillPath(metadata.manageTaskboardSkillPath ?? "");
+      setManagePanelSkillPath(metadata.managePanelSkillPath ?? "");
       setLocalAiChatAvailable(metadata.capabilities?.localAiChat === true);
       setDeviceWorkspacePaths((current) => {
         const next = { ...current, ...workspaces };
@@ -1222,7 +1282,7 @@ export function App() {
       intervalMs: revisionPollingInterval,
       fetchRevision: async (since: number) => {
         try {
-          const result = await getTaskboardRevision(since, controller.signal);
+          const result = await getPanelRevision(since, controller.signal);
           setConnection("live");
           return result;
         } catch (error) {
@@ -1675,7 +1735,7 @@ export function App() {
 
   function openThread(threadId: string) {
     if (embedded && window.parent !== window) {
-      window.parent.postMessage({ type: "taskboard:open-thread", payload: { threadId } }, "*");
+      window.parent.postMessage({ type: "panel:open-thread", payload: { threadId } }, "*");
       return;
     }
 
@@ -1684,12 +1744,24 @@ export function App() {
 
   function expandCodexSidebar() {
     if (!embedded || window.parent === window) return;
-    window.parent.postMessage({ type: "taskboard:expand-sidebar" }, "*");
+    window.parent.postMessage({ type: "panel:expand-sidebar" }, "*");
   }
 
-  function openTaskInThread(task: Task) {
-    if (!manageTaskboardSkillPath) {
-      setActionError("任务面板还没有读取到 manage-taskboard Skill 路径，请刷新后重试。");
+  async function openTaskInThread(task: Task) {
+    if (!managePanelSkillPath) {
+      setActionError("任务面板还没有读取到 manage-panel Skill 路径，请刷新后重试。");
+      return;
+    }
+    if (openingThreadTaskId) return;
+    setOpeningThreadTaskId(task.id);
+    setActionError(null);
+
+    let instruction;
+    try {
+      instruction = issueThreadInstruction(task, latestAiChatHandoff(await listComments(task.id)));
+    } catch (error) {
+      setOpeningThreadTaskId(null);
+      setActionError(`无法读取议题交接记录：${errorMessage(error)}`);
       return;
     }
     const worktreePath = task.developmentContext?.type === "worktree"
@@ -1699,8 +1771,7 @@ export function App() {
       ?? selectedDeviceWorkspacePath
       ?? developmentScan.workspacePath
       ?? hostContext?.workspacePath;
-    const instruction = `e-taskboard Addressing the issues mentioned in ${task.identifier}`;
-    const prompt = `[$manage-taskboard](${manageTaskboardSkillPath}) ${instruction}`;
+    const prompt = `[$manage-panel](${managePanelSkillPath}) ${instruction}`;
 
     if (!embedded || window.parent === window) {
       const query = new URLSearchParams();
@@ -1709,19 +1780,16 @@ export function App() {
       window.location.assign(`codex://new?${query.toString().replace(/\+/g, "%20")}`);
       return;
     }
-    if (openingThreadTaskId) return;
     const codexProject = hostContext?.projects?.find((project) => project.id === selectedProject?.id);
-    setOpeningThreadTaskId(task.id);
-    setActionError(null);
     window.parent.postMessage({
-      type: "taskboard:create-thread",
+      type: "panel:create-thread",
       payload: {
         taskId: task.id,
         identifier: task.identifier,
         instruction,
-        skillName: "manage-taskboard",
-        skillDisplayName: "Manage Taskboard",
-        skillPath: manageTaskboardSkillPath,
+        skillName: "manage-panel",
+        skillDisplayName: "Manage Panel",
+        skillPath: managePanelSkillPath,
         codexProjectId: codexProject?.id ?? (selectedProject?.id === "local" ? hostContext?.projectId : selectedProject?.id),
         projectName: selectedProject?.name,
         workspacePath,
@@ -1813,7 +1881,7 @@ export function App() {
 
   return (
     <div className={`app-shell${embedded ? " embedded" : ""}`} style={appShellStyle}>
-      {taskboardMetadata && taskboardMetadata.mode !== "cloud" && (
+      {panelMetadata && panelMetadata.mode !== "cloud" && (
         <LocalRealtimeSync
           selectedProjectId={selectedProjectId}
           detailTaskId={detailTaskId}
@@ -1826,7 +1894,7 @@ export function App() {
         />
       )}
       {!embedded && (
-        <aside className="app-nav" aria-label="Taskboard navigation">
+        <aside className="app-nav" aria-label="Panel navigation">
           <div className="brand-row">
             <span className="brand-mark" aria-hidden="true"><LinearIcon name="project" /></span>
             <span>任务面板</span>
@@ -2079,7 +2147,7 @@ export function App() {
         {(loadError || actionError) && (
           <div className="error-banner" role="alert">
             <span className="error-mark" aria-hidden="true"><LinearIcon name="alert" /></span>
-            <div><strong>Taskboard needs attention</strong><p>{actionError ?? loadError}</p></div>
+            <div><strong>Panel needs attention</strong><p>{actionError ?? loadError}</p></div>
             <button
               type="button"
               onClick={() => {
@@ -2192,6 +2260,8 @@ export function App() {
               mutateTaskRelation("remove", current, type, relatedTaskId)
             )}
             onOpenThread={openThread}
+            aiChatThreads={aiChatThreads}
+            onOpenAiChatThread={openAiChatThread}
             onOpenInThread={openTaskInThread}
             openingThread={openingThreadTaskId === detailTask.id}
             onError={setActionError}
@@ -2330,6 +2400,8 @@ export function App() {
         available={localAiChatAvailable}
         projectId={selectedProjectId || null}
         issueId={detailTaskId}
+        openRequest={aiChatOpenRequest}
+        onThreadsChange={setAiChatThreads}
       />
 
       <div className="sr-only" role="status" aria-live="polite">{announcement}</div>

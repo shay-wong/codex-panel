@@ -1,11 +1,11 @@
 ---
-name: manage-taskboard
-description: Manage taskboard projects, issues, issue relations, and comments through the taskctl CLI. Use when Codex needs to track a new requirement, inspect project work, create or update issues, relate dependent work, add progress notes, begin work on an issue, record completion, or coordinate concurrent updates.
+name: manage-panel
+description: Manage panel projects, issues, issue relations, and comments through the panelctl CLI. Use when Codex needs to track a new requirement, inspect project work, create or update issues, relate dependent work, add progress notes, begin work on an issue, record completion, or coordinate concurrent updates.
 ---
 
-# Manage Taskboard
+# Manage Panel
 
-Use `taskctl` for every project, issue, and comment operation. Read [references/cli.md](references/cli.md) before choosing a command or option.
+Use `panelctl` for every project, issue, and comment operation. Read [references/cli.md](references/cli.md) before choosing a command or option.
 
 ## Workflow
 
@@ -16,11 +16,12 @@ Use `taskctl` for every project, issue, and comment operation. Read [references/
    - Create a new issue only when no existing issue reasonably tracks the requirement.
    - Do not create, append, or relate a tiny or trivial request that does not benefit from durable tracking.
 2. Before executing an issue, read the latest issue content and all comments. Treat comments as part of the current requirements, especially when completed work has been returned for changes.
+   - A comment headed `AI 对话交接` is a handoff summary from a prior Codex conversation, created either by embedded chat or `$handoff-panel`. Use the latest such comment as prior discussion context, while newer issue content and later comments take precedence.
    - In a description or comment, `![alt](/api/attachments/<id>/content)` marks an inline image at that exact position in the text.
    - When understanding that image is necessary, use `attachment download` to save it locally, then inspect the saved file with an available image-viewing tool.
 3. Create or update issues with the CLI; consume its JSON output.
-   Issues created through `taskctl` are assigned to Codex Agent by default. Later CLI updates do not change the assignee.
-4. Let `taskctl` attribute every issue, relation, or comment mutation to the current Codex conversation through `CODEX_THREAD_ID`. Outside Codex, pass the exact conversation id with `--thread-id`.
+   Issues created through `panelctl` are assigned to Codex Agent by default. Later CLI updates do not change the assignee.
+4. Let `panelctl` attribute every issue, relation, or comment mutation to the current Codex conversation through `CODEX_THREAD_ID`. Outside Codex, pass the exact conversation id with `--thread-id`.
 5. To claim a `todo` issue, move it to `in_progress` with `--if-version` from the latest read before starting implementation. If this claim reports a version conflict or a new read shows that its status changed, skip the issue and do not implement it.
 6. Include `--if-version <version>` on every concurrent update, using the version returned by the latest read.
 7. Before requesting review, verify the requested work and acceptance criteria.

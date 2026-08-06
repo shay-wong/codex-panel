@@ -12,7 +12,7 @@ import type {
   IssueRelationType,
   Project,
   Task,
-  TaskboardMetadata,
+  PanelMetadata,
   TaskDraft,
   TaskStatus,
   WorkflowCapabilities,
@@ -59,10 +59,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const method = (init?.method ?? "GET").toUpperCase();
   if (method !== "GET" && method !== "HEAD") {
-    headers.set("X-Taskboard-User-Id", currentUserActor.id);
-    headers.set("X-Taskboard-User-Name", encodeURIComponent(currentUserActor.name));
+    headers.set("X-Panel-User-Id", currentUserActor.id);
+    headers.set("X-Panel-User-Name", encodeURIComponent(currentUserActor.name));
     if (currentUserActor.avatarUrl) {
-      headers.set("X-Taskboard-User-Avatar", currentUserActor.avatarUrl);
+      headers.set("X-Panel-User-Avatar", currentUserActor.avatarUrl);
     }
   }
 
@@ -74,7 +74,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(0, {
       error: {
         code: "SERVICE_UNAVAILABLE",
-        message: "无法连接本地 Taskboard 服务，请重新通过 Taskboard 启动 Codex。",
+        message: "无法连接本地 Panel 服务，请重新通过 Panel 启动 Codex。",
       },
     });
   }
@@ -89,11 +89,11 @@ export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
   return data.projects;
 }
 
-export async function getTaskboardMetadata(signal?: AbortSignal): Promise<TaskboardMetadata> {
-  return request<TaskboardMetadata>("/api/meta", { signal });
+export async function getPanelMetadata(signal?: AbortSignal): Promise<PanelMetadata> {
+  return request<PanelMetadata>("/api/meta", { signal });
 }
 
-export async function getTaskboardRevision(
+export async function getPanelRevision(
   since: number,
   signal?: AbortSignal,
 ): Promise<{ changed: boolean; revision: number }> {
@@ -145,6 +145,7 @@ export async function updateAiChatThread(
   threadId: string,
   input: {
     title?: string;
+    issueId?: string | null;
     model?: string;
     reasoningEffort?: string;
     sandbox?: AiChatSandbox;
@@ -424,7 +425,7 @@ export async function uploadAttachment(taskId: string, file: File): Promise<Atta
       method: "POST",
       headers: {
         "Content-Type": file.type || "application/octet-stream",
-        "X-Taskboard-Filename": encodeURIComponent(file.name),
+        "X-Panel-Filename": encodeURIComponent(file.name),
       },
       body: file,
     },
@@ -439,7 +440,7 @@ export async function uploadCommentAttachment(commentId: string, file: File): Pr
       method: "POST",
       headers: {
         "Content-Type": file.type || "application/octet-stream",
-        "X-Taskboard-Filename": encodeURIComponent(file.name),
+        "X-Panel-Filename": encodeURIComponent(file.name),
       },
       body: file,
     },

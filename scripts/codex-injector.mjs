@@ -7,10 +7,11 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { resolvePort } from "../server/app.mjs";
+import { resolvePanelDataDirectory } from "../shared/panel-paths.mjs";
 import {
-  parseTaskboardAutomationHostRequest,
-  reconcileTaskboardAutomation,
-} from "../shared/taskboard-automation.mjs";
+  parsePanelAutomationHostRequest,
+  reconcilePanelAutomation,
+} from "../shared/panel-automation.mjs";
 import {
   findResidentInjectorPids,
   handleHostBindingPayload,
@@ -23,16 +24,19 @@ import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
 const injectorPath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(injectorPath), "..");
 const defaultCodexDebuggingPort = 9229;
-const injectionPath = path.join(projectRoot, "inject", "codex-taskboard.user.js");
-const automationPoliciesPath = path.join(projectRoot, ".data", "codex-automation-policies.json");
-const taskboardOrigin = `http://127.0.0.1:${resolvePort()}`;
-const taskboardHealthUrl = `${taskboardOrigin}/health`;
-const taskboardPageUrl = `${taskboardOrigin}/?host=codex`;
-const hostBindingName = "__codexTaskboardHostV1";
-const hostHeartbeatName = "__codexTaskboardHostHeartbeatV1";
-const hostStartupTokenName = "__codexTaskboardHostStartupTokenV1";
-const injectionSourceHashName = "__CODEX_TASKBOARD_SOURCE_HASH__";
-const injectionScriptIdentifierName = "__CODEX_TASKBOARD_SCRIPT_IDENTIFIER__";
+const injectionPath = path.join(projectRoot, "inject", "codex-panel.user.js");
+const automationPoliciesPath = path.join(
+  resolvePanelDataDirectory(),
+  "codex-automation-policies.json",
+);
+const panelOrigin = `http://127.0.0.1:${resolvePort()}`;
+const panelHealthUrl = `${panelOrigin}/health`;
+const panelPageUrl = `${panelOrigin}/?host=codex`;
+const hostBindingName = "__codexPanelHostV1";
+const hostHeartbeatName = "__codexPanelHostHeartbeatV1";
+const hostStartupTokenName = "__codexPanelHostStartupTokenV1";
+const injectionSourceHashName = "__CODEX_PANEL_SOURCE_HASH__";
+const injectionScriptIdentifierName = "__CODEX_PANEL_SCRIPT_IDENTIFIER__";
 const codexAutomationMethods = new Set([
   "list-automations",
   "automation-create",
@@ -116,7 +120,7 @@ async function waitUntilReachable(url, timeoutMs) {
   throw new Error(`Timed out waiting for ${url}`);
 }
 
-function startTaskboard({ detached }) {
+function startPanel({ detached }) {
   return spawn(process.execPath, [path.join(projectRoot, "server", "index.mjs")], {
     cwd: projectRoot,
     detached,
@@ -124,44 +128,44 @@ function startTaskboard({ detached }) {
   });
 }
 
-function createTaskboardSupervisor({ detached }) {
+function createPanelSupervisor({ detached }) {
   let child = null;
   let ensureInFlight = null;
   let retryAfter = 0;
   let stopping = false;
 
   async function ensure({ force = false } = {}) {
-    if (await isReachable(taskboardHealthUrl)) {
+    if (await isReachable(panelHealthUrl)) {
       return { status: "ok", restarted: false };
     }
     if (ensureInFlight) return ensureInFlight;
     if (!force && Date.now() < retryAfter) {
-      throw new Error("Taskboard restart is waiting before its next attempt");
+      throw new Error("Panel restart is waiting before its next attempt");
     }
 
     ensureInFlight = (async () => {
       if (child?.exitCode === null && !child.killed) {
         try {
-          await waitUntilReachable(taskboardHealthUrl, 3_000);
+          await waitUntilReachable(panelHealthUrl, 3_000);
           return { status: "ok", restarted: false };
         } catch (_) {}
       }
 
-      const started = startTaskboard({ detached });
+      const started = startPanel({ detached });
       child = started;
       if (detached) started.unref();
       started.once("error", (error) => {
-        if (!stopping) console.error(`Taskboard process error: ${error.message}`);
+        if (!stopping) console.error(`Panel process error: ${error.message}`);
       });
       started.once("exit", (code, signal) => {
         if (child === started) child = null;
         if (!stopping && !detached && code !== 0) {
-          console.error(`Taskboard exited (${signal || code}); it will be restarted automatically.`);
+          console.error(`Panel exited (${signal || code}); it will be restarted automatically.`);
         }
       });
 
       try {
-        await waitUntilReachable(taskboardHealthUrl, 10_000);
+        await waitUntilReachable(panelHealthUrl, 10_000);
         retryAfter = 0;
         return { status: "ok", restarted: true };
       } catch (error) {
@@ -406,7 +410,7 @@ async function stopResidentInjector(pid) {
       return;
     }
   }
-  throw new Error(`Timed out stopping resident Taskboard injector ${pid}`);
+  throw new Error(`Timed out stopping resident Panel injector ${pid}`);
 }
 
 async function waitForResidentInjectorReady(port, pid, startupToken, expectedSourceHash) {
@@ -422,14 +426,14 @@ async function waitForResidentInjectorReady(port, pid, startupToken, expectedSou
           const readiness = await cdp.send("Runtime.evaluate", {
             expression: `({
               token: window[${JSON.stringify(hostStartupTokenName)}],
-              taskboardEntryMounted: Boolean(document.getElementById("codex-taskboard-entry")),
-              sourceHash: window.__codexTaskboardInjection__?.sourceHash || null
+              panelEntryMounted: Boolean(document.getElementById("codex-panel-entry")),
+              sourceHash: window.__codexPanelInjection__?.sourceHash || null
             })`,
             returnByValue: true,
           });
           if (
             readiness.result.value?.token === startupToken
-            && readiness.result.value.taskboardEntryMounted
+            && readiness.result.value.panelEntryMounted
             && readiness.result.value.sourceHash === expectedSourceHash
           ) return;
         } finally {
@@ -439,7 +443,7 @@ async function waitForResidentInjectorReady(port, pid, startupToken, expectedSou
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`Timed out waiting for resident Taskboard injector ${pid}`);
+  throw new Error(`Timed out waiting for resident Panel injector ${pid}`);
 }
 
 async function restartResidentInjectorForRefresh(port, shouldOpen = false) {
@@ -457,7 +461,7 @@ async function restartResidentInjectorForRefresh(port, shouldOpen = false) {
   });
 }
 
-async function openResidentTaskboard(port, expectedSourceHash) {
+async function openResidentPanel(port, expectedSourceHash) {
   const targets = await codexTargets(port);
   for (const target of targets) {
     const cdp = new CdpConnection(target.webSocketDebuggerUrl);
@@ -466,9 +470,9 @@ async function openResidentTaskboard(port, expectedSourceHash) {
       await cdp.send("Runtime.enable");
       const opened = await cdp.send("Runtime.evaluate", {
         expression: `(() => {
-          const taskboard = window.__codexTaskboardInjection__;
-          if (taskboard?.sourceHash !== ${JSON.stringify(expectedSourceHash)}) return false;
-          taskboard.open();
+          const panel = window.__codexPanelInjection__;
+          if (panel?.sourceHash !== ${JSON.stringify(expectedSourceHash)}) return false;
+          panel.open();
           return true;
         })()`,
         returnByValue: true,
@@ -488,7 +492,7 @@ async function openResidentTaskboard(port, expectedSourceHash) {
   return false;
 }
 
-async function refreshTaskboardFrames(port) {
+async function refreshPanelFrames(port) {
   const targets = await codexTargets(port);
   const results = [];
 
@@ -499,14 +503,14 @@ async function refreshTaskboardFrames(port) {
       await cdp.send("Runtime.enable");
       const evaluation = await cdp.send("Runtime.evaluate", {
         expression: `(() => {
-          const taskboard = window.__codexTaskboardInjection__;
-          if (typeof taskboard?.reloadFrame === "function") {
-            return { refreshed: taskboard.reloadFrame(), via: "injection" };
+          const panel = window.__codexPanelInjection__;
+          if (typeof panel?.reloadFrame === "function") {
+            return { refreshed: panel.reloadFrame(), via: "injection" };
           }
-          const frame = document.getElementById("codex-taskboard-frame");
+          const frame = document.getElementById("codex-panel-frame");
           if (!frame) return { refreshed: false, via: "not-mounted" };
           const url = new URL(frame.getAttribute("src") || frame.src);
-          url.searchParams.set("__codex_taskboard_refresh", Date.now().toString(36));
+          url.searchParams.set("__codex_panel_refresh", Date.now().toString(36));
           frame.setAttribute("src", url.href);
           return { refreshed: true, via: "fallback", frameUrl: url.href };
         })()`,
@@ -514,7 +518,7 @@ async function refreshTaskboardFrames(port) {
       });
       if (evaluation.exceptionDetails) {
         throw new Error(
-          evaluation.exceptionDetails.exception?.description || "Taskboard frame refresh failed",
+          evaluation.exceptionDetails.exception?.description || "Panel frame refresh failed",
         );
       }
       results.push({
@@ -584,7 +588,7 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
     throw new Error(`Unsupported Codex automation method: ${method}`);
   }
   const requestId = [
-    "taskboard-automation",
+    "panel-automation",
     process.pid,
     Date.now().toString(36),
     (++codexAutomationRequestSequence).toString(36),
@@ -665,14 +669,14 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
   }
 }
 
-async function applyTaskboardAutomationPolicy(request, rpc, stillCurrent = () => true) {
+async function applyPanelAutomationPolicy(request, rpc, stillCurrent = () => true) {
   const quota = request.quotaAware
     ? await readCodexQuotaStatus(request.model)
     : null;
   if (!stillCurrent()) return { quota, stale: true };
   const shouldRun = request.enabledByUser
     && (!request.quotaAware || quota?.state === "available");
-  const result = await reconcileTaskboardAutomation(
+  const result = await reconcilePanelAutomation(
     { ...request, operation: shouldRun ? "ensure-active" : "pause" },
     rpc,
   );
@@ -684,7 +688,7 @@ async function applyTaskboardAutomationPolicy(request, rpc, stillCurrent = () =>
 
 function storedAutomationPolicy(request) {
   return {
-    taskboardProjectId: request.taskboardProjectId,
+    panelProjectId: request.panelProjectId,
     codexProjectId: request.codexProjectId,
     projectName: request.projectName,
     workspacePath: request.workspacePath,
@@ -699,8 +703,12 @@ function storedAutomationPolicy(request) {
 }
 
 function restoredAutomationPolicy(value) {
-  return parseTaskboardAutomationHostRequest({
-    ...value,
+  const normalized = value?.panelProjectId
+    ? value
+    : { ...value, panelProjectId: value?.taskboardProjectId };
+  if (normalized && "taskboardProjectId" in normalized) delete normalized.taskboardProjectId;
+  return parsePanelAutomationHostRequest({
+    ...normalized,
     id: "restored-policy",
     action: "automation",
     requestId: "restored-policy",
@@ -721,7 +729,7 @@ async function ensureQuotaPoliciesLoaded() {
     for (const value of Object.values(stored)) {
       const request = restoredAutomationPolicy(value);
       if (!request) continue;
-      quotaPolicyRecords.set(request.taskboardProjectId, { version: 1, request });
+      quotaPolicyRecords.set(request.panelProjectId, { version: 1, request });
     }
   })();
   return quotaPoliciesLoadPromise;
@@ -747,7 +755,7 @@ function persistQuotaPolicies() {
 
 function scheduleQuotaPolicyCheck(record, cdp, result) {
   const { request, version } = record;
-  const key = request.taskboardProjectId;
+  const key = request.panelProjectId;
   const previous = quotaPolicyTimers.get(key);
   if (previous) clearTimeout(previous);
   quotaPolicyTimers.delete(key);
@@ -766,7 +774,7 @@ function scheduleQuotaPolicyCheck(record, cdp, result) {
     try {
       await enqueueCurrentQuotaPolicy(key, cdp);
     } catch (error) {
-      console.error(`Taskboard quota policy check failed: ${error.message}`);
+      console.error(`Panel quota policy check failed: ${error.message}`);
       const current = quotaPolicyRecords.get(key);
       if (current?.version === version) {
         scheduleQuotaPolicyCheck(current, cdp, { quota: { state: "unknown" } });
@@ -778,14 +786,14 @@ function scheduleQuotaPolicyCheck(record, cdp, result) {
 }
 
 function enqueueQuotaPolicyMutation(record, cdp, rpc) {
-  const key = record.request.taskboardProjectId;
+  const key = record.request.panelProjectId;
   const previous = quotaPolicyQueues.get(key) ?? Promise.resolve();
   const run = previous
     .catch(() => {})
     .then(async () => {
       const current = quotaPolicyRecords.get(key);
       if (!current || current.version !== record.version) return { stale: true };
-      const result = await applyTaskboardAutomationPolicy(
+      const result = await applyPanelAutomationPolicy(
         current.request,
         rpc,
         () => quotaPolicyRecords.get(key)?.version === current.version,
@@ -807,19 +815,19 @@ function enqueueQuotaPolicyMutation(record, cdp, rpc) {
 
 async function updateAndApplyQuotaPolicy(request, cdp, rpc) {
   await ensureQuotaPoliciesLoaded();
-  const previous = quotaPolicyRecords.get(request.taskboardProjectId);
+  const previous = quotaPolicyRecords.get(request.panelProjectId);
   const record = {
     version: (previous?.version ?? 0) + 1,
     request,
   };
-  quotaPolicyRecords.set(request.taskboardProjectId, record);
+  quotaPolicyRecords.set(request.panelProjectId, record);
   try {
     await persistQuotaPolicies();
     return await enqueueQuotaPolicyMutation(record, cdp, rpc);
   } catch (error) {
-    if (quotaPolicyRecords.get(request.taskboardProjectId)?.version === record.version) {
-      if (previous) quotaPolicyRecords.set(request.taskboardProjectId, previous);
-      else quotaPolicyRecords.delete(request.taskboardProjectId);
+    if (quotaPolicyRecords.get(request.panelProjectId)?.version === record.version) {
+      if (previous) quotaPolicyRecords.set(request.panelProjectId, previous);
+      else quotaPolicyRecords.delete(request.panelProjectId);
       await persistQuotaPolicies();
     }
     throw error;
@@ -850,7 +858,7 @@ async function restoreQuotaPolicies(cdp) {
   for (const [projectId, record] of quotaPolicyRecords) {
     if (record.request.enabledByUser && record.request.quotaAware) {
       void enqueueCurrentQuotaPolicy(projectId, cdp).catch((error) => {
-        console.error(`Taskboard quota policy restore failed: ${error.message}`);
+        console.error(`Panel quota policy restore failed: ${error.message}`);
       });
     }
   }
@@ -994,17 +1002,17 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
 
 async function sendHostResponse(cdp, executionContextId, response) {
   await cdp.send("Runtime.evaluate", {
-    expression: `window.__codexTaskboardInjection__?.hostResponse(${JSON.stringify(response)})`,
+    expression: `window.__codexPanelInjection__?.hostResponse(${JSON.stringify(response)})`,
     contextId: executionContextId,
     returnByValue: true,
   });
 }
 
-async function installTaskboardHostBinding(cdp, supervisor) {
+async function installPanelHostBinding(cdp, supervisor) {
   cdp.on("Runtime.bindingCalled", async (params) => {
     if (params.name !== hostBindingName) return;
     await handleHostBindingPayload(params, {
-      parseAutomationRequest: parseTaskboardAutomationHostRequest,
+      parseAutomationRequest: parsePanelAutomationHostRequest,
       ensure: () => supervisor.ensure({ force: true }),
       runAutomation: (request, executionContextId) => (
         (async () => {
@@ -1016,9 +1024,9 @@ async function installTaskboardHostBinding(cdp, supervisor) {
           );
           const result = request.operation === "apply-policy"
             ? await updateAndApplyQuotaPolicy(request, cdp, rpc)
-            : await reconcileTaskboardAutomation(request, rpc);
+            : await reconcilePanelAutomation(request, rpc);
           if (request.operation === "list") {
-            const policy = await readStoredAutomationPolicy(request.taskboardProjectId);
+            const policy = await readStoredAutomationPolicy(request.panelProjectId);
             return { ...result, ...(policy ? { policy } : {}) };
           }
           return result;
@@ -1049,13 +1057,13 @@ async function publishHostHeartbeat(cdp, startupToken) {
 async function readInjectionStatus(cdp) {
   const status = await cdp.send("Runtime.evaluate", {
     expression: `({
-      version: window.__codexTaskboardInjection__?.version || null,
-      sourceHash: window.__codexTaskboardInjection__?.sourceHash || null,
+      version: window.__codexPanelInjection__?.version || null,
+      sourceHash: window.__codexPanelInjection__?.sourceHash || null,
       scriptIdentifier: window[${JSON.stringify(injectionScriptIdentifierName)}] || null,
-      entryMounted: Boolean(document.getElementById("codex-taskboard-entry")),
-      pageMounted: Boolean(document.getElementById("codex-taskboard-page")),
-      pageVisible: document.getElementById("codex-taskboard-page")?.hidden === false,
-      frameUrl: document.getElementById("codex-taskboard-frame")?.src || null
+      entryMounted: Boolean(document.getElementById("codex-panel-entry")),
+      pageMounted: Boolean(document.getElementById("codex-panel-page")),
+      pageVisible: document.getElementById("codex-panel-page")?.hidden === false,
+      frameUrl: document.getElementById("codex-panel-frame")?.src || null
     })`,
     returnByValue: true,
   });
@@ -1087,7 +1095,7 @@ async function evaluateInjectionSource(cdp, source) {
   });
   if (evaluation.exceptionDetails) {
     throw new Error(
-      evaluation.exceptionDetails.exception?.description || "Taskboard injection failed",
+      evaluation.exceptionDetails.exception?.description || "Panel injection failed",
     );
   }
 }
@@ -1101,7 +1109,7 @@ async function publishInjectionScriptIdentifier(cdp, scriptIdentifier) {
 
 async function registerInjectionSource(cdp, source) {
   const registration = await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
-    source: `${source}\n//# sourceURL=codex-taskboard.user.js`,
+    source: `${source}\n//# sourceURL=codex-panel.user.js`,
   });
   return registration.identifier;
 }
@@ -1124,7 +1132,7 @@ async function injectTarget(
     await cdp.send("Page.enable");
     await cdp.send("Page.setBypassCSP", { enabled: true });
     await cdp.send("Runtime.enable");
-    if (keepAlive) await installTaskboardHostBinding(cdp, supervisor);
+    if (keepAlive) await installPanelHostBinding(cdp, supervisor);
     if (keepAlive && attachExisting) {
       const currentStatus = await readInjectionStatus(cdp);
       const reconciled = await reconcileInjectionRuntime({
@@ -1144,14 +1152,14 @@ async function injectTarget(
         evaluateCurrentSource: (currentSource) => evaluateInjectionSource(cdp, currentSource),
         publishRegistration: (identifier) => publishInjectionScriptIdentifier(cdp, identifier),
         reopen: () => cdp.send("Runtime.evaluate", {
-          expression: "window.__codexTaskboardInjection__?.open()",
+          expression: "window.__codexPanelInjection__?.open()",
           returnByValue: true,
         }),
       });
       const shouldRemainOpen = shouldOpen || reconciled.shouldRemainOpen;
       if (shouldOpen && !reconciled.shouldRemainOpen) {
         await cdp.send("Runtime.evaluate", {
-          expression: "window.__codexTaskboardInjection__?.open()",
+          expression: "window.__codexPanelInjection__?.open()",
           returnByValue: true,
         });
       }
@@ -1187,9 +1195,9 @@ async function injectTarget(
     if (shouldOpen) {
       await cdp.send("Runtime.evaluate", {
         expression: `(() => {
-          const taskboard = window.__codexTaskboardInjection__;
-          taskboard?.close();
-          taskboard?.open();
+          const panel = window.__codexPanelInjection__;
+          panel?.close();
+          panel?.open();
         })()`,
       });
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -1199,7 +1207,7 @@ async function injectTarget(
       ? await waitForFrame(cdp, status.frameUrl, 15_000)
       : false;
     if (shouldOpen && !frameLoaded) {
-      throw new Error("Taskboard iframe did not finish loading in the Codex renderer");
+      throw new Error("Panel iframe did not finish loading in the Codex renderer");
     }
     const result = {
       ...status,
@@ -1265,9 +1273,9 @@ async function injectAll(
 
 async function currentInjectionSource() {
   const userScript = await readFile(injectionPath, "utf8");
-  const runtimeSource = `window.__CODEX_TASKBOARD_MANAGED_ORIGIN__ = ${JSON.stringify(taskboardOrigin)};
-if (typeof window.__CODEX_TASKBOARD_URL__ !== "string" || !window.__CODEX_TASKBOARD_URL__.trim()) {
-  window.__CODEX_TASKBOARD_URL__ = ${JSON.stringify(taskboardPageUrl)};
+  const runtimeSource = `window.__CODEX_PANEL_MANAGED_ORIGIN__ = ${JSON.stringify(panelOrigin)};
+if (typeof window.__CODEX_PANEL_URL__ !== "string" || !window.__CODEX_PANEL_URL__.trim()) {
+  window.__CODEX_PANEL_URL__ = ${JSON.stringify(panelPageUrl)};
 }
 ${userScript}`;
   const sourceHash = createHash("sha256").update(runtimeSource).digest("hex");
@@ -1300,7 +1308,7 @@ async function main() {
     let launcher = null;
     if (residentPids.length === 1) {
       const { sourceHash } = await currentInjectionSource();
-      const opened = !options.open || await openResidentTaskboard(port, sourceHash);
+      const opened = !options.open || await openResidentPanel(port, sourceHash);
       if (opened) launcher = { pid: residentPids[0], started: false, opened: options.open };
     }
     launcher ??= residentPids.length > 0
@@ -1318,7 +1326,7 @@ async function main() {
     for (const port of ports) {
       if (!(await isReachable(`http://127.0.0.1:${port}/json/version`))) continue;
       if (options.refreshIfRunning) await restartResidentInjectorForRefresh(port);
-      const results = await refreshTaskboardFrames(port);
+      const results = await refreshPanelFrames(port);
       refreshed.push(...results.map((result) => ({ port, ...result })));
     }
     if (refreshed.length === 0) {
@@ -1333,7 +1341,7 @@ async function main() {
   }
 
   let codexProcess = null;
-  const supervisor = createTaskboardSupervisor({ detached: !options.watch });
+  const supervisor = createPanelSupervisor({ detached: !options.watch });
 
   try {
     const cdpReachable = await isReachable(cdpVersionUrl);
@@ -1392,7 +1400,7 @@ async function main() {
       try {
         await supervisor.ensure();
       } catch (error) {
-        console.error(`Waiting for Taskboard service: ${error.message}`);
+        console.error(`Waiting for Panel service: ${error.message}`);
       }
       for (const connection of injectedTargets.values()) {
         try {

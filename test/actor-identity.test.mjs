@@ -7,7 +7,7 @@ const detailSource = await readFile(new URL("../web/src/components/TaskDetail.ts
 const avatarSource = await readFile(new URL("../web/src/components/ActorAvatar.tsx", import.meta.url), "utf8");
 const apiSource = await readFile(new URL("../web/src/api.ts", import.meta.url), "utf8");
 const appSource = await readFile(new URL("../web/src/App.tsx", import.meta.url), "utf8");
-const injectSource = await readFile(new URL("../inject/codex-taskboard.user.js", import.meta.url), "utf8");
+const injectSource = await readFile(new URL("../inject/codex-panel.user.js", import.meta.url), "utf8");
 const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 
 test("task and comment contracts expose persisted user or agent identities", () => {
@@ -71,14 +71,14 @@ test("comment metadata separators never become avatar content", () => {
   );
 });
 
-test("Codex host identity is forwarded to user-authored taskboard mutations", () => {
+test("Codex host identity is forwarded to user-authored panel mutations", () => {
   assert.match(injectSource, /function readCodexUser\(\)/);
   assert.match(injectSource, /cdn\.auth0\.com\/avatars/);
   assert.match(injectSource, /user: readCodexUser\(\)/);
   assert.match(typesSource, /user\?: ActorIdentity/);
   assert.match(apiSource, /export function setCurrentUserActor/);
-  assert.match(apiSource, /X-Taskboard-User-Id/);
-  assert.match(apiSource, /X-Taskboard-User-Name/);
-  assert.match(apiSource, /X-Taskboard-User-Avatar/);
+  assert.match(apiSource, /X-Panel-User-Id/);
+  assert.match(apiSource, /X-Panel-User-Name/);
+  assert.match(apiSource, /X-Panel-User-Avatar/);
   assert.match(appSource, /setCurrentUserActor\(payload\.user\)/);
 });

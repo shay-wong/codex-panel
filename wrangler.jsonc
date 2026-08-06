@@ -1,14 +1,8 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "codex-taskboard",
+  "name": "codex-panel",
   "main": "cloud/src/index.mjs",
   "compatibility_date": "2026-07-24",
-  "routes": [
-    {
-      "pattern": "taskboard.dsxzai.com",
-      "custom_domain": true
-    }
-  ],
   "assets": {
     "directory": "./dist/web",
     "binding": "ASSETS",
@@ -18,15 +12,15 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "codex-taskboard-db",
-      "database_id": "6b90b71b-81e0-473a-a70c-470b388b7e99",
+      "database_name": "codex-panel-db",
+      "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "cloud/migrations"
     }
   ],
   "r2_buckets": [
     {
       "binding": "ATTACHMENTS",
-      "bucket_name": "codex-taskboard-attachments"
+      "bucket_name": "codex-panel-attachments"
     }
   ]
 }

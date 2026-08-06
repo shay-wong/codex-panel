@@ -47,8 +47,8 @@ async function createMigrationFixture({
   missingAttachmentId = null,
   foreignKeyViolation = false,
 } = {}) {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-cloud-migration-"));
-  const databasePath = path.join(directory, "taskboard.sqlite");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "panel-cloud-migration-"));
+  const databasePath = path.join(directory, "panel.sqlite");
   const attachmentsDirectory = path.join(directory, "attachments");
   const database = new DatabaseSync(databasePath);
   const fixture = {
@@ -970,7 +970,7 @@ test("Wrangler adapter requires remote opt-in and keeps transfer files private",
       remote: true,
       environment: {},
     }),
-    /TASKBOARD_MIGRATION_REMOTE=1/,
+    /PANEL_MIGRATION_REMOTE=1/,
   );
 
   const fixture = await createMigrationFixture();
@@ -992,7 +992,7 @@ test("Wrangler adapter requires remote opt-in and keeps transfer files private",
   const downloadedBody = Buffer.from("downloaded R2 body");
   const adapters = createWranglerCloudAdapters({
     remote: true,
-    environment: { TASKBOARD_MIGRATION_REMOTE: "1" },
+    environment: { PANEL_MIGRATION_REMOTE: "1" },
     runCommand: async (_executable, args) => {
       calls.push(args);
       const fileIndex = args.indexOf("--file");
@@ -1023,8 +1023,8 @@ test("Wrangler adapter requires remote opt-in and keeps transfer files private",
     assert.deepEqual(
       calls.map((args) => args.slice(0, 3)),
       [
-        ["d1", "execute", "codex-taskboard-db"],
-        ["d1", "execute", "codex-taskboard-db"],
+        ["d1", "execute", "codex-panel-db"],
+        ["d1", "execute", "codex-panel-db"],
         ["r2", "object", "put"],
         ["r2", "object", "get"],
         ["r2", "object", "delete"],
@@ -1053,7 +1053,7 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
       remote: true,
       environment: {},
     }),
-    /TASKBOARD_MIGRATION_REMOTE=1/,
+    /PANEL_MIGRATION_REMOTE=1/,
   );
 
   const fixture = await createMigrationFixture();
@@ -1097,7 +1097,7 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
       "d1",
       "migrations",
       "apply",
-      "codex-taskboard-db",
+      "codex-panel-db",
       "--local",
       "--persist-to",
       persistTo,
@@ -1118,8 +1118,8 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
       cwd: projectRoot,
       env: {
         ...process.env,
-        TASKBOARD_MIGRATION_PERSIST_TO: persistTo,
-        TASKBOARD_MIGRATION_CONFIG: wranglerConfig,
+        PANEL_MIGRATION_PERSIST_TO: persistTo,
+        PANEL_MIGRATION_CONFIG: wranglerConfig,
       },
     });
   }
@@ -1138,11 +1138,11 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
     modulesRoot: projectRoot,
     compatibilityDate: "2026-07-24",
     bindings: {
-      TASKBOARD_ENVIRONMENT: "production",
-      TASKBOARD_SHARED_SECRET: "migration-test-secret",
+      PANEL_ENVIRONMENT: "production",
+      PANEL_SHARED_SECRET: "migration-test-secret",
     },
     d1Databases: { DB: configuredDatabaseId },
-    r2Buckets: { ATTACHMENTS: "codex-taskboard-attachments" },
+    r2Buckets: { ATTACHMENTS: "codex-panel-attachments" },
     defaultPersistRoot: path.join(persistTo, "v3"),
     d1Persist: path.join(persistTo, "v3", "d1"),
     r2Persist: true,
@@ -1152,7 +1152,7 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
     const authorization = `Basic ${Buffer.from("Alice:migration-test-secret").toString("base64")}`;
     const attachment = bundle.attachments[0];
     const downloaded = await miniflare.dispatchFetch(
-      `https://taskboard.example.test/api/attachments/${attachment.id}/content`,
+      `https://panel.example.test/api/attachments/${attachment.id}/content`,
       { headers: { authorization } },
     );
     assert.equal(downloaded.status, 200);
@@ -1161,7 +1161,7 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
       fixture.attachmentContents[attachment.id],
     );
     const deleted = await miniflare.dispatchFetch(
-      `https://taskboard.example.test/api/attachments/${attachment.id}`,
+      `https://panel.example.test/api/attachments/${attachment.id}`,
       { method: "DELETE", headers: { authorization } },
     );
     assert.equal(deleted.status, 204);

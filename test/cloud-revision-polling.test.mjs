@@ -224,7 +224,7 @@ test("the app connects the selected realtime transport without reloading the pag
   ]);
 
   assert.match(apiSource, /\/api\/revisions\?\$\{query\}/);
-  assert.match(appSource, /getRevisionPollingInterval\(taskboardMetadata\)/);
+  assert.match(appSource, /getRevisionPollingInterval\(panelMetadata\)/);
   assert.match(appSource, /createRevisionPoller\(\{/);
   assert.match(appSource, /controller\.abort\(\);\s*poller\.stop\(\)/);
   assert.match(appSource, /new EventSource\("\/api\/events"\)/);
@@ -234,6 +234,6 @@ test("the app connects the selected realtime transport without reloading the pag
     appSource.indexOf("if (revisionPollingInterval === null) return;"),
     appSource.indexOf("function pushUndo"),
   );
-  assert.doesNotMatch(pollingEffect, /\bdetailTaskId\b|\btaskboardMetadata\b|\bselectedProjectId\b/);
+  assert.doesNotMatch(pollingEffect, /\bdetailTaskId\b|\bpanelMetadata\b|\bselectedProjectId\b/);
   assert.match(pollingEffect, /selectedProjectIdRef\.current/);
 });

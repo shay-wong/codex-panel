@@ -17,6 +17,7 @@ import {
 import { TASK_STATUSES } from "../types";
 import type {
   ActorIdentity,
+  AiChatThread,
   Attachment,
   Comment,
   DevelopmentContext,
@@ -37,6 +38,7 @@ import {
 } from "../actors";
 import { ActorAvatar } from "./ActorAvatar";
 import { STATUS_DETAILS } from "./BoardColumn";
+import { DetailPropertySelect } from "./DetailPropertySelect";
 import { LabelPicker } from "./LabelPicker";
 import { LinearIcon, LinearPriorityIcon, LinearStatusIcon } from "./LinearIcon";
 import {
@@ -69,6 +71,12 @@ const PRIORITY_DETAILS: Record<TaskPriority, { label: string; bars: number }> = 
   low: { label: "低", bars: 1 },
 };
 
+const AI_CHAT_STATUS_LABELS: Record<AiChatThread["status"], string> = {
+  idle: "空闲",
+  running: "运行中",
+  failed: "失败",
+};
+
 interface TaskDetailProps {
   task: Task;
   tasks: Task[];
@@ -92,6 +100,8 @@ interface TaskDetailProps {
     relatedTaskId: string,
   ) => Promise<RelationMutationResult>;
   onOpenThread: (threadId: string) => void;
+  aiChatThreads: AiChatThread[];
+  onOpenAiChatThread: (threadId: string) => void;
   onOpenInThread: (task: Task) => void;
   openingThread: boolean;
   onError: (message: string | null) => void;
@@ -183,6 +193,41 @@ function ConversationLink({
   );
 }
 
+function AiConversationActivity({
+  thread,
+  onOpen,
+}: {
+  thread: AiChatThread;
+  onOpen: (threadId: string) => void;
+}) {
+  const statusLabel = AI_CHAT_STATUS_LABELS[thread.status];
+
+  return (
+    <div className="activity-entry activity-ai-conversation">
+      <span className="activity-rail-icon activity-conversation-icon" aria-hidden="true">
+        <LinearIcon name="conversation" />
+      </span>
+      <button
+        className="activity-conversation-link"
+        type="button"
+        title={`打开内嵌对话 ${thread.title}`}
+        aria-label={`打开内嵌对话：${thread.title}，${statusLabel}`}
+        onClick={() => onOpen(thread.id)}
+      >
+        <span className="activity-conversation-copy">
+          <strong>{thread.title}</strong>
+          <small>
+            <span className={`activity-conversation-state is-${thread.status}`} aria-hidden="true" />
+            <span>内嵌 AI 对话 · {statusLabel}</span>
+            <time title={exactTime(thread.updatedAt)}>{relativeTime(thread.updatedAt)}</time>
+          </small>
+        </span>
+        <LinearIcon name="chevronRight" />
+      </button>
+    </div>
+  );
+}
+
 export function TaskDetail({
   task,
   tasks,
@@ -198,6 +243,8 @@ export function TaskDetail({
   onAddRelation,
   onRemoveRelation,
   onOpenThread,
+  aiChatThreads,
+  onOpenAiChatThread,
   onOpenInThread,
   openingThread,
   onError,
@@ -220,7 +267,7 @@ export function TaskDetail({
   const [commentsError, setCommentsError] = useState<string | null>(null);
   const [commentSegments, setCommentSegments] = useState<InlineMediaSegment[]>(
     () => createInlineMediaSegments(
-      window.localStorage.getItem(`taskboard.comment-draft.${task.id}`) ?? "",
+      window.localStorage.getItem(`panel.comment-draft.${task.id}`) ?? "",
     ),
   );
   const [pendingCommentFiles, setPendingCommentFiles] = useState<File[]>([]);
@@ -238,6 +285,24 @@ export function TaskDetail({
   const commentAttachmentInputRef = useRef<HTMLInputElement>(null);
   const workflowAvailable = !currentTask.workflowId
     || workflows.some((workflow) => workflow.id === currentTask.workflowId);
+  const linkedAiChatThreads = aiChatThreads
+    .filter((thread) => thread.origin.issueId === currentTask.id);
+  const activityItems = [
+    ...comments.map((comment) => ({
+      kind: "comment" as const,
+      id: comment.id,
+      timestamp: comment.createdAt,
+      comment,
+    })),
+    ...linkedAiChatThreads.map((thread) => ({
+      kind: "ai-chat" as const,
+      id: thread.id,
+      timestamp: thread.updatedAt,
+      thread,
+    })),
+  ].sort((left, right) => (
+    left.timestamp.localeCompare(right.timestamp) || left.id.localeCompare(right.id)
+  ));
   const draft = serializeInlineMedia(commentSegments);
   const commentInlineImages = inlineMediaImages(commentSegments);
 
@@ -296,7 +361,7 @@ export function TaskDetail({
   }, [attachmentsRevision, task.id]);
 
   useEffect(() => {
-    const key = `taskboard.comment-draft.${task.id}`;
+    const key = `panel.comment-draft.${task.id}`;
     const text = inlineMediaText(commentSegments);
     if (text) window.localStorage.setItem(key, text);
     else window.localStorage.removeItem(key);
@@ -741,7 +806,7 @@ export function TaskDetail({
             <section className="activity-section" aria-labelledby="activity-heading">
               <header className="activity-heading">
                 <h2 id="activity-heading">活动</h2>
-                <span>{comments.length}</span>
+                <span>{comments.length + linkedAiChatThreads.length}</span>
               </header>
 
               <div className="activity-stream">
@@ -765,12 +830,24 @@ export function TaskDetail({
 
                 {commentsLoading ? (
                   <div className="comments-loading" aria-label="正在加载评论" aria-busy="true"><i /><i /></div>
-                ) : comments.map((comment) => (
-                  <article
-                    className={`comment-entry is-${comment.authorType}`}
-                    key={comment.id}
-                    id={`comment-${comment.id}`}
-                  >
+                ) : activityItems.map((item) => {
+                  if (item.kind === "ai-chat") {
+                    return (
+                      <AiConversationActivity
+                        thread={item.thread}
+                        onOpen={onOpenAiChatThread}
+                        key={`ai-chat-${item.id}`}
+                      />
+                    );
+                  }
+
+                  const { comment } = item;
+                  return (
+                    <article
+                      className={`comment-entry is-${comment.authorType}`}
+                      key={`comment-${comment.id}`}
+                      id={`comment-${comment.id}`}
+                    >
                     <div className="comment-card">
                       <header className="comment-header">
                         <ActorAvatar
@@ -888,8 +965,9 @@ export function TaskDetail({
                         </div>
                       )}
                     </div>
-                  </article>
-                ))}
+                    </article>
+                  );
+                })}
               </div>
 
               {commentsError && <div className="comments-error" role="alert">{commentsError}</div>}
@@ -974,54 +1052,62 @@ export function TaskDetail({
               <span>{openingThread ? "正在打开…" : "在对话中打开"}</span>
             </button>
             <h2>属性</h2>
-            <label className="detail-property-row">
+            <div className="detail-property-row">
               <span className={`detail-property-icon status-icon-${STATUS_DETAILS[currentTask.status].tone}`}><LinearStatusIcon status={currentTask.status} /></span>
               <span className="detail-property-label">状态</span>
-              <select
+              <DetailPropertySelect
                 value={currentTask.status}
                 disabled={savingProperty === "status"}
-                onChange={(event) => void saveTask({ status: event.target.value as TaskStatus }, "status")}
-              >
-                {TASK_STATUSES.map((status) => (
-                  <option value={status} key={status}>{STATUS_DETAILS[status].label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="detail-property-row">
+                ariaLabel="状态"
+                options={TASK_STATUSES.map((status) => ({
+                  value: status,
+                  label: STATUS_DETAILS[status].label,
+                  icon: (
+                    <LinearStatusIcon
+                      status={status}
+                      className={`status-icon-${STATUS_DETAILS[status].tone}`}
+                    />
+                  ),
+                }))}
+                onChange={(status) => void saveTask({ status }, "status")}
+              />
+            </div>
+            <div className="detail-property-row">
               <span className="detail-property-icon"><LinearPriorityIcon priority={currentTask.priority} /></span>
               <span className="detail-property-label">优先级</span>
-              <select
+              <DetailPropertySelect
                 value={currentTask.priority}
                 disabled={savingProperty === "priority"}
-                onChange={(event) => void saveTask({ priority: event.target.value as TaskPriority }, "priority")}
-              >
-                {(Object.keys(PRIORITY_DETAILS) as TaskPriority[]).map((priority) => (
-                  <option value={priority} key={priority}>{PRIORITY_DETAILS[priority].label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="detail-property-row assignee-property">
+                ariaLabel="优先级"
+                options={(Object.keys(PRIORITY_DETAILS) as TaskPriority[]).map((priority) => ({
+                  value: priority,
+                  label: PRIORITY_DETAILS[priority].label,
+                  icon: <LinearPriorityIcon priority={priority} />,
+                }))}
+                onChange={(priority) => void saveTask({ priority }, "priority")}
+              />
+            </div>
+            <div className="detail-property-row assignee-property">
               <ActorAvatar actor={currentTask.assignee} className="detail-assignee-avatar" />
               <span className="detail-property-label">负责人</span>
-              <select
-                aria-label="负责人"
+              <DetailPropertySelect
                 value={actorKey(currentTask.assignee)}
                 disabled={savingProperty === "assignee"}
-                onChange={(event) => {
-                  const selected = assigneeOptions.find((actor) => actorKey(actor) === event.target.value);
+                ariaLabel="负责人"
+                options={assigneeOptions.map((actor) => ({
+                  value: actorKey(actor),
+                  label: actor.id === currentUser.id ? `${actor.name}（我）` : actor.name,
+                  icon: <ActorAvatar actor={actor} className="detail-select-assignee-avatar" />,
+                }))}
+                onChange={(actorId) => {
+                  const selected = assigneeOptions.find((actor) => actorKey(actor) === actorId);
                   const assigneeTarget = selected
                     ? assigneeTargetForActor(selected, currentUser)
                     : undefined;
                   if (assigneeTarget) void saveTask({ assigneeTarget: assigneeTarget }, "assignee");
                 }}
-              >
-                {assigneeOptions.map((actor) => (
-                  <option value={actorKey(actor)} key={actorKey(actor)}>
-                    {actor.id === currentUser.id ? `${actor.name}（我）` : actor.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+              />
+            </div>
             <div className="detail-property-row labels-property">
               <span className="detail-property-icon" aria-hidden="true">
                 <LinearIcon name="label" />
@@ -1039,53 +1125,67 @@ export function TaskDetail({
                 onChange={(nextLabels) => void saveTask({ labels: nextLabels }, "labels")}
               />
             </div>
-            <label className="detail-property-row workflow-property">
+            <div className="detail-property-row workflow-property">
               <span className="detail-property-icon" aria-hidden="true">
                 <LinearIcon name="dashboard" />
               </span>
               <span className="detail-property-label">工作流</span>
-              <select
+              <DetailPropertySelect
                 value={currentTask.workflowId ?? ""}
                 disabled={savingProperty === "workflowId"}
-                onChange={(event) => void saveTask({
-                  workflowId: event.target.value || null,
+                ariaLabel="工作流"
+                options={[
+                  { value: "", label: "未绑定", icon: <LinearIcon name="linkOff" /> },
+                  ...(!workflowAvailable && currentTask.workflowId ? [{
+                    value: currentTask.workflowId,
+                    label: "当前设备未找到此流程",
+                    icon: <LinearIcon name="alert" />,
+                  }] : []),
+                  ...workflows.map((workflow) => ({
+                    value: workflow.id,
+                    label: workflow.name,
+                    icon: <LinearIcon name="dashboard" />,
+                  })),
+                ]}
+                onChange={(workflowId) => void saveTask({
+                  workflowId: workflowId || null,
                 }, "workflowId")}
-              >
-                <option value="">未绑定</option>
-                {!workflowAvailable && currentTask.workflowId && (
-                  <option value={currentTask.workflowId}>当前设备未找到此流程</option>
-                )}
-                {workflows.map((workflow) => (
-                  <option value={workflow.id} key={workflow.id}>{workflow.name}</option>
-                ))}
-              </select>
-            </label>
-            <label className="detail-property-row development-property">
+              />
+            </div>
+            <div className="detail-property-row development-property">
               <span className="detail-property-icon" aria-hidden="true">
                 <LinearIcon name="branch" />
               </span>
               <span className="detail-property-label">开发上下文</span>
-              <select
+              <DetailPropertySelect
                 value={contextValue(currentTask.developmentContext)}
                 disabled={developmentScanLoading || savingProperty === "developmentContext"}
                 title={currentTask.developmentContext?.type === "worktree" ? currentTask.developmentContext.path : undefined}
-                onChange={(event) => void saveTask({
-                  developmentContext: event.target.value ? JSON.parse(event.target.value) as DevelopmentContext : null,
+                ariaLabel="开发上下文"
+                options={[
+                  {
+                    value: "",
+                    label: developmentScanLoading ? "正在扫描 Git…" : "未绑定",
+                    icon: <LinearIcon name="linkOff" />,
+                  },
+                  ...developmentOptions.filter((context) => context.type === "branch").map((context) => ({
+                    value: contextValue(context),
+                    label: contextLabel(context),
+                    group: "代码分支",
+                    icon: <LinearIcon name="branch" />,
+                  })),
+                  ...developmentOptions.filter((context) => context.type === "worktree").map((context) => ({
+                    value: contextValue(context),
+                    label: contextLabel(context),
+                    group: "Worktree",
+                    icon: <LinearIcon name="folder" />,
+                  })),
+                ]}
+                onChange={(context) => void saveTask({
+                  developmentContext: context ? JSON.parse(context) as DevelopmentContext : null,
                 }, "developmentContext")}
-              >
-                <option value="">{developmentScanLoading ? "正在扫描 Git…" : "未绑定"}</option>
-                <optgroup label="代码分支">
-                  {developmentOptions.filter((context) => context.type === "branch").map((context) => (
-                    <option value={contextValue(context)} key={contextValue(context)}>{contextLabel(context)}</option>
-                  ))}
-                </optgroup>
-                <optgroup label="Worktree">
-                  {developmentOptions.filter((context) => context.type === "worktree").map((context) => (
-                    <option value={contextValue(context)} key={contextValue(context)}>{contextLabel(context)}</option>
-                  ))}
-                </optgroup>
-              </select>
-            </label>
+              />
+            </div>
             <label className="detail-property-row">
               <span className="detail-property-icon" aria-hidden="true"><LinearIcon name="calendar" /></span>
               <span className="detail-property-label">截止日期</span>
@@ -1099,25 +1199,32 @@ export function TaskDetail({
                 }, "dueDate")}
               />
             </label>
-            <label className="detail-property-row">
+            <div className="detail-property-row">
               <span className="detail-property-icon" aria-hidden="true"><LinearIcon name="recurrence" /></span>
               <span className="detail-property-label">重复</span>
-              <select
+              <DetailPropertySelect
                 value={currentTask.recurrence?.unit ?? ""}
                 disabled={!currentTask.dueDate || savingProperty === "recurrence"}
-                onChange={(event) => void saveTask({
-                  recurrence: event.target.value
-                    ? { interval: 1, unit: event.target.value as Recurrence["unit"] }
+                title={!currentTask.dueDate ? "请先设置截止日期" : undefined}
+                ariaLabel="重复"
+                options={[
+                  {
+                    value: "",
+                    label: currentTask.dueDate ? "不重复" : "请先设置截止日期",
+                    icon: <LinearIcon name="linkOff" />,
+                  },
+                  { value: "day", label: "每天", icon: <LinearIcon name="recurrence" /> },
+                  { value: "week", label: "每周", icon: <LinearIcon name="recurrence" /> },
+                  { value: "month", label: "每月", icon: <LinearIcon name="recurrence" /> },
+                  { value: "year", label: "每年", icon: <LinearIcon name="recurrence" /> },
+                ]}
+                onChange={(unit) => void saveTask({
+                  recurrence: unit
+                    ? { interval: 1, unit: unit as Recurrence["unit"] }
                     : null,
                 }, "recurrence")}
-              >
-                <option value="">不重复</option>
-                <option value="day">每天</option>
-                <option value="week">每周</option>
-                <option value="month">每月</option>
-                <option value="year">每年</option>
-              </select>
-            </label>
+              />
+            </div>
             <IssueRelationSidebar
               task={currentTask}
               tasks={tasks}

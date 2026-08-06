@@ -47,9 +47,9 @@ test("the launcher waits for and selects a delayed main Codex renderer", async (
   assert.deepEqual(targets.map((target) => target.id), ["codex-main"]);
 });
 
-test("the resident injector supervises the fixed local Taskboard service", () => {
-  assert.match(source, /function createTaskboardSupervisor/);
-  assert.match(source, /await isReachable\(taskboardHealthUrl\)/);
+test("the resident injector supervises the fixed local Panel service", () => {
+  assert.match(source, /function createPanelSupervisor/);
+  assert.match(source, /await isReachable\(panelHealthUrl\)/);
   assert.match(source, /ensureInFlight/);
   assert.match(source, /await supervisor\.ensure\(\)/);
   assert.match(source, /it will be restarted automatically/);
@@ -57,7 +57,7 @@ test("the resident injector supervises the fixed local Taskboard service", () =>
 });
 
 test("the CDP bridge accepts only service ensure and native Skill composer prefill actions", () => {
-  assert.match(source, /const hostBindingName = "__codexTaskboardHostV1"/);
+  assert.match(source, /const hostBindingName = "__codexPanelHostV1"/);
   assert.match(runtimeSource, /request\.action === "ensure"/);
   assert.match(runtimeSource, /request\.action === "prefill-task-composer"/);
   assert.match(runtimeSource, /request\.instruction\.length <= 1_024/);
@@ -72,14 +72,14 @@ test("the CDP bridge accepts only service ensure and native Skill composer prefi
   assert.match(source, /Runtime\.bindingCalled/);
   assert.match(runtimeSource, /params\.executionContextId/);
   assert.match(source, /hostResponse/);
-  assert.match(source, /if \(keepAlive\) await installTaskboardHostBinding/);
+  assert.match(source, /if \(keepAlive\) await installPanelHostBinding/);
   assert.match(source, /publishHostHeartbeat/);
-  assert.match(source, /__codexTaskboardHostHeartbeatV1/);
+  assert.match(source, /__codexPanelHostHeartbeatV1/);
 });
 
-test("the CDP bridge exposes only the fixed Taskboard automation operations", () => {
-  assert.match(source, /parseTaskboardAutomationHostRequest/);
-  assert.match(source, /reconcileTaskboardAutomation/);
+test("the CDP bridge exposes only the fixed Panel automation operations", () => {
+  assert.match(source, /parsePanelAutomationHostRequest/);
+  assert.match(source, /reconcilePanelAutomation/);
   assert.match(runtimeSource, /request\.action === "automation"/);
   assert.match(source, /function requestCodexAutomationViaCdp/);
   assert.match(source, /new Set\(\[\s*"list-automations",\s*"automation-create",\s*"automation-update",\s*\]\)/);
@@ -102,14 +102,14 @@ test("the package injection command remains resident for tab-triggered recovery"
   assert.match(source, /const defaultCodexDebuggingPort = 9229/);
   assert.match(source, /port: defaultCodexDebuggingPort/);
   assert.match(source, /--startup-token/);
-  assert.match(source, /__codexTaskboardHostStartupTokenV1/);
+  assert.match(source, /__codexPanelHostStartupTokenV1/);
 });
 
 test("attach reconciles the renderer against a hashed current injection source", () => {
   assert.match(source, /createHash\("sha256"\)/);
-  assert.match(source, /__CODEX_TASKBOARD_SOURCE_HASH__/);
-  assert.match(source, /sourceHash: window\.__codexTaskboardInjection__\?\.sourceHash \|\| null/);
-  assert.match(source, /const injectionScriptIdentifierName = "__CODEX_TASKBOARD_SCRIPT_IDENTIFIER__"/);
+  assert.match(source, /__CODEX_PANEL_SOURCE_HASH__/);
+  assert.match(source, /sourceHash: window\.__codexPanelInjection__\?\.sourceHash \|\| null/);
+  assert.match(source, /const injectionScriptIdentifierName = "__CODEX_PANEL_SCRIPT_IDENTIFIER__"/);
   assert.match(source, /scriptIdentifier: window\[\$\{JSON\.stringify\(injectionScriptIdentifierName\)\}\] \|\| null/);
   assert.match(source, /Page\.removeScriptToEvaluateOnNewDocument/);
   assert.match(source, /Page\.addScriptToEvaluateOnNewDocument/);
@@ -124,15 +124,15 @@ test("the injector ignores auxiliary Codex windows", () => {
 test("a completed web build refreshes an already-open Codex iframe", () => {
   assert.match(packageJson.scripts.build, /--refresh-if-running/);
   assert.match(packageJson.scripts["codex:refresh"], /--refresh/);
-  assert.match(source, /async function refreshTaskboardFrames/);
+  assert.match(source, /async function refreshPanelFrames/);
   assert.match(source, /function codexDebuggingPorts/);
   assert.match(source, /--remote-debugging-port=/);
-  assert.match(source, /taskboard\.reloadFrame\(\)/);
-  assert.match(source, /__codex_taskboard_refresh/);
+  assert.match(source, /panel\.reloadFrame\(\)/);
+  assert.match(source, /__codex_panel_refresh/);
   assert.match(source, /await restartResidentInjectorForRefresh\(port\)/);
 });
 
 test("the injected iframe follows the configured local service port", () => {
-  assert.match(source, /const taskboardPageUrl = `\$\{taskboardOrigin\}\/\?host=codex`/);
-  assert.match(source, /window\.__CODEX_TASKBOARD_URL__ = \$\{JSON\.stringify\(taskboardPageUrl\)\}/);
+  assert.match(source, /const panelPageUrl = `\$\{panelOrigin\}\/\?host=codex`/);
+  assert.match(source, /window\.__CODEX_PANEL_URL__ = \$\{JSON\.stringify\(panelPageUrl\)\}/);
 });

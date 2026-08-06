@@ -25,7 +25,7 @@ export function HiddenColumns({
 
   function dropTask(event: DragEvent<HTMLElement>, status: TaskStatus) {
     event.preventDefault();
-    const taskId = event.dataTransfer.getData("application/x-taskboard-task")
+    const taskId = event.dataTransfer.getData("application/x-panel-task")
       || event.dataTransfer.getData("text/plain");
     onDragTargetChange(null);
     if (taskId) onDrop(status, taskId);

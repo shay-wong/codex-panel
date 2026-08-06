@@ -7,10 +7,10 @@ import {
   buildTurnInput,
   chatPrimaryAction,
   filterVisibleAiEvents,
-  insertSkillMention,
   isAiChatCapabilityAvailable,
   needsDangerConfirmation,
   normalizeChatSelection,
+  parseAiChatComposerFragment,
   routeChatState,
   shouldRefreshAiSnapshot,
 } from "../web/src/aiChatState.ts";
@@ -87,16 +87,18 @@ test("model and effort selections are normalized exclusively against the real ca
   assert.equal(normalizeChatSelection([], "missing-model", "high"), null);
 });
 
-test("@ skill insertion uses the selected real skill id while keeping the mention visible", () => {
-  assert.deepEqual(insertSkillMention("请用 @cl 检查", 3, 6, {
-    id: "cloudflare",
-    label: "Cloudflare",
-    scope: "user",
-  }), {
-    value: "请用 @Cloudflare 检查",
-    caret: 14,
-    skillId: "cloudflare",
+test("copied composer fragments keep only valid selected Skill ids", () => {
+  assert.deepEqual(parseAiChatComposerFragment(JSON.stringify({
+    message: `请用 \uFFFC 检查`,
+    skillIds: ["cloudflare"],
+  }), ["cloudflare"]), {
+    message: `请用 \uFFFC 检查`,
+    skillIds: ["cloudflare"],
   });
+  assert.equal(parseAiChatComposerFragment(JSON.stringify({
+    message: `请用 \uFFFC 检查`,
+    skillIds: ["unknown"],
+  }), ["cloudflare"]), null);
 });
 
 test("turn input contains only visible user content, real skill ids and one-time confirmation", () => {
@@ -109,7 +111,7 @@ test("turn input contains only visible user content, real skill ids and one-time
     dangerFullAccessConfirmed: true,
   });
   assert.equal(JSON.stringify(buildTurnInput("hello", [], false)).includes("workspacePath"), false);
-  assert.equal(JSON.stringify(buildTurnInput("hello", [], false)).includes("manage-taskboard"), false);
+  assert.equal(JSON.stringify(buildTurnInput("hello", [], false)).includes("manage-panel"), false);
 });
 
 test("running threads expose stop, danger-full-access requires confirmation, and SSE is a refresh hint", () => {
@@ -155,10 +157,10 @@ test("AI chat API uses the stable local contract and never sends cwd or hidden p
 
 test("panel follows the measured Codex-like layout and responsive boundary", () => {
   assert.match(styles, /\.ai-chat-launcher\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?width:\s*40px;[\s\S]*?height:\s*40px;/);
-  assert.match(styles, /\.ai-chat-panel\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?width:\s*min\(500px,/);
-  assert.match(styles, /\.ai-chat-panel\s*\{[\s\S]*?height:\s*min\(680px,\s*calc\(100vh - 80px\)\);/);
-  assert.match(styles, /\.ai-chat-panel-header\s*\{[\s\S]*?height:\s*48px;/);
-  assert.match(styles, /\.ai-chat-composer\s*\{[\s\S]*?min-height:\s*116px;[\s\S]*?max-height:\s*240px;/);
+  assert.match(styles, /\.ai-chat-panel\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?width:\s*min\(672px,/);
+  assert.match(styles, /\.ai-chat-panel\s*\{[\s\S]*?height:\s*calc\(100vh - 16px\);/);
+  assert.match(styles, /\.ai-chat-panel-header\s*\{[\s\S]*?height:\s*42px;/);
+  assert.match(styles, /\.ai-chat-composer-editor\s*\{[\s\S]*?min-height:\s*42px;[\s\S]*?max-height:\s*158px;/);
   assert.match(styles, /@media \(max-width:\s*719px\)/);
   assert.doesNotMatch(chatSource, /<select/);
 });
@@ -166,18 +168,18 @@ test("panel follows the measured Codex-like layout and responsive boundary", () 
 test("chat renders Markdown, public activity cards and never renders host-only fields", () => {
   assert.match(chatSource, /ReactMarkdown/);
   assert.match(chatSource, /remarkPlugins=\{\[remarkGfm\]\}/);
-  assert.match(chatSource, /ai-chat-activity/);
+  assert.match(chatSource, /ai-chat-thinking-steps/);
   assert.match(chatSource, /aria-label="停止生成"/);
   assert.match(chatSource, /aria-label="发送消息"/);
   assert.doesNotMatch(chatSource, /origin\.workspacePath/);
   assert.doesNotMatch(chatSource, /codexThreadId/);
-  assert.doesNotMatch(chatSource, /manageTaskboardSkillPath/);
+  assert.doesNotMatch(chatSource, /managePanelSkillPath/);
 });
 
 test("composer does not submit during IME composition and background runs keep launcher state fresh", () => {
   const composingGuard = chatSource.indexOf("event.nativeEvent.isComposing");
   const skillSelection = chatSource.indexOf('event.key === "Enter" && skillMention');
-  const messageSubmission = chatSource.indexOf('event.key === "Enter" && !event.shiftKey');
+  const messageSubmission = chatSource.indexOf('if (event.key === "Enter")');
   assert.ok(composingGuard > 0);
   assert.ok(composingGuard < skillSelection);
   assert.ok(composingGuard < messageSubmission);
@@ -186,18 +188,26 @@ test("composer does not submit during IME composition and background runs keep l
   assert.match(chatSource, /observedRunStatusesRef/);
 });
 
-test("composer and Enter submission stay disabled while a snapshot is loading", () => {
+test("Enter submission stays disabled while a snapshot or settings request is loading", () => {
   assert.match(chatSource, /disabled=\{[\s\S]*?loading[\s\S]*?\}/);
-  assert.match(chatSource, /const composerBlocked = loading[\s\S]*?\|\| settingsSaving/);
+  assert.match(chatSource, /const sendBlocked = loading[\s\S]*?\|\| settingsSaving/);
   assert.match(chatSource, /if \(composerBlocked\) return;/);
-  assert.match(chatSource, /chatPrimaryAction\([\s\S]*?composerBlocked/);
+  assert.match(chatSource, /chatPrimaryAction\([\s\S]*?sendBlocked/);
 });
 
 test("new threads cannot inherit settings from a selected thread in another project", () => {
-  assert.match(chatSource, /settingsForNewAiThread\(/);
   assert.match(chatSource, /catalogProjectId/);
   assert.match(chatSource, /catalogLoadedProjectId/);
+  assert.match(chatSource, /catalogLoadedProjectId === input\.projectId && activeCatalog/);
+  assert.match(chatSource, /await getAiChatCatalog\(input\.projectId\)/);
   assert.match(chatSource, /createAiChatThread\(\{[\s\S]*?\.\.\.settings/);
+});
+
+test("issue linking loads active issues from the conversation origin project", () => {
+  assert.match(chatSource, /listTasks\(originProjectId, controller\.signal\)/);
+  assert.match(chatSource, /issueTasksProjectId !== originProjectId/);
+  assert.doesNotMatch(chatSource, /interface AiChatProps \{[\s\S]*?tasks: Task\[\]/);
+  assert.doesNotMatch(appSource, /<AiChat[\s\S]{0,300}?tasks=\{tasks\}/);
 });
 
 test("quiet refreshes preserve action errors and PATCH results are guarded by their starting thread", () => {
@@ -217,8 +227,9 @@ test("danger confirmation sends the bound pending retry instead of the current d
 test("SSE hints are coalesced and the panel remains resizable without clipping narrow menus", () => {
   assert.match(chatSource, /createAiSnapshotRefreshQueue/);
   assert.match(chatSource, /selectedHintRefreshQueue\.request\(selectedThreadId\)/);
-  assert.match(styles, /\.ai-chat-panel\s*\{[\s\S]*?resize:\s*both;/);
-  assert.match(styles, /@media \(max-width:\s*719px\)[\s\S]*?\.ai-chat-panel\s*\{[\s\S]*?resize:\s*none;/);
+  assert.match(chatSource, /className="ai-chat-resize-handle is-top"/);
+  assert.match(chatSource, /className="ai-chat-resize-handle is-left"/);
+  assert.match(styles, /@media \(max-width:\s*719px\)[\s\S]*?\.ai-chat-resize-handle\s*\{[\s\S]*?display:\s*none;/);
   assert.match(styles, /@media \(max-width:\s*719px\)[\s\S]*?\.ai-chat-menu-wrap\s*\{[\s\S]*?position:\s*static;/);
   assert.match(styles, /@media \(max-width:\s*719px\)[\s\S]*?\.ai-chat-option-menu\s*\{[\s\S]*?right:\s*0;[\s\S]*?left:\s*0;/);
 });

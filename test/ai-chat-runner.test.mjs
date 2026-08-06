@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { TaskboardDatabase } from "../server/database.mjs";
+import { PanelDatabase } from "../server/database.mjs";
 import { AiChatService } from "../server/ai-chat.mjs";
 import { normalizeCodexEvent } from "../server/ai-chat-process.mjs";
 
@@ -34,7 +34,7 @@ test("normalized item events retain a bounded public item id", () => {
 });
 
 async function createFixture() {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-ai-runner-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "panel-ai-runner-"));
   const workspacePath = path.join(directory, "workspace");
   const otherWorkspacePath = path.join(directory, "other-workspace");
   await Promise.all([mkdir(workspacePath), mkdir(otherWorkspacePath)]);
@@ -70,7 +70,7 @@ if (args[0] === "app-server") {
       if (!line.trim()) continue;
       const message = JSON.parse(line);
       if (message.id === 1) process.stdout.write('{"id":1,"result":{"platformFamily":"unix"}}\\n');
-      if (message.id === 2) process.stdout.write('{"id":2,"result":{"data":[{"skills":[{"name":"real-skill","enabled":true,"scope":"repo","interface":{"displayName":"Real Skill"}},{"name":"disabled","enabled":false,"scope":"user"}]}]}}\\n');
+      if (message.id === 2) process.stdout.write('{"id":2,"result":{"data":[{"skills":[{"name":"handoff","enabled":true,"scope":"user","path":"/fixture/handoff/SKILL.md","description":"Write a temporary handoff","interface":{"displayName":"Handoff"}},{"name":"real-skill","enabled":true,"scope":"repo","interface":{"displayName":"Real Skill"}},{"name":"disabled","enabled":false,"scope":"user"}]}]}}\\n');
     }
   });
 } else if (args[0] === "exec") {
@@ -101,7 +101,15 @@ if (args[0] === "app-server") {
       return;
     }
     emit({type:"item.completed",item:{type:"reasoning",text:"SECRET REASONING"}});
-    emit({type:"item.completed",item:{type:"agent_message",text:"Visible answer"}});
+    emit({
+      type:"item.completed",
+      item:{
+        type:"agent_message",
+        text:prompt.includes("Create a durable handoff summary")
+          ? "Targeted issue summary"
+          : "Visible answer"
+      }
+    });
     emit({type:"item.completed",item:{type:"command_execution",command:"npm test",status:"completed",exit_code:0,aggregated_output:"ok"}});
     if (prompt.includes("TURN_FAILED_ZERO")) {
       emit({type:"turn.failed",error:{message:"Protocol turn failed"}});
@@ -134,24 +142,27 @@ if (args[0] === "app-server") {
       other: { rootPaths: [otherWorkspace] },
     },
   }));
-  const databasePath = path.join(directory, "taskboard.sqlite");
-  const database = new TaskboardDatabase(databasePath);
+  const databasePath = path.join(directory, "panel.sqlite");
+  const database = new PanelDatabase(databasePath);
   database.createProject({ id: "project", name: "Project", workspacePath: null });
   database.createProject({ id: "other", name: "Other", workspacePath: null });
+  const createdComments = [];
   const service = new AiChatService({
     database,
     codexExecutable: executable,
     codexStatePath,
-    manageTaskboardSkillPath: "/fixture/manage-taskboard/SKILL.md",
+    managePanelSkillPath: "/fixture/manage-panel/SKILL.md",
     processEnv: {
       ...process.env,
       FAKE_CAPTURE_PATH: capturePath,
       FAKE_DESCENDANT_PATH: descendantPath,
     },
+    onIssueCommentCreated: (event) => createdComments.push(event),
     killGraceMs: 50,
   });
   return {
     capturePath,
+    createdComments,
     database,
     databasePath,
     descendantPath,
@@ -167,6 +178,23 @@ if (args[0] === "app-server") {
   };
 }
 
+function createIssue(database, projectId, title) {
+  return database.createTask({
+    projectId,
+    title,
+    description: "",
+    status: "backlog",
+    priority: "none",
+    labels: [],
+    actor: { type: "user", id: "local-user", name: "Local User", avatarUrl: null },
+    assignee: { type: "agent", id: "codex-agent", name: "Codex Agent", avatarUrl: null },
+    workflowId: null,
+    developmentContext: null,
+    dueDate: null,
+    recurrence: null,
+  });
+}
+
 test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized visible events", async () => {
   const fixture = await createFixture();
   try {
@@ -179,7 +207,22 @@ test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized
       supportedReasoningEfforts: ["low", "medium", "high"],
       serviceTiers: [{ id: "priority", name: "Fast" }],
     }]);
-    assert.deepEqual(catalog.skills, [{ id: "real-skill", label: "Real Skill", scope: "repo" }]);
+    assert.deepEqual(catalog.skills, [
+      {
+        id: "handoff",
+        label: "Handoff",
+        description: "Write a temporary handoff",
+        path: "/fixture/handoff/SKILL.md",
+        scope: "user",
+      },
+      {
+        id: "real-skill",
+        label: "Real Skill",
+        description: "",
+        path: "",
+        scope: "repo",
+      },
+    ]);
 
     const thread = await fixture.service.createThread({
       projectId: "project",
@@ -190,7 +233,7 @@ test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized
     assert.equal(thread.origin.workspacePath, fixture.workspace);
 
     const first = await fixture.service.startTurn(thread.id, {
-      message: "HIDDEN_SENTINEL first",
+      message: "\uFFFC HIDDEN_SENTINEL first",
       skillIds: ["real-skill"],
     });
     await waitFor(() => fixture.service.getRun(first.id)?.status !== "running");
@@ -202,19 +245,23 @@ test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized
       "exec", "--json", "--color", "never",
       "-C", fixture.workspace,
       "-s", "workspace-write",
+      "-c", 'approval_policy="on-request"',
+      "-c", 'approvals_reviewer="auto_review"',
       "--add-dir", fixture.otherWorkspace,
       "-m", "gpt-real",
       "-c", 'model_reasoning_effort="high"',
       "-",
     ]);
     assert.equal(captures[0].args.join(" ").includes("HIDDEN_SENTINEL"), false);
-    assert.match(captures[0].prompt, /\[\$manage-taskboard\]\(\/fixture\/manage-taskboard\/SKILL\.md\) e-taskboard/);
+    assert.match(captures[0].prompt, /\[\$manage-panel\]\(\/fixture\/manage-panel\/SKILL\.md\) e-panel/);
     assert.match(captures[0].prompt, /\$real-skill/);
     assert.match(captures[0].prompt, /HIDDEN_SENTINEL first/);
     assert.deepEqual(captures[1].args, [
       "exec", "--json", "--color", "never",
       "-C", fixture.workspace,
       "-s", "workspace-write",
+      "-c", 'approval_policy="on-request"',
+      "-c", 'approvals_reviewer="auto_review"',
       "--add-dir", fixture.otherWorkspace,
       "-m", "gpt-real",
       "-c", 'model_reasoning_effort="high"',
@@ -229,12 +276,57 @@ test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized
     assert.equal(snapshot.events.some((event) => event.type === "command_execution"), true);
     const serialized = JSON.stringify(snapshot);
     assert.equal(serialized.includes("HIDDEN_SENTINEL"), true);
-    assert.equal(serialized.includes("<taskboard_context>"), false);
+    assert.equal(serialized.includes("<panel_context>"), false);
     const persisted = JSON.stringify(
       fixture.database.database.prepare("SELECT * FROM ai_chat_events").all(),
     );
-    assert.equal(persisted.includes("<taskboard_context>"), false);
+    assert.equal(persisted.includes("<panel_context>"), false);
     assert.equal(persisted.includes("SECRET REASONING"), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("the original handoff Skill remains a single unmodified Panel turn", async () => {
+  const fixture = await createFixture();
+  try {
+    const thread = await fixture.service.createThread({ projectId: "project" });
+    const run = await fixture.service.startTurn(thread.id, {
+      message: "\uFFFC --issue MISSING-404 preserve the original behavior",
+      skillIds: ["handoff"],
+    });
+    await waitFor(() => fixture.service.getRun(run.id).status !== "running");
+
+    assert.equal(fixture.service.getRun(run.id).status, "completed");
+    const captures = (await readFile(fixture.capturePath, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.equal(captures.length, 1);
+    assert.match(captures[0].prompt, /\[\$handoff\]\(\/fixture\/handoff\/SKILL\.md\)/);
+    assert.match(captures[0].prompt, /--issue MISSING-404 preserve the original behavior/);
+    assert.equal(fixture.createdComments.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a direct handoff command can target an issue without linking the conversation", async () => {
+  const fixture = await createFixture();
+  try {
+    const issue = createIssue(fixture.database, "project", "Direct handoff target");
+    const thread = await fixture.service.createThread({ projectId: "project" });
+    const run = await fixture.service.startTurn(thread.id, {
+      message: `/交接 --issue ${issue.identifier} preserve the direct decision`,
+    });
+    await waitFor(() => fixture.service.getRun(run.id).status !== "running");
+
+    assert.equal(fixture.service.getRun(run.id).status, "completed");
+    const captures = (await readFile(fixture.capturePath, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.equal(captures.length, 1);
+    assert.match(captures[0].prompt, new RegExp(`issue ${issue.identifier}`));
+    assert.match(captures[0].prompt, /The user asked you to emphasize: preserve the direct decision/);
+    assert.equal(fixture.database.listComments(issue.id).length, 1);
+    assert.match(fixture.database.listComments(issue.id)[0].body, /Targeted issue summary/);
+    assert.equal(fixture.createdComments.length, 1);
+    assert.equal(fixture.createdComments[0].task.id, issue.id);
   } finally {
     await fixture.close();
   }
@@ -386,12 +478,12 @@ test("startup marks abandoned runs interrupted while preserving the Codex thread
   `).run(thread.id, new Date().toISOString());
   await fixture.service.close();
   fixture.database.close();
-  fixture.database = new TaskboardDatabase(fixture.databasePath);
+  fixture.database = new PanelDatabase(fixture.databasePath);
   const restarted = new AiChatService({
     database: fixture.database,
     codexExecutable: path.join(fixture.directory, "fake-codex.mjs"),
     codexStatePath: path.join(fixture.directory, "codex-state.json"),
-    manageTaskboardSkillPath: "/fixture/manage-taskboard/SKILL.md",
+    managePanelSkillPath: "/fixture/manage-panel/SKILL.md",
   });
   fixture.service = restarted;
   try {

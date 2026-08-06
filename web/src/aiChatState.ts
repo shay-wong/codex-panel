@@ -6,7 +6,7 @@ import type {
   AiChatThread,
   AiChatThreadSnapshot,
   AiChatThreadStatus,
-  TaskboardCapabilities,
+  PanelCapabilities,
 } from "./types";
 
 export interface AiChatRouteState {
@@ -40,7 +40,7 @@ export function parseAiChatComposerFragment(
   }
 }
 
-export function isAiChatCapabilityAvailable(capabilities?: TaskboardCapabilities): boolean {
+export function isAiChatCapabilityAvailable(capabilities?: PanelCapabilities): boolean {
   return capabilities?.localAiChat === true;
 }
 

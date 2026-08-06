@@ -176,7 +176,7 @@ function projectPrefix(projectId) {
   return (prefix || "TASK").slice(0, 12);
 }
 
-export class TaskboardDatabase {
+export class PanelDatabase {
   constructor(filename) {
     mkdirSync(path.dirname(filename), { recursive: true });
     this.database = new DatabaseSync(filename);
@@ -458,14 +458,13 @@ export class TaskboardDatabase {
         SET thread_id = COALESCE(thread_id, (
           SELECT task_threads.thread_id
           FROM task_threads
+          LEFT JOIN comments
+            ON comments.task_id = task_threads.task_id
+            AND comments.thread_id = task_threads.thread_id
           WHERE task_threads.task_id = tasks.id
+          GROUP BY task_threads.task_id, task_threads.thread_id, task_threads.created_at
           ORDER BY
-            CASE WHEN EXISTS (
-              SELECT 1
-              FROM comments
-              WHERE comments.task_id = tasks.id
-                AND comments.thread_id = task_threads.thread_id
-            ) THEN 1 ELSE 0 END,
+            CASE WHEN COUNT(comments.thread_id) > 0 THEN 1 ELSE 0 END,
             task_threads.created_at DESC,
             task_threads.thread_id DESC
           LIMIT 1
@@ -727,6 +726,8 @@ export class TaskboardDatabase {
     const columns = {
       title: "title",
       status: "status",
+      originIssueId: "origin_issue_id",
+      originIssueIdentifier: "origin_issue_identifier",
       codexThreadId: "codex_thread_id",
       model: "model",
       reasoningEffort: "reasoning_effort",
@@ -887,7 +888,7 @@ export class TaskboardDatabase {
         UPDATE ai_chat_runs
         SET
           status = 'interrupted',
-          error = COALESCE(error, 'Taskboard service restarted'),
+          error = COALESCE(error, 'Panel service restarted'),
           finished_at = COALESCE(finished_at, ?)
         WHERE status = 'running'
       `).run(timestamp);

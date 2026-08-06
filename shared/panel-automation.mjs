@@ -1,5 +1,5 @@
 import path from "node:path";
-import { isSupportedModelEffort } from "./taskboard-automation-options.mjs";
+import { isSupportedModelEffort } from "./panel-automation-options.mjs";
 
 const AUTOMATION_OPERATIONS = new Set(["ensure-active", "pause", "list", "apply-policy"]);
 const INTERVAL_MINUTES = new Set([5, 10, 15, 30, 60]);
@@ -8,7 +8,7 @@ const HOST_REQUEST_FIELDS = new Set([
   "action",
   "requestId",
   "operation",
-  "taskboardProjectId",
+  "panelProjectId",
   "codexProjectId",
   "projectName",
   "workspacePath",
@@ -21,13 +21,13 @@ const HOST_REQUEST_FIELDS = new Set([
   "reasoningEffort",
 ]);
 
-export function parseTaskboardAutomationHostRequest(value) {
+export function parsePanelAutomationHostRequest(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   if (Object.keys(value).some((field) => !HOST_REQUEST_FIELDS.has(field))) return null;
   if (value.action !== "automation") return null;
   if (!validIdentifier(value.id, 80) || !validIdentifier(value.requestId, 100)) return null;
   if (!AUTOMATION_OPERATIONS.has(value.operation)) return null;
-  if (!validProjectId(value.taskboardProjectId)) return null;
+  if (!validProjectId(value.panelProjectId)) return null;
   if (!validText(value.codexProjectId, 256) || !validText(value.projectName, 200)) return null;
   if (!validAbsolutePath(value.workspacePath) || !validAbsolutePath(value.skillPath)) return null;
   if (!INTERVAL_MINUTES.has(value.intervalMinutes)) return null;
@@ -40,7 +40,7 @@ export function parseTaskboardAutomationHostRequest(value) {
     action: "automation",
     requestId: value.requestId,
     operation: value.operation,
-    taskboardProjectId: value.taskboardProjectId,
+    panelProjectId: value.panelProjectId,
     codexProjectId: value.codexProjectId,
     projectName: value.projectName,
     workspacePath: value.workspacePath,
@@ -54,13 +54,17 @@ export function parseTaskboardAutomationHostRequest(value) {
   };
 }
 
-export function buildTaskboardAutomationName(request) {
-  return `Taskboard 自动认领 · ${request.taskboardProjectId}`;
+export function buildPanelAutomationName(request) {
+  return `Panel 自动认领 · ${request.panelProjectId}`;
 }
 
-export function buildTaskboardAutomationPrompt(request) {
+function legacyAutomationName(request) {
+  return `Taskboard 自动认领 · ${request.panelProjectId}`;
+}
+
+export function buildPanelAutomationPrompt(request) {
   return [
-    `[$manage-taskboard](${request.skillPath}) e-taskboard 每 ${request.intervalMinutes} 分钟检查任务面板中的「${request.projectName}」项目（项目 ID：${request.taskboardProjectId}，项目目录：${request.workspacePath}）。`,
+    `[$manage-panel](${request.skillPath}) e-panel 每 ${request.intervalMinutes} 分钟检查任务面板中的「${request.projectName}」项目（项目 ID：${request.panelProjectId}，项目目录：${request.workspacePath}）。`,
     "每次仅处理一个 todo：先用 issue get 读取最新议题内容，并用 comment list 读取全部评论，确认是否包含已完成后被打回的返工要求。",
     "认领时使用最新 version 将议题移动到 in_progress；若发生版本冲突或最新状态已变化，立即跳过，避免多个 Agent 抢同一任务。",
     "若议题已绑定 branch 或 worktree，必须在该议题绑定的开发上下文执行，避免并行 Agent 修改同一工作目录。",
@@ -68,11 +72,11 @@ export function buildTaskboardAutomationPrompt(request) {
   ].join("\n");
 }
 
-export function buildTaskboardAutomationSpec(request) {
+export function buildPanelAutomationSpec(request) {
   return {
     kind: "cron",
-    name: buildTaskboardAutomationName(request),
-    prompt: buildTaskboardAutomationPrompt(request),
+    name: buildPanelAutomationName(request),
+    prompt: buildPanelAutomationPrompt(request),
     projectId: request.codexProjectId,
     executionEnvironment: "local",
     localEnvironmentConfigPath: null,
@@ -82,11 +86,12 @@ export function buildTaskboardAutomationSpec(request) {
   };
 }
 
-export async function reconcileTaskboardAutomation(request, rpc) {
+export async function reconcilePanelAutomation(request, rpc) {
   const listed = await rpc("list-automations", {});
   const items = Array.isArray(listed?.items) ? listed.items : [];
-  const name = buildTaskboardAutomationName(request);
-  const matchingItems = items.filter((item) => item?.name === name);
+  const name = buildPanelAutomationName(request);
+  const legacyName = legacyAutomationName(request);
+  const matchingItems = items.filter((item) => item?.name === name || item?.name === legacyName);
 
   if (request.operation === "list") {
     return { items: matchingItems.map(sanitizeAutomation).filter(Boolean) };
@@ -97,7 +102,7 @@ export async function reconcileTaskboardAutomation(request, rpc) {
       ? matchingItems.find((item) => item?.id === request.automationId)
       : null
   ) ?? matchingItems[0];
-  const spec = buildTaskboardAutomationSpec(request);
+  const spec = buildPanelAutomationSpec(request);
 
   if (request.operation === "pause") {
     if (!existing) return { error: "not-found" };

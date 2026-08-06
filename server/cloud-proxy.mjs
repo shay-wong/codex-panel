@@ -216,7 +216,11 @@ export function createCloudProxy({
       headers.delete("connection");
       headers.delete("transfer-encoding");
       for (const name of [...headers.keys()]) {
-        if (name.toLowerCase().startsWith("x-taskboard-user-")) headers.delete(name);
+        const normalizedName = name.toLowerCase();
+        if (
+          normalizedName.startsWith("x-panel-user-")
+          || normalizedName.startsWith("x-taskboard-user-")
+        ) headers.delete(name);
       }
       headers.set("authorization", basicAuthorization(config.actorName, config.sharedKey));
 
@@ -246,7 +250,7 @@ export function createCloudProxy({
         throw new CloudProxyError(
           502,
           "REMOTE_UNAVAILABLE",
-          `Cannot reach cloud taskboard at ${remoteUrl}`,
+          `Cannot reach cloud panel at ${remoteUrl}`,
           error instanceof Error ? error.message : String(error),
         );
       }

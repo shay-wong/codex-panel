@@ -21,7 +21,7 @@ test("empty workflow statuses are partitioned from the filtered board result", (
 });
 
 test("show empty columns is off by default, persisted locally, and updates immediately", () => {
-  assert.match(appSource, /const SHOW_EMPTY_COLUMNS_KEY = "taskboard\.showEmptyColumns\.v1"/);
+  assert.match(appSource, /const SHOW_EMPTY_COLUMNS_KEY = "panel\.showEmptyColumns\.v1"/);
   assert.match(appSource, /getItem\(SHOW_EMPTY_COLUMNS_KEY\) === "true"/);
   assert.match(appSource, /useState\(readShowEmptyColumns\)/);
   assert.match(appSource, /localStorage\.setItem\(SHOW_EMPTY_COLUMNS_KEY, String\(show\)\)/);
@@ -32,7 +32,7 @@ test("show empty columns is off by default, persisted locally, and updates immed
 });
 
 test("column menus persist manual hiding and showing per project", () => {
-  assert.match(appSource, /const COLUMN_VISIBILITY_KEY = "taskboard\.columnVisibility\.v1"/);
+  assert.match(appSource, /const COLUMN_VISIBILITY_KEY = "panel\.columnVisibility\.v1"/);
   assert.match(appSource, /useState\(readColumnVisibilityByProject\)/);
   assert.match(appSource, /window\.localStorage\.setItem\(COLUMN_VISIBILITY_KEY, JSON\.stringify\(next\)\)/);
   assert.match(appSource, /if \(!selectedProjectId \|\| tasksByStatus\[status\]\.length === 0\) return/);
@@ -57,7 +57,7 @@ test("隐藏列 is collapsible and accepts drops into hidden statuses", () => {
   assert.match(hiddenColumnsSource, /aria-label="隐藏列"/);
   assert.match(hiddenColumnsSource, />隐藏列</);
   assert.doesNotMatch(hiddenColumnsSource, /statuses\.length/);
-  assert.match(hiddenColumnsSource, /application\/x-taskboard-task/);
+  assert.match(hiddenColumnsSource, /application\/x-panel-task/);
   assert.match(hiddenColumnsSource, /onDrop\(status, taskId\)/);
   assert.match(appSource, /onDrop=\{\(destination, taskId\) => finishTaskDrop\(destination, taskId\)\}/);
   assert.match(styles, /\.hidden-column-item\.is-drop-target/);

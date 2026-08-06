@@ -74,7 +74,7 @@ export function TaskCard({
       onDragStart={(event) => {
         event.dataTransfer.effectAllowed = "move";
         event.dataTransfer.setData("text/plain", task.id);
-        event.dataTransfer.setData("application/x-taskboard-task", task.id);
+        event.dataTransfer.setData("application/x-panel-task", task.id);
         onDragStart(task, event.currentTarget.offsetHeight);
       }}
       onDragEnd={onDragEnd}

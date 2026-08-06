@@ -99,7 +99,7 @@ test("the complete Linear-style workflow shares one ordered status source", () =
 test("review, blocked and canceled statuses round-trip through filter URLs", () => {
   const statuses = workflowStatuses();
   const selected = ["in_review", "blocked", "canceled"];
-  const url = new URL("http://taskboard.local/");
+  const url = new URL("http://panel.local/");
   url.searchParams.set("status", selected.join(","));
   const restored = url.searchParams.get("status").split(",").filter((status) => statuses.includes(status));
 
@@ -162,7 +162,8 @@ test("issues bind one workflow from the current project's workflow tabs", () => 
   assert.match(editorSource, /workflowId: workflowId \|\| null/);
   assert.match(editorSource, /<span className="sr-only">工作流<\/span>/);
   assert.match(detailSource, /<span className="detail-property-label">工作流<\/span>/);
-  assert.match(detailSource, /workflowId: event\.target\.value \|\| null/);
+  assert.match(detailSource, /<DetailPropertySelect[\s\S]*?ariaLabel="工作流"/);
+  assert.match(detailSource, /onChange=\{\(workflowId\) => void saveTask\(\{\s*workflowId: workflowId \|\| null,/);
   assert.match(detailSource, /当前设备未找到此流程/);
 });
 
@@ -171,7 +172,10 @@ test("comments stage, upload, render and delete their own attachments", () => {
   assert.match(apiSource, /\/api\/comments\/\$\{encodeURIComponent\(commentId\)\}\/attachments/);
   assert.match(detailSource, /pendingCommentFiles/);
   assert.match(detailSource, /uploadCommentAttachment\(comment\.id, file\)/);
-  assert.match(detailSource, /comment\.attachments\.map/);
+  assert.match(
+    detailSource,
+    /comment\.attachments[\s\S]*?\.filter\(\(attachment\) => !comment\.body\.includes\(attachmentContentPath\(attachment\)\)\)[\s\S]*?\.map\(\(attachment\) =>/,
+  );
   assert.match(detailSource, /setPendingAttachmentDelete\(attachment\)/);
 });
 

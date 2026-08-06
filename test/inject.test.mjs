@@ -3,29 +3,31 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import vm from "node:vm";
 
-import { parseTaskboardAutomationHostRequest } from "../shared/taskboard-automation.mjs";
+import { parsePanelAutomationHostRequest } from "../shared/panel-automation.mjs";
 
-const sourceUrl = new URL("../inject/codex-taskboard.user.js", import.meta.url);
+const sourceUrl = new URL("../inject/codex-panel.user.js", import.meta.url);
 const source = await readFile(sourceUrl, "utf8");
+const injectorSource = await readFile(new URL("../scripts/codex-injector.mjs", import.meta.url), "utf8");
 const webStyles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 const webApp = await readFile(new URL("../web/src/App.tsx", import.meta.url), "utf8");
 
 test("injection is an idempotent IIFE guarded by its current source hash", () => {
   assert.match(source, /^\(\(\) => \{/);
-  assert.match(source, /const VERSION = "0\.6\.8"/);
-  assert.match(source, /const SOURCE_HASH = window\.__CODEX_TASKBOARD_SOURCE_HASH__/);
-  assert.match(source, /const SENTINEL_KEY = "__codexTaskboardInjection__"/);
+  assert.match(source, /const VERSION = "0\.6\.10"/);
+  assert.match(source, /const SOURCE_HASH = window\.__CODEX_PANEL_SOURCE_HASH__/);
+  assert.match(source, /const SENTINEL_KEY = "__codexPanelInjection__"/);
   assert.match(source, /previous\?\.sourceHash === SOURCE_HASH/);
   assert.match(source, /previous\.refresh\(\);\s*return;/);
   assert.match(source, /sourceHash: SOURCE_HASH/);
   assert.match(source, /window\[SENTINEL_KEY\] = api/);
 });
 
-test("embedded page uses the local taskboard URL and supports a runtime override", () => {
+test("embedded page uses the local panel URL and supports a runtime override", () => {
   assert.match(source, /http:\/\/127\.0\.0\.1:47823\/\?host=codex/);
+  assert.match(source, /window\.__CODEX_PANEL_URL__/);
   assert.match(source, /window\.__CODEX_TASKBOARD_URL__/);
-  assert.match(source, /nextFrame\.src = taskboardUrl\.href/);
-  assert.match(source, /frameOrigin = taskboardUrl\.origin/);
+  assert.match(source, /nextFrame\.src = panelUrl\.href/);
+  assert.match(source, /frameOrigin = panelUrl\.origin/);
 });
 
 test("entry clones the native Plugins row and the page covers the complete Codex workspace", () => {
@@ -38,15 +40,15 @@ test("entry clones the native Plugins row and the page covers the complete Codex
   assert.match(source, /const surface = viewport\?\.parentElement/);
   assert.match(source, /surface\.appendChild\(page\)/);
   assert.match(source, /#\$\{PAGE_ID\} \{[\s\S]*?top: 0;/);
-  assert.doesNotMatch(source, /--codex-taskboard-top-offset/);
+  assert.doesNotMatch(source, /--codex-panel-top-offset/);
   assert.match(source, /child\.setAttribute\(HIDDEN_ATTRIBUTE, "true"\)/);
   assert.match(source, /page\.hidden = false/);
-  assert.doesNotMatch(source, /codex-taskboard-overlay/);
-  assert.doesNotMatch(source, /codex-taskboard-toolbar/);
+  assert.doesNotMatch(source, /codex-panel-overlay/);
+  assert.doesNotMatch(source, /codex-panel-toolbar/);
   assert.doesNotMatch(source, /aria-modal/);
 });
 
-test("conversation content frames can host Taskboard when they include the native header", () => {
+test("conversation content frames can host Panel when they include the native header", () => {
   const findPageHostSource = source.slice(
     source.indexOf("function findPageHost"),
     source.indexOf("function findPageMount"),
@@ -74,14 +76,14 @@ test("conversation content frames can host Taskboard when they include the nativ
   assert.equal(findPageHost().kind, "conversation-frame");
 });
 
-test("opening Taskboard suppresses native selection and contextual header until close", () => {
+test("opening Panel suppresses native selection and contextual header until close", () => {
   assert.match(source, /aside nav\[role="navigation"\] \[aria-current\]/);
   assert.match(source, /node\.removeAttribute\("aria-current"\)/);
   assert.match(source, /NATIVE_SELECTED_ATTRIBUTE/);
   assert.match(source, /app-shell-header-context-menu-surface/);
   assert.match(source, /restoreNativeSelection\(\)/);
-  assert.match(source, /function onDocumentClick[\s\S]*closeTaskboard\(false\);/);
-  assert.doesNotMatch(source, /setTimeout\(\(\) => closeTaskboard\(false\), 0\)/);
+  assert.match(source, /function onDocumentClick[\s\S]*closePanel\(false\);/);
+  assert.doesNotMatch(source, /setTimeout\(\(\) => closePanel\(false\), 0\)/);
 });
 
 test("the embedded header fills the native titlebar without clipping or a full-page no-drag region", () => {
@@ -90,19 +92,19 @@ test("the embedded header fills the native titlebar without clipping or a full-p
   assert.doesNotMatch(source, /headerRightInset/);
   assert.doesNotMatch(source, /NATIVE_HEADER_RIGHT_INSET/);
   assert.doesNotMatch(source, /clip-path: polygon/);
-  assert.doesNotMatch(source, /codex-taskboard-titlebar-fill/);
+  assert.doesNotMatch(source, /codex-panel-titlebar-fill/);
   assert.doesNotMatch(source, /#\$\{PAGE_ID\} \{[^}]*-webkit-app-region: no-drag !important;/);
   assert.doesNotMatch(source, /#\$\{FRAME_ID\} \{[^}]*-webkit-app-region: no-drag !important;/);
-  assert.match(source, /const NO_DRAG_LEFT_ID = "codex-taskboard-no-drag-left"/);
-  assert.match(source, /const NO_DRAG_RIGHT_ID = "codex-taskboard-no-drag-right"/);
+  assert.match(source, /const NO_DRAG_LEFT_ID = "codex-panel-no-drag-left"/);
+  assert.match(source, /const NO_DRAG_RIGHT_ID = "codex-panel-no-drag-right"/);
   assert.match(source, /window\.addEventListener\("resize", scheduleRefresh\)/);
 });
 
 test("only the empty embedded header spacer is draggable", () => {
   assert.match(webApp, /<div ref=\{dragRegionRef\} className="workspace-drag-region" aria-hidden="true" \/>/);
-  assert.match(webApp, /type: "taskboard:drag-region"/);
-  assert.match(source, /const DRAG_REGION_ID = "codex-taskboard-drag-region"/);
-  assert.match(source, /message\.type === "taskboard:drag-region"/);
+  assert.match(webApp, /type: "panel:drag-region"/);
+  assert.match(source, /const DRAG_REGION_ID = "codex-panel-drag-region"/);
+  assert.match(source, /message\.type === "panel:drag-region"/);
   assert.match(source, /function updateDragRegion\(payload\)/);
   assert.match(source, /#\$\{DRAG_REGION_ID\} \{[\s\S]*?-webkit-app-region: drag;/);
   assert.doesNotMatch(webStyles, /\.app-shell\.embedded \.workspace-header \{\s*-webkit-app-region: no-drag;/);
@@ -130,20 +132,20 @@ test("the embedded header exposes Codex's native sidebar expansion when collapse
   assert.match(source, /\[data-app-shell-sidebar-trigger="true"\]/);
   assert.match(source, /function nativeSidebarCollapsed\(\)/);
   assert.match(source, /sidebarCollapsed: nativeSidebarCollapsed\(\)/);
-  assert.match(source, /message\.type === "taskboard:expand-sidebar"/);
+  assert.match(source, /message\.type === "panel:expand-sidebar"/);
   assert.match(source, /function expandNativeSidebar\(\)[\s\S]*?trigger\.click\(\)/);
   assert.match(webApp, /embedded && hostContext\?\.sidebarCollapsed/);
-  assert.match(webApp, /type: "taskboard:expand-sidebar"/);
+  assert.match(webApp, /type: "panel:expand-sidebar"/);
   assert.match(webApp, /className="detail-back-button codex-sidebar-expand-button"/);
   assert.match(webApp, /<LinearIcon name="codexSidebarExpand" \/>/);
   assert.match(webStyles, /\.codex-sidebar-expand-button \{[\s\S]*?width: 28px;[\s\S]*?height: 28px;/);
 });
 
 test("opening asks the resident launcher to ensure the service and rebuilds failed frames", () => {
-  assert.match(source, /const HOST_BINDING_NAME = "__codexTaskboardHostV1"/);
+  assert.match(source, /const HOST_BINDING_NAME = "__codexPanelHostV1"/);
   assert.match(source, /return requestHost\("ensure"\)/);
   assert.match(source, /result\.restarted/);
-  assert.match(source, /loadTaskboardFrame\(\)/);
+  assert.match(source, /loadPanelFrame\(\)/);
   assert.match(source, /waitForFrameReady\(\)/);
   assert.match(source, /hostResponse: onHostResponse/);
   assert.match(source, /function hasLiveHostBinding/);
@@ -151,27 +153,27 @@ test("opening asks the resident launcher to ensure the service and rebuilds fail
 });
 
 test("the injected iframe can be cache-busted without reloading the Codex shell", () => {
-  assert.match(source, /const FRAME_REFRESH_PARAM = "__codex_taskboard_refresh"/);
+  assert.match(source, /const FRAME_REFRESH_PARAM = "__codex_panel_refresh"/);
   assert.match(source, /function reloadFrame\(\)/);
-  assert.match(source, /loadTaskboardFrame\(true\)/);
+  assert.match(source, /loadPanelFrame\(true\)/);
   assert.match(source, /reloadFrame,/);
 });
 
 test("reopening reuses a ready cache-busted iframe without showing the startup placeholder", () => {
-  assert.match(source, /function frameMatchesTaskboardUrl\(taskboardUrl\)/);
+  assert.match(source, /function frameMatchesPanelUrl\(panelUrl\)/);
   assert.match(source, /loadedUrl\.searchParams\.delete\(FRAME_REFRESH_PARAM\)/);
   assert.match(source, /expectedUrl\.searchParams\.delete\(FRAME_REFRESH_PARAM\)/);
   const prepareSource = source.slice(
-    source.indexOf("async function prepareTaskboard"),
+    source.indexOf("async function preparePanel"),
     source.indexOf("function restoreNativeContent"),
   );
-  assert.match(prepareSource, /const canReuseFrame = Boolean\([\s\S]*frameMatchesTaskboardUrl\(taskboardUrl\)/);
+  assert.match(prepareSource, /const canReuseFrame = Boolean\([\s\S]*frameMatchesPanelUrl\(panelUrl\)/);
   assert.match(prepareSource, /if \(canReuseFrame\) showFrame\(\);\s*else showLoading\(\);/);
   assert.match(
     prepareSource,
-    /if \(!frameReady \|\| result\.restarted \|\| !frameMatchesTaskboardUrl\(taskboardUrl\)\) \{\s*showLoading\(\);/,
+    /if \(!frameReady \|\| result\.restarted \|\| !frameMatchesPanelUrl\(panelUrl\)\) \{\s*showLoading\(\);/,
   );
-  assert.doesNotMatch(prepareSource, /async function prepareTaskboard\(generation\) \{\s*showLoading\(\);/);
+  assert.doesNotMatch(prepareSource, /async function preparePanel\(generation\) \{\s*showLoading\(\);/);
 });
 
 test("iframe messages require both the exact origin and source window", () => {
@@ -179,23 +181,61 @@ test("iframe messages require both the exact origin and source window", () => {
     source,
     /event\.source !== frame\.contentWindow \|\| event\.origin !== frameOrigin/,
   );
-  assert.match(source, /message\.type === "taskboard:open-thread"/);
-  assert.match(source, /message\.type === "taskboard:create-thread"/);
+  assert.match(source, /message\.type === "panel:open-thread"/);
+  assert.match(source, /message\.type === "panel:create-thread"/);
   assert.match(source, /postMessage\(message, frameOrigin\)/);
 });
 
+test("custom iframe origins are display-only and cannot cross the native Codex boundary", () => {
+  assert.match(source, /function isTrustedPanelOrigin\(origin = frameOrigin\)/);
+  assert.match(source, /return Boolean\(origin\) && origin === managedPanelOrigin\(\)/);
+  const postHostContextSource = source.slice(
+    source.indexOf("function postHostContext"),
+    source.indexOf("function findThreadRow"),
+  );
+  assert.match(postHostContextSource, /type: "panel:theme"/);
+  assert.match(postHostContextSource, /if \(!isTrustedPanelOrigin\(\)\) return/);
+  assert.match(postHostContextSource, /type: "panel:host-context"/);
+  assert.ok(
+    postHostContextSource.indexOf('type: "panel:theme"')
+      < postHostContextSource.indexOf("if (!isTrustedPanelOrigin()) return"),
+  );
+  assert.ok(
+    postHostContextSource.indexOf("if (!isTrustedPanelOrigin()) return")
+      < postHostContextSource.indexOf('type: "panel:host-context"'),
+  );
+
+  const frameMessageSource = source.slice(
+    source.indexOf("function onFrameMessage"),
+    source.indexOf("function updateDragRegion"),
+  );
+  assert.match(frameMessageSource, /message\.type === "panel:drag-region"[\s\S]*?return/);
+  assert.match(frameMessageSource, /if \(!isTrustedPanelOrigin\(\)\) return/);
+  assert.ok(
+    frameMessageSource.indexOf('message.type === "panel:drag-region"')
+      < frameMessageSource.indexOf("if (!isTrustedPanelOrigin()) return"),
+  );
+  for (const type of ["panel:open-thread", "panel:expand-sidebar", "panel:automation-request", "panel:create-thread"]) {
+    assert.ok(
+      frameMessageSource.indexOf("if (!isTrustedPanelOrigin()) return")
+        < frameMessageSource.indexOf(`message.type === "${type}"`),
+      `${type} must require the managed Panel origin`,
+    );
+  }
+});
+
 test("the iframe automation contract is forwarded through the fixed host binding", () => {
-  assert.match(source, /message\.type === "taskboard:automation-request"/);
+  assert.match(source, /message\.type === "panel:automation-request"/);
   assert.match(source, /function handleAutomationRequest\(payload\)/);
   assert.match(source, /requestHost\(\s*"automation",\s*buildAutomationHostPayload\(payload\),\s*\)/);
   assert.match(source, /operation: payload\.operation/);
-  assert.match(source, /taskboardProjectId: payload\.taskboardProjectId/);
+  assert.match(source, /panelProjectId: payload\.panelProjectId/);
   assert.match(source, /codexProjectId: payload\.codexProjectId/);
   assert.match(source, /workspacePath: payload\.workspacePath/);
   assert.match(source, /skillPath: payload\.skillPath/);
   assert.match(source, /model: payload\.model/);
   assert.match(source, /reasoningEffort: payload\.reasoningEffort/);
-  assert.match(source, /type: "taskboard:automation-response"/);
+  assert.match(source, /type: "panel:automation-response"/);
   assert.match(source, /requestId,\s*ok: true,\s*item: response\.item/);
   assert.match(source, /items: response\.items/);
   assert.match(source, /requestId,\s*ok: false,\s*error:/);
@@ -211,37 +251,48 @@ test("complete App automation payloads cross the injected forwarder into the cur
   const buildAutomationHostPayload = vm.runInNewContext(`(${functionSource})`);
   const basePayload = {
     requestId: "request-1",
-    taskboardProjectId: "local",
+    panelProjectId: "local",
     codexProjectId: "codex-project",
     projectName: "Local",
     workspacePath: "/tmp/local-project",
-    skillPath: "/tmp/manage-taskboard/SKILL.md",
+    skillPath: "/tmp/manage-panel/SKILL.md",
     automationId: "automation-1",
+    enabledByUser: true,
+    quotaAware: true,
     intervalMinutes: 10,
     model: "gpt-5.6-sol",
     reasoningEffort: "ultra",
   };
 
-  for (const operation of ["list", "pause", "ensure-active"]) {
+  for (const operation of ["list", "pause", "ensure-active", "apply-policy"]) {
     const forwarded = {
       id: `host-${operation}`,
       action: "automation",
       ...buildAutomationHostPayload({ ...basePayload, operation }),
     };
     assert.deepEqual(
-      parseTaskboardAutomationHostRequest(forwarded),
+      parsePanelAutomationHostRequest(forwarded),
       forwarded,
       `${operation} must retain model and reasoningEffort`,
     );
   }
 });
 
-test("only a loopback Taskboard iframe can request native automation", () => {
-  assert.match(source, /function isLocalTaskboardOrigin\(origin\)/);
-  assert.match(source, /hostname === "127\.0\.0\.1" \|\| hostname === "localhost"/);
+test("apply-policy is persisted and evaluated before returning automation state", () => {
+  assert.match(
+    injectorSource,
+    /request\.operation === "apply-policy"[\s\S]*?updateAndApplyQuotaPolicy\(request, cdp, rpc\)[\s\S]*?: await reconcilePanelAutomation\(request, rpc\)/,
+  );
+  assert.match(
+    injectorSource,
+    /const shouldRun = request\.enabledByUser[\s\S]*?quota\?\.state === "available"[\s\S]*?operation: shouldRun \? "ensure-active" : "pause"/,
+  );
+});
+
+test("only the managed Panel iframe can request native automation", () => {
   assert.match(
     source,
-    /if \(!isLocalTaskboardOrigin\(frameOrigin\)\) \{\s*postToFrame\(\{\s*type: "taskboard:automation-response"/,
+    /if \(!isTrustedPanelOrigin\(\)\) \{\s*postToFrame\(\{\s*type: "panel:automation-response"/,
   );
 });
 
@@ -258,24 +309,24 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.match(source, /\[skill-mention-name\]/);
   assert.match(source, /mention\.getAttribute\("skill-mention-path"\) === skillPath/);
   assert.doesNotMatch(source, /submit\.click\(\)/);
-  assert.match(source, /type: "taskboard:thread-prepared"/);
+  assert.match(source, /type: "panel:thread-prepared"/);
   assert.doesNotMatch(source, /function waitForCreatedThread/);
-  assert.doesNotMatch(source, /type: "taskboard:thread-created"/);
-  assert.doesNotMatch(webApp, /taskboard:thread-created/);
+  assert.match(source, /type: "panel:thread-created"/);
+  assert.match(webApp, /panel:thread-created/);
+  assert.match(webApp, /function issueThreadInstruction\(task: Task, handoff: string \| null\)/);
+  assert.match(webApp, /`e-panel Continue work on issue \$\{task\.identifier\}: \$\{task\.title\}`/);
+  assert.match(webApp, /use panelctl to read the latest issue content and every comment/);
+  assert.match(webApp, /Latest conversation handoff for immediate context/);
   assert.match(
     webApp,
-    /const instruction = `e-taskboard Addressing the issues mentioned in \$\{task\.identifier\}`/,
+    /const prompt = `\[\$manage-panel\]\(\$\{managePanelSkillPath\}\) \$\{instruction\}`/,
   );
-  assert.match(
-    webApp,
-    /const prompt = `\[\$manage-taskboard\]\(\$\{manageTaskboardSkillPath\}\) \$\{instruction\}`/,
-  );
-  assert.match(webApp, /skillName: "manage-taskboard"/);
-  assert.match(webApp, /skillDisplayName: "Manage Taskboard"/);
-  assert.match(webApp, /skillPath: manageTaskboardSkillPath/);
+  assert.match(webApp, /skillName: "manage-panel"/);
+  assert.match(webApp, /skillDisplayName: "Manage Panel"/);
+  assert.match(webApp, /skillPath: managePanelSkillPath/);
   assert.match(webApp, /instruction,/);
-  assert.match(webApp, /type: "taskboard:create-thread"/);
-  assert.match(webApp, /type: "taskboard:open-thread", payload: \{ threadId \}/);
+  assert.match(webApp, /type: "panel:create-thread"/);
+  assert.match(webApp, /type: "panel:open-thread", payload: \{ threadId \}/);
 });
 
 test("the standalone web page opens linked Codex tasks through the app deep link", () => {
@@ -315,7 +366,7 @@ test("host context captures all Codex projects even when the sidebar section is 
   assert.match(source, /data-app-action-sidebar-section-collapsed/);
   assert.match(source, /async function captureHostContext\(\)/);
   assert.match(source, /while \(!section && Date\.now\(\) < sectionDeadline\)/);
-  assert.match(source, /requestHostEnsure\(taskboardUrl\),\s*captureHostContext\(\),/);
+  assert.match(source, /isTrustedPanelOrigin\(panelUrl\.origin\)\s*\? captureHostContext\(\)\s*:\s*Promise\.resolve\(null\)/);
   assert.match(source, /let lastNativeThreadId = ""/);
   assert.match(source, /clickedThreadId.*lastNativeThreadId/s);
   assert.match(source, /activeThreadId \|\| lastNativeThreadId \|\| normalizeThreadId\(threadIdFromLocation\(\)\)/);
@@ -329,14 +380,14 @@ test("cleanup removes observers, listeners, timers and owned DOM", () => {
   assert.match(source, /document\.removeEventListener\("click", onDocumentClick, true\)/);
   assert.match(source, /window\.removeEventListener\("popstate", onNativeRouteChange\)/);
   assert.match(source, /window\.clearTimeout\(reattachTimer\)/);
-  assert.match(source, /data-codex-taskboard-owned/);
+  assert.match(source, /data-codex-panel-owned/);
   assert.match(source, /delete window\[SENTINEL_KEY\]/);
 });
 
 test("host integration stays thin", () => {
   assert.match(source, /new MutationObserver\(scheduleRefresh\)/);
-  assert.match(source, /type: "taskboard:host-context"/);
-  assert.match(source, /type: "taskboard:theme"/);
+  assert.match(source, /type: "panel:host-context"/);
+  assert.match(source, /type: "panel:theme"/);
   assert.match(source, /type: "navigate-to-route"/);
   assert.doesNotMatch(source, /__codexSessionDeleteBridge/);
   assert.doesNotMatch(source, /import\s*\(/);

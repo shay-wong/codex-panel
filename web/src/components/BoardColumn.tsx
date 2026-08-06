@@ -91,7 +91,7 @@ export function BoardColumn({
   function handleDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
     const taskId =
-      event.dataTransfer.getData("application/x-taskboard-task") ||
+      event.dataTransfer.getData("application/x-panel-task") ||
       event.dataTransfer.getData("text/plain");
     if (taskId) onDrop(status, taskId, findDropBefore(event.currentTarget, event.clientY));
     setDropBeforeTaskId(undefined);

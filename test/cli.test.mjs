@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { main, parseArgs } from "../cli/taskctl.mjs";
+import { main, parseArgs } from "../cli/panelctl.mjs";
 
 function capture() {
   let value = "";
@@ -58,10 +58,10 @@ test("project list uses the default local service and adds schemaVersion", async
   });
   assert.equal(calls[0].url, "http://127.0.0.1:47823/api/projects");
   assert.equal(calls[0].init.method, "GET");
-  assert.equal(calls[0].init.headers["x-taskboard-client"], "taskctl");
+  assert.equal(calls[0].init.headers["x-panel-client"], "panelctl");
 });
 
-test("CODEX_TASKBOARD_URL overrides the service origin", async () => {
+test("CODEX_PANEL_URL overrides the service origin", async () => {
   let requestedUrl;
   const result = await run(
     ["project", "list", "--json"],
@@ -69,11 +69,34 @@ test("CODEX_TASKBOARD_URL overrides the service origin", async () => {
       requestedUrl = url;
       return response({ projects: [] });
     },
-    { env: { CODEX_TASKBOARD_URL: "https://tasks.example.test/" } },
+    { env: { CODEX_PANEL_URL: "https://tasks.example.test/" } },
   );
 
   assert.equal(result.exitCode, 0);
   assert.equal(requestedUrl.toString(), "https://tasks.example.test/api/projects");
+});
+
+test("the legacy service URL remains a fallback while CODEX_PANEL_URL takes precedence", async () => {
+  const requestedUrls = [];
+  const fetchImplementation = async (url) => {
+    requestedUrls.push(url.toString());
+    return response({ projects: [] });
+  };
+
+  await run(["project", "list"], fetchImplementation, {
+    env: { CODEX_TASKBOARD_URL: "https://legacy.example.test" },
+  });
+  await run(["project", "list"], fetchImplementation, {
+    env: {
+      CODEX_PANEL_URL: "https://panel.example.test",
+      CODEX_TASKBOARD_URL: "https://legacy.example.test",
+    },
+  });
+
+  assert.deepEqual(requestedUrls, [
+    "https://legacy.example.test/api/projects",
+    "https://panel.example.test/api/projects",
+  ]);
 });
 
 test("project create sends id, name, and an absolute workspace path", async () => {
@@ -223,8 +246,8 @@ test("issue update binds one worktree context", async () => {
   const result = await run(
     [
       "issue", "update", "TASK-1",
-      "--worktree-path", "../taskboard-worktree",
-      "--worktree-branch", "worktree/taskboard",
+      "--worktree-path", "../panel-worktree",
+      "--worktree-branch", "worktree/panel",
       "--if-version", "4",
     ],
     async (_url, init) => {
@@ -238,8 +261,8 @@ test("issue update binds one worktree context", async () => {
   assert.deepEqual(requestBody, {
     developmentContext: {
       type: "worktree",
-      path: "/work/taskboard-worktree",
-      branch: "worktree/taskboard",
+      path: "/work/panel-worktree",
+      branch: "worktree/panel",
     },
     threadId: "thread-current",
     version: 4,
@@ -249,7 +272,7 @@ test("issue update binds one worktree context", async () => {
 test("issue update rejects simultaneous branch and worktree bindings", async () => {
   let called = false;
   const result = await run(
-    ["issue", "update", "TASK-1", "--git-branch", "feature/taskboard", "--worktree-path", "../taskboard-worktree"],
+    ["issue", "update", "TASK-1", "--git-branch", "feature/panel", "--worktree-path", "../panel-worktree"],
     async () => {
       called = true;
       return response({});

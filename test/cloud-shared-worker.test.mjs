@@ -89,10 +89,10 @@ test("the Basic username becomes the trusted actor while the shared password gra
   const agentTask = await cloud.request("/api/tasks", {
     method: "POST",
     actorName: bob,
-    headers: { "x-taskboard-client": "taskctl" },
+    headers: { "x-panel-client": "panelctl" },
     json: {
       projectId: "alpha",
-      title: "Created through taskctl",
+      title: "Created through panelctl",
       status: "backlog",
       priority: "none",
       labels: [],
@@ -236,7 +236,7 @@ test("R2 attachment upload, download, delete, and D1 failure compensation form o
     actorName: alice,
     headers: {
       "content-type": "text/plain",
-      "x-taskboard-filename": encodeURIComponent("evidence.txt"),
+      "x-panel-filename": encodeURIComponent("evidence.txt"),
     },
     body: "attachment body",
   });
@@ -264,7 +264,7 @@ test("R2 attachment upload, download, delete, and D1 failure compensation form o
     actorName: alice,
     headers: {
       "content-type": "text/plain",
-      "x-taskboard-filename": encodeURIComponent("fail.txt"),
+      "x-panel-filename": encodeURIComponent("fail.txt"),
     },
     body: "must be compensated",
   });
@@ -514,7 +514,7 @@ test("workflow conflicts and comment attachment cleanup preserve shared-state bo
       actorName: bob,
       headers: {
         "content-type": "text/plain",
-        "x-taskboard-filename": encodeURIComponent("comment.txt"),
+        "x-panel-filename": encodeURIComponent("comment.txt"),
       },
       body: "comment attachment",
     },

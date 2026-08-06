@@ -14,11 +14,11 @@ const currentAutomationRequest = {
   action: "automation",
   requestId: "automation-request-1",
   operation: "ensure-active",
-  taskboardProjectId: "local",
+  panelProjectId: "local",
   codexProjectId: "codex-project",
   projectName: "Local",
   workspacePath: "/tmp/project",
-  skillPath: "/tmp/manage-taskboard/SKILL.md",
+  skillPath: "/tmp/manage-panel/SKILL.md",
   intervalMinutes: 10,
   model: "gpt-5.6-sol",
   reasoningEffort: "ultra",
@@ -165,7 +165,7 @@ test("attach reloads the renderer and restores an open page even when the source
 });
 
 test("resident discovery accepts this repository's absolute and relative launch forms only", () => {
-  const projectRoot = "/workspace/codex-taskboard";
+  const projectRoot = "/workspace/codex-panel";
   const injectorPath = `${projectRoot}/scripts/codex-injector.mjs`;
   const processList = [
     `101 node ${injectorPath} --watch --port 9231`,

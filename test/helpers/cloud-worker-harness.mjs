@@ -28,18 +28,18 @@ export async function createCloudWorkerHarness({
   sharedSecret = "two-person-shared-secret",
 } = {}) {
   await requireCloudImplementation();
-  const persistenceRoot = await mkdtemp(path.join(os.tmpdir(), "taskboard-cloud-worker-"));
+  const persistenceRoot = await mkdtemp(path.join(os.tmpdir(), "panel-cloud-worker-"));
   const miniflare = new Miniflare({
     modules: true,
     scriptPath: ENTRY_PATH,
     modulesRoot: PROJECT_ROOT,
     compatibilityDate: "2026-07-24",
     bindings: {
-      TASKBOARD_ENVIRONMENT: "production",
-      TASKBOARD_SHARED_SECRET: sharedSecret,
+      PANEL_ENVIRONMENT: "production",
+      PANEL_SHARED_SECRET: sharedSecret,
     },
-    d1Databases: { DB: "taskboard-test" },
-    r2Buckets: { ATTACHMENTS: "taskboard-test-attachments" },
+    d1Databases: { DB: "panel-test" },
+    r2Buckets: { ATTACHMENTS: "panel-test-attachments" },
     defaultPersistRoot: persistenceRoot,
     d1Persist: true,
     r2Persist: true,
@@ -67,7 +67,7 @@ export async function createCloudWorkerHarness({
       }
       if (json !== undefined) headers.set("content-type", "application/json");
       const response = await miniflare.dispatchFetch(
-        new URL(pathname, "https://taskboard.example.test"),
+        new URL(pathname, "https://panel.example.test"),
         {
           ...init,
           headers,

@@ -241,11 +241,11 @@ export function buildCodexPrompt(thread, { message, skills, attachmentPaths }, s
   );
 
   return [
-    `[$manage-taskboard](${skillPath}) e-taskboard`,
+    `[$manage-panel](${skillPath}) e-panel`,
     "",
-    "<taskboard_context>",
+    "<panel_context>",
     ...context,
-    "</taskboard_context>",
+    "</panel_context>",
     "",
     "<user_message>",
     userMessage,

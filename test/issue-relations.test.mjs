@@ -9,8 +9,8 @@ const detailSource = await readFile(new URL("../web/src/components/TaskDetail.ts
 const relationsSource = await readFile(new URL("../web/src/components/IssueRelations.tsx", import.meta.url), "utf8");
 const cardSource = await readFile(new URL("../web/src/components/TaskCard.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
-const skillSource = await readFile(new URL("../skills/manage-taskboard/SKILL.md", import.meta.url), "utf8");
-const cliReference = await readFile(new URL("../skills/manage-taskboard/references/cli.md", import.meta.url), "utf8");
+const skillSource = await readFile(new URL("../skills/manage-panel/SKILL.md", import.meta.url), "utf8");
+const cliReference = await readFile(new URL("../skills/manage-panel/references/cli.md", import.meta.url), "utf8");
 
 test("tasks expose one parent plus directional and symmetric issue relations", () => {
   assert.match(typesSource, /export type IssueRelationType = "parent" \| "blocks" \| "blocked_by" \| "related"/);
@@ -61,7 +61,7 @@ test("board cards keep relation context compact", () => {
   assert.doesNotMatch(cardSource, /task\.relations\.related/);
 });
 
-test("the taskboard skill tracks substantive requests before implementation", () => {
+test("the panel skill tracks substantive requests before implementation", () => {
   assert.match(skillSource, /Search for an existing issue before creating one/i);
   assert.match(skillSource, /append/i);
   assert.match(skillSource, /parent|sub-issue/i);

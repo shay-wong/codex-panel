@@ -16,7 +16,7 @@ const serverSource = await readFile(new URL("../server/app.mjs", import.meta.url
 const styles = await readFile(new URL("../web/src/components/workflow.css", import.meta.url), "utf8");
 const globalStyles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 
-test("the taskboard defaults to issues and exposes issue and node mode tabs", () => {
+test("the panel defaults to issues and exposes issue and node mode tabs", () => {
   assert.match(appSource, /type BoardView = "issues" \| "workflow"/);
   assert.match(appSource, /useState<BoardView>\("issues"\)/);
   assert.match(appSource, />\s*议题看板\s*<\/button>/);
@@ -172,7 +172,7 @@ test("workflow edits persist per project and continue to synchronize through the
   assert.match(serverSource, /events\.emit\("workflow\.updated"/);
   assert.match(apiSource, /export async function getWorkflowWorkspace/);
   assert.match(apiSource, /export async function saveWorkflowWorkspace/);
-  assert.match(workflowStoreSource, /WORKFLOW_STATE_KEY_PREFIX = "taskboard\.workflow\.workspace\."/);
+  assert.match(workflowStoreSource, /WORKFLOW_STATE_KEY_PREFIX = "panel\.workflow\.workspace\."/);
   assert.match(workflowSource, /getWorkflowWorkspace<WorkflowWorkspace>\(projectId/);
   assert.match(workflowSource, /saveWorkflowWorkspace\([\s\S]*?remoteVersionRef\.current/);
   assert.match(workflowSource, /saveQueueRef\.current = saveQueueRef\.current\.then/);

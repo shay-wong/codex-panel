@@ -1,0 +1,6 @@
+interface:
+  display_name: "Handoff Panel"
+  short_description: "Create a handoff and attach it to a Panel issue"
+  default_prompt: "Use $handoff-panel --issue ISSUE-ID to create a handoff and attach it to the Panel issue."
+policy:
+  allow_implicit_invocation: false

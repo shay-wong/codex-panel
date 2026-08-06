@@ -15,6 +15,7 @@ import {
   isTaskPriority,
   isTaskStatus,
 } from "../shared/domain.mjs";
+import { resolvePanelDataDirectory } from "../shared/panel-paths.mjs";
 import { normalizeWorkflowSnapshot } from "../shared/workflow-control-flow.mjs";
 import { AiChatService } from "./ai-chat.mjs";
 import { createCloudConfigStore } from "./cloud-config.mjs";
@@ -23,7 +24,7 @@ import {
   createCloudProxy,
   isLocalCompanionRoute,
 } from "./cloud-proxy.mjs";
-import { ApiError, TaskboardDatabase } from "./database.mjs";
+import { ApiError, PanelDatabase } from "./database.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -495,13 +496,19 @@ function requestHeader(request, name) {
 }
 
 function actorFromRequest(request) {
-  if (request.headers["x-taskboard-client"] === "taskctl") {
+  if (
+    request.headers["x-panel-client"] === "panelctl"
+    || request.headers["x-taskboard-client"] === "taskctl"
+  ) {
     return CODEX_AGENT_ACTOR;
   }
 
-  const rawId = requestHeader(request, "x-taskboard-user-id");
-  const rawName = requestHeader(request, "x-taskboard-user-name");
-  const rawAvatarUrl = requestHeader(request, "x-taskboard-user-avatar");
+  const rawId = requestHeader(request, "x-panel-user-id")
+    ?? requestHeader(request, "x-taskboard-user-id");
+  const rawName = requestHeader(request, "x-panel-user-name")
+    ?? requestHeader(request, "x-taskboard-user-name");
+  const rawAvatarUrl = requestHeader(request, "x-panel-user-avatar")
+    ?? requestHeader(request, "x-taskboard-user-avatar");
   if (rawId === undefined && rawName === undefined && rawAvatarUrl === undefined) {
     return { type: "user", id: "local-user", name: "本地用户", avatarUrl: null };
   }
@@ -509,7 +516,7 @@ function actorFromRequest(request) {
     throw new ApiError(400, "INVALID_ACTOR", "User identity requires both an ID and name");
   }
 
-  const id = stringField(rawId, "X-Taskboard-User-Id", { required: true, maxLength: 96 });
+  const id = stringField(rawId, "X-Panel-User-Id", { required: true, maxLength: 96 });
   if (!/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/.test(id)) {
     throw new ApiError(400, "INVALID_ACTOR", "User ID contains unsupported characters");
   }
@@ -519,11 +526,11 @@ function actorFromRequest(request) {
   } catch {
     throw new ApiError(400, "INVALID_ACTOR", "User name is not valid URL-encoded text");
   }
-  const name = stringField(decodedName, "X-Taskboard-User-Name", { required: true, maxLength: 120 });
+  const name = stringField(decodedName, "X-Panel-User-Name", { required: true, maxLength: 120 });
 
   let avatarUrl = null;
   if (rawAvatarUrl !== undefined) {
-    const value = stringField(rawAvatarUrl, "X-Taskboard-User-Avatar", { required: true, maxLength: 2048 });
+    const value = stringField(rawAvatarUrl, "X-Panel-User-Avatar", { required: true, maxLength: 2048 });
     let parsed;
     try {
       parsed = new URL(value);
@@ -670,9 +677,10 @@ function parseCommentPatch(body) {
 }
 
 function parseAttachmentHeaders(request) {
-  const encodedFilename = request.headers["x-taskboard-filename"];
+  const encodedFilename = request.headers["x-panel-filename"]
+    ?? request.headers["x-taskboard-filename"];
   if (typeof encodedFilename !== "string") {
-    throw new ApiError(400, "INVALID_FILENAME", "X-Taskboard-Filename is required");
+    throw new ApiError(400, "INVALID_FILENAME", "X-Panel-Filename is required");
   }
   let filename;
   try {
@@ -812,9 +820,14 @@ function parseAiThreadCreate(body) {
 
 function parseAiThreadPatch(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["title", "model", "reasoningEffort", "sandbox"]));
+  assertAllowedKeys(body, new Set(["title", "issueId", "model", "reasoningEffort", "sandbox"]));
   const input = {};
   if (body.title !== undefined) input.title = parseAiSetting(body.title, "title", 160);
+  if (body.issueId !== undefined) {
+    input.issueId = body.issueId === null
+      ? null
+      : parseAiSetting(body.issueId, "issueId", 128);
+  }
   if (body.model !== undefined) input.model = parseAiSetting(body.model, "model", 128);
   if (body.reasoningEffort !== undefined) {
     input.reasoningEffort = parseAiSetting(body.reasoningEffort, "reasoningEffort", 64);
@@ -1269,18 +1282,17 @@ async function discoverWorkflowCapabilities(resolved, workspacePath) {
 }
 
 export function resolveServerOptions(options = {}) {
-  const configuredDataDirectory = options.dataDirectory ?? process.env.CODEX_TASKBOARD_DATA_DIR;
-  const dataDirectory = configuredDataDirectory
-    ? path.resolve(configuredDataDirectory)
-    : path.join(PROJECT_ROOT, ".data");
+  const dataDirectory = options.dataDirectory
+    ? path.resolve(options.dataDirectory)
+    : resolvePanelDataDirectory();
   const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
   return {
     dataDirectory,
-    databasePath: options.databasePath ?? path.join(dataDirectory, "taskboard.sqlite"),
+    databasePath: options.databasePath ?? path.join(dataDirectory, "panel.sqlite"),
     attachmentsDirectory: options.attachmentsDirectory ?? path.join(dataDirectory, "attachments"),
     cloudConfigPath: options.cloudConfigPath ?? path.join(dataDirectory, "cloud-companion.json"),
     staticDirectory: options.staticDirectory ?? path.join(PROJECT_ROOT, "dist", "web"),
-    skillPath: options.skillPath ?? path.join(PROJECT_ROOT, "skills", "manage-taskboard", "SKILL.md"),
+    skillPath: options.skillPath ?? path.join(PROJECT_ROOT, "skills", "manage-panel", "SKILL.md"),
     codexExecutable: options.codexExecutable ?? process.env.CODEX_EXECUTABLE ?? "codex",
     codexStatePath: options.codexStatePath
       ?? path.join(codexHome, ".codex-global-state.json"),
@@ -1289,25 +1301,33 @@ export function resolveServerOptions(options = {}) {
   };
 }
 
-export function resolvePort(value = process.env.CODEX_TASKBOARD_PORT ?? "47823") {
+export function resolvePort(value = (
+  process.env.CODEX_PANEL_PORT
+  ?? process.env.CODEX_TASKBOARD_PORT
+  ?? "47823"
+)) {
   const port = typeof value === "number" ? value : Number(value);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("CODEX_TASKBOARD_PORT must be an integer between 1 and 65535");
+    throw new Error("CODEX_PANEL_PORT must be an integer between 1 and 65535");
   }
   return port;
 }
 
-export function resolveHost(value = process.env.CODEX_TASKBOARD_HOST ?? "0.0.0.0") {
+export function resolveHost(value = (
+  process.env.CODEX_PANEL_HOST
+  ?? process.env.CODEX_TASKBOARD_HOST
+  ?? "0.0.0.0"
+)) {
   const host = String(value).trim();
   if (host !== "127.0.0.1" && host !== "0.0.0.0") {
-    throw new Error("CODEX_TASKBOARD_HOST must be 127.0.0.1 or 0.0.0.0");
+    throw new Error("CODEX_PANEL_HOST must be 127.0.0.1 or 0.0.0.0");
   }
   return host;
 }
 
-export function createTaskboardServer(options = {}) {
+export function createPanelServer(options = {}) {
   const resolved = resolveServerOptions(options);
-  const database = new TaskboardDatabase(resolved.databasePath);
+  const database = new PanelDatabase(resolved.databasePath);
   const events = new EventHub();
   const cloudConfig = options.cloudConfigStore ?? createCloudConfigStore({
     configPath: resolved.cloudConfigPath,
@@ -1330,7 +1350,11 @@ export function createTaskboardServer(options = {}) {
     database,
     codexExecutable: resolved.codexExecutable,
     codexStatePath: resolved.codexStatePath,
-    manageTaskboardSkillPath: resolved.skillPath,
+    managePanelSkillPath: resolved.skillPath,
+    handoffActor: CODEX_AGENT_ACTOR,
+    onIssueCommentCreated: ({ comment, task }) => {
+      events.emit("comment.created", { comment, task });
+    },
   });
   const aiEventResponses = new Set();
 
@@ -1433,7 +1457,7 @@ export function createTaskboardServer(options = {}) {
           throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/meta does not accept query parameters");
         }
         return sendJson(response, 200, {
-          manageTaskboardSkillPath: resolved.skillPath,
+          managePanelSkillPath: resolved.skillPath,
           capabilities: { localAiChat: isLoopbackAddress(request.socket.remoteAddress) },
           ...(capabilityCloudConfig?.remoteUrl
             ? {
@@ -2051,7 +2075,7 @@ export function createTaskboardServer(options = {}) {
     options: resolved,
     async listen({ host = "127.0.0.1", port = resolvePort() } = {}) {
       if (host !== "127.0.0.1" && host !== "0.0.0.0") {
-        throw new Error("Taskboard server must bind to 127.0.0.1 or 0.0.0.0");
+        throw new Error("Panel server must bind to 127.0.0.1 or 0.0.0.0");
       }
       await new Promise((resolve, reject) => {
         const onError = (error) => {

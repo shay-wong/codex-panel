@@ -1,30 +1,31 @@
 (() => {
   "use strict";
 
-  const VERSION = "0.6.8";
-  const SOURCE_HASH = window.__CODEX_TASKBOARD_SOURCE_HASH__;
-  const SENTINEL_KEY = "__codexTaskboardInjection__";
-  const DEFAULT_TASKBOARD_URL = "http://127.0.0.1:47823/?host=codex";
-  const ENTRY_ID = "codex-taskboard-entry";
-  const PAGE_ID = "codex-taskboard-page";
-  const FRAME_ID = "codex-taskboard-frame";
-  const DRAG_REGION_ID = "codex-taskboard-drag-region";
-  const NO_DRAG_LEFT_ID = "codex-taskboard-no-drag-left";
-  const NO_DRAG_RIGHT_ID = "codex-taskboard-no-drag-right";
-  const STATUS_ID = "codex-taskboard-status";
-  const STYLE_ID = "codex-taskboard-inject-style";
-  const OWNED_ATTRIBUTE = "data-codex-taskboard-owned";
-  const HIDDEN_ATTRIBUTE = "data-codex-taskboard-native-hidden";
-  const HOST_ATTRIBUTE = "data-codex-taskboard-page-host";
-  const NATIVE_SELECTED_ATTRIBUTE = "data-codex-taskboard-native-selected";
-  const HOST_BINDING_NAME = "__codexTaskboardHostV1";
-  const HOST_HEARTBEAT_NAME = "__codexTaskboardHostHeartbeatV1";
+  const VERSION = "0.6.10";
+  const SOURCE_HASH = window.__CODEX_PANEL_SOURCE_HASH__;
+  const SENTINEL_KEY = "__codexPanelInjection__";
+  const DEFAULT_PANEL_URL = "http://127.0.0.1:47823/?host=codex";
+  const ENTRY_ID = "codex-panel-entry";
+  const PAGE_ID = "codex-panel-page";
+  const FRAME_ID = "codex-panel-frame";
+  const DRAG_REGION_ID = "codex-panel-drag-region";
+  const NO_DRAG_LEFT_ID = "codex-panel-no-drag-left";
+  const NO_DRAG_RIGHT_ID = "codex-panel-no-drag-right";
+  const STATUS_ID = "codex-panel-status";
+  const STYLE_ID = "codex-panel-inject-style";
+  const OWNED_ATTRIBUTE = "data-codex-panel-owned";
+  const HIDDEN_ATTRIBUTE = "data-codex-panel-native-hidden";
+  const HOST_ATTRIBUTE = "data-codex-panel-page-host";
+  const NATIVE_SELECTED_ATTRIBUTE = "data-codex-panel-native-selected";
+  const HOST_BINDING_NAME = "__codexPanelHostV1";
+  const HOST_HEARTBEAT_NAME = "__codexPanelHostHeartbeatV1";
   const REATTACH_DELAY_MS = 160;
   const FRAME_READY_TIMEOUT_MS = 12_000;
   const HOST_REQUEST_TIMEOUT_MS = 12_000;
   const HOST_HEARTBEAT_MAX_AGE_MS = 8_000;
+  const THREAD_ASSOCIATION_TIMEOUT_MS = 10 * 60_000;
   const MACOS_TITLEBAR_SAFE_LEFT = 80;
-  const FRAME_REFRESH_PARAM = "__codex_taskboard_refresh";
+  const FRAME_REFRESH_PARAM = "__codex_panel_refresh";
   const PLUGIN_LABELS = ["插件", "plugins"];
   const NATIVE_PAGE_LABELS = [
     "新建任务",
@@ -70,6 +71,7 @@
   let mutedNativeSelections = new Map();
   let openGeneration = 0;
   let pendingThreadCreation = null;
+  let pendingThreadAssociation = null;
   let lastNativeThreadId = "";
   let active = false;
   let destroyed = false;
@@ -82,29 +84,20 @@
     return String(value || "").trim().replace(/^(?:local|cloud):/i, "");
   }
 
-  function resolveTaskboardUrl() {
-    const configured = typeof window.__CODEX_TASKBOARD_URL__ === "string"
-      ? window.__CODEX_TASKBOARD_URL__.trim()
-      : "";
+  function resolvePanelUrl() {
+    const configuredValue = typeof window.__CODEX_PANEL_URL__ === "string"
+      ? window.__CODEX_PANEL_URL__
+      : window.__CODEX_TASKBOARD_URL__;
+    const configured = typeof configuredValue === "string" ? configuredValue.trim() : "";
     try {
-      const url = new URL(configured || DEFAULT_TASKBOARD_URL);
+      const url = new URL(configured || DEFAULT_PANEL_URL);
       if (url.protocol !== "http:" && url.protocol !== "https:") {
-        throw new Error("Unsupported taskboard URL protocol");
+        throw new Error("Unsupported panel URL protocol");
       }
       if (!url.searchParams.has("host")) url.searchParams.set("host", "codex");
       return url;
     } catch (_) {
-      return new URL(DEFAULT_TASKBOARD_URL);
-    }
-  }
-
-  function isLocalTaskboardOrigin(origin) {
-    try {
-      const { protocol, hostname } = new URL(origin);
-      return (protocol === "http:" || protocol === "https:")
-        && (hostname === "127.0.0.1" || hostname === "localhost");
-    } catch (_) {
-      return false;
+      return new URL(DEFAULT_PANEL_URL);
     }
   }
 
@@ -272,7 +265,7 @@
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      openTaskboard();
+      openPanel();
     });
     return button;
   }
@@ -551,12 +544,41 @@
     frame.contentWindow.postMessage(message, frameOrigin);
   }
 
+  function nativeThreadIds() {
+    return new Set(
+      Array.from(document.querySelectorAll("[data-app-action-sidebar-thread-id]"))
+        .map((row) => normalizeThreadId(row.getAttribute("data-app-action-sidebar-thread-id")))
+        .filter(Boolean),
+    );
+  }
+
+  function publishPendingThreadAssociation() {
+    if (!isTrustedPanelOrigin()) return;
+    const pending = pendingThreadAssociation;
+    if (!pending) return;
+    if (Date.now() > pending.expiresAt) {
+      pendingThreadAssociation = null;
+      return;
+    }
+    const threadId = normalizeThreadId(threadIdFromLocation());
+    if (!threadId || pending.existingThreadIds.has(threadId)) return;
+    pendingThreadAssociation = null;
+    lastNativeThreadId = threadId;
+    postToFrame({
+      type: "panel:thread-created",
+      payload: { taskId: pending.taskId, threadId },
+    });
+  }
+
   function dispatchHostMessage(message) {
     window.postMessage(message, window.location.origin);
   }
 
   function postHostContext() {
     if (!frame) return;
+    const theme = currentTheme();
+    postToFrame({ type: "panel:theme", theme });
+    if (!isTrustedPanelOrigin()) return;
     const liveContext = readHostContext();
     const payload = hostContextSnapshot
       ? {
@@ -567,8 +589,7 @@
             : hostContextSnapshot.projects,
         }
       : liveContext;
-    postToFrame({ type: "taskboard:host-context", payload });
-    postToFrame({ type: "taskboard:theme", theme: payload.theme });
+    postToFrame({ type: "panel:host-context", payload });
   }
 
   function findThreadRow(threadId) {
@@ -585,7 +606,7 @@
     const normalizedThreadId = normalizeThreadId(threadId);
     lastNativeThreadId = normalizedThreadId;
     const row = findThreadRow(normalizedThreadId);
-    closeTaskboard(false);
+    closePanel(false);
 
     if (row?.isConnected) {
       row.click?.();
@@ -636,14 +657,14 @@
         const containsIdentifier = normalizedLabel(editor.textContent).includes(normalizedLabel(identifier));
         const skillMention = Array.from(editor.querySelectorAll("[skill-mention-name]"))
           .find((mention) => (
-            mention.getAttribute("skill-mention-name") === "manage-taskboard"
+            mention.getAttribute("skill-mention-name") === "manage-panel"
             && mention.getAttribute("skill-mention-path") === skillPath
           ));
         if (containsIdentifier && skillMention) return editor;
       }
       await new Promise((resolve) => window.setTimeout(resolve, 80));
     }
-    throw new Error("Codex 对话输入框没有生成 manage-taskboard Skill 引用");
+    throw new Error("Codex 对话输入框没有生成 manage-panel Skill 引用");
   }
 
   async function createThreadForTask(payload) {
@@ -668,6 +689,7 @@
       || pendingThreadCreation
     ) return;
     pendingThreadCreation = taskId;
+    pendingThreadAssociation = null;
     try {
       const bridge = window.electronBridge;
       if (!bridge || typeof bridge.sendMessageFromView !== "function") {
@@ -698,7 +720,7 @@
         if (selectProject) await new Promise((resolve) => window.setTimeout(resolve, 120));
       }
 
-      closeTaskboard(false);
+      closePanel(false);
       await dispatchHostMessage({
         type: "navigate-to-route",
         path: "/",
@@ -706,6 +728,7 @@
           focusComposerNonce: Date.now(),
         },
       });
+      const existingThreadIds = nativeThreadIds();
       await requestHostTaskComposerPrefill({
         instruction,
         skillDisplayName,
@@ -713,10 +736,15 @@
         skillPath,
       });
       await waitForPreparedComposer(identifier, skillPath);
-      postToFrame({ type: "taskboard:thread-prepared", payload: { taskId } });
+      pendingThreadAssociation = {
+        taskId,
+        existingThreadIds,
+        expiresAt: Date.now() + THREAD_ASSOCIATION_TIMEOUT_MS,
+      };
+      postToFrame({ type: "panel:thread-prepared", payload: { taskId } });
     } catch (error) {
       postToFrame({
-        type: "taskboard:thread-create-error",
+        type: "panel:thread-create-error",
         payload: { taskId, error: error instanceof Error ? error.message : "无法创建 Codex 对话" },
       });
     } finally {
@@ -728,7 +756,7 @@
     return {
       requestId: payload.requestId,
       operation: payload.operation,
-      taskboardProjectId: payload.taskboardProjectId,
+      panelProjectId: payload.panelProjectId,
       codexProjectId: payload.codexProjectId,
       projectName: payload.projectName,
       workspacePath: payload.workspacePath,
@@ -745,9 +773,9 @@
   async function handleAutomationRequest(payload) {
     const requestId = typeof payload?.requestId === "string" ? payload.requestId : "";
     if (!requestId) return;
-    if (!isLocalTaskboardOrigin(frameOrigin)) {
+    if (!isTrustedPanelOrigin()) {
       postToFrame({
-        type: "taskboard:automation-response",
+        type: "panel:automation-response",
         payload: { requestId, ok: false, error: "仅本地任务面板可用" },
       });
       return;
@@ -758,7 +786,7 @@
         buildAutomationHostPayload(payload),
       );
       postToFrame({
-        type: "taskboard:automation-response",
+        type: "panel:automation-response",
         payload: response.error
           ? { requestId, ok: false, error: response.error }
           : {
@@ -772,7 +800,7 @@
       });
     } catch (error) {
       postToFrame({
-        type: "taskboard:automation-response",
+        type: "panel:automation-response",
         payload: {
           requestId,
           ok: false,
@@ -786,7 +814,7 @@
     if (!frame || event.source !== frame.contentWindow || event.origin !== frameOrigin) return;
     const message = event.data;
     if (!message || typeof message !== "object") return;
-    if (message.type === "taskboard:ready") {
+    if (message.type === "panel:ready") {
       frameReady = true;
       frameReadyWaiters.forEach(({ resolve, timer }) => {
         window.clearTimeout(timer);
@@ -797,23 +825,24 @@
       postHostContext();
       return;
     }
-    if (message.type === "taskboard:drag-region") {
+    if (message.type === "panel:drag-region") {
       updateDragRegion(message.payload);
       return;
     }
-    if (message.type === "taskboard:open-thread") {
+    if (!isTrustedPanelOrigin()) return;
+    if (message.type === "panel:open-thread") {
       void openThread(message.payload?.threadId);
       return;
     }
-    if (message.type === "taskboard:expand-sidebar") {
+    if (message.type === "panel:expand-sidebar") {
       expandNativeSidebar();
       return;
     }
-    if (message.type === "taskboard:automation-request") {
+    if (message.type === "panel:automation-request") {
       void handleAutomationRequest(message.payload);
       return;
     }
-    if (message.type === "taskboard:create-thread") void createThreadForTask(message.payload);
+    if (message.type === "panel:create-thread") void createThreadForTask(message.payload);
   }
 
   function updateDragRegion(payload) {
@@ -904,7 +933,7 @@
     const retry = document.createElement("button");
     retry.type = "button";
     retry.textContent = "重新启动";
-    retry.addEventListener("click", openTaskboard, { once: true });
+    retry.addEventListener("click", openPanel, { once: true });
     content.append(text, retry);
     status.replaceChildren(content);
     status.hidden = false;
@@ -934,7 +963,7 @@
     });
   }
 
-  function loadTaskboardFrame(cacheBust = false) {
+  function loadPanelFrame(cacheBust = false) {
     cancelFrameReadyWaiters(new Error("任务面板正在重新加载"));
     frame?.remove();
     frame = null;
@@ -943,15 +972,15 @@
     if (noDragLeft) noDragLeft.hidden = true;
     if (noDragRight) noDragRight.hidden = true;
 
-    const taskboardUrl = resolveTaskboardUrl();
+    const panelUrl = resolvePanelUrl();
     if (cacheBust) {
-      taskboardUrl.searchParams.set(FRAME_REFRESH_PARAM, Date.now().toString(36));
+      panelUrl.searchParams.set(FRAME_REFRESH_PARAM, Date.now().toString(36));
     }
-    frameOrigin = taskboardUrl.origin;
+    frameOrigin = panelUrl.origin;
     const nextFrame = document.createElement("iframe");
     nextFrame.id = FRAME_ID;
     nextFrame.hidden = true;
-    nextFrame.src = taskboardUrl.href;
+    nextFrame.src = panelUrl.href;
     nextFrame.title = "任务面板";
     nextFrame.referrerPolicy = "no-referrer";
     nextFrame.setAttribute("allow", "clipboard-read; clipboard-write");
@@ -964,7 +993,7 @@
     if (!frame) return false;
     const generation = ++openGeneration;
     if (active) showLoading();
-    loadTaskboardFrame(true);
+    loadPanelFrame(true);
     if (active) {
       void waitForFrameReady()
         .then(() => {
@@ -980,15 +1009,20 @@
     return true;
   }
 
-  function managedTaskboardOrigin() {
-    const configured = typeof window.__CODEX_TASKBOARD_MANAGED_ORIGIN__ === "string"
-      ? window.__CODEX_TASKBOARD_MANAGED_ORIGIN__.trim()
-      : "";
+  function managedPanelOrigin() {
+    const configuredValue = typeof window.__CODEX_PANEL_MANAGED_ORIGIN__ === "string"
+      ? window.__CODEX_PANEL_MANAGED_ORIGIN__
+      : window.__CODEX_TASKBOARD_MANAGED_ORIGIN__;
+    const configured = typeof configuredValue === "string" ? configuredValue.trim() : "";
     try {
-      return new URL(configured || DEFAULT_TASKBOARD_URL).origin;
+      return new URL(configured || DEFAULT_PANEL_URL).origin;
     } catch (_) {
-      return new URL(DEFAULT_TASKBOARD_URL).origin;
+      return new URL(DEFAULT_PANEL_URL).origin;
     }
+  }
+
+  function isTrustedPanelOrigin(origin = frameOrigin) {
+    return Boolean(origin) && origin === managedPanelOrigin();
   }
 
   function hasLiveHostBinding() {
@@ -1001,7 +1035,7 @@
   function requestHost(action, payload = {}) {
     const binding = window[HOST_BINDING_NAME];
     if (!hasLiveHostBinding()) {
-      return Promise.reject(new Error("Taskboard 启动器未运行，无法操作 Codex 对话输入框"));
+      return Promise.reject(new Error("Panel 启动器未运行，无法操作 Codex 对话输入框"));
     }
 
     const id = `${Date.now().toString(36)}-${(++hostRequestSequence).toString(36)}`;
@@ -1021,8 +1055,8 @@
     });
   }
 
-  function requestHostEnsure(taskboardUrl) {
-    if (taskboardUrl.origin !== managedTaskboardOrigin() || !hasLiveHostBinding()) {
+  function requestHostEnsure(panelUrl) {
+    if (panelUrl.origin !== managedPanelOrigin() || !hasLiveHostBinding()) {
       return Promise.resolve({ managed: false, restarted: false });
     }
     return requestHost("ensure");
@@ -1042,12 +1076,12 @@
     });
   }
 
-  function frameMatchesTaskboardUrl(taskboardUrl) {
+  function frameMatchesPanelUrl(panelUrl) {
     if (!frame) return false;
     try {
       const loadedUrl = new URL(frame.getAttribute("src") || frame.src);
       loadedUrl.searchParams.delete(FRAME_REFRESH_PARAM);
-      const expectedUrl = new URL(taskboardUrl.href);
+      const expectedUrl = new URL(panelUrl.href);
       expectedUrl.searchParams.delete(FRAME_REFRESH_PARAM);
       return loadedUrl.href === expectedUrl.href;
     } catch (_) {
@@ -1065,26 +1099,28 @@
     else pending.reject(new Error(response.error || "任务面板服务启动失败"));
   }
 
-  async function prepareTaskboard(generation) {
-    const taskboardUrl = resolveTaskboardUrl();
+  async function preparePanel(generation) {
+    const panelUrl = resolvePanelUrl();
     const canReuseFrame = Boolean(
       frameReady
       && frame?.isConnected
-      && frameMatchesTaskboardUrl(taskboardUrl),
+      && frameMatchesPanelUrl(panelUrl),
     );
     if (canReuseFrame) showFrame();
     else showLoading();
 
     try {
       const [result, context] = await Promise.all([
-        requestHostEnsure(taskboardUrl),
-        captureHostContext(),
+        requestHostEnsure(panelUrl),
+        isTrustedPanelOrigin(panelUrl.origin)
+          ? captureHostContext()
+          : Promise.resolve(null),
       ]);
       if (!active || generation !== openGeneration) return;
       hostContextSnapshot = context;
-      if (!frameReady || result.restarted || !frameMatchesTaskboardUrl(taskboardUrl)) {
+      if (!frameReady || result.restarted || !frameMatchesPanelUrl(panelUrl)) {
         showLoading();
-        loadTaskboardFrame();
+        loadPanelFrame();
         await waitForFrameReady();
       }
       if (!active || generation !== openGeneration) return;
@@ -1095,7 +1131,7 @@
       const bindingAvailable = hasLiveHostBinding();
       showLoadError(bindingAvailable
         ? error.message
-        : "任务面板服务未就绪。请保持 Taskboard 启动器运行后重试。");
+        : "任务面板服务未就绪。请保持 Panel 启动器运行后重试。");
     }
   }
 
@@ -1126,24 +1162,24 @@
     hideNativeHeader();
     muteNativeSelection();
     page.hidden = false;
-    document.documentElement.setAttribute("data-codex-taskboard-open", "true");
+    document.documentElement.setAttribute("data-codex-panel-open", "true");
   }
 
-  function closeTaskboard(restoreFocus = true) {
+  function closePanel(restoreFocus = true) {
     if (!active && page?.hidden !== false) return;
     openGeneration += 1;
     active = false;
     if (page) page.hidden = true;
     restoreNativeContent();
     restoreNativeSelection();
-    document.documentElement.removeAttribute("data-codex-taskboard-open");
+    document.documentElement.removeAttribute("data-codex-panel-open");
     syncEntryState();
     if (restoreFocus) lastFocusedElement?.focus?.();
     lastFocusedElement = null;
     hostContextSnapshot = null;
   }
 
-  function openTaskboard() {
+  function openPanel() {
     if (destroyed) return;
     if (!active) {
       lastFocusedElement = document.activeElement;
@@ -1154,7 +1190,7 @@
     ensureEntry();
     mountActivePage();
     syncEntryState();
-    void prepareTaskboard(generation);
+    void preparePanel(generation);
   }
 
   function isNativePageNavigation(target) {
@@ -1175,7 +1211,7 @@
     const clickedThreadId = normalizeThreadId(threadRow?.getAttribute?.("data-app-action-sidebar-thread-id"));
     if (clickedThreadId) lastNativeThreadId = clickedThreadId;
     if (!active || !isNativePageNavigation(event.target)) return;
-    closeTaskboard(false);
+    closePanel(false);
   }
 
   function scheduleRefresh() {
@@ -1184,6 +1220,7 @@
       reattachTimer = null;
       ensureEntry();
       mountActivePage();
+      publishPendingThreadAssociation();
       postHostContext();
     }, REATTACH_DELAY_MS);
   }
@@ -1191,6 +1228,7 @@
   function refresh() {
     ensureEntry();
     mountActivePage();
+    publishPendingThreadAssociation();
     postHostContext();
   }
 
@@ -1228,13 +1266,14 @@
     });
     hostRequests.clear();
     pendingThreadCreation = null;
+    pendingThreadAssociation = null;
     document.removeEventListener("DOMContentLoaded", mount);
     document.removeEventListener("click", onDocumentClick, true);
     window.removeEventListener("message", onFrameMessage);
     window.removeEventListener("popstate", onNativeRouteChange);
     window.removeEventListener("hashchange", onNativeRouteChange);
     window.removeEventListener("resize", scheduleRefresh);
-    closeTaskboard(false);
+    closePanel(false);
     document.querySelectorAll(`[${OWNED_ATTRIBUTE}="true"]`).forEach((node) => node.remove());
     entry = null;
     page = null;
@@ -1248,7 +1287,8 @@
   }
 
   function onNativeRouteChange() {
-    if (active) closeTaskboard(false);
+    if (active) closePanel(false);
+    publishPendingThreadAssociation();
   }
 
   const api = {
@@ -1256,8 +1296,8 @@
     sourceHash: SOURCE_HASH,
     refresh,
     reloadFrame,
-    open: openTaskboard,
-    close: closeTaskboard,
+    open: openPanel,
+    close: closePanel,
     destroy,
     hostResponse: onHostResponse,
   };

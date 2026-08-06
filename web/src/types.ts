@@ -36,9 +36,9 @@ export interface DevelopmentScan {
   contexts: DevelopmentContext[];
 }
 
-export interface TaskboardMetadata {
-  manageTaskboardSkillPath?: string;
-  capabilities?: TaskboardCapabilities;
+export interface PanelMetadata {
+  managePanelSkillPath?: string;
+  capabilities?: PanelCapabilities;
   mode?: "local" | "cloud";
   realtime?: {
     transport: "poll";
@@ -49,7 +49,7 @@ export interface TaskboardMetadata {
   };
 }
 
-export interface TaskboardCapabilities {
+export interface PanelCapabilities {
   localAiChat: boolean;
 }
 
@@ -138,6 +138,8 @@ export interface AiChatThreadSnapshot {
 export interface WorkflowCapabilityOption {
   id: string;
   label: string;
+  description: string;
+  path: string;
   scope: "user" | "repo" | "system" | "admin";
 }
 

@@ -1,4 +1,4 @@
 interface:
-  display_name: "Manage Taskboard"
-  short_description: "Manage projects and issues with taskctl CLI"
-  default_prompt: "Use $manage-taskboard to manage this project and its issues with taskctl."
+  display_name: "Manage Panel"
+  short_description: "Manage projects and issues with panelctl CLI"
+  default_prompt: "Use $manage-panel to manage this project and its issues with panelctl."

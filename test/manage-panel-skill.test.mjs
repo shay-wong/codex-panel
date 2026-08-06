@@ -3,11 +3,11 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 const skillSource = await readFile(
-  new URL("../skills/manage-taskboard/SKILL.md", import.meta.url),
+  new URL("../skills/manage-panel/SKILL.md", import.meta.url),
   "utf8",
 );
 
-test("the taskboard skill coordinates safe issue execution and review handoff", () => {
+test("the panel skill coordinates safe issue execution and review handoff", () => {
   assert.match(skillSource, /read the latest issue content and all comments/i);
   assert.match(skillSource, /completed work.*returned|returned.*completed work/i);
   assert.match(skillSource, /claim.*`todo`.*`in_progress`.*`--if-version`/is);

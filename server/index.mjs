@@ -1,12 +1,12 @@
 import os from "node:os";
 import { pathToFileURL } from "node:url";
 
-import { createTaskboardServer, resolveHost, resolvePort } from "./app.mjs";
+import { createPanelServer, resolveHost, resolvePort } from "./app.mjs";
 
-export { createTaskboardServer, resolveHost, resolvePort, resolveServerOptions } from "./app.mjs";
+export { createPanelServer, resolveHost, resolvePort, resolveServerOptions } from "./app.mjs";
 
 async function main() {
-  const app = createTaskboardServer();
+  const app = createPanelServer();
   const host = resolveHost();
   const address = await app.listen({ host, port: resolvePort() });
   console.log(`Codex Panel listening on http://127.0.0.1:${address.port}`);

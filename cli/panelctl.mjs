@@ -79,10 +79,10 @@ const COMMAND_OPTIONS = new Map([
   ["context current", new Set(["cwd", "json"])],
 ]);
 
-class TaskctlError extends Error {
-  constructor(message, { code = "TASKCTL_ERROR", exitCode = 2, details } = {}) {
+class PanelctlError extends Error {
+  constructor(message, { code = "PANELCTL_ERROR", exitCode = 2, details } = {}) {
     super(message);
-    this.name = "TaskctlError";
+    this.name = "PanelctlError";
     this.code = code;
     this.exitCode = exitCode;
     this.details = details;
@@ -187,7 +187,9 @@ async function execute(parsed, overrides) {
   const env = overrides.env ?? process.env;
   const usesCompanionControl = command.startsWith("cloud ") || command === "project map";
   const api = createApiClient(overrides, {
-    baseUrl: usesCompanionControl || env.CODEX_TASKBOARD_COMPANION_URL !== undefined
+    baseUrl: usesCompanionControl
+      || env.CODEX_PANEL_COMPANION_URL !== undefined
+      || env.CODEX_TASKBOARD_COMPANION_URL !== undefined
       ? resolveCompanionUrl(env)
       : undefined,
   });
@@ -299,14 +301,19 @@ async function execute(parsed, overrides) {
 function createApiClient(overrides, { baseUrl: explicitBaseUrl } = {}) {
   const fetchImplementation = overrides.fetch ?? globalThis.fetch;
   if (typeof fetchImplementation !== "function") {
-    throw new TaskctlError("fetch is not available", {
+    throw new PanelctlError("fetch is not available", {
       code: "CLIENT_UNAVAILABLE",
       exitCode: 3,
     });
   }
 
   const env = overrides.env ?? process.env;
-  const baseUrl = normalizeBaseUrl(explicitBaseUrl ?? env.CODEX_TASKBOARD_URL ?? DEFAULT_API_URL);
+  const baseUrl = normalizeBaseUrl(
+    explicitBaseUrl
+    ?? env.CODEX_PANEL_URL
+    ?? env.CODEX_TASKBOARD_URL
+    ?? DEFAULT_API_URL,
+  );
 
   return {
     async request(method, pathname, body) {
@@ -316,13 +323,13 @@ function createApiClient(overrides, { baseUrl: explicitBaseUrl } = {}) {
           method,
           headers: {
             accept: "application/json",
-            "x-taskboard-client": "taskctl",
+            "x-panel-client": "panelctl",
             ...(body === undefined ? {} : { "content-type": "application/json" }),
           },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         });
       } catch (error) {
-        throw new TaskctlError(`Cannot reach taskboard service at ${baseUrl}`, {
+        throw new PanelctlError(`Cannot reach panel service at ${baseUrl}`, {
           code: "SERVICE_UNAVAILABLE",
           exitCode: 3,
           details: error instanceof Error ? error.message : String(error),
@@ -332,14 +339,14 @@ function createApiClient(overrides, { baseUrl: explicitBaseUrl } = {}) {
       const payload = await readResponse(response);
       if (!response.ok) {
         const apiError = extractApiError(payload, response.status);
-        throw new TaskctlError(apiError.message, {
+        throw new PanelctlError(apiError.message, {
           code: apiError.code,
           exitCode: response.status === 409 ? 5 : 4,
           details: apiError.details,
         });
       }
       if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-        throw new TaskctlError("Taskboard service returned an invalid JSON response", {
+        throw new PanelctlError("Panel service returned an invalid JSON response", {
           code: "INVALID_RESPONSE",
           exitCode: 4,
         });
@@ -352,11 +359,11 @@ function createApiClient(overrides, { baseUrl: explicitBaseUrl } = {}) {
         response = await fetchImplementation(new URL(pathname, `${baseUrl}/`), {
           headers: {
             accept: "*/*",
-            "x-taskboard-client": "taskctl",
+            "x-panel-client": "panelctl",
           },
         });
       } catch (error) {
-        throw new TaskctlError(`Cannot reach taskboard service at ${baseUrl}`, {
+        throw new PanelctlError(`Cannot reach panel service at ${baseUrl}`, {
           code: "SERVICE_UNAVAILABLE",
           exitCode: 3,
           details: error instanceof Error ? error.message : String(error),
@@ -366,7 +373,7 @@ function createApiClient(overrides, { baseUrl: explicitBaseUrl } = {}) {
       if (!response.ok) {
         const payload = await readResponse(response);
         const apiError = extractApiError(payload, response.status);
-        throw new TaskctlError(apiError.message, {
+        throw new PanelctlError(apiError.message, {
           code: apiError.code,
           exitCode: response.status === 409 ? 5 : 4,
           details: apiError.details,
@@ -390,7 +397,7 @@ async function downloadAttachment(api, attachmentId, options, overrides) {
   try {
     await write(output, downloaded.bytes);
   } catch (error) {
-    throw new TaskctlError(`Cannot write attachment file: ${output}`, {
+    throw new PanelctlError(`Cannot write attachment file: ${output}`, {
       code: "FILE_WRITE_FAILED",
       exitCode: 2,
       details: error instanceof Error ? error.message : String(error),
@@ -409,7 +416,7 @@ async function cloudLogin(api, rawUrl, actorName, overrides) {
   try {
     remoteUrl = normalizeCloudUrl(rawUrl);
   } catch (error) {
-    throw new TaskctlError(error instanceof Error ? error.message : String(error), {
+    throw new PanelctlError(error instanceof Error ? error.message : String(error), {
       code: error?.code ?? "INVALID_CLOUD_URL",
       exitCode: 2,
     });
@@ -453,7 +460,7 @@ async function readSecretFromInput(input, output) {
       for (const character of String(chunk)) {
         if (character === "\r" || character === "\n") return finish();
         if (character === "\u0003") {
-          return finish(new TaskctlError("Cloud login canceled", {
+          return finish(new PanelctlError("Cloud login canceled", {
             code: "CANCELED",
             exitCode: 2,
           }));
@@ -608,7 +615,7 @@ async function resolveVersion(api, taskId, rawVersion) {
   const response = await api.request("GET", taskPath(taskId));
   const version = response.task?.version;
   if (!Number.isSafeInteger(version) || version < 1) {
-    throw new TaskctlError("Taskboard service returned a task without a valid version", {
+    throw new PanelctlError("Panel service returned a task without a valid version", {
       code: "INVALID_RESPONSE",
       exitCode: 4,
     });
@@ -628,7 +635,7 @@ async function resolveDescription(options, overrides) {
   try {
     return await read(options["description-file"], "utf8");
   } catch (error) {
-    throw new TaskctlError(`Cannot read description file: ${options["description-file"]}`, {
+    throw new PanelctlError(`Cannot read description file: ${options["description-file"]}`, {
       code: "FILE_READ_FAILED",
       exitCode: 2,
       details: error instanceof Error ? error.message : String(error),
@@ -765,10 +772,10 @@ function normalizeBaseUrl(rawUrl) {
   try {
     url = new URL(rawUrl);
   } catch {
-    throw usageError("CODEX_TASKBOARD_URL must be a valid URL");
+    throw usageError("CODEX_PANEL_URL must be a valid URL");
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw usageError("CODEX_TASKBOARD_URL must use http or https");
+    throw usageError("CODEX_PANEL_URL must use http or https");
   }
   url.pathname = url.pathname.replace(/\/$/, "");
   url.search = "";
@@ -777,7 +784,9 @@ function normalizeBaseUrl(rawUrl) {
 }
 
 function resolveCompanionUrl(env) {
-  const rawUrl = env.CODEX_TASKBOARD_COMPANION_URL
+  const rawUrl = env.CODEX_PANEL_COMPANION_URL
+    ?? env.CODEX_TASKBOARD_COMPANION_URL
+    ?? env.CODEX_PANEL_URL
     ?? env.CODEX_TASKBOARD_URL
     ?? DEFAULT_API_URL;
   let url;
@@ -809,7 +818,7 @@ async function readResponse(response) {
   try {
     return JSON.parse(text);
   } catch {
-    throw new TaskctlError("Taskboard service returned invalid JSON", {
+    throw new PanelctlError("Panel service returned invalid JSON", {
       code: "INVALID_RESPONSE",
       exitCode: 4,
     });
@@ -820,7 +829,7 @@ function extractApiError(payload, status) {
   if (payload?.error && typeof payload.error === "object") {
     return {
       code: payload.error.code ?? `HTTP_${status}`,
-      message: payload.error.message ?? `Taskboard service returned HTTP ${status}`,
+      message: payload.error.message ?? `Panel service returned HTTP ${status}`,
       details: payload.error.details,
     };
   }
@@ -828,21 +837,21 @@ function extractApiError(payload, status) {
     code: payload?.code ?? `HTTP_${status}`,
     message:
       payload?.message ??
-      (typeof payload?.error === "string" ? payload.error : `Taskboard service returned HTTP ${status}`),
+      (typeof payload?.error === "string" ? payload.error : `Panel service returned HTTP ${status}`),
     details: payload?.details,
   };
 }
 
 function normalizeError(error) {
-  if (error instanceof TaskctlError) return error;
-  return new TaskctlError(error instanceof Error ? error.message : String(error), {
+  if (error instanceof PanelctlError) return error;
+  return new PanelctlError(error instanceof Error ? error.message : String(error), {
     code: "INTERNAL_ERROR",
     exitCode: 1,
   });
 }
 
 function usageError(message) {
-  return new TaskctlError(message, { code: "USAGE_ERROR", exitCode: 2 });
+  return new PanelctlError(message, { code: "USAGE_ERROR", exitCode: 2 });
 }
 
 function writeJson(stream, payload) {

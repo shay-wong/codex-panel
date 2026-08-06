@@ -37,34 +37,34 @@ export function createWranglerCloudAdapters({
   persistTo,
   configPath,
   wranglerExecutable = defaultWrangler,
-  database = "codex-taskboard-db",
-  bucket = "codex-taskboard-attachments",
+  database = "codex-panel-db",
+  bucket = "codex-panel-attachments",
   preparedImportSql,
   environment = process.env,
   runCommand = execFile,
 } = {}) {
-  const remoteEnabled = environment.TASKBOARD_MIGRATION_REMOTE === "1";
+  const remoteEnabled = environment.PANEL_MIGRATION_REMOTE === "1";
   const useRemote = remote ?? remoteEnabled;
   if (useRemote && !remoteEnabled) {
-    throw new Error("Remote migration requires TASKBOARD_MIGRATION_REMOTE=1");
+    throw new Error("Remote migration requires PANEL_MIGRATION_REMOTE=1");
   }
 
-  const resolvedPersistTo = persistTo ?? environment.TASKBOARD_MIGRATION_PERSIST_TO;
+  const resolvedPersistTo = persistTo ?? environment.PANEL_MIGRATION_PERSIST_TO;
   if (!useRemote && !resolvedPersistTo) {
     throw new Error(
-      "Local migration requires TASKBOARD_MIGRATION_PERSIST_TO",
+      "Local migration requires PANEL_MIGRATION_PERSIST_TO",
     );
   }
   const resolvedConfig = path.resolve(
     configPath
-      ?? environment.TASKBOARD_MIGRATION_CONFIG
+      ?? environment.PANEL_MIGRATION_CONFIG
       ?? path.join(projectRoot, "wrangler.jsonc"),
   );
   const modeArguments = useRemote
     ? ["--remote"]
     : ["--local", "--persist-to", path.resolve(resolvedPersistTo)];
   const temporaryDirectory = mkdtemp(
-    path.join(os.tmpdir(), "taskboard-wrangler-migration-"),
+    path.join(os.tmpdir(), "panel-wrangler-migration-"),
   ).then(async (directory) => {
     await chmod(directory, 0o700);
     return directory;

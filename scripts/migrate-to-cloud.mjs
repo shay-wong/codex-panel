@@ -194,8 +194,8 @@ async function readAttachmentPayloads(tables, attachmentsDirectory) {
 }
 
 async function readSnapshot(databasePath) {
-  const snapshotDirectory = await mkdtemp(path.join(os.tmpdir(), "taskboard-cloud-snapshot-"));
-  const snapshotPath = path.join(snapshotDirectory, "taskboard.sqlite");
+  const snapshotDirectory = await mkdtemp(path.join(os.tmpdir(), "panel-cloud-snapshot-"));
+  const snapshotPath = path.join(snapshotDirectory, "panel.sqlite");
   let source;
   let snapshot;
   try {
@@ -708,7 +708,7 @@ const HELP = `Usage:
   node scripts/migrate-to-cloud.mjs verify --bundle <directory> --adapter <module>
 
 The bundled Wrangler adapter uses Wrangler authentication without reading or
-storing credentials. Remote operations require TASKBOARD_MIGRATION_REMOTE=1.`;
+storing credentials. Remote operations require PANEL_MIGRATION_REMOTE=1.`;
 
 async function loadAdapterModule(modulePath, context) {
   const loaded = await import(pathToFileURL(path.resolve(modulePath)).href);

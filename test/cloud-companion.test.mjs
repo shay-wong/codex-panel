@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { main } from "../cli/taskctl.mjs";
-import { createTaskboardServer } from "../server/index.mjs";
+import { main } from "../cli/panelctl.mjs";
+import { createPanelServer } from "../server/index.mjs";
 
 const temporaryDirectories = [];
 
@@ -44,7 +44,7 @@ async function runCli(argv, overrides = {}) {
 }
 
 async function temporaryConfigPath(name) {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-companion-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "panel-companion-"));
   temporaryDirectories.push(directory);
   return path.join(directory, name);
 }
@@ -160,15 +160,15 @@ test("cloud proxy replaces client identity with Basic Auth and makes exactly one
   });
 
   const response = await proxy.forward(new Request(
-    "http://127.0.0.1:47823/api/tasks?source=taskctl",
+    "http://127.0.0.1:47823/api/tasks?source=panelctl",
     {
       method: "POST",
       headers: {
         authorization: "Bearer client-supplied-token",
         "content-type": "application/json",
-        "x-taskboard-client": "taskctl",
-        "x-taskboard-user-id": "spoofed-user",
-        "x-taskboard-user-name": "Spoofed User",
+        "x-panel-client": "panelctl",
+        "x-panel-user-id": "spoofed-user",
+        "x-panel-user-name": "Spoofed User",
       },
       body: JSON.stringify({
         projectId: "portfolio",
@@ -180,15 +180,15 @@ test("cloud proxy replaces client identity with Basic Auth and makes exactly one
 
   assert.equal(response.status, 201);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "https://tasks.example.test/api/tasks?source=taskctl");
+  assert.equal(calls[0].url, "https://tasks.example.test/api/tasks?source=panelctl");
   assert.equal(calls[0].init.method, "POST");
   assert.equal(
     new Headers(calls[0].init.headers).get("authorization"),
     `Basic ${Buffer.from("Alice:two-person-shared-key").toString("base64")}`,
   );
-  assert.equal(new Headers(calls[0].init.headers).get("x-taskboard-client"), "taskctl");
-  assert.equal(new Headers(calls[0].init.headers).has("x-taskboard-user-id"), false);
-  assert.equal(new Headers(calls[0].init.headers).has("x-taskboard-user-name"), false);
+  assert.equal(new Headers(calls[0].init.headers).get("x-panel-client"), "panelctl");
+  assert.equal(new Headers(calls[0].init.headers).has("x-panel-user-id"), false);
+  assert.equal(new Headers(calls[0].init.headers).has("x-panel-user-name"), false);
   assert.deepEqual(await response.json(), {
     task: {
       id: "REMOTE-1",
@@ -492,7 +492,7 @@ test("two companions map the same cloud project to different local paths", async
 });
 
 test("configured server proxies business APIs without touching local rows and advertises polling", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-cloud-server-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "panel-cloud-server-"));
   temporaryDirectories.push(directory);
   const configPath = path.join(directory, "companion.json");
   const { createCloudConfigStore } = await importCloudConfig();
@@ -502,7 +502,7 @@ test("configured server proxies business APIs without touching local rows and ad
     sharedKey: "two-person-shared-key",
   });
   const upstreamCalls = [];
-  const app = createTaskboardServer({
+  const app = createPanelServer({
     dataDirectory: directory,
     cloudConfigPath: configPath,
     remoteFetch: async (url, init) => {
@@ -519,7 +519,7 @@ test("configured server proxies business APIs without touching local rows and ad
       mode: "cloud",
       realtime: { transport: "poll", intervalMs: 2000 },
       localCapabilities: { available: true },
-      manageTaskboardSkillPath: app.options.skillPath,
+      managePanelSkillPath: app.options.skillPath,
       capabilities: { localAiChat: true },
     });
     const session = await fetch(`${baseUrl}/api/local/cloud-session`)
@@ -542,7 +542,7 @@ test("cloud mode exposes machine capabilities only to loopback while local mode 
     t.skip("No non-loopback IPv4 interface is available");
     return;
   }
-  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-cloud-lan-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "panel-cloud-lan-"));
   temporaryDirectories.push(directory);
   const configPath = path.join(directory, "companion.json");
   const { createCloudConfigStore } = await importCloudConfig();
@@ -553,7 +553,7 @@ test("cloud mode exposes machine capabilities only to loopback while local mode 
     sharedKey: "two-person-shared-key",
   });
   let upstreamCalls = 0;
-  const app = createTaskboardServer({
+  const app = createPanelServer({
     dataDirectory: directory,
     cloudConfigPath: configPath,
     remoteFetch: async () => {
@@ -597,7 +597,7 @@ test("cloud mode exposes machine capabilities only to loopback while local mode 
   }
 });
 
-test("taskctl cloud login reads the shared key privately and sends it to the local companion", async () => {
+test("panelctl cloud login reads the shared key privately and sends it to the local companion", async () => {
   const fetchCalls = [];
   let secretReads = 0;
   let execCalled = false;
@@ -646,7 +646,7 @@ test("taskctl cloud login reads the shared key privately and sends it to the loc
   assert.equal(result.stderr.text().includes("two-person-shared-key"), false);
 });
 
-test("taskctl cloud status, logout, and project map use local companion endpoints", async () => {
+test("panelctl cloud status, logout, and project map use local companion endpoints", async () => {
   const calls = [];
   const fetchImplementation = async (url, init) => {
     calls.push({ url: url.toString(), init });
@@ -671,7 +671,7 @@ test("taskctl cloud status, logout, and project map use local companion endpoint
   };
 
   const companionEnv = {
-    CODEX_TASKBOARD_COMPANION_URL: "http://127.0.0.1:49000",
+    CODEX_PANEL_COMPANION_URL: "http://127.0.0.1:49000",
   };
   assert.equal((await runCli(
     ["cloud", "status"],
@@ -696,10 +696,10 @@ test("taskctl cloud status, logout, and project map use local companion endpoint
   });
 });
 
-test("taskctl accepts only loopback companion origins and supports the legacy loopback URL", async () => {
+test("panelctl accepts only loopback companion origins and supports the legacy loopback URL", async () => {
   let requestedUrl;
   const legacy = await runCli(["cloud", "status"], {
-    env: { CODEX_TASKBOARD_URL: "http://localhost:49100/" },
+    env: { CODEX_PANEL_URL: "http://localhost:49100/" },
     fetch: async (url) => {
       requestedUrl = url.toString();
       return jsonResponse({ mode: "local", authenticated: false });
@@ -710,7 +710,7 @@ test("taskctl accepts only loopback companion origins and supports the legacy lo
 
   let fetchCalled = false;
   const rejected = await runCli(["cloud", "status"], {
-    env: { CODEX_TASKBOARD_COMPANION_URL: "https://tasks.example.test" },
+    env: { CODEX_PANEL_COMPANION_URL: "https://tasks.example.test" },
     fetch: async () => {
       fetchCalled = true;
       return jsonResponse({});
@@ -721,12 +721,12 @@ test("taskctl accepts only loopback companion origins and supports the legacy lo
   assert.equal(fetchCalled, false);
 });
 
-test("taskctl uses an explicit companion URL for ordinary commands before the legacy URL", async () => {
+test("panelctl uses an explicit companion URL for ordinary commands before the legacy URL", async () => {
   let requestedUrl;
   const result = await runCli(["project", "list"], {
     env: {
-      CODEX_TASKBOARD_COMPANION_URL: "http://127.0.0.1:49200",
-      CODEX_TASKBOARD_URL: "https://legacy.example.test",
+      CODEX_PANEL_COMPANION_URL: "http://127.0.0.1:49200",
+      CODEX_PANEL_URL: "https://legacy.example.test",
     },
     fetch: async (url) => {
       requestedUrl = url.toString();
@@ -738,7 +738,7 @@ test("taskctl uses an explicit companion URL for ordinary commands before the le
   assert.equal(requestedUrl, "http://127.0.0.1:49200/api/projects");
 });
 
-test("without cloud configuration taskctl keeps using the local companion", async () => {
+test("without cloud configuration panelctl keeps using the local companion", async () => {
   let requestedUrl;
   let execCalled = false;
   const result = await runCli(["project", "list"], {

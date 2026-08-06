@@ -17,8 +17,8 @@ const iconSource = await readFile(
 );
 const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 
-test("project automation state is device-local and scoped by taskboard project", () => {
-  assert.match(appSource, /const PROJECT_AUTOMATIONS_KEY = "taskboard\.projectAutomations\.v1"/);
+test("project automation state is device-local and scoped by panel project", () => {
+  assert.match(appSource, /const PROJECT_AUTOMATIONS_KEY = "panel\.projectAutomations\.v1"/);
   assert.match(appSource, /type ProjectAutomationStatus = "ACTIVE" \| "PAUSED"/);
   assert.match(appSource, /automationId\?: string/);
   assert.match(appSource, /codexProjectId: string/);
@@ -30,17 +30,17 @@ test("project automation state is device-local and scoped by taskboard project",
 });
 
 test("automation requests use the exact Codex host message contract", () => {
-  assert.match(appSource, /type: "taskboard:automation-request"/);
+  assert.match(appSource, /type: "panel:automation-request"/);
   assert.match(appSource, /operation: "ensure-active" \| "pause" \| "list"/);
-  assert.match(appSource, /taskboardProjectId: selectedProjectId/);
+  assert.match(appSource, /panelProjectId: selectedProjectId/);
   assert.match(appSource, /codexProjectId/);
   assert.match(appSource, /projectName: selectedProject\.name/);
   assert.match(appSource, /workspacePath/);
-  assert.match(appSource, /skillPath: manageTaskboardSkillPath/);
+  assert.match(appSource, /skillPath: managePanelSkillPath/);
   assert.match(appSource, /intervalMinutes: options\.intervalMinutes/);
   assert.match(appSource, /model: options\.model/);
   assert.match(appSource, /reasoningEffort: options\.reasoningEffort/);
-  assert.match(appSource, /message\.type === "taskboard:automation-response"/);
+  assert.match(appSource, /message\.type === "panel:automation-response"/);
   assert.match(appSource, /pendingAutomationRequestsRef/);
   assert.match(appSource, /requestId/);
   assert.match(appSource, /window\.setTimeout/);
@@ -96,9 +96,9 @@ test("automation play and pause retain Linear's 16px filled presentation", () =>
 });
 
 test("the automation menu reuses the Linear switch and keeps form focus chrome suppressed", () => {
-  assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.status === "ACTIVE" \? " is-on" : ""\}`\}/);
+  assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.enabledByUser \? " is-on" : ""\}`\}/);
   assert.match(menuSource, /role="switch"/);
-  assert.match(menuSource, /aria-checked=\{draft\.status === "ACTIVE"\}/);
+  assert.match(menuSource, /aria-checked=\{draft\.enabledByUser\}/);
   assert.doesNotMatch(menuSource, /type="checkbox"/);
   assert.match(styles, /\.project-automation-field select:focus-visible\s*\{[^}]*outline:\s*0;[^}]*box-shadow:\s*none;/s);
   assert.doesNotMatch(styles, /\.project-automation-switch input:focus-visible/);
@@ -107,7 +107,11 @@ test("the automation menu reuses the Linear switch and keeps form focus chrome s
 test("unavailable automation state has one notice, clears stale errors, and cannot change", () => {
   assert.match(menuSource, /error && error !== unavailableReason/);
   assert.match(menuSource, /const disabled = pending \|\| Boolean\(unavailableReason\)/);
-  assert.equal(menuSource.match(/disabled=\{disabled\}/g)?.length, 4);
+  assert.match(
+    menuSource,
+    /draft\.enabledByUser[\s\S]*?disabled=\{disabled\}[\s\S]*?draft\.quotaAware[\s\S]*?disabled=\{disabled\}/,
+  );
+  assert.equal(menuSource.match(/<select[\s\S]*?disabled=\{disabled\}/g)?.length, 3);
   const reconcileSource = appSource.slice(
     appSource.indexOf("const reconcileProjectAutomation"),
     appSource.indexOf("const saveProjectAutomation"),
@@ -148,11 +152,11 @@ test("pending completion reconciles the optimistic draft to confirmed host state
 });
 
 test("opening settings and changing projects reconcile with the host list", () => {
-  assert.match(appSource, /sendAutomationRequest\("list", options, stored\?\.automationId\)/);
+  assert.match(appSource, /sendAutomationRequest\(\s*stored \? "apply-policy" : "list",\s*options,\s*stored\?\.automationId,/);
   assert.match(appSource, /items\.find\(\(item\) => item\.id === stored\?\.automationId\)/);
   assert.match(appSource, /items\.length === 1 \? items\[0\] : undefined/);
   assert.match(appSource, /status: item\.status/);
   assert.match(appSource, /automationId: undefined/);
-  assert.match(appSource, /options\.status === "PAUSED" && !stored\?\.automationId/);
+  assert.match(appSource, /sendAutomationRequest\("apply-policy", options, stored\?\.automationId\)/);
   assert.match(appSource, /writeProjectAutomation\(selectedProjectId, previousRecord\)/);
 });

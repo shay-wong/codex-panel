@@ -6,11 +6,15 @@ const appSource = await readFile(new URL("../web/src/App.tsx", import.meta.url),
 const apiSource = await readFile(new URL("../web/src/api.ts", import.meta.url), "utf8");
 const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 const editorSource = await readFile(new URL("../web/src/components/TaskEditor.tsx", import.meta.url), "utf8");
+const pendingAttachmentsSource = await readFile(
+  new URL("../web/src/components/PendingAttachments.tsx", import.meta.url),
+  "utf8",
+);
 const detailSource = await readFile(new URL("../web/src/components/TaskDetail.tsx", import.meta.url), "utf8");
 const labelPickerSource = await readFile(new URL("../web/src/components/LabelPicker.tsx", import.meta.url), "utf8");
 const labelsSource = await readFile(new URL("../web/src/labels.ts", import.meta.url), "utf8");
 
-test("the project home merges live Codex projects with persisted Taskboard projects", () => {
+test("the project home merges live Codex projects with persisted Panel projects", () => {
   assert.match(appSource, /hostContext\?\.projects \?\? \[\]/);
   assert.match(appSource, /persistedById/);
   assert.match(appSource, /project\.inCodex \? "Codex 项目" : "已保存的项目"/);
@@ -19,7 +23,7 @@ test("the project home merges live Codex projects with persisted Taskboard proje
 });
 
 test("each device stores an independent workspace path for every project", () => {
-  assert.match(appSource, /const DEVICE_WORKSPACE_PATHS_KEY = "taskboard\.deviceWorkspacePaths\.v1"/);
+  assert.match(appSource, /const DEVICE_WORKSPACE_PATHS_KEY = "panel\.deviceWorkspacePaths\.v1"/);
   assert.match(appSource, /function readDeviceWorkspacePaths\(\)/);
   assert.match(appSource, /rememberDeviceWorkspacePath/);
   assert.match(appSource, /const \[nextProjects, metadata, workspaces\] = await Promise\.all\(\[/);
@@ -32,7 +36,7 @@ test("each device stores an independent workspace path for every project", () =>
 });
 
 test("project selection is remembered until the user explicitly returns home", () => {
-  assert.match(appSource, /const LAST_PROJECT_KEY = "taskboard\.lastProjectId"/);
+  assert.match(appSource, /const LAST_PROJECT_KEY = "panel\.lastProjectId"/);
   assert.match(appSource, /window\.localStorage\.setItem\(LAST_PROJECT_KEY, projectId\)/);
   assert.match(appSource, /function returnToProjectHome\(\)/);
   assert.match(appSource, /window\.localStorage\.removeItem\(LAST_PROJECT_KEY\)/);
@@ -52,7 +56,8 @@ test("the home uses the same restrained surface language as the issue board", ()
 
 test("new issues stage attachments in the composer and upload them after creation", () => {
   assert.match(editorSource, /type="file"[\s\S]*?multiple/);
-  assert.match(editorSource, /className="composer-attachment-list"/);
+  assert.match(editorSource, /<PendingAttachments/);
+  assert.match(pendingAttachmentsSource, /className="composer-attachment-list"/);
   assert.match(editorSource, /保存后上传/);
   assert.match(appSource, /Promise\.allSettled/);
   assert.match(appSource, /uploadAttachment\(saved\.id, file\)/);

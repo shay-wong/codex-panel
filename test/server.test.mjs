@@ -6,7 +6,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, test } from "node:test";
 
-import { createTaskboardServer } from "../server/index.mjs";
+import { createPanelServer } from "../server/index.mjs";
 
 const runningApps = [];
 
@@ -19,9 +19,9 @@ afterEach(async () => {
 });
 
 async function startServer(configure, listenOptions = {}) {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "codex-taskboard-test-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-test-"));
   const options = configure ? await configure(directory) : {};
-  const app = createTaskboardServer({ dataDirectory: directory, ...options });
+  const app = createPanelServer({ dataDirectory: directory, ...options });
   const address = await app.listen({ port: 0, ...listenOptions });
   runningApps.push({ app, directory });
   return `http://127.0.0.1:${address.port}`;
@@ -65,7 +65,7 @@ async function requestWithHost(baseUrl, host) {
 test("health and the default local project are available", async () => {
   let skillPath;
   const baseUrl = await startServer(async (directory) => {
-    skillPath = path.join(directory, "skills", "manage-taskboard", "SKILL.md");
+    skillPath = path.join(directory, "skills", "manage-panel", "SKILL.md");
     return { skillPath };
   });
 
@@ -76,7 +76,7 @@ test("health and the default local project are available", async () => {
   const metadata = await request(baseUrl, "/api/meta");
   assert.equal(metadata.response.status, 200);
   assert.deepEqual(metadata.body, {
-    manageTaskboardSkillPath: skillPath,
+    managePanelSkillPath: skillPath,
     capabilities: { localAiChat: true },
   });
 
@@ -720,7 +720,7 @@ fi
 while IFS= read -r line; do
   case "$line" in
     *'"id":1'*) printf '%s\\n' '{"id":1,"result":{"platformFamily":"unix"}}' ;;
-    *'"id":2'*) printf '%s\\n' '{"id":2,"result":{"data":[{"cwd":"workspace","skills":[{"name":"user-skill","enabled":true,"scope":"user","interface":null},{"name":"repo-skill","enabled":true,"scope":"repo","interface":{"displayName":"Repository Skill"}},{"name":"user-skill","enabled":true,"scope":"system","interface":{"displayName":"Duplicate"}},{"name":"disabled-skill","enabled":false,"scope":"user","interface":null}],"errors":[]}]}}' ;;
+    *'"id":2'*) printf '%s\\n' '{"id":2,"result":{"data":[{"cwd":"workspace","skills":[{"name":"user-skill","enabled":true,"scope":"user","description":"User workflow","path":"/skills/user-skill/SKILL.md","interface":null},{"name":"repo-skill","enabled":true,"scope":"repo","description":"Repository workflow","path":"/workspace/skills/repo-skill/SKILL.md","interface":{"displayName":"Repository Skill"}},{"name":"user-skill","enabled":true,"scope":"system","interface":{"displayName":"Duplicate"}},{"name":"disabled-skill","enabled":false,"scope":"user","interface":null}],"errors":[]}]}}' ;;
   esac
 done
 `);
@@ -735,8 +735,20 @@ done
   assert.equal(result.response.status, 200);
   assert.deepEqual(result.body, {
     skills: [
-      { id: "repo-skill", label: "Repository Skill", scope: "repo" },
-      { id: "user-skill", label: "user-skill", scope: "user" },
+      {
+        id: "repo-skill",
+        label: "Repository Skill",
+        description: "Repository workflow",
+        path: "/workspace/skills/repo-skill/SKILL.md",
+        scope: "repo",
+      },
+      {
+        id: "user-skill",
+        label: "user-skill",
+        description: "User workflow",
+        path: "/skills/user-skill/SKILL.md",
+        scope: "user",
+      },
     ],
     mcpServers: [
       { id: "context7", label: "context7", transport: "streamable_http" },
@@ -766,7 +778,7 @@ test("workflow capability discovery fails instead of inventing fallback options"
 
 test("existing task and comment thread attribution remains content-specific", async () => {
   const baseUrl = await startServer(async (directory) => {
-    const databasePath = path.join(directory, "taskboard.sqlite");
+    const databasePath = path.join(directory, "panel.sqlite");
     const database = new DatabaseSync(databasePath);
     database.exec(`
       CREATE TABLE projects (
@@ -896,7 +908,7 @@ test("existing task and comment thread attribution remains content-specific", as
 
 test("task thread migration excludes comment-only aggregate entries", async () => {
   const baseUrl = await startServer(async (directory) => {
-    const databasePath = path.join(directory, "taskboard.sqlite");
+    const databasePath = path.join(directory, "panel.sqlite");
     const database = new DatabaseSync(databasePath);
     database.exec(`
       CREATE TABLE projects (
@@ -1041,10 +1053,10 @@ test("accepts private LAN requests and rejects public Host and Origin headers", 
   });
   assert.equal(lanOriginResult.response.status, 200);
 
-  const localHostnameResult = await requestWithHost(baseUrl, "taskboard.local:47823");
+  const localHostnameResult = await requestWithHost(baseUrl, "panel.local:47823");
   assert.equal(localHostnameResult.status, 200);
 
-  const hostResult = await requestWithHost(baseUrl, "taskboard.example.com");
+  const hostResult = await requestWithHost(baseUrl, "panel.example.com");
   assert.equal(hostResult.status, 403);
   assert.equal(hostResult.body.error.code, "INVALID_HOST");
 
@@ -1078,8 +1090,8 @@ test("project and task CRUD flow", async () => {
       threadId: "thread-123",
       developmentContext: {
         type: "worktree",
-        path: "/work/website/.worktrees/taskboard",
-        branch: "worktree/taskboard",
+        path: "/work/website/.worktrees/panel",
+        branch: "worktree/panel",
       },
       dueDate: "2026-07-24",
       recurrence: { interval: 2, unit: "week" },
@@ -1099,8 +1111,8 @@ test("project and task CRUD flow", async () => {
   assert.equal(created.creatorAvatarUrl, null);
   assert.deepEqual(created.developmentContext, {
     type: "worktree",
-    path: "/work/website/.worktrees/taskboard",
-    branch: "worktree/taskboard",
+    path: "/work/website/.worktrees/panel",
+    branch: "worktree/panel",
   });
   assert.equal(created.dueDate, "2026-07-24");
   assert.deepEqual(created.recurrence, { interval: 2, unit: "week" });
@@ -1534,13 +1546,13 @@ test("issue comments can be created, edited, listed, and deleted", async () => {
   assert.equal(taskAfterDelete.body.task.threadId, null);
 });
 
-test("taskctl issue creation and comments use the Codex Agent identity", async () => {
+test("panelctl issue creation and comments use the Codex Agent identity", async () => {
   const baseUrl = await startServer();
   const agentHeaders = {
-    "x-taskboard-client": "taskctl",
-    "x-taskboard-user-id": "spoofed-user",
-    "x-taskboard-user-name": "Spoofed User",
-    "x-taskboard-user-avatar": "https://example.com/spoofed.png",
+    "x-panel-client": "panelctl",
+    "x-panel-user-id": "spoofed-user",
+    "x-panel-user-name": "Spoofed User",
+    "x-panel-user-avatar": "https://example.com/spoofed.png",
   };
   const createTaskResult = await request(baseUrl, "/api/tasks", {
     method: "POST",
@@ -1577,9 +1589,9 @@ test("taskctl issue creation and comments use the Codex Agent identity", async (
 test("Codex-hosted user mutations persist the current account identity and avatar", async () => {
   const baseUrl = await startServer();
   const userHeaders = {
-    "x-taskboard-user-id": "test-user",
-    "x-taskboard-user-name": "Test%20User",
-    "x-taskboard-user-avatar": "https://example.com/test-user.png",
+    "x-panel-user-id": "test-user",
+    "x-panel-user-name": "Test%20User",
+    "x-panel-user-avatar": "https://example.com/test-user.png",
   };
   const createTaskResult = await request(baseUrl, "/api/tasks", {
     method: "POST",
@@ -1633,10 +1645,10 @@ test("Codex-hosted user mutations persist the current account identity and avata
 
   const updatedByCodexResult = await request(baseUrl, `/api/tasks/${task.id}`, {
     method: "PATCH",
-    headers: { "x-taskboard-client": "taskctl" },
+    headers: { "x-panel-client": "panelctl" },
     body: {
       version: assignedToUserResult.body.task.version,
-      title: "Updated through taskctl",
+      title: "Updated through panelctl",
     },
   });
   assert.equal(updatedByCodexResult.response.status, 200);
@@ -1683,7 +1695,7 @@ test("issue attachments can be uploaded, listed, opened, downloaded, and deleted
     method: "POST",
     headers: {
       "content-type": "text/plain; charset=utf-8",
-      "x-taskboard-filename": encodeURIComponent("设计说明.txt"),
+      "x-panel-filename": encodeURIComponent("设计说明.txt"),
     },
     body: contents,
   });
@@ -1714,7 +1726,7 @@ test("issue attachments can be uploaded, listed, opened, downloaded, and deleted
     method: "POST",
     headers: {
       "content-type": "text/html",
-      "x-taskboard-filename": encodeURIComponent("page.html"),
+      "x-panel-filename": encodeURIComponent("page.html"),
     },
     body: "<script>document.body.textContent = 'unsafe'</script>",
   });
@@ -1755,7 +1767,7 @@ test("comments support attachments and deleting a comment removes its files", as
     method: "POST",
     headers: {
       "content-type": "text/plain",
-      "x-taskboard-filename": encodeURIComponent("comment.txt"),
+      "x-panel-filename": encodeURIComponent("comment.txt"),
     },
     body: contents,
   });
@@ -1797,7 +1809,7 @@ test("attachment uploads reject unsafe filenames", async () => {
     method: "POST",
     headers: {
       "content-type": "text/plain",
-      "x-taskboard-filename": encodeURIComponent("../outside.txt"),
+      "x-panel-filename": encodeURIComponent("../outside.txt"),
     },
     body: "unsafe",
   });
