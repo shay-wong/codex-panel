@@ -63,13 +63,13 @@
 
 - 生命周期：`长期保留`
 - 原始目的：让项目自动重建用户现有的 `~/Applications/Codex.app` 启动器，保留 Codex 名称、图标和原有 Dock 入口，并在点击它时启动带内嵌 Panel 的官方 Codex，不必先打开终端运行注入器。
-- 行为不变量：macOS 上由显式 `npm run codex:install` 原位重建 `~/Applications/Codex.app`；`npm ci` 只安装项目依赖，不得写入用户应用或全局集成。启动器保留兼容 bundle id `com.shay.codex-taskboard-launcher` 以维持现有 Dock 应用身份；生成的 AppleScript 必须直接使用 Node 运行固定用户目录中的 injector，不得依赖源仓库或 npm 工作目录，并按 9229 CDP 状态选择 `--daemon --open` 或 `--launch --watch --open`。已有健康 resident 时必须直接复用并打开 Panel；接管或刷新 resident 时，必须在同一 CDP 会话启用 CSP bypass 后重载 renderer，避免 iframe 变成 `ERR_BLOCKED_BY_CSP`。保持现有回环 CDP、服务监督和随 Codex 退出的生命周期，退役服务必须关闭仍活跃的 HTTP/SSE 连接且不继续持有 SQLite；不修改官方 `/Applications/ChatGPT.app` 或 `app.asar`。非 macOS 环境应成功跳过生成。
-- 代码和测试路径：`scripts/install-macos-launcher.mjs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-runtime.mjs`、`server/app.mjs`、`test/injector-host-runtime.test.mjs`、`test/ai-chat-server.test.mjs` 和 `package.json`。
+- 行为不变量：macOS 上由显式 `npm run codex:install` 原位重建 `~/Applications/Codex.app`；`npm ci` 只安装项目依赖，不得写入用户应用或全局集成。启动器保留兼容 bundle id `com.shay.codex-taskboard-launcher` 以维持现有 Dock 应用身份；生成的 AppleScript 必须直接使用 Node 运行固定用户目录中的 injector，不得依赖源仓库或 npm 工作目录，并按 9229 CDP 状态选择 `--daemon --open` 或 `--launch --watch --open`。冷启动必须解析并直接启动官方应用的 `CFBundleExecutable`，让 watcher 跟踪真实 Codex 主进程并保留 CDP 参数，不得重新依赖短生命周期的 `/usr/bin/open -W` 代理进程。已有健康 resident 时必须直接复用并打开 Panel；接管或刷新 resident 时，必须在同一 CDP 会话启用 CSP bypass 后重载 renderer，避免 iframe 变成 `ERR_BLOCKED_BY_CSP`。保持现有回环 CDP、服务监督和随 Codex 退出的生命周期，退役服务必须关闭仍活跃的 HTTP/SSE 连接且不继续持有 SQLite；不修改官方 `/Applications/ChatGPT.app` 或 `app.asar`。非 macOS 环境应成功跳过生成。
+- 代码和测试路径：`scripts/install-macos-launcher.mjs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-runtime.mjs`、`server/app.mjs`、`test/injector.test.mjs`、`test/injector-host-runtime.test.mjs`、`test/ai-chat-server.test.mjs` 和 `package.json`。
 - 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
 - 来源：本次 Fork 能力；可用 `git log -S'launcher:install' -- package.json scripts/install-macos-launcher.mjs` 定位。
 - 合并指引：上游调整安装脚本或注入器入口时，保留“显式安装命令重建现有用户级 `Codex.app`，AppleScript 只调用已安装 runtime，健康 resident 直接复用，接管时重载以应用 CSP bypass，官方 Codex 与本地服务生命周期绑定”的不变量，不把注入实现复制进应用包，也不能重新依赖源仓库路径。
 - 移除条件：Fork 不再支持 macOS Codex 内嵌，或上游提供等价的自动生成本地启动器能力时同步移除。
-- 针对性验证：先运行 `npm ci`，确认没有创建或修改 Skills、CLI 及 `~/Applications/Codex.app`；再运行 `npm run codex:install`，确认 `~/Applications/Codex.app/Contents/Info.plist` 可由 `plutil -lint` 解析，bundle id 保持兼容，且 marker 和反编译后的 AppleScript 只指向固定 runtime 与数据目录，不包含源仓库路径或 `npm run`。完全退出 Codex 后打开该应用，确认 Panel 已嵌入；运行一次 resident refresh 后确认 iframe target 仍为 Panel URL 而不是 `chrome-error://chromewebdata/`；再次点击启动器时确认复用同一 resident PID；最后退出 Codex 并确认本地服务及退役进程全部停止。
+- 针对性验证：先运行 `node --test --test-name-pattern='cold launch' test/injector.test.mjs`，确认冷启动返回并跟踪应用包主可执行进程、完整传入 CDP 参数，且缺失或损坏的 `CFBundleExecutable` 元数据会保留 `plutil` 错误并拒绝 basename 回退。再运行 `npm ci`，确认没有创建或修改 Skills、CLI 及 `~/Applications/Codex.app`；运行 `npm run codex:install`，确认 `~/Applications/Codex.app/Contents/Info.plist` 可由 `plutil -lint` 解析，bundle id 保持兼容，且 marker 和反编译后的 AppleScript 只指向固定 runtime 与数据目录，不包含源仓库路径或 `npm run`。完全退出 Codex 后打开该应用，确认 Panel 已嵌入；运行一次 resident refresh 后确认 iframe target 仍为 Panel URL 而不是 `chrome-error://chromewebdata/`；再次点击启动器时确认复用同一 resident PID；最后退出 Codex 并确认本地服务及退役进程全部停止。
 
 ### 自包含安装 Panel runtime、Skills 与 CLI
 

@@ -2,6 +2,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { accessSync, constants } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -193,14 +194,41 @@ function codexIsRunning() {
   return spawnSync("/usr/bin/pgrep", ["-x", "ChatGPT"], { stdio: "ignore" }).status === 0;
 }
 
-function launchCodex(appPath, port) {
+function codexExecutablePath(appPath) {
+  const plistPath = path.join(appPath, "Contents", "Info.plist");
+  const plistResult = spawnSync("/usr/bin/plutil", [
+    "-extract",
+    "CFBundleExecutable",
+    "raw",
+    "-o",
+    "-",
+    plistPath,
+  ], { encoding: "utf8" });
+  if (plistResult.status !== 0) {
+    const detail = plistResult.stderr?.trim()
+      || plistResult.stdout?.trim()
+      || plistResult.error?.message
+      || `exit status ${plistResult.status}`;
+    throw new Error(`Unable to read CFBundleExecutable from ${plistPath}: ${detail}`);
+  }
+  const executableName = plistResult.stdout.trim();
+  if (!executableName || path.basename(executableName) !== executableName) {
+    throw new Error(`Invalid Codex application executable: ${executableName || "missing"}`);
+  }
+  const executablePath = path.join(appPath, "Contents", "MacOS", executableName);
+  try {
+    accessSync(executablePath, constants.X_OK);
+  } catch {
+    throw new Error(`Codex application executable is not runnable: ${executablePath}`);
+  }
+  return executablePath;
+}
+
+export function launchCodex(appPath, port) {
+  const executablePath = codexExecutablePath(appPath);
   return spawn(
-    "/usr/bin/open",
+    executablePath,
     [
-      "-W",
-      "-a",
-      appPath,
-      "--args",
       `--remote-debugging-port=${port}`,
       `--remote-allow-origins=http://127.0.0.1:${port}`,
     ],

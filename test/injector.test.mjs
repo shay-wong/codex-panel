@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { once } from "node:events";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:http";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
-import { waitForCodexTargets } from "../scripts/codex-injector.mjs";
+import { launchCodex, waitForCodexTargets } from "../scripts/codex-injector.mjs";
 
 const source = await readFile(new URL("../scripts/codex-injector.mjs", import.meta.url), "utf8");
 const runtimeSource = await readFile(
@@ -13,6 +23,69 @@ const runtimeSource = await readFile(
 const packageJson = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
 );
+
+test("cold launch tracks the Codex application process instead of an open helper", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-launch-"));
+  const appPath = path.join(directory, "Fake Codex.app");
+  const executablePath = path.join(appPath, "Contents", "MacOS", "Fake Codex");
+  const capturePath = path.join(directory, "args.json");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  await mkdir(path.dirname(executablePath), { recursive: true });
+  await writeFile(path.join(appPath, "Contents", "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleExecutable</key><string>Fake Codex</string>
+  <key>CFBundleIdentifier</key><string>test.codex-panel.fake-codex</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>
+`);
+  await writeFile(executablePath, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify(process.argv.slice(2)));
+`);
+  await chmod(executablePath, 0o755);
+
+  const child = launchCodex(appPath, 9347);
+  const [exitCode] = await once(child, "exit");
+
+  assert.equal(exitCode, 0);
+  assert.equal(child.spawnfile, executablePath);
+  assert.deepEqual(JSON.parse(await readFile(capturePath, "utf8")), [
+    "--remote-debugging-port=9347",
+    "--remote-allow-origins=http://127.0.0.1:9347",
+  ]);
+});
+
+for (const [caseName, plistContents] of [
+  [
+    "missing CFBundleExecutable",
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>test.codex-panel.fake-codex</string>
+</dict></plist>
+`,
+  ],
+  ["malformed Info.plist", "not a property list\n"],
+]) {
+  test(`cold launch rejects ${caseName} without a basename fallback`, async (t) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-invalid-launch-"));
+    const appPath = path.join(directory, "Fake Codex.app");
+    const executablePath = path.join(appPath, "Contents", "MacOS", "Fake Codex");
+    t.after(() => rm(directory, { recursive: true, force: true }));
+
+    await mkdir(path.dirname(executablePath), { recursive: true });
+    await writeFile(path.join(appPath, "Contents", "Info.plist"), plistContents);
+    await writeFile(executablePath, "#!/bin/sh\nexit 0\n");
+    await chmod(executablePath, 0o755);
+
+    assert.throws(
+      () => launchCodex(appPath, 9347),
+      /Unable to read CFBundleExecutable from .*Info\.plist: .+/,
+    );
+  });
+}
 
 test("the launcher waits for and selects a delayed main Codex renderer", async (t) => {
   let listRequests = 0;
