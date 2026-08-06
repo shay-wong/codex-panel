@@ -8,7 +8,7 @@ The browser title and repository entry points use the `Codex Panel` name, and th
 
 ## Generated macOS launcher
 
-On macOS, the explicit `npm run codex:install` command builds a standalone runtime under `~/Library/Application Support/Codex Panel` and rebuilds the existing `~/Applications/Codex.app` launcher with its Codex name and icon. Plain `npm ci` only installs project dependencies. Opening the generated launcher runs the installed runtime directly, so the official `/Applications/ChatGPT.app` installation starts with CDP, the local Panel service starts, and the embedded sidebar entry opens without a terminal command. The service started by this launcher stops after that Codex instance exits.
+On macOS, the explicit `npm run codex:install` command builds a standalone runtime under `~/Library/Application Support/Codex Panel` and creates or refreshes the existing `~/Applications/Codex.app` launcher with its Codex name and icon. A stable definition marker and signature verification let an unchanged launcher bundle survive routine reinstallations without changing its ad-hoc designated requirement or macOS permission identity. The generated bundle removes AppleScript's default `CFBundleIconName=applet` override so Finder and the Dock use the copied Codex icon on both first-time and repeated installation, and opts its native dialogs into the current macOS appearance instead of forcing Aqua. Plain `npm ci` only installs project dependencies. Opening the generated launcher runs the installed runtime directly, so the official `/Applications/ChatGPT.app` installation starts with CDP, the local Panel service starts, and the embedded sidebar entry opens without a terminal command. The service started by this launcher stops after that Codex instance exits.
 
 Clicking the launcher while its CDP-enabled Codex is already running reuses a healthy resident injector and opens the embedded Panel before focusing the existing window. A missing or stale resident is replaced; the recovery reloads the Codex renderer once after enabling the CSP bypass, and the retired local service closes active connections before releasing SQLite.
 
@@ -22,7 +22,9 @@ The launcher never modifies the official `ChatGPT.app`. Moving or deleting the s
 
 ## Reliable initial Codex injection
 
-The standalone launcher waits up to 30 seconds for Codex's main renderer after CDP becomes reachable. It ignores auxiliary renderers such as global dictation and the avatar overlay.
+The standalone launcher waits up to 30 seconds for Codex's main renderer after CDP becomes reachable. It ignores auxiliary renderers such as global dictation and the avatar overlay, then waits for the main renderer's initial `app://` document to reach `complete`. Initial injection runs in that document without reloading it, so the official desktop bootstrap is not aborted. Reload remains limited to taking over or refreshing an existing resident renderer after enabling the CSP bypass. A first renderer or iframe timeout in watch mode is retried while the supervised Panel service remains available.
+
+Chromium 151 applies Local Network Access checks to loopback subframe navigation. The generated launcher therefore passes `--disable-features=LocalNetworkAccessForSubframeNavigations`, and the managed iframe delegates `local-network-access`, `loopback-network`, and `local-network`. The compatibility switch is limited to subframe navigation; fetch, WebSocket, and other Local Network Access checks are not disabled.
 
 Run the launcher as documented in [Embed in Codex](../README.md#embed-in-codex):
 

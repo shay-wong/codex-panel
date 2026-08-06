@@ -69,7 +69,7 @@ Existing browser settings and drafts are migrated from `taskboard.*` keys to `pa
 
 ### Recommended: use the generated Codex launcher
 
-`npm run codex:install` rebuilds the existing `Codex.app` launcher in `~/Applications`, preserving its Codex name and icon while pointing it at the installed runtime and data directory. Quit every running Codex window, then open that launcher from its existing Dock item, Finder, or the explicit command-line path:
+`npm run codex:install` creates or refreshes the existing `Codex.app` launcher in `~/Applications`, preserving its Codex name and icon while pointing it at the installed runtime and data directory. An unchanged, valid launcher bundle is reused instead of being recompiled and re-signed, so routine runtime updates keep the same macOS permission identity. The generated bundle removes AppleScript's default applet-icon override, so both first-time and repeated installation use the copied Codex icon in Finder and the Dock. Its native warning and error dialogs follow the current macOS light or dark appearance. Quit every running Codex window, then open that launcher from its existing Dock item, Finder, or the explicit command-line path:
 
 ```bash
 open "$HOME/Applications/Codex.app"
@@ -100,7 +100,8 @@ Keep the existing Codex window open. From the Panel repository, start a second C
 ```bash
 open -n -a /Applications/ChatGPT.app --args \
   --remote-debugging-port=9231 \
-  --remote-allow-origins=http://127.0.0.1:9231
+  --remote-allow-origins=http://127.0.0.1:9231 \
+  --disable-features=LocalNetworkAccessForSubframeNavigations
 ```
 
 After the new Codex window appears, run the injector in another terminal:
@@ -112,9 +113,9 @@ npm run codex:inject -- --port 9231 --open
 
 Keep the injector terminal running while using the embedded panel. The original Codex window remains unchanged, and the new window receives the Panel sidebar entry. If port `9231` is occupied, use another port in both commands.
 
-After CDP becomes reachable, the launcher waits up to 30 seconds for Codex to create its main renderer before injecting Panel, ignoring auxiliary renderers such as the avatar overlay. This avoids startup failures when Electron exposes the debugging endpoint before the Codex page is ready.
+After CDP becomes reachable, the launcher waits up to 30 seconds for Codex to create its main renderer, then waits for the initial `app://` document to finish loading before injecting Panel. It ignores auxiliary renderers such as the avatar overlay and does not reload the initial renderer, so Codex can complete its own desktop bootstrap. In resident watch mode, an initial renderer or iframe timeout leaves the local service running and is retried until the Panel opens instead of terminating the integration.
 
-Codex 26.715.52143 ships a renderer CSP that blocks arbitrary HTTP iframes. The launcher therefore enables CDP CSP bypass, reloads that renderer once, installs the document-start script, and waits until the Panel OOPIF is actually loaded. CDP is unauthenticated to other processes on the same machine, so only run trusted local code while the launcher is active.
+Codex ships a renderer CSP that blocks arbitrary HTTP iframes. The launcher enables the CDP CSP bypass before injecting the initial document. Chromium 151 also applies Local Network Access checks to loopback subframe navigation, so the launcher disables only `LocalNetworkAccessForSubframeNavigations` and the managed iframe explicitly delegates the corresponding local-network permissions. Other Local Network Access checks remain enabled. When the injector must take over or refresh an existing resident renderer, it reloads that renderer once after enabling the CSP bypass so the Panel OOPIF can load. CDP is unauthenticated to other processes on the same machine, so only run trusted local code while the launcher is active.
 
 To inject into a Codex instance that was already launched with CDP by another method, run:
 

@@ -69,7 +69,7 @@ npm run codex:install
 
 ### 推荐：使用自动生成的 Codex 启动器
 
-`npm run codex:install` 会重建 `~/Applications` 中现有的 `Codex.app` 启动器，保留它的 Codex 名称和图标，并让它指向已安装的 runtime 和数据目录。完全退出所有正在运行的 Codex 窗口，然后从现有 Dock 图标、Finder 或明确的命令行路径打开该启动器：
+`npm run codex:install` 会创建或刷新 `~/Applications` 中现有的 `Codex.app` 启动器，保留它的 Codex 名称和图标，并让它指向已安装的 runtime 和数据目录。如果现有启动器定义未变化且签名有效，安装器会直接复用该 bundle，不再重复编译和签名，因此日常 runtime 更新不会改变 macOS 权限身份。生成的应用会移除 AppleScript 默认 applet 图标覆盖，因此首次安装和重复安装都会让 Finder 与 Dock 使用复制的 Codex 图标；原生警告和错误提示框也会跟随当前 macOS 的浅色或深色外观。完全退出所有正在运行的 Codex 窗口，然后从现有 Dock 图标、Finder 或明确的命令行路径打开该启动器：
 
 ```bash
 open "$HOME/Applications/Codex.app"
@@ -100,7 +100,8 @@ CODEX_PANEL_HOST=127.0.0.1 npm run codex
 ```bash
 open -n -a /Applications/ChatGPT.app --args \
   --remote-debugging-port=9231 \
-  --remote-allow-origins=http://127.0.0.1:9231
+  --remote-allow-origins=http://127.0.0.1:9231 \
+  --disable-features=LocalNetworkAccessForSubframeNavigations
 ```
 
 新的 Codex 窗口出现后，在另一个终端中运行注入器：
@@ -112,9 +113,9 @@ npm run codex:inject -- --port 9231 --open
 
 使用嵌入面板期间，请保持注入器终端运行。原 Codex 窗口不会受到影响，新窗口会显示 Panel 侧边栏入口。如果端口 `9231` 已被占用，请在两条命令中使用同一个其他端口。
 
-CDP 可以访问后，启动器会等待最多 30 秒，让 Codex 创建主 renderer，再注入 Panel，并忽略头像浮层等辅助 renderer。这样可以避免 Electron 已开放调试端点、但 Codex 页面尚未就绪时启动失败。
+CDP 可以访问后，启动器会等待最多 30 秒，让 Codex 创建主 renderer，再等待初始 `app://` 文档完成加载后注入 Panel，并忽略头像浮层等辅助 renderer。首次注入不会重载 renderer，因此不会中断 Codex 自身的桌面 bootstrap。在 resident watch 模式下，如果首次等待 renderer 或 iframe 超时，本地服务会继续运行并持续重试，直到 Panel 成功打开，而不是直接终止集成。
 
-Codex 26.715.52143 自带的渲染器 CSP 会阻止任意 HTTP iframe。因此，启动器会通过 CDP 绕过 CSP，重新加载一次渲染器，安装 document-start 脚本，并等待 Panel OOPIF 真正加载完成。同一台设备上的其他进程无需认证即可访问 CDP，因此仅应在启动器运行期间执行可信的本地代码。
+Codex 自带的渲染器 CSP 会阻止任意 HTTP iframe。启动器会先通过 CDP 绕过 CSP，再注入初始文档。Chromium 151 还会对回环地址的子框架导航执行 Local Network Access 检查，因此启动器只关闭 `LocalNetworkAccessForSubframeNavigations`，并由受管 iframe 显式委派对应的本地网络权限；其他 Local Network Access 检查仍保持启用。只有接管或刷新已有 resident renderer 时，才会在启用 CSP bypass 后重载一次 renderer，确保 Panel OOPIF 可以加载。同一台设备上的其他进程无需认证即可访问 CDP，因此仅应在启动器运行期间执行可信的本地代码。
 
 如果 Codex 已通过其他方式启用了 CDP，可运行：
 
