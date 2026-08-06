@@ -13,12 +13,14 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import {
+import * as injectorModule from "../scripts/codex-injector.mjs";
+
+const {
   launchCodex,
   reloadRenderer,
   waitForCodexTargets,
   waitForRendererReady,
-} from "../scripts/codex-injector.mjs";
+} = injectorModule;
 
 const source = await readFile(new URL("../scripts/codex-injector.mjs", import.meta.url), "utf8");
 const runtimeSource = await readFile(
@@ -181,13 +183,12 @@ test("the resident injector supervises the fixed local Panel service", () => {
   assert.match(source, /AbortSignal\.timeout\(1_500\)/);
 });
 
-test("watch mode keeps retrying an initial Panel iframe failure", () => {
-  assert.match(source, /let initialOpenPending = options\.open/);
-  assert.match(source, /if \(!options\.watch\) throw error/);
-  assert.match(source, /shouldOpen && firstTarget/);
-  assert.match(source, /initialOpenPending,\s*null,\s*injectedTargets/);
-  assert.match(source, /initialOpenPending = false/);
-  assert.match(source, /if \(shouldRemainOpen && !frameLoaded\)/);
+test("the initial Panel open request is claimed only once after a renderer appears", () => {
+  const request = injectorModule.createInitialOpenRequest(true);
+
+  assert.equal(request.claim([]), false);
+  assert.equal(request.claim([{ id: "main" }]), true);
+  assert.equal(request.claim([{ id: "main" }]), false);
 });
 
 test("the CDP bridge accepts only service ensure and native Skill composer prefill actions", () => {
@@ -251,20 +252,26 @@ test("attach reconciles the renderer against a hashed current injection source",
   assert.match(source, /expectedSourceHash/);
 });
 
-test("initial renderer injection waits for Codex bootstrap without reloading it", () => {
+test("initial renderer injection reloads only after Codex bootstrap completes", () => {
   const readinessStart = source.indexOf(
     "    await waitForRendererReady(cdp, 15_000);",
   );
-  const branchEnd = source.indexOf(
-    "    await evaluateInjectionSource(cdp, source);",
+  const registration = source.indexOf(
+    "    const scriptIdentifier = await registerInjectionSource(cdp, source);",
     readinessStart,
   );
+  const reload = source.indexOf(
+    "    await reloadRenderer(cdp, 15_000);",
+    registration,
+  );
+  const evaluation = source.indexOf(
+    "    await evaluateInjectionSource(cdp, source);",
+    reload,
+  );
   assert.notEqual(readinessStart, -1);
-  assert.notEqual(branchEnd, -1);
-
-  const initialRendererSetup = source.slice(readinessStart, branchEnd);
-  assert.match(initialRendererSetup, /registerInjectionSource\(cdp, source\)/);
-  assert.doesNotMatch(initialRendererSetup, /Page\.reload|reloadRenderer/);
+  assert.ok(registration > readinessStart);
+  assert.ok(reload > registration);
+  assert.ok(evaluation > reload);
 });
 
 test("the injector ignores auxiliary Codex windows", () => {

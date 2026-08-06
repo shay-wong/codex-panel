@@ -97,6 +97,17 @@ function parseArgs(argv) {
   return options;
 }
 
+export function createInitialOpenRequest(enabled) {
+  let pending = Boolean(enabled);
+  return {
+    claim(targets) {
+      if (!pending || targets.length === 0) return false;
+      pending = false;
+      return true;
+    },
+  };
+}
+
 async function fetchJson(url) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
@@ -1257,6 +1268,7 @@ async function injectTarget(
     cdp.on("Page.loadEventFired", () => (
       publishInjectionScriptIdentifier(cdp, scriptIdentifier)
     ));
+    await reloadRenderer(cdp, 15_000);
     await evaluateInjectionSource(cdp, source);
     await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
     if (keepAlive) await publishHostHeartbeat(cdp, startupToken);
@@ -1433,14 +1445,15 @@ async function main() {
 
     const { source, sourceHash } = await currentInjectionSource();
     const injectedTargets = new Map();
-    let initialOpenPending = options.open;
+    const initialOpenRequest = createInitialOpenRequest(options.open);
     try {
       const firstTargets = await waitForCodexTargets(options.port, 30_000);
+      const shouldOpen = initialOpenRequest.claim(firstTargets);
       const firstResults = await injectAll(
         options.port,
         source,
         sourceHash,
-        initialOpenPending,
+        shouldOpen,
         options.screenshot,
         injectedTargets,
         options.watch,
@@ -1450,9 +1463,6 @@ async function main() {
         firstTargets,
       );
       console.log(JSON.stringify({ injected: firstResults }, null, 2));
-      if (!initialOpenPending || firstResults.some((result) => result.frameLoaded)) {
-        initialOpenPending = false;
-      }
     } catch (error) {
       if (!options.watch) throw error;
       console.error(`Waiting for Codex renderer: ${error.message}`);
@@ -1485,23 +1495,23 @@ async function main() {
         } catch (_) {}
       }
       try {
+        const targets = await codexTargets(options.port);
+        const shouldOpen = initialOpenRequest.claim(targets);
         const results = await injectAll(
           options.port,
           source,
           sourceHash,
-          initialOpenPending,
+          shouldOpen,
           null,
           injectedTargets,
           true,
           supervisor,
           options.attachExisting,
           options.startupToken,
+          targets,
         );
         if (results.length > 0) {
           console.log(JSON.stringify({ injected: results }, null, 2));
-          if (!initialOpenPending || results.some((result) => result.frameLoaded)) {
-            initialOpenPending = false;
-          }
         }
       } catch (error) {
         if (codexProcess && codexProcess.exitCode !== null) break;
