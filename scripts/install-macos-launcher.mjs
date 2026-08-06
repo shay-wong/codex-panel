@@ -57,7 +57,7 @@ const runtimeScriptNames = [
 const launcherName = "Codex.app";
 const mistakenLauncherName = "Codex Panel.app";
 const launcherBundleIdentifier = "com.shay.codex-taskboard-launcher";
-const launcherDefinitionVersion = 1;
+const launcherDefinitionVersion = 2;
 const launcherMarkerName = "codex-panel-launcher.json";
 const officialCodexAppPath = "/Applications/ChatGPT.app";
 const plistBuddyPath = "/usr/libexec/PlistBuddy";
@@ -361,6 +361,7 @@ async function launcherBundleMetadataIsCurrent(launcherPath) {
     && plistValue(launcherPath, "CFBundleIconFile") === "Codex"
     && plistValue(launcherPath, "CFBundleIconName") === null
     && plistValue(launcherPath, "NSRequiresAquaSystemAppearance") === "false"
+    && plistValue(launcherPath, "LSUIElement") === "true"
     && await pathExists(path.join(launcherPath, "Contents", "Resources", "Codex.icns"));
 }
 
@@ -554,6 +555,7 @@ export async function installLauncher(layout) {
     setPlistValue(plistPath, "CFBundleIconFile", "Codex");
     deletePlistValue(plistPath, "CFBundleIconName");
     setPlistBoolean(plistPath, "NSRequiresAquaSystemAppearance", false);
+    setPlistBoolean(plistPath, "LSUIElement", true);
 
     const resourcesPath = path.join(temporaryLauncherPath, "Contents", "Resources");
     await copyFile(iconSourcePath, path.join(resourcesPath, "Codex.icns"));

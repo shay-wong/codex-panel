@@ -148,6 +148,13 @@ test("the generated launcher opts into the current macOS appearance", () => {
   );
 });
 
+test("the generated launcher does not leave a temporary Dock application", () => {
+  assert.match(
+    installerSource,
+    /setPlistBoolean\(plistPath, "LSUIElement", true\)/,
+  );
+});
+
 test("reinstalling an unchanged launcher preserves its macOS permission identity", {
   skip: process.platform !== "darwin",
 }, async () => {
