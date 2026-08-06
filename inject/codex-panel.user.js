@@ -983,7 +983,10 @@
     nextFrame.src = panelUrl.href;
     nextFrame.title = "任务面板";
     nextFrame.referrerPolicy = "no-referrer";
-    nextFrame.setAttribute("allow", "clipboard-read; clipboard-write");
+    nextFrame.setAttribute(
+      "allow",
+      "clipboard-read; clipboard-write; local-network-access; loopback-network; local-network",
+    );
     nextFrame.addEventListener("load", postHostContext);
     frame = nextFrame;
     page.appendChild(nextFrame);

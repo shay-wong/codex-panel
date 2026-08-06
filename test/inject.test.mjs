@@ -159,6 +159,13 @@ test("the injected iframe can be cache-busted without reloading the Codex shell"
   assert.match(source, /reloadFrame,/);
 });
 
+test("the embedded Panel delegates Chromium local network access", () => {
+  assert.match(
+    source,
+    /local-network-access; loopback-network; local-network/,
+  );
+});
+
 test("reopening reuses a ready cache-busted iframe without showing the startup placeholder", () => {
   assert.match(source, /function frameMatchesPanelUrl\(panelUrl\)/);
   assert.match(source, /loadedUrl\.searchParams\.delete\(FRAME_REFRESH_PARAM\)/);

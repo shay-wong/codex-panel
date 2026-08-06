@@ -13,7 +13,12 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { launchCodex, waitForCodexTargets } from "../scripts/codex-injector.mjs";
+import {
+  launchCodex,
+  reloadRenderer,
+  waitForCodexTargets,
+  waitForRendererReady,
+} from "../scripts/codex-injector.mjs";
 
 const source = await readFile(new URL("../scripts/codex-injector.mjs", import.meta.url), "utf8");
 const runtimeSource = await readFile(
@@ -54,6 +59,7 @@ writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify(process.argv.slice(
   assert.deepEqual(JSON.parse(await readFile(capturePath, "utf8")), [
     "--remote-debugging-port=9347",
     "--remote-allow-origins=http://127.0.0.1:9347",
+    "--disable-features=LocalNetworkAccessForSubframeNavigations",
   ]);
 });
 
@@ -120,6 +126,52 @@ test("the launcher waits for and selects a delayed main Codex renderer", async (
   assert.deepEqual(targets.map((target) => target.id), ["codex-main"]);
 });
 
+test("initial renderer readiness waits for the completed app document", async () => {
+  const states = [
+    { readyState: "loading", href: "app://-/index.html" },
+    { readyState: "complete", href: "app://-/index.html" },
+  ];
+  const calls = [];
+  const cdp = {
+    async send(method, params) {
+      calls.push({ method, params });
+      return { result: { value: states.shift() } };
+    },
+  };
+
+  const state = await waitForRendererReady(cdp, 1_000);
+
+  assert.deepEqual(state, { readyState: "complete", href: "app://-/index.html" });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].method, "Runtime.evaluate");
+  assert.equal(calls[0].params.returnByValue, true);
+});
+
+test("reload waiter rejection is handled while the reload command is pending", async () => {
+  const expected = new Error("renderer closed during reload");
+  const calls = [];
+  let rejectLoad;
+  const cdp = {
+    waitFor(method, timeoutMs) {
+      calls.push({ method, timeoutMs });
+      return new Promise((resolve, reject) => {
+        rejectLoad = reject;
+      });
+    },
+    send(method) {
+      calls.push({ method });
+      rejectLoad(expected);
+      return new Promise((resolve) => setImmediate(resolve));
+    },
+  };
+
+  await assert.rejects(reloadRenderer(cdp, 250), expected);
+  assert.deepEqual(calls, [
+    { method: "Page.loadEventFired", timeoutMs: 250 },
+    { method: "Page.reload" },
+  ]);
+});
+
 test("the resident injector supervises the fixed local Panel service", () => {
   assert.match(source, /function createPanelSupervisor/);
   assert.match(source, /await isReachable\(panelHealthUrl\)/);
@@ -127,6 +179,15 @@ test("the resident injector supervises the fixed local Panel service", () => {
   assert.match(source, /await supervisor\.ensure\(\)/);
   assert.match(source, /it will be restarted automatically/);
   assert.match(source, /AbortSignal\.timeout\(1_500\)/);
+});
+
+test("watch mode keeps retrying an initial Panel iframe failure", () => {
+  assert.match(source, /let initialOpenPending = options\.open/);
+  assert.match(source, /if \(!options\.watch\) throw error/);
+  assert.match(source, /shouldOpen && firstTarget/);
+  assert.match(source, /initialOpenPending,\s*null,\s*injectedTargets/);
+  assert.match(source, /initialOpenPending = false/);
+  assert.match(source, /if \(shouldRemainOpen && !frameLoaded\)/);
 });
 
 test("the CDP bridge accepts only service ensure and native Skill composer prefill actions", () => {
@@ -188,6 +249,22 @@ test("attach reconciles the renderer against a hashed current injection source",
   assert.match(source, /Page\.addScriptToEvaluateOnNewDocument/);
   assert.match(source, /reconcileInjectionRuntime/);
   assert.match(source, /expectedSourceHash/);
+});
+
+test("initial renderer injection waits for Codex bootstrap without reloading it", () => {
+  const readinessStart = source.indexOf(
+    "    await waitForRendererReady(cdp, 15_000);",
+  );
+  const branchEnd = source.indexOf(
+    "    await evaluateInjectionSource(cdp, source);",
+    readinessStart,
+  );
+  assert.notEqual(readinessStart, -1);
+  assert.notEqual(branchEnd, -1);
+
+  const initialRendererSetup = source.slice(readinessStart, branchEnd);
+  assert.match(initialRendererSetup, /registerInjectionSource\(cdp, source\)/);
+  assert.doesNotMatch(initialRendererSetup, /Page\.reload|reloadRenderer/);
 });
 
 test("the injector ignores auxiliary Codex windows", () => {

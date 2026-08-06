@@ -231,6 +231,7 @@ export function launchCodex(appPath, port) {
     [
       `--remote-debugging-port=${port}`,
       `--remote-allow-origins=http://127.0.0.1:${port}`,
+      "--disable-features=LocalNetworkAccessForSubframeNavigations",
     ],
     { stdio: "ignore" },
   );
@@ -354,6 +355,48 @@ async function waitForCodexTargets(port, timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error("Timed out waiting for a Codex renderer target");
+}
+
+export async function waitForRendererReady(cdp, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let lastState = "unknown";
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    try {
+      const evaluation = await cdp.send("Runtime.evaluate", {
+        expression: "({ readyState: document.readyState, href: window.location.href })",
+        returnByValue: true,
+      });
+      if (evaluation.exceptionDetails) {
+        throw new Error(
+          evaluation.exceptionDetails.exception?.description
+            || "Unable to inspect Codex renderer readiness",
+        );
+      }
+      const state = evaluation.result?.value;
+      lastState = state?.readyState || "unknown";
+      if (state?.readyState === "complete" && state?.href?.startsWith("app://")) {
+        return state;
+      }
+      lastError = null;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  const detail = lastError
+    ? `: ${lastError.message}`
+    : ` (last state: ${lastState})`;
+  throw new Error(`Timed out waiting for the Codex renderer to finish loading${detail}`);
+}
+
+export async function reloadRenderer(cdp, timeoutMs) {
+  await Promise.all([
+    cdp.waitFor("Page.loadEventFired", timeoutMs),
+    cdp.send("Page.reload"),
+  ]);
 }
 
 function codexDebuggingPorts(preferredPort) {
@@ -1172,11 +1215,7 @@ async function injectTarget(
           { identifier },
         ),
         registerCurrentSource: (currentSource) => registerInjectionSource(cdp, currentSource),
-        reloadRenderer: async () => {
-          const reloaded = cdp.waitFor("Page.loadEventFired", 15_000);
-          await cdp.send("Page.reload");
-          await reloaded;
-        },
+        reloadRenderer: () => reloadRenderer(cdp, 15_000),
         evaluateCurrentSource: (currentSource) => evaluateInjectionSource(cdp, currentSource),
         publishRegistration: (identifier) => publishInjectionScriptIdentifier(cdp, identifier),
         reopen: () => cdp.send("Runtime.evaluate", {
@@ -1204,19 +1243,20 @@ async function injectTarget(
       const frameLoaded = status.frameUrl
         ? await waitForFrame(cdp, status.frameUrl, 15_000)
         : false;
+      if (shouldRemainOpen && !frameLoaded) {
+        throw new Error("Panel iframe did not finish loading in the Codex renderer");
+      }
       retained = true;
       return {
         result: { ...status, cspBypassed: true, frameLoaded },
         connection: cdp,
       };
     }
+    await waitForRendererReady(cdp, 15_000);
     const scriptIdentifier = await registerInjectionSource(cdp, source);
     cdp.on("Page.loadEventFired", () => (
       publishInjectionScriptIdentifier(cdp, scriptIdentifier)
     ));
-    const reloaded = cdp.waitFor("Page.loadEventFired", 15_000);
-    await cdp.send("Page.reload");
-    await reloaded;
     await evaluateInjectionSource(cdp, source);
     await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
     if (keepAlive) await publishHostHeartbeat(cdp, startupToken);
@@ -1393,21 +1433,30 @@ async function main() {
 
     const { source, sourceHash } = await currentInjectionSource();
     const injectedTargets = new Map();
-    const firstTargets = await waitForCodexTargets(options.port, 30_000);
-    const firstResults = await injectAll(
-      options.port,
-      source,
-      sourceHash,
-      options.open,
-      options.screenshot,
-      injectedTargets,
-      options.watch,
-      supervisor,
-      options.attachExisting,
-      options.startupToken,
-      firstTargets,
-    );
-    console.log(JSON.stringify({ injected: firstResults }, null, 2));
+    let initialOpenPending = options.open;
+    try {
+      const firstTargets = await waitForCodexTargets(options.port, 30_000);
+      const firstResults = await injectAll(
+        options.port,
+        source,
+        sourceHash,
+        initialOpenPending,
+        options.screenshot,
+        injectedTargets,
+        options.watch,
+        supervisor,
+        options.attachExisting,
+        options.startupToken,
+        firstTargets,
+      );
+      console.log(JSON.stringify({ injected: firstResults }, null, 2));
+      if (!initialOpenPending || firstResults.some((result) => result.frameLoaded)) {
+        initialOpenPending = false;
+      }
+    } catch (error) {
+      if (!options.watch) throw error;
+      console.error(`Waiting for Codex renderer: ${error.message}`);
+    }
 
     if (!options.watch) {
       codexProcess?.unref();
@@ -1440,7 +1489,7 @@ async function main() {
           options.port,
           source,
           sourceHash,
-          false,
+          initialOpenPending,
           null,
           injectedTargets,
           true,
@@ -1448,7 +1497,12 @@ async function main() {
           options.attachExisting,
           options.startupToken,
         );
-        if (results.length > 0) console.log(JSON.stringify({ injected: results }, null, 2));
+        if (results.length > 0) {
+          console.log(JSON.stringify({ injected: results }, null, 2));
+          if (!initialOpenPending || results.some((result) => result.frameLoaded)) {
+            initialOpenPending = false;
+          }
+        }
       } catch (error) {
         if (codexProcess && codexProcess.exitCode !== null) break;
         console.error(`Waiting for Codex renderer: ${error.message}`);
