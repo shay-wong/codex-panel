@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   access,
   copyFile,
@@ -19,6 +20,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   initializeDataDirectory,
+  installLauncher,
   installPanelTools,
   installRuntime,
   launcherSource,
@@ -29,6 +31,10 @@ import { installManagedDirectory } from "../scripts/managed-install.mjs";
 import { resolvePanelDataDirectory, resolvePanelSupportRoot } from "../shared/panel-paths.mjs";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
+const installerSource = await readFile(
+  new URL("../scripts/install-macos-launcher.mjs", import.meta.url),
+  "utf8",
+);
 const runtimeDirectories = [
   "cli",
   "inject",
@@ -43,6 +49,10 @@ const runtimeScripts = [
   "codex-injector.mjs",
   "codex-rate-limits.mjs",
 ];
+const launchServicesRegister = [
+  "/System/Library/Frameworks/CoreServices.framework",
+  "Frameworks/LaunchServices.framework/Support/lsregister",
+].join("/");
 
 async function missing(targetPath) {
   await assert.rejects(access(targetPath), { code: "ENOENT" });
@@ -116,6 +126,87 @@ test("runtime and launchers use installed files instead of repository paths", as
     assert.doesNotMatch(appSource, /npmPath|projectPath|npm run/);
     assert.doesNotMatch(appSource, new RegExp(projectRoot.replaceAll("/", "\\/")));
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the generated launcher gives the Codex icon file precedence", () => {
+  assert.match(
+    installerSource,
+    /setPlistValue\(plistPath, "CFBundleIconFile", "Codex"\)/,
+  );
+  assert.match(
+    installerSource,
+    /deletePlistValue\(plistPath, "CFBundleIconName"\)/,
+  );
+});
+
+test("the generated launcher opts into the current macOS appearance", () => {
+  assert.match(
+    installerSource,
+    /setPlistBoolean\(plistPath, "NSRequiresAquaSystemAppearance", false\)/,
+  );
+});
+
+test("reinstalling an unchanged launcher preserves its macOS permission identity", {
+  skip: process.platform !== "darwin",
+}, async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "panel-launcher-identity-"));
+  const applicationsDirectory = path.join(directory, "Applications");
+  const launcherPath = path.join(applicationsDirectory, "Codex.app");
+  const resourcesPath = path.join(launcherPath, "Contents", "Resources");
+  const layout = {
+    applicationsDirectory,
+    dataDirectory: path.join(directory, "data"),
+    logPath: path.join(directory, "panel.log"),
+    runtimeDirectory: path.join(directory, "runtime"),
+    userBinDirectory: path.join(directory, "bin"),
+  };
+
+  const designatedRequirement = () => {
+    const result = spawnSync("/usr/bin/codesign", ["-d", "-r-", launcherPath], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const requirement = `${result.stdout}${result.stderr}`.match(/designated => (.+)/)?.[1];
+    assert.ok(requirement, "generated launcher must have a designated requirement");
+    return requirement;
+  };
+
+  try {
+    await mkdir(resourcesPath, { recursive: true });
+    await writeFile(path.join(resourcesPath, "Codex.icns"), "fixture icon");
+    await writeFile(
+      path.join(resourcesPath, "codex-panel-launcher.json"),
+      `${JSON.stringify({ generator: "codex-panel" })}\n`,
+    );
+
+    await installLauncher(layout);
+    const firstRequirement = designatedRequirement();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await installLauncher(layout);
+
+    assert.equal(designatedRequirement(), firstRequirement);
+
+    const markerPath = path.join(resourcesPath, "codex-panel-launcher.json");
+    const legacyMarker = JSON.parse(await readFile(markerPath, "utf8"));
+    delete legacyMarker.definitionVersion;
+    delete legacyMarker.sourceHash;
+    legacyMarker.generatedAt = "2026-08-06T00:00:00.000Z";
+    await writeFile(markerPath, `${JSON.stringify(legacyMarker, null, 2)}\n`);
+    const resign = spawnSync(
+      "/usr/bin/codesign",
+      ["--force", "--deep", "--sign", "-", launcherPath],
+      { encoding: "utf8" },
+    );
+    assert.equal(resign.status, 0, resign.stderr || resign.stdout);
+    const legacyRequirement = designatedRequirement();
+
+    await installLauncher(layout);
+
+    assert.equal(designatedRequirement(), legacyRequirement);
+  } finally {
+    spawnSync(launchServicesRegister, ["-u", launcherPath]);
     await rm(directory, { recursive: true, force: true });
   }
 });

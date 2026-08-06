@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmod,
   copyFile,
@@ -56,6 +57,7 @@ const runtimeScriptNames = [
 const launcherName = "Codex.app";
 const mistakenLauncherName = "Codex Panel.app";
 const launcherBundleIdentifier = "com.shay.codex-taskboard-launcher";
+const launcherDefinitionVersion = 1;
 const launcherMarkerName = "codex-panel-launcher.json";
 const officialCodexAppPath = "/Applications/ChatGPT.app";
 const plistBuddyPath = "/usr/libexec/PlistBuddy";
@@ -301,6 +303,15 @@ function bundleIdentifier(appPath) {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
+function plistValue(appPath, key) {
+  const result = run(plistBuddyPath, [
+    "-c",
+    `Print :${key}`,
+    path.join(appPath, "Contents", "Info.plist"),
+  ], { allowFailure: true });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
 async function managedMarker(appPath) {
   try {
     return JSON.parse(await readFile(path.join(
@@ -320,6 +331,72 @@ async function assertManagedLauncher(appPath, { allowCurrentCodexLauncher = fals
   if (marker?.generator === "codex-panel") return;
   if (allowCurrentCodexLauncher && bundleIdentifier(appPath) === launcherBundleIdentifier) return;
   throw new Error(`Refusing to replace an unmanaged application at ${appPath}`);
+}
+
+function launcherMarker(layout, source) {
+  return {
+    generator: "codex-panel",
+    definitionVersion: launcherDefinitionVersion,
+    launcher: launcherName,
+    dataDirectory: layout.dataDirectory,
+    nodePath: process.execPath,
+    runtimeDirectory: layout.runtimeDirectory,
+    sourceHash: createHash("sha256").update(source).digest("hex"),
+  };
+}
+
+function legacyLauncherMarkerMatches(marker, expectedMarker) {
+  return marker?.generator === expectedMarker.generator
+    && marker?.launcher === expectedMarker.launcher
+    && marker?.dataDirectory === expectedMarker.dataDirectory
+    && marker?.nodePath === expectedMarker.nodePath
+    && marker?.runtimeDirectory === expectedMarker.runtimeDirectory
+    && marker?.definitionVersion == null
+    && marker?.sourceHash == null
+    && typeof marker?.generatedAt === "string";
+}
+
+async function launcherBundleMetadataIsCurrent(launcherPath) {
+  return bundleIdentifier(launcherPath) === launcherBundleIdentifier
+    && plistValue(launcherPath, "CFBundleIconFile") === "Codex"
+    && plistValue(launcherPath, "CFBundleIconName") === null
+    && plistValue(launcherPath, "NSRequiresAquaSystemAppearance") === "false"
+    && await pathExists(path.join(launcherPath, "Contents", "Resources", "Codex.icns"));
+}
+
+function decompileLauncher(launcherPath) {
+  const result = run("/usr/bin/osadecompile", [launcherPath], { allowFailure: true });
+  return result.status === 0 ? result.stdout : null;
+}
+
+async function canonicalLauncherSource(source) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-launcher-source-"));
+  const sourcePath = path.join(directory, "Codex.applescript");
+  const launcherPath = path.join(directory, launcherName);
+  try {
+    await writeFile(sourcePath, source);
+    run("/usr/bin/osacompile", ["-o", launcherPath, sourcePath]);
+    return decompileLauncher(launcherPath);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function launcherIsCurrent(launcherPath, expectedMarker, source) {
+  const marker = await managedMarker(launcherPath);
+  const signatureValid = run(
+    "/usr/bin/codesign",
+    ["--verify", "--deep", "--strict", launcherPath],
+    { allowFailure: true },
+  ).status === 0;
+  if (!signatureValid) return false;
+  if (JSON.stringify(marker) === JSON.stringify(expectedMarker)) return true;
+  if (!legacyLauncherMarkerMatches(marker, expectedMarker)) return false;
+  if (!(await launcherBundleMetadataIsCurrent(launcherPath))) return false;
+  const currentSource = decompileLauncher(launcherPath);
+  if (currentSource === null) return false;
+  const expectedSource = await canonicalLauncherSource(source);
+  return expectedSource !== null && currentSource === expectedSource;
 }
 
 async function resolveLauncherIcon(currentLauncherPath) {
@@ -398,6 +475,30 @@ function setPlistValue(plistPath, key, value) {
   }
 }
 
+function setPlistBoolean(plistPath, key, value) {
+  deletePlistValue(plistPath, key);
+  run(plistBuddyPath, [
+    "-c",
+    `Add :${key} bool ${value ? "true" : "false"}`,
+    plistPath,
+  ]);
+}
+
+function deletePlistValue(plistPath, key) {
+  const result = run(
+    plistBuddyPath,
+    ["-c", `Delete :${key}`, plistPath],
+    { allowFailure: true },
+  );
+  if (result.status === 0) return;
+  const detail = result.stderr?.trim()
+    || result.stdout?.trim()
+    || result.error?.message
+    || `exit status ${result.status}`;
+  if (detail.includes("Does Not Exist")) return;
+  throw new Error(`${path.basename(plistBuddyPath)} failed: ${detail}`);
+}
+
 async function removeMistakenLauncher(applicationsDirectory) {
   const mistakenLauncherPath = path.join(applicationsDirectory, mistakenLauncherName);
   if (!(await pathExists(mistakenLauncherPath))) return;
@@ -414,12 +515,27 @@ export async function installLauncher(layout) {
 
   const applicationsDirectory = layout.applicationsDirectory;
   const launcherPath = path.join(applicationsDirectory, launcherName);
-  const iconSourcePath = await resolveLauncherIcon(launcherPath);
+  const source = launcherSource({
+    dataDirectory: layout.dataDirectory,
+    logPath: layout.logPath,
+    nodeBinPath: path.dirname(process.execPath),
+    nodePath: process.execPath,
+    runtimeDirectory: layout.runtimeDirectory,
+    userBinDirectory: layout.userBinDirectory,
+  });
+  const marker = launcherMarker(layout, source);
 
   if (await pathExists(launcherPath)) {
     await assertManagedLauncher(launcherPath, { allowCurrentCodexLauncher: true });
+    if (await launcherIsCurrent(launcherPath, marker, source)) {
+      run(launchServicesRegister, ["-f", launcherPath]);
+      await removeMistakenLauncher(applicationsDirectory);
+      console.log(`Codex launcher already current at ${launcherPath}`);
+      return;
+    }
   }
 
+  const iconSourcePath = await resolveLauncherIcon(launcherPath);
   await mkdir(applicationsDirectory, { recursive: true });
   const temporaryDirectory = await mkdtemp(
     path.join(applicationsDirectory, ".codex-launcher-"),
@@ -428,14 +544,7 @@ export async function installLauncher(layout) {
   const sourcePath = path.join(temporaryDirectory, "Codex.applescript");
 
   try {
-    await writeFile(sourcePath, launcherSource({
-      dataDirectory: layout.dataDirectory,
-      logPath: layout.logPath,
-      nodeBinPath: path.dirname(process.execPath),
-      nodePath: process.execPath,
-      runtimeDirectory: layout.runtimeDirectory,
-      userBinDirectory: layout.userBinDirectory,
-    }));
+    await writeFile(sourcePath, source);
     run("/usr/bin/osacompile", ["-o", temporaryLauncherPath, sourcePath]);
 
     const plistPath = path.join(temporaryLauncherPath, "Contents", "Info.plist");
@@ -443,19 +552,14 @@ export async function installLauncher(layout) {
     setPlistValue(plistPath, "CFBundleDisplayName", "Codex");
     setPlistValue(plistPath, "CFBundleName", "Codex");
     setPlistValue(plistPath, "CFBundleIconFile", "Codex");
+    deletePlistValue(plistPath, "CFBundleIconName");
+    setPlistBoolean(plistPath, "NSRequiresAquaSystemAppearance", false);
 
     const resourcesPath = path.join(temporaryLauncherPath, "Contents", "Resources");
     await copyFile(iconSourcePath, path.join(resourcesPath, "Codex.icns"));
     await writeFile(
       path.join(resourcesPath, launcherMarkerName),
-      `${JSON.stringify({
-        generator: "codex-panel",
-        launcher: "Codex.app",
-        dataDirectory: layout.dataDirectory,
-        nodePath: process.execPath,
-        runtimeDirectory: layout.runtimeDirectory,
-        generatedAt: new Date().toISOString(),
-      }, null, 2)}\n`,
+      `${JSON.stringify(marker, null, 2)}\n`,
     );
     run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", temporaryLauncherPath]);
 
