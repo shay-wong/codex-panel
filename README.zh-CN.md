@@ -55,7 +55,7 @@ npm ci
 npm run codex:install
 ```
 
-集成命令会构建独立 runtime 并复制到 `~/Library/Application Support/Codex Panel/runtime`，把 `manage-panel` 和 `handoff-panel` 复制到标准用户 Skill 目录 `~/.agents/skills`，把 `panelctl` 安装到 `~/.local/bin`，然后生成 macOS 启动器。安装结果都是带所有权标记的真实副本，不是指回 Git 仓库的符号链接。单独运行 `npm ci` 只安装项目依赖，不会写入这些用户级集成。安装完成后启动一个新的 Codex 任务即可使用 `$manage-panel` 和 `$handoff-panel`。
+集成命令会构建独立 runtime 并复制到 `~/Library/Application Support/Codex Panel/runtime`，把 `manage-panel` 和 `handoff-panel` 复制到标准用户 Skill 目录 `~/.agents/skills`，把 `panelctl` 安装到 `~/.local/bin`，然后生成 macOS 启动器；启动器还会在自己的 App bundle 中保存一份受签名保护的 runtime 副本。安装结果都是带所有权标记的真实副本，不是指回 Git 仓库的符号链接。单独运行 `npm ci` 只安装项目依赖，不会写入这些用户级集成。安装完成后启动一个新的 Codex 任务即可使用 `$manage-panel` 和 `$handoff-panel`。
 
 首次安装时，如果固定数据目录尚不存在，安装器会在线快照仓库现有的 `.data/panel.sqlite`，并复制附件和本地配置，不删除原数据。它还会清理原来由本仓库管理的 `~/.codex/skills` 和 Node 可执行目录软链接。重复运行时只会原子更新带 Codex Panel 所有权标记的文件；用户自己维护的文件和目录不会被覆盖。移动或删除仓库不会破坏已经安装的 runtime。拉取代码更新或替换 Node.js 后，再运行该命令安装新版本。
 
@@ -67,21 +67,21 @@ npm run codex:install
 
 ## 嵌入 Codex
 
-### 推荐：使用自动生成的 Codex 启动器
+### 推荐：使用原生 Codex Panel 管理器
 
-`npm run codex:install` 会创建或刷新 `~/Applications` 中现有的 `Codex.app` 启动器，保留它的 Codex 名称和图标，并让它指向已安装的 runtime 和数据目录。如果现有启动器定义未变化且签名有效，安装器会直接复用该 bundle，不再重复编译和签名，因此日常 runtime 更新不会改变 macOS 权限身份。生成的应用会移除 AppleScript 默认 applet 图标覆盖，因此首次安装和重复安装都会让 Finder 与已固定的 Dock 入口使用复制的 Codex 图标。这个短生命周期的引导应用以 UI agent 运行，交给官方 Codex 后不会在 Dock 里留下另一个临时运行图标；原生警告和错误提示框也会跟随当前 macOS 的浅色或深色外观。完全退出所有正在运行的 Codex 窗口，然后从现有 Dock 图标、Finder 或明确的命令行路径打开该启动器：
+`npm run codex:install` 会创建或刷新 `~/Applications/Codex Panel.app`，并删除之前由本项目管理的 `~/Applications/Codex.app` 引导器。这个原生 SwiftUI 管理器直接使用已安装的 runtime 和数据目录，因此移动或删除源仓库也不会使它失效。可以从 Finder、Dock 或明确路径打开：
 
 ```bash
-open "$HOME/Applications/Codex.app"
+open "$HOME/Applications/Codex Panel.app"
 ```
 
-启动器会以仅监听回环地址的 CDP 端口启动官方 `/Applications/ChatGPT.app` Codex 应用，启动本地 Panel 服务，注入 Panel 侧边栏入口，并跟随这次 Codex 的生命周期运行。由它启动的 Codex 退出后，其启动的本地服务也会退出。它不会修改官方应用或其 `app.asar`。
+管理器会作为普通 Dock 应用持续运行。主窗口显示 Panel 服务、Codex/CDP 和内嵌集成状态，可以打开任务面板、启动、重启或停止受管进程，也可以打开浏览器页面、日志和数据目录。“已连接”表示当前签名版本的注入已挂载到 renderer，并持续发布属于本次管理器的心跳；仅有 HTTP 服务或 CDP 端口可达不会再误报嵌入成功。设置中可以注册 macOS 登录项，并分别控制启动时是否连接 Codex、连接后是否自动打开任务面板；后两项默认开启。
 
-如果 Codex 已经通过该启动器的 CDP 端口运行，再次点击 `Codex.app` 会复用健康的 resident injector、打开 Panel 入口并聚焦现有 Codex 窗口。缺失或过期的 injector 会被替换；恢复过程会在启用 CSP bypass 后重载一次 Codex renderer，确保内嵌 frame 仍可用。退役的本地服务会关闭活跃连接，不会继续占用 SQLite 数据库。
+应用图标直接使用 `ChatGPT.app` 内官方的 Codex 浅色和深色资源，并在右上角增加斜向 `PANEL` 角标；缺少任一官方外观资源时安装会明确失败，运行中的 Dock 图标会跟随 macOS 当前外观切换。如果本机存在与全局 Git 邮箱匹配的有效 Apple Development 身份，安装器会使用它，让后续更新保持稳定的 macOS 权限要求；也可以通过 `CODEX_PANEL_CODESIGN_IDENTITY` 指定身份。安装器会记录真实 designated requirement，只有 requirement、真实 signer 和内容摘要都匹配时才复用未变化的 bundle。没有稳定身份时会回退到 ad-hoc 签名，并在显式重装时重建启动器，因此 macOS 可能再次请求文件访问权限。
 
-移动仓库不会影响已安装的启动器。更新仓库代码或替换该 Node.js 安装后，请重新运行 `npm run codex:install`。`npm run launcher:install` 仍作为兼容别名保留。最近一次启动日志位于 `~/Library/Logs/Codex Panel.log`。
+管理器启动代码前会校验自身 App 签名、bundle 内 runtime、安装时记录的 Node.js 和官方 Codex CLI 哈希，以及官方 `ChatGPT.app` 的 designated requirement、固定的主程序路径和主程序哈希。随后运行仅监听回环地址的 Panel 服务，并连接 Codex 实际使用的 CDP 端口，或先以 CDP 启动官方 `/Applications/ChatGPT.app`，再注入 Panel 侧边栏；它只退役选中端口上的 Panel injector，也不会把自己管理的 injector 替换为 detached 进程。正常打开的 Codex 无法在运行中补开 CDP；如果管理器提示需要重启 Codex，请完全退出 Codex 后再次点击“启动服务”。停止或退出管理器只会等待它负责的 Panel 服务和 injector 进程结束；官方 ChatGPT/Codex 应用及其 CDP 端口会继续运行，直到你主动退出 ChatGPT。它不会修改官方应用或其 `app.asar`。
 
-正常打开且未启用 CDP 的 Codex 无法在运行中补开 CDP。如果 Codex 已经以这种方式运行，请完全退出后再打开生成的 `Codex.app`。
+更新仓库代码、替换 Node.js，或安装新版 `ChatGPT.app` 后，请重新运行 `npm run codex:install`，以刷新固定的应用身份和可执行文件哈希。`npm run launcher:install` 仍作为兼容别名保留。最近一次管理器日志位于 `~/Library/Logs/Codex Panel.log`。
 
 ### 备选：在终端运行启动器
 
@@ -115,7 +115,7 @@ npm run codex:inject -- --port 9231 --open
 
 CDP 可以访问后，启动器会等待最多 30 秒，让 Codex 创建主 renderer，再等待初始 `app://` 文档完成加载，然后启用 CSP bypass 并受控重载一次 renderer。它会忽略头像浮层等辅助 renderer；把这次重载推迟到 `complete` 后，既能让 Codex 完成桌面 bootstrap，也不会进入 fallback 错误页。启动器在第一次主 renderer 尝试时就会消费自动打开请求；如果 frame 仍失败，本地服务和页面上的重试入口会保留，但不会循环把用户从对话拉回 Panel。
 
-Codex 自带的渲染器 CSP 会阻止任意 HTTP iframe。CDP CSP bypass 不会追溯改变已经加载的文档，因此启动器启用 bypass 后必须执行上面的 bootstrap 后受控重载，再打开 Panel。Chromium 151 还会对回环地址的子框架导航执行 Local Network Access 检查，因此启动器只关闭 `LocalNetworkAccessForSubframeNavigations`，并由受管 iframe 显式委派对应的本地网络权限；其他 Local Network Access 检查仍保持启用。接管或刷新已有 resident renderer 时也遵循同一个单次重载规则。同一台设备上的其他进程无需认证即可访问 CDP，因此仅应在启动器运行期间执行可信的本地代码。
+Codex 自带的渲染器 CSP 会阻止任意 HTTP iframe。CDP CSP bypass 不会追溯改变已经加载的文档，因此启动器启用 bypass 后必须执行上面的 bootstrap 后受控重载，再打开 Panel。Chromium 151 还会对回环地址的子框架导航执行 Local Network Access 检查，因此启动器只关闭 `LocalNetworkAccessForSubframeNavigations`，并由受管 iframe 显式委派对应的本地网络权限；其他 Local Network Access 检查仍保持启用。接管或刷新已有 resident renderer 时也遵循同一个单次重载规则。同一台设备上的其他进程无需认证即可访问 CDP。由于关闭 Panel 后会按设计保留由管理器启动的 ChatGPT，因此在这个启用了 CDP 的 ChatGPT 实例整个运行期间，都只能运行可信的本地代码。
 
 如果 Codex 已通过其他方式启用了 CDP，可运行：
 
@@ -146,6 +146,7 @@ npm run codex:inject -- --port 9229 --open
 | `CODEX_PANEL_HOME` | macOS 上为 `~/Library/Application Support/Codex Panel` | 已安装 runtime 和默认数据根目录 |
 | `CODEX_PANEL_DATA_DIR` | `$CODEX_PANEL_HOME/data` | SQLite 数据目录 |
 | `CODEX_PANEL_URL` | `http://127.0.0.1:47823` | CLI API 地址 |
+| `CODEX_PANEL_CODESIGN_IDENTITY` | 匹配的本机 Apple Development 身份，否则为 `-` | 签名 `Codex Panel.app` 时显式指定身份名称或证书哈希 |
 
 `npm start` 会输出本地 URL 和可用的局域网 URL。同一受信任网络中的协作者可以打开局域网 URL，共用同一个 Panel 服务。任务、评论和附件变更会通过服务器发送事件广播到所有已打开的客户端；重新连接的客户端会执行完整刷新，避免遗漏断线期间的变更。协作者可设置 `CODEX_PANEL_URL=http://<host-ip>:47823`，让 `panelctl` 连接共享服务。
 
