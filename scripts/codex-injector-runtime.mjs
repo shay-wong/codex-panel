@@ -117,15 +117,9 @@ export function findResidentInjectorPids({
   processList,
   currentPid,
   injectorPath,
-  projectRoot,
   port,
   defaultPort,
-  cwdForPid,
 }) {
-  const absoluteScript = new RegExp(
-    `(?:^|\\s)${escapeRegExp(injectorPath)}(?=\\s|$)`,
-  );
-  const relativeScript = /(?:^|\s)(?:\.\/)?scripts\/codex-injector\.mjs(?=\s|$)/;
   const residents = [];
 
   for (const line of processList.split("\n")) {
@@ -133,13 +127,40 @@ export function findResidentInjectorPids({
     if (!match) continue;
     const pid = Number(match[1]);
     const command = match[2];
-    if (pid === currentPid || !/(?:^|\s)--watch(?=\s|$)/.test(command)) continue;
-    const scriptMatches = absoluteScript.test(command)
-      || (relativeScript.test(command) && cwdForPid(pid) === projectRoot);
-    if (!scriptMatches || commandPort(command, defaultPort) !== port) continue;
+    if (pid === currentPid || !residentInjectorCommandMatches(command, injectorPath)) continue;
+    if (commandPort(command, defaultPort) !== port) continue;
     residents.push(pid);
   }
   return residents;
+}
+
+export function residentInjectorCommandMatches(
+  command,
+  injectorPath,
+  port = null,
+  defaultPort = 9229,
+) {
+  const absoluteScript = new RegExp(
+    `(?:^|\\s)${escapeRegExp(injectorPath)}(?=\\s|$)`,
+  );
+  return absoluteScript.test(command)
+    && /(?:^|\s)--watch(?=\s|$)/.test(command)
+    && (port === null || commandPort(command, defaultPort) === port);
+}
+
+export function injectionReadinessMatches(status, {
+  expectedSourceHash,
+  expectedStartupToken,
+  now = Date.now(),
+  maxHeartbeatAgeMs = 5_000,
+} = {}) {
+  const heartbeatAge = now - Number(status?.heartbeatAt);
+  return status?.sourceHash === expectedSourceHash
+    && status?.startupToken === expectedStartupToken
+    && status?.entryMounted === true
+    && Number.isFinite(heartbeatAge)
+    && heartbeatAge >= 0
+    && heartbeatAge <= maxHeartbeatAgeMs;
 }
 
 export async function restartResidentInjector(port, handlers) {
@@ -155,6 +176,15 @@ export async function restartResidentInjector(port, handlers) {
     pid: started.pid,
     restarted: true,
   };
+}
+
+export async function stopResidentInjectors(pids, stopResident) {
+  const stoppedPids = [];
+  for (const pid of [...new Set(pids)]) {
+    await stopResident(pid);
+    stoppedPids.push(pid);
+  }
+  return stoppedPids;
 }
 
 export function sameFrameDocumentUrl(candidate, expected) {

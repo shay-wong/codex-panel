@@ -4,7 +4,9 @@ import { test } from "node:test";
 import {
   findResidentInjectorPids,
   handleHostBindingPayload,
+  injectionReadinessMatches,
   reconcileInjectionRuntime,
+  residentInjectorCommandMatches,
   restartResidentInjector,
   sameFrameDocumentUrl,
 } from "../scripts/codex-injector-runtime.mjs";
@@ -164,7 +166,7 @@ test("attach reloads the renderer and restores an open page even when the source
   ]);
 });
 
-test("resident discovery accepts this repository's absolute and relative launch forms only", () => {
+test("resident discovery is scoped to the exact current injector path and port", () => {
   const projectRoot = "/workspace/codex-panel";
   const injectorPath = `${projectRoot}/scripts/codex-injector.mjs`;
   const processList = [
@@ -174,31 +176,71 @@ test("resident discovery accepts this repository's absolute and relative launch 
     "104 node scripts/codex-injector.mjs --watch",
     `105 node ${injectorPath} --watch --port 9229`,
     `106 node ${injectorPath} --port 9231`,
+    "107 node /Users/example/Library/Application Support/Codex Panel/runtime/scripts/codex-injector.mjs --watch --port 9231",
+    "108 node /workspace/another-clone/scripts/codex-injector.mjs --watch --port 9229",
   ].join("\n");
-  const cwdByPid = new Map([
-    [102, projectRoot],
-    [103, projectRoot],
-    [104, "/workspace/another-repository"],
-  ]);
-
   assert.deepEqual(findResidentInjectorPids({
     processList,
     currentPid: 999,
     injectorPath,
-    projectRoot,
     port: 9231,
     defaultPort: 9229,
-    cwdForPid: (pid) => cwdByPid.get(pid) ?? null,
-  }), [101, 103]);
+  }), [101]);
   assert.deepEqual(findResidentInjectorPids({
     processList,
     currentPid: 999,
     injectorPath,
-    projectRoot,
     port: 9229,
     defaultPort: 9229,
-    cwdForPid: (pid) => cwdByPid.get(pid) ?? null,
-  }), [102, 105]);
+  }), [105]);
+  assert.equal(
+    residentInjectorCommandMatches(
+      `node ${injectorPath} --watch --port 9231`,
+      injectorPath,
+    ),
+    true,
+  );
+  assert.equal(
+    residentInjectorCommandMatches(
+      "node /workspace/another-clone/scripts/codex-injector.mjs --watch --port 9231",
+      injectorPath,
+    ),
+    false,
+  );
+  assert.equal(
+    residentInjectorCommandMatches("node scripts/codex-injector.mjs --watch", injectorPath),
+    false,
+  );
+  assert.equal(
+    residentInjectorCommandMatches(
+      `node ${injectorPath} --watch --port 9229`,
+      injectorPath,
+      9231,
+      9229,
+    ),
+    false,
+  );
+});
+
+test("renderer readiness requires the current source, manager token, mounted entry, and fresh heartbeat", () => {
+  const expected = {
+    expectedSourceHash: "current-source",
+    expectedStartupToken: "manager-token",
+    now: 10_000,
+    maxHeartbeatAgeMs: 5_000,
+  };
+  const ready = {
+    sourceHash: "current-source",
+    startupToken: "manager-token",
+    entryMounted: true,
+    heartbeatAt: 9_000,
+  };
+
+  assert.equal(injectionReadinessMatches(ready, expected), true);
+  assert.equal(injectionReadinessMatches({ ...ready, entryMounted: false }, expected), false);
+  assert.equal(injectionReadinessMatches({ ...ready, sourceHash: "stale" }, expected), false);
+  assert.equal(injectionReadinessMatches({ ...ready, startupToken: "other" }, expected), false);
+  assert.equal(injectionReadinessMatches({ ...ready, heartbeatAt: 4_999 }, expected), false);
 });
 
 test("refresh stops every stale resident before starting one token-verified replacement", async () => {

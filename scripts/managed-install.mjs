@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import {
   chmod,
   cp,
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   readlink,
   rename,
@@ -29,6 +31,55 @@ export async function pathExists(targetPath) {
 
 function resolvedSources(sourcePaths) {
   return new Set(sourcePaths.map((sourcePath) => path.resolve(sourcePath)));
+}
+
+async function updateDirectoryHash(hash, rootPath, relativeDirectory = "") {
+  const directoryPath = relativeDirectory
+    ? path.join(rootPath, relativeDirectory)
+    : rootPath;
+  const entries = await readdir(directoryPath, { withFileTypes: true });
+  entries.sort((left, right) => left.name.localeCompare(right.name));
+
+  for (const entry of entries) {
+    if (!relativeDirectory && entry.name === DIRECTORY_MARKER) continue;
+    const relativePath = relativeDirectory
+      ? path.join(relativeDirectory, entry.name)
+      : entry.name;
+    const entryPath = path.join(rootPath, relativePath);
+    const stats = await lstat(entryPath);
+    const kind = stats.isDirectory()
+      ? "directory"
+      : stats.isFile()
+        ? "file"
+        : stats.isSymbolicLink()
+          ? "symlink"
+          : "unsupported";
+    hash.update(`${kind}\0${relativePath}\0${stats.mode & 0o7777}\0`);
+
+    if (stats.isDirectory()) {
+      await updateDirectoryHash(hash, rootPath, relativePath);
+    } else if (stats.isFile()) {
+      hash.update(await readFile(entryPath));
+    } else if (stats.isSymbolicLink()) {
+      hash.update(await readlink(entryPath));
+    } else {
+      throw new Error(`Unsupported managed installation entry: ${entryPath}`);
+    }
+  }
+}
+
+export async function directoryContentHash(directoryPath) {
+  const hash = createHash("sha256");
+  await updateDirectoryHash(hash, directoryPath);
+  return hash.digest("hex");
+}
+
+async function directoriesHaveSameContents(sourcePath, targetPath) {
+  const [sourceHash, targetHash] = await Promise.all([
+    directoryContentHash(sourcePath),
+    directoryContentHash(targetPath),
+  ]);
+  return sourceHash === targetHash;
 }
 
 async function managedDirectoryArtifact(targetPath) {
@@ -97,7 +148,15 @@ export async function installManagedDirectory(
   { artifact, replaceSources = [] },
 ) {
   await mkdir(path.dirname(targetPath), { recursive: true });
-  await assertReplaceable(targetPath, artifact, replaceSources);
+  const hadPrevious = await assertReplaceable(targetPath, artifact, replaceSources);
+  if (
+    hadPrevious
+    && (await lstat(targetPath)).isDirectory()
+    && await directoriesHaveSameContents(sourcePath, targetPath)
+  ) {
+    console.log(`${label} already current at ${targetPath}`);
+    return false;
+  }
   const temporaryDirectory = await mkdtemp(
     path.join(path.dirname(targetPath), ".codex-panel-install-"),
   );

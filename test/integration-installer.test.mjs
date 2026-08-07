@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import {
   access,
+  chmod,
   copyFile,
   cp,
   lstat,
@@ -23,9 +25,11 @@ import {
   installLauncher,
   installPanelTools,
   installRuntime,
-  launcherSource,
+  launcherConfiguration,
   panelctlLauncher,
+  resolveLauncherIcons,
   resolveInstallLayout,
+  selectLauncherSigningIdentity,
 } from "../scripts/install-macos-launcher.mjs";
 import { installManagedDirectory } from "../scripts/managed-install.mjs";
 import { resolvePanelDataDirectory, resolvePanelSupportRoot } from "../shared/panel-paths.mjs";
@@ -33,6 +37,38 @@ import { resolvePanelDataDirectory, resolvePanelSupportRoot } from "../shared/pa
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const installerSource = await readFile(
   new URL("../scripts/install-macos-launcher.mjs", import.meta.url),
+  "utf8",
+);
+const launcherAppSource = await readFile(
+  new URL(
+    "../macos/CodexPanelLauncher/Sources/CodexPanelLauncher/App/CodexPanelLauncherApp.swift",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const launcherConfigurationSource = await readFile(
+  new URL(
+    "../macos/CodexPanelLauncher/Sources/CodexPanelLauncher/Services/LauncherConfiguration.swift",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const panelManagerSource = await readFile(
+  new URL(
+    "../macos/CodexPanelLauncher/Sources/CodexPanelLauncher/Stores/PanelManager.swift",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const buildAndRunSource = await readFile(
+  new URL("../script/build_and_run.sh", import.meta.url),
+  "utf8",
+);
+const iconBuilderSource = await readFile(
+  new URL(
+    "../macos/CodexPanelLauncher/Sources/CodexPanelIconBuilder/main.swift",
+    import.meta.url,
+  ),
   "utf8",
 );
 const runtimeDirectories = [
@@ -93,7 +129,7 @@ test("Panel uses the standard user Skill directory and a stable support root", (
   assert.equal(layout.runtimeDirectory, "/Users/example/Library/Application Support/Codex Panel/runtime");
 });
 
-test("runtime and launchers use installed files instead of repository paths", async () => {
+test("runtime and native launcher configuration use installed files instead of repository paths", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "panel-runtime-install-"));
   const firstSource = path.join(directory, "source-a");
   const secondSource = path.join(directory, "source-b");
@@ -113,55 +149,221 @@ test("runtime and launchers use installed files instead of repository paths", as
     assert.match(cliLauncher, new RegExp(runtimeDirectory.replaceAll("/", "\\/")));
     assert.doesNotMatch(cliLauncher, new RegExp(projectRoot.replaceAll("/", "\\/")));
 
-    const appSource = launcherSource({
+    const appConfiguration = launcherConfiguration({
       dataDirectory: path.join(directory, "data"),
       logPath: path.join(directory, "panel.log"),
       nodeBinPath: "/node/bin",
       nodePath: "/node/bin/node",
-      runtimeDirectory,
+      nodeSha256: "node-sha256",
+      runtimeRelativePath: "runtime",
+      codexAppDesignatedRequirement: "identifier test.codex",
+      codexAppExecutablePath: "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+      codexAppExecutableSha256: "codex-app-sha256",
+      codexExecutablePath: "/Applications/ChatGPT.app/Contents/Resources/codex",
+      codexExecutableSha256: "codex-cli-sha256",
       userBinDirectory: path.join(directory, "bin"),
     });
-    assert.match(appSource, /--launch --watch --open/);
-    assert.match(appSource, /CODEX_PANEL_DATA_DIR/);
-    assert.doesNotMatch(appSource, /npmPath|projectPath|npm run/);
-    assert.doesNotMatch(appSource, new RegExp(projectRoot.replaceAll("/", "\\/")));
+    assert.equal(appConfiguration.version, 3);
+    assert.equal(appConfiguration.runtimeRelativePath, "runtime");
+    assert.equal(appConfiguration.dataDirectory, path.join(directory, "data"));
+    assert.equal(appConfiguration.nodePath, "/node/bin/node");
+    assert.equal(appConfiguration.nodeSha256, "node-sha256");
+    assert.equal(
+      appConfiguration.codexAppExecutablePath,
+      "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+    );
+    assert.equal(appConfiguration.codexAppExecutableSha256, "codex-app-sha256");
+    assert.equal(
+      appConfiguration.codexExecutablePath,
+      "/Applications/ChatGPT.app/Contents/Resources/codex",
+    );
+    assert.match(appConfiguration.pathValue, new RegExp(path.join(directory, "bin")));
+    assert.doesNotMatch(
+      JSON.stringify(appConfiguration),
+      new RegExp(projectRoot.replaceAll("/", "\\/")),
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("the generated launcher gives the Codex icon file precedence", () => {
+test("the native launcher packages official light and dark Codex icons", () => {
+  assert.match(installerSource, /icon-codex-light\.png/);
+  assert.match(installerSource, /icon-codex-dark-color\.png/);
+  assert.match(installerSource, /CodexBaseLight\.png/);
+  assert.match(installerSource, /CodexBaseDark\.png/);
+  assert.match(installerSource, /<string>CodexPanel<\/string>/);
+});
+
+test("launcher icon resolution fails when either official appearance resource is missing", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "panel-icons-"));
+  const resourcesPath = path.join(directory, "ChatGPT.app", "Contents", "Resources");
+  try {
+    await mkdir(resourcesPath, { recursive: true });
+    await writeFile(path.join(resourcesPath, "icon-codex-light.png"), "light");
+    await assert.rejects(
+      resolveLauncherIcons(path.join(directory, "ChatGPT.app")),
+      /icon-codex-dark-color\.png/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the launcher executes only its signed runtime and hash-pinned Node binary", () => {
+  assert.match(installerSource, /runtimeRelativePath/);
+  assert.match(installerSource, /nodeSha256/);
+  assert.match(installerSource, /runtimeHash/);
+  assert.match(installerSource, /codexAppDesignatedRequirement/);
+  assert.match(installerSource, /codexAppExecutableSha256/);
+  assert.match(installerSource, /Contents["']?,\s*["']Resources["']?,\s*["']runtime/);
+  assert.match(launcherConfigurationSource, /validatedNodeURL/);
+  assert.match(launcherConfigurationSource, /validatedCodexAppExecutableURL/);
+  assert.match(launcherConfigurationSource, /SecRequirementCreateWithString/);
+  assert.match(launcherConfigurationSource, /SHA256/);
+  assert.match(launcherConfigurationSource, /isSymbolicLink/);
+  assert.match(panelManagerSource, /CODEX_EXECUTABLE/);
+  assert.match(panelManagerSource, /--app-executable/);
+});
+
+test("the manager waits for renderer injection and never detaches ownership when opening Panel", () => {
+  assert.match(panelManagerSource, /--status/);
+  assert.match(panelManagerSource, /--startup-token/);
+  assert.match(panelManagerSource, /--open-existing/);
+  assert.doesNotMatch(panelManagerSource, /--daemon/);
+  assert.match(panelManagerSource, /--stop-residents", "--port"/);
+});
+
+test("launcher termination awaits only managed children, preserves ChatGPT, and development restarts request a normal quit", () => {
+  assert.match(launcherAppSource, /applicationShouldTerminate/);
+  assert.match(launcherAppSource, /terminateLater/);
+  assert.match(launcherAppSource, /await shutdownHandler/);
+  assert.match(panelManagerSource, /func shutdown\(\) async/);
+  assert.match(panelManagerSource, /integration\?\.terminate\(\)/);
+  assert.match(panelManagerSource, /panel\?\.terminate\(\)/);
+  assert.doesNotMatch(panelManagerSource, /NSRunningApplication[\s\S]*terminate\(\)/);
+  assert.doesNotMatch(panelManagerSource, /(?:killall|pkill)[\s\S]*(?:ChatGPT|Codex)/i);
+  assert.match(panelManagerSource, /0\.\.<100/);
+  assert.match(buildAndRunSource, /osascript/);
+  assert.match(buildAndRunSource, /stop_app_with_wait_iterations 300/);
+  assert.doesNotMatch(buildAndRunSource, /CODEX_PANEL_STOP_WAIT_ITERATIONS/);
+  assert.match(buildAndRunSource, /pid_matches_app_binary "\$app_pid"/);
+  assert.match(buildAndRunSource, /\/bin\/kill -KILL "\$app_pid"/);
+  assert.doesNotMatch(buildAndRunSource, /(?:killall|pkill)[\s\S]*(?:ChatGPT|Codex)/i);
+  assert.match(buildAndRunSource, /BASH_SOURCE\[0\].*==.*\$0/);
+});
+
+test("development restart keeps its 30-second production wait", () => {
+  const scriptPath = fileURLToPath(new URL("../script/build_and_run.sh", import.meta.url));
+  const result = spawnSync("/bin/bash", ["-c", `
+    source "$1"
+    stop_app_with_wait_iterations() { printf '%s' "$1"; }
+    stop_app
+  `, "test-stop-wait", scriptPath], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      CODEX_PANEL_STOP_WAIT_ITERATIONS: "1",
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(result.stdout, "300");
+});
+
+test("development restart force-kills only the captured launcher binary", {
+  skip: process.platform !== "darwin",
+}, async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-stop-app-"));
+  const launcherBinary = path.join(directory, "CodexPanelLauncher");
+  const unrelatedBinary = path.join(directory, "ChatGPT");
+  await copyFile(process.execPath, launcherBinary);
+  await copyFile(process.execPath, unrelatedBinary);
+  await chmod(launcherBinary, 0o755);
+  await chmod(unrelatedBinary, 0o755);
+
+  const keepAlive = "setInterval(() => {}, 1_000)";
+  const launcher = spawn(launcherBinary, ["--eval", keepAlive], { stdio: "ignore" });
+  const unrelated = spawn(unrelatedBinary, ["--eval", keepAlive], { stdio: "ignore" });
+  t.after(async () => {
+    for (const child of [launcher, unrelated]) {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      if (child.exitCode === null && child.signalCode === null) await once(child, "exit");
+    }
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const scriptPath = fileURLToPath(new URL("../script/build_and_run.sh", import.meta.url));
+  const result = spawnSync("/bin/bash", ["-c", `
+    source "$1"
+    APP_BINARY="$2"
+    request_app_quit() { :; }
+    stop_app_with_wait_iterations 1
+  `, "test-stop-app", scriptPath, launcherBinary], {
+    encoding: "utf8",
+    timeout: 5_000,
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  await once(launcher, "exit");
+  assert.equal(launcher.signalCode, "SIGKILL");
+  assert.equal(unrelated.exitCode, null);
+  assert.equal(unrelated.signalCode, null);
+  assert.doesNotThrow(() => process.kill(unrelated.pid, 0));
+});
+
+test("current-launcher detection binds the marker to the real designated requirement", () => {
+  assert.match(installerSource, /designatedRequirement/);
+  assert.match(installerSource, /codesign[\s\S]*-d[\s\S]*-r-/);
+  assert.match(installerSource, /marker\?\.designatedRequirement/);
+});
+
+test("the Panel ribbon is symmetrically clipped at both corner edges", () => {
+  assert.match(iconBuilderSource, /translateX\(by: 800, yBy: 800\)/);
+  assert.match(iconBuilderSource, /rotate\(byDegrees: -45\)/);
   assert.match(
-    installerSource,
-    /setPlistValue\(plistPath, "CFBundleIconFile", "Codex"\)/,
-  );
-  assert.match(
-    installerSource,
-    /deletePlistValue\(plistPath, "CFBundleIconName"\)/,
+    iconBuilderSource,
+    /NSRect\(x: -280, y: -50, width: 560, height: 100\)/,
   );
 });
 
 test("the generated launcher opts into the current macOS appearance", () => {
-  assert.match(
-    installerSource,
-    /setPlistBoolean\(plistPath, "NSRequiresAquaSystemAppearance", false\)/,
-  );
+  assert.match(installerSource, /<key>NSRequiresAquaSystemAppearance<\/key>\s*<false\/>/);
 });
 
-test("the generated launcher does not leave a temporary Dock application", () => {
-  assert.match(
-    installerSource,
-    /setPlistBoolean\(plistPath, "LSUIElement", true\)/,
-  );
+test("the native launcher switches its Dock icon with the current macOS appearance", () => {
+  assert.match(launcherAppSource, /observe\(\s*\\\.effectiveAppearance/);
+  assert.match(launcherAppSource, /"CodexPanelDark"/);
+  assert.match(launcherAppSource, /NSApp\.applicationIconImage = icon/);
+});
+
+test("the native launcher remains a foreground Dock application", () => {
+  assert.match(installerSource, /plistValue\(launcherPath, "LSUIElement"\) === null/);
+  assert.doesNotMatch(installerSource, /<key>LSUIElement<\/key>/);
 });
 
 test("reinstalling an unchanged launcher preserves its macOS permission identity", {
   skip: process.platform !== "darwin",
-}, async () => {
+}, async (t) => {
+  const identities = spawnSync(
+    "/usr/bin/security",
+    ["find-identity", "-p", "codesigning", "-v"],
+    { encoding: "utf8" },
+  );
+  const signingIdentity = identities.stdout.match(
+    /^\s*\d+\)\s+([0-9A-F]{40})\s+"Apple Development:/m,
+  )?.[1];
+  if (!signingIdentity) {
+    t.skip("a stable Apple Development signing identity is not installed");
+    return;
+  }
+
   const directory = await mkdtemp(path.join(os.tmpdir(), "panel-launcher-identity-"));
   const applicationsDirectory = path.join(directory, "Applications");
-  const launcherPath = path.join(applicationsDirectory, "Codex.app");
+  const launcherPath = path.join(applicationsDirectory, "Codex Panel.app");
   const resourcesPath = path.join(launcherPath, "Contents", "Resources");
+  const lightIconPath = path.join(projectRoot, "web", "public", "codex-app-icon.png");
+  const darkIconPath = lightIconPath;
   const layout = {
     applicationsDirectory,
     dataDirectory: path.join(directory, "data"),
@@ -181,41 +383,103 @@ test("reinstalling an unchanged launcher preserves its macOS permission identity
   };
 
   try {
-    await mkdir(resourcesPath, { recursive: true });
-    await writeFile(path.join(resourcesPath, "Codex.icns"), "fixture icon");
-    await writeFile(
-      path.join(resourcesPath, "codex-panel-launcher.json"),
-      `${JSON.stringify({ generator: "codex-panel" })}\n`,
-    );
+    await createRuntimeFixture(layout.runtimeDirectory, "runtime");
+    await writeFile(path.join(layout.runtimeDirectory, "server", "index.mjs"), "// fixture\n");
 
-    await installLauncher(layout);
+    const installOptions = {
+      codexAppDesignatedRequirement: "identifier test.codex-panel.fake-app",
+      codexAppExecutablePath: process.execPath,
+      codexExecutablePath: process.execPath,
+      iconSourcePaths: {
+        lightSourcePath: lightIconPath,
+        darkSourcePath: darkIconPath,
+      },
+      signingIdentity,
+    };
+    await installLauncher(layout, installOptions);
     const firstRequirement = designatedRequirement();
+    const firstMarker = JSON.parse(
+      await readFile(path.join(resourcesPath, "codex-panel-launcher.json"), "utf8"),
+    );
+    const firstExecutable = await lstat(path.join(
+      launcherPath,
+      "Contents",
+      "MacOS",
+      "CodexPanelLauncher",
+    ));
+    assert.equal(
+      firstMarker.designatedRequirement,
+      firstRequirement,
+    );
     await new Promise((resolve) => setTimeout(resolve, 10));
-    await installLauncher(layout);
+    await installLauncher(layout, installOptions);
 
     assert.equal(designatedRequirement(), firstRequirement);
-
-    const markerPath = path.join(resourcesPath, "codex-panel-launcher.json");
-    const legacyMarker = JSON.parse(await readFile(markerPath, "utf8"));
-    delete legacyMarker.definitionVersion;
-    delete legacyMarker.sourceHash;
-    legacyMarker.generatedAt = "2026-08-06T00:00:00.000Z";
-    await writeFile(markerPath, `${JSON.stringify(legacyMarker, null, 2)}\n`);
-    const resign = spawnSync(
-      "/usr/bin/codesign",
-      ["--force", "--deep", "--sign", "-", launcherPath],
-      { encoding: "utf8" },
+    assert.equal(
+      (await lstat(path.join(
+        launcherPath,
+        "Contents",
+        "MacOS",
+        "CodexPanelLauncher",
+      ))).ino,
+      firstExecutable.ino,
     );
-    assert.equal(resign.status, 0, resign.stderr || resign.stdout);
-    const legacyRequirement = designatedRequirement();
 
-    await installLauncher(layout);
-
-    assert.equal(designatedRequirement(), legacyRequirement);
+    await writeFile(
+      path.join(layout.runtimeDirectory, "scripts", "codex-injector.mjs"),
+      "runtime changed\n",
+    );
+    await installLauncher(layout, installOptions);
+    const updatedMarker = JSON.parse(
+      await readFile(path.join(resourcesPath, "codex-panel-launcher.json"), "utf8"),
+    );
+    assert.notEqual(updatedMarker.runtimeHash, firstMarker.runtimeHash);
+    assert.equal(
+      await readFile(
+        path.join(resourcesPath, "runtime", "scripts", "codex-injector.mjs"),
+        "utf8",
+      ),
+      "runtime changed\n",
+    );
+    assert.equal(designatedRequirement(), firstRequirement);
   } finally {
     spawnSync(launchServicesRegister, ["-u", launcherPath]);
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("launcher signing prefers an explicit or matching stable development identity", () => {
+  const personalIdentity = {
+    hash: "1111111111111111111111111111111111111111",
+    name: "Apple Development: Shay (TEAMID1234)",
+  };
+  const otherIdentity = {
+    hash: "2222222222222222222222222222222222222222",
+    name: "Apple Development: Other (TEAMID5678)",
+  };
+  const identities = [personalIdentity, otherIdentity];
+
+  assert.equal(selectLauncherSigningIdentity({
+    environment: { CODEX_PANEL_CODESIGN_IDENTITY: "Configured Identity" },
+    gitEmail: "shay@example.com",
+    identities,
+  }), "Configured Identity");
+  assert.equal(selectLauncherSigningIdentity({
+    existingIdentity: otherIdentity.hash,
+    gitEmail: "shay@example.com",
+    identities,
+  }), otherIdentity.hash);
+  assert.equal(selectLauncherSigningIdentity({
+    gitEmail: "shay@example.com",
+    identities: [
+      { ...personalIdentity, name: "Apple Development: shay@example.com (TEAMID1234)" },
+      otherIdentity,
+    ],
+  }), personalIdentity.hash);
+  assert.equal(selectLauncherSigningIdentity({
+    gitEmail: "missing@example.com",
+    identities,
+  }), "-");
 });
 
 test("managed installation refuses to overwrite a user-owned directory", async () => {
@@ -235,6 +499,35 @@ test("managed installation refuses to overwrite a user-owned directory", async (
       /is not managed by Codex Panel/,
     );
     assert.equal(await readFile(path.join(targetDirectory, "SKILL.md"), "utf8"), "user-owned\n");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("managed installation leaves an unchanged Skill directory in place", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "panel-managed-install-"));
+  const sourceDirectory = path.join(directory, "source");
+  const targetDirectory = path.join(directory, "target");
+  try {
+    await mkdir(sourceDirectory);
+    await writeFile(path.join(sourceDirectory, "SKILL.md"), "managed\n");
+
+    assert.equal(await installManagedDirectory(
+      sourceDirectory,
+      targetDirectory,
+      "test Skill",
+      { artifact: "test-skill" },
+    ), true);
+    const before = await lstat(targetDirectory);
+
+    assert.equal(await installManagedDirectory(
+      sourceDirectory,
+      targetDirectory,
+      "test Skill",
+      { artifact: "test-skill" },
+    ), false);
+    const after = await lstat(targetDirectory);
+    assert.equal(after.ino, before.ino);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -290,9 +583,12 @@ test("Skill and CLI installation creates managed copies and removes owned legacy
 
     await installPanelTools(layout);
 
+    const installedSkillInodes = new Map();
     for (const skillName of ["manage-panel", "handoff-panel"]) {
       const installedSkill = path.join(layout.skillsDirectory, skillName);
-      assert.equal((await lstat(installedSkill)).isSymbolicLink(), false);
+      const installedSkillStats = await lstat(installedSkill);
+      assert.equal(installedSkillStats.isSymbolicLink(), false);
+      installedSkillInodes.set(skillName, installedSkillStats.ino);
       assert.match(
         await readFile(path.join(installedSkill, ".codex-panel-managed.json"), "utf8"),
         new RegExp(`"artifact": "${skillName}"`),
@@ -307,6 +603,12 @@ test("Skill and CLI installation creates managed copies and removes owned legacy
 
     await installPanelTools(layout);
     assert.equal((await lstat(panelctlPath)).isSymbolicLink(), false);
+    for (const [skillName, inode] of installedSkillInodes) {
+      assert.equal(
+        (await lstat(path.join(layout.skillsDirectory, skillName))).ino,
+        inode,
+      );
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

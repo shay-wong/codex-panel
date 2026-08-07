@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import {
   chmod,
@@ -16,8 +17,10 @@ import { test } from "node:test";
 import * as injectorModule from "../scripts/codex-injector.mjs";
 
 const {
+  codexExecutablePath,
   launchCodex,
   reloadRenderer,
+  validatedCdpWebSocketUrl,
   waitForCodexTargets,
   waitForRendererReady,
 } = injectorModule;
@@ -31,7 +34,7 @@ const packageJson = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
 );
 
-test("cold launch tracks the Codex application process instead of an open helper", async (t) => {
+test("cold launch detaches the Codex application from the injector lifecycle", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-launch-"));
   const appPath = path.join(directory, "Fake Codex.app");
   const executablePath = path.join(appPath, "Contents", "MacOS", "Fake Codex");
@@ -47,22 +50,90 @@ test("cold launch tracks the Codex application process instead of an open helper
   <key>CFBundlePackageType</key><string>APPL</string>
 </dict></plist>
 `);
-  await writeFile(executablePath, `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
-writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify(process.argv.slice(2)));
+  const quotedCapturePath = `'${capturePath.replaceAll("'", `'\\''`)}'`;
+  await writeFile(executablePath, `#!/bin/sh
+printf '%s\\n' "$@" > ${quotedCapturePath}
+while :; do /bin/sleep 1; done
 `);
   await chmod(executablePath, 0o755);
 
-  const child = launchCodex(appPath, 9347);
-  const [exitCode] = await once(child, "exit");
+  let launchedPid = null;
+  const launcher = spawn(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    `import { launchCodex } from ${JSON.stringify(new URL("../scripts/codex-injector.mjs", import.meta.url).href)};
+const child = launchCodex(process.argv[1], Number(process.argv[2]));
+process.stdout.write(String(child.pid));`,
+    executablePath,
+    "9347",
+  ], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let launcherOutput = "";
+  let launcherError = "";
+  launcher.stdout.on("data", (chunk) => { launcherOutput += chunk; });
+  launcher.stderr.on("data", (chunk) => { launcherError += chunk; });
+  const launcherExit = once(launcher, "exit");
+  t.after(() => {
+    try {
+      launcher.kill("SIGKILL");
+    } catch {}
+    if (launchedPid) {
+      try {
+        process.kill(launchedPid, "SIGTERM");
+      } catch {}
+    }
+  });
 
-  assert.equal(exitCode, 0);
-  assert.equal(child.spawnfile, executablePath);
-  assert.deepEqual(JSON.parse(await readFile(capturePath, "utf8")), [
+  let timeout;
+  const [launcherExitCode] = await Promise.race([
+    launcherExit,
+    new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(new Error("launcher parent did not exit after unref")), 2_000);
+    }),
+  ]).finally(() => clearTimeout(timeout));
+  assert.equal(launcherExitCode, 0, launcherError);
+  launchedPid = Number(launcherOutput.trim());
+  assert.ok(Number.isInteger(launchedPid) && launchedPid > 0);
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      await readFile(capturePath, "utf8");
+      break;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  assert.doesNotThrow(() => process.kill(launchedPid, 0));
+
+  const processGroup = await new Promise((resolve, reject) => {
+    const ps = spawn("/bin/ps", ["-o", "pgid=", "-p", String(launchedPid)]);
+    let output = "";
+    ps.stdout.on("data", (chunk) => { output += chunk; });
+    ps.once("error", reject);
+    ps.once("exit", (code) => {
+      if (code === 0) resolve(Number(output.trim()));
+      else reject(new Error(`ps exited with status ${code}`));
+    });
+  });
+
+  assert.equal(processGroup, launchedPid);
+  assert.deepEqual((await readFile(capturePath, "utf8")).trimEnd().split("\n"), [
     "--remote-debugging-port=9347",
     "--remote-allow-origins=http://127.0.0.1:9347",
     "--disable-features=LocalNetworkAccessForSubframeNavigations",
   ]);
+  process.kill(launchedPid, "SIGTERM");
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      process.kill(launchedPid, 0);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } catch {
+      launchedPid = null;
+      break;
+    }
+  }
+  assert.equal(launchedPid, null);
 });
 
 for (const [caseName, plistContents] of [
@@ -89,7 +160,7 @@ for (const [caseName, plistContents] of [
     await chmod(executablePath, 0o755);
 
     assert.throws(
-      () => launchCodex(appPath, 9347),
+      () => codexExecutablePath(appPath),
       /Unable to read CFBundleExecutable from .*Info\.plist: .+/,
     );
   });
@@ -97,6 +168,7 @@ for (const [caseName, plistContents] of [
 
 test("the launcher waits for and selects a delayed main Codex renderer", async (t) => {
   let listRequests = 0;
+  let cdpPort;
   const server = createServer((request, response) => {
     assert.equal(request.url, "/json/list");
     response.setHeader("content-type", "application/json");
@@ -108,13 +180,13 @@ test("the launcher waits for and selects a delayed main Codex renderer", async (
           type: "page",
           title: "Codex",
           url: "app://-/index.html?initialRoute=%2Favatar-overlay",
-          webSocketDebuggerUrl: "ws://127.0.0.1/devtools/page/codex-avatar-overlay",
+          webSocketDebuggerUrl: `ws://127.0.0.1:${cdpPort}/devtools/page/codex-avatar-overlay`,
         }, {
           id: "codex-main",
           type: "page",
           title: "Codex",
           url: "app://-/index.html",
-          webSocketDebuggerUrl: "ws://127.0.0.1/devtools/page/codex-main",
+          webSocketDebuggerUrl: `ws://127.0.0.1:${cdpPort}/devtools/page/codex-main`,
         }]));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -122,10 +194,39 @@ test("the launcher waits for and selects a delayed main Codex renderer", async (
 
   const address = server.address();
   assert(address && typeof address === "object");
+  cdpPort = address.port;
   const targets = await waitForCodexTargets(address.port, 1_000);
 
   assert.equal(listRequests, 3);
   assert.deepEqual(targets.map((target) => target.id), ["codex-main"]);
+});
+
+test("CDP WebSocket URLs stay on the selected loopback endpoint", () => {
+  assert.equal(
+    validatedCdpWebSocketUrl("ws://127.0.0.1:9347/devtools/page/codex-main", 9347),
+    "ws://127.0.0.1:9347/devtools/page/codex-main",
+  );
+  assert.equal(
+    validatedCdpWebSocketUrl("ws://127.0.0.1:80/devtools/page/codex-main", 80),
+    "ws://127.0.0.1/devtools/page/codex-main",
+  );
+
+  for (const candidate of [
+    "wss://127.0.0.1:9347/devtools/page/codex-main",
+    "ws://localhost:9347/devtools/page/codex-main",
+    "ws://127.1:9347/devtools/page/codex-main",
+    "ws://2130706433:9347/devtools/page/codex-main",
+    "ws://192.0.2.10:9347/devtools/page/codex-main",
+    "ws://127.0.0.1:9229/devtools/page/codex-main",
+    "ws://user@127.0.0.1:9347/devtools/page/codex-main",
+    "ws://127.0.0.1:9347/devtools/page/codex-main#fragment",
+    "ws://127.0.0.1:9347/other/page/codex-main",
+  ]) {
+    assert.throws(
+      () => validatedCdpWebSocketUrl(candidate, 9347),
+      /selected loopback endpoint/,
+    );
+  }
 });
 
 test("initial renderer readiness waits for the completed app document", async () => {
@@ -275,7 +376,8 @@ test("initial renderer injection reloads only after Codex bootstrap completes", 
 });
 
 test("the injector ignores auxiliary Codex windows", () => {
-  assert.match(source, /!target\.url\?\.includes\("initialRoute=%2Fglobal-dictation"\)/);
+  assert.match(source, /target\.url\?\.includes\("initialRoute=%2Fglobal-dictation"\)/);
+  assert.match(source, /target\.url\?\.includes\("initialRoute=%2Favatar-overlay"\)/);
 });
 
 test("a completed web build refreshes an already-open Codex iframe", () => {

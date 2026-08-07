@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 
 import { resolvePanelDataDirectory, resolvePanelSupportRoot } from "../shared/panel-paths.mjs";
 import {
+  directoryContentHash,
   installManagedDirectory,
   installManagedFile,
   pathExists,
@@ -28,6 +29,7 @@ import {
 
 const scriptPath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(scriptPath), "..");
+const nativeLauncherRoot = path.join(projectRoot, "macos", "CodexPanelLauncher");
 const panelSkillSource = path.join(projectRoot, "skills", "manage-panel");
 const handoffPanelSkillSource = path.join(projectRoot, "skills", "handoff-panel");
 const panelctlSource = path.join(projectRoot, "cli", "panelctl.mjs");
@@ -54,30 +56,119 @@ const runtimeScriptNames = [
   "codex-injector.mjs",
   "codex-rate-limits.mjs",
 ];
-const launcherName = "Codex.app";
-const mistakenLauncherName = "Codex Panel.app";
-const launcherBundleIdentifier = "com.shay.codex-taskboard-launcher";
-const launcherDefinitionVersion = 2;
+const launcherName = "Codex Panel.app";
+const legacyLauncherName = "Codex.app";
+const launcherExecutableName = "CodexPanelLauncher";
+const launcherIconBuilderName = "CodexPanelIconBuilder";
+const launcherBundleIdentifier = "com.shay.codex-panel";
+const legacyLauncherBundleIdentifier = "com.shay.codex-taskboard-launcher";
+const launcherDefinitionVersion = 8;
 const launcherMarkerName = "codex-panel-launcher.json";
+const launcherConfigurationName = "launcher-config.json";
 const officialCodexAppPath = "/Applications/ChatGPT.app";
+const officialCodexExecutablePath = path.join(
+  officialCodexAppPath,
+  "Contents",
+  "Resources",
+  "codex",
+);
 const plistBuddyPath = "/usr/libexec/PlistBuddy";
 const launchServicesRegister = [
   "/System/Library/Frameworks/CoreServices.framework",
   "Frameworks/LaunchServices.framework/Support/lsregister",
 ].join("/");
 
-function appleScriptString(value) {
-  return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-}
-
 function run(command, args, { allowFailure = false, cwd } = {}) {
-  const result = spawnSync(command, args, { cwd, encoding: "utf8" });
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+  });
   if (result.status === 0 || allowFailure) return result;
   const detail = result.stderr?.trim()
     || result.stdout?.trim()
     || result.error?.message
     || `exit status ${result.status}`;
   throw new Error(`${path.basename(command)} failed: ${detail}`);
+}
+
+function parseCodeSigningIdentities(output) {
+  const identities = new Map();
+  for (const match of output.matchAll(/^\s*\d+\)\s+([0-9A-F]{40})\s+"([^"]+)"/gm)) {
+    identities.set(match[1], { hash: match[1], name: match[2] });
+  }
+  return [...identities.values()];
+}
+
+export function selectLauncherSigningIdentity({
+  environment = {},
+  existingIdentity,
+  gitEmail,
+  identities = [],
+} = {}) {
+  const explicitIdentity = environment.CODEX_PANEL_CODESIGN_IDENTITY?.trim();
+  if (explicitIdentity) return explicitIdentity;
+
+  if (
+    existingIdentity
+    && existingIdentity !== "-"
+    && identities.some(({ hash, name }) => (
+      hash === existingIdentity || name === existingIdentity
+    ))
+  ) return existingIdentity;
+
+  const normalizedEmail = gitEmail?.trim().toLowerCase();
+  if (!normalizedEmail) return "-";
+  const matchingIdentities = identities.filter(({ name }) => (
+    name.startsWith("Apple Development:")
+    && name.toLowerCase().includes(normalizedEmail)
+  ));
+  return matchingIdentities.length === 1 ? matchingIdentities[0].hash : "-";
+}
+
+function codeSigningDetails(appPath) {
+  const details = run(
+    "/usr/bin/codesign",
+    ["-dv", "--verbose=4", appPath],
+    { allowFailure: true },
+  );
+  const requirement = run(
+    "/usr/bin/codesign",
+    ["-d", "-r-", appPath],
+    { allowFailure: true },
+  );
+  const detailsText = `${details.stdout || ""}\n${details.stderr || ""}`;
+  const requirementText = `${requirement.stdout || ""}\n${requirement.stderr || ""}`;
+  return {
+    authority: detailsText.match(/^Authority=(.+)$/m)?.[1] ?? null,
+    designatedRequirement: requirementText.match(/^#?\s*designated => (.+)$/m)?.[1] ?? null,
+  };
+}
+
+function resolveLauncherSigningIdentity(currentLauncherPath) {
+  const identityResult = run(
+    "/usr/bin/security",
+    ["find-identity", "-p", "codesigning", "-v"],
+    { allowFailure: true },
+  );
+  const emailResult = run(
+    "/usr/bin/git",
+    ["config", "--global", "user.email"],
+    { allowFailure: true },
+  );
+  const identities = identityResult.status === 0
+    ? parseCodeSigningIdentities(identityResult.stdout)
+    : [];
+  const currentAuthority = currentLauncherPath
+    ? codeSigningDetails(currentLauncherPath).authority
+    : null;
+  const existingIdentity = identities.find(({ name }) => name === currentAuthority)?.hash;
+  return selectLauncherSigningIdentity({
+    environment: process.env,
+    existingIdentity,
+    gitEmail: emailResult.status === 0 ? emailResult.stdout : "",
+    identities,
+  });
 }
 
 export function resolveInstallLayout(options = {}) {
@@ -326,99 +417,25 @@ async function managedMarker(appPath) {
   }
 }
 
-async function assertManagedLauncher(appPath, { allowCurrentCodexLauncher = false } = {}) {
+async function assertManagedLauncher(appPath) {
   const marker = await managedMarker(appPath);
   if (marker?.generator === "codex-panel") return;
-  if (allowCurrentCodexLauncher && bundleIdentifier(appPath) === launcherBundleIdentifier) return;
   throw new Error(`Refusing to replace an unmanaged application at ${appPath}`);
 }
 
-function launcherMarker(layout, source) {
-  return {
-    generator: "codex-panel",
-    definitionVersion: launcherDefinitionVersion,
-    launcher: launcherName,
-    dataDirectory: layout.dataDirectory,
-    nodePath: process.execPath,
-    runtimeDirectory: layout.runtimeDirectory,
-    sourceHash: createHash("sha256").update(source).digest("hex"),
-  };
-}
-
-function legacyLauncherMarkerMatches(marker, expectedMarker) {
-  return marker?.generator === expectedMarker.generator
-    && marker?.launcher === expectedMarker.launcher
-    && marker?.dataDirectory === expectedMarker.dataDirectory
-    && marker?.nodePath === expectedMarker.nodePath
-    && marker?.runtimeDirectory === expectedMarker.runtimeDirectory
-    && marker?.definitionVersion == null
-    && marker?.sourceHash == null
-    && typeof marker?.generatedAt === "string";
-}
-
-async function launcherBundleMetadataIsCurrent(launcherPath) {
-  return bundleIdentifier(launcherPath) === launcherBundleIdentifier
-    && plistValue(launcherPath, "CFBundleIconFile") === "Codex"
-    && plistValue(launcherPath, "CFBundleIconName") === null
-    && plistValue(launcherPath, "NSRequiresAquaSystemAppearance") === "false"
-    && plistValue(launcherPath, "LSUIElement") === "true"
-    && await pathExists(path.join(launcherPath, "Contents", "Resources", "Codex.icns"));
-}
-
-function decompileLauncher(launcherPath) {
-  const result = run("/usr/bin/osadecompile", [launcherPath], { allowFailure: true });
-  return result.status === 0 ? result.stdout : null;
-}
-
-async function canonicalLauncherSource(source) {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-launcher-source-"));
-  const sourcePath = path.join(directory, "Codex.applescript");
-  const launcherPath = path.join(directory, launcherName);
-  try {
-    await writeFile(sourcePath, source);
-    run("/usr/bin/osacompile", ["-o", launcherPath, sourcePath]);
-    return decompileLauncher(launcherPath);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-}
-
-async function launcherIsCurrent(launcherPath, expectedMarker, source) {
-  const marker = await managedMarker(launcherPath);
-  const signatureValid = run(
-    "/usr/bin/codesign",
-    ["--verify", "--deep", "--strict", launcherPath],
-    { allowFailure: true },
-  ).status === 0;
-  if (!signatureValid) return false;
-  if (JSON.stringify(marker) === JSON.stringify(expectedMarker)) return true;
-  if (!legacyLauncherMarkerMatches(marker, expectedMarker)) return false;
-  if (!(await launcherBundleMetadataIsCurrent(launcherPath))) return false;
-  const currentSource = decompileLauncher(launcherPath);
-  if (currentSource === null) return false;
-  const expectedSource = await canonicalLauncherSource(source);
-  return expectedSource !== null && currentSource === expectedSource;
-}
-
-async function resolveLauncherIcon(currentLauncherPath) {
-  const candidates = [
-    path.join(currentLauncherPath, "Contents", "Resources", "codex.icns"),
-    path.join(currentLauncherPath, "Contents", "Resources", "Codex.icns"),
-    path.join(officialCodexAppPath, "Contents", "Resources", "app.icns"),
-    path.join(officialCodexAppPath, "Contents", "Resources", "electron.icns"),
-  ];
-  for (const candidate of candidates) {
-    if (await pathExists(candidate)) return candidate;
-  }
-  throw new Error("No Codex application icon was found");
-}
-
-export function launcherSource({
+export function launcherConfiguration({
+  codexAppPath = officialCodexAppPath,
+  codexAppDesignatedRequirement,
+  codexAppExecutablePath,
+  codexAppExecutableSha256,
+  codexExecutablePath = officialCodexExecutablePath,
+  codexExecutableSha256,
   dataDirectory,
   logPath,
   nodeBinPath,
   nodePath,
-  runtimeDirectory,
+  nodeSha256,
+  runtimeRelativePath = "runtime",
   userBinDirectory,
 }) {
   const pathValue = [
@@ -431,84 +448,370 @@ export function launcherSource({
     "/usr/sbin",
     "/sbin",
   ].join(":");
-  return `property runtimePath : ${appleScriptString(runtimeDirectory)}
-property dataPath : ${appleScriptString(dataDirectory)}
-property injectorPath : ${appleScriptString(path.join(runtimeDirectory, "scripts", "codex-injector.mjs"))}
-property nodePath : ${appleScriptString(nodePath)}
-property nodePathValue : ${appleScriptString(pathValue)}
-property logPath : ${appleScriptString(logPath)}
-property codexAppPath : ${appleScriptString(officialCodexAppPath)}
+  return {
+    version: 3,
+    runtimeRelativePath,
+    dataDirectory,
+    logPath,
+    nodePath,
+    nodeSha256,
+    pathValue,
+    codexAppPath,
+    codexAppDesignatedRequirement,
+    codexAppExecutablePath,
+    codexAppExecutableSha256,
+    codexExecutablePath,
+    codexExecutableSha256,
+    panelPort: 47823,
+    cdpPort: 9229,
+  };
+}
 
-on run
-  set shellSetup to "export PATH=" & quoted form of nodePathValue & "; export CODEX_PANEL_HOST=127.0.0.1; export CODEX_PANEL_DATA_DIR=" & quoted form of dataPath & "; cd " & quoted form of runtimePath & "; "
+function launcherMarker(
+  layout,
+  sourceHash,
+  runtimeHash,
+  signingIdentity,
+  designatedRequirement = null,
+) {
+  return {
+    generator: "codex-panel",
+    definitionVersion: launcherDefinitionVersion,
+    launcher: launcherName,
+    dataDirectory: layout.dataDirectory,
+    nodePath: process.execPath,
+    runtimeDirectory: layout.runtimeDirectory,
+    signingIdentity,
+    designatedRequirement,
+    runtimeHash,
+    sourceHash,
+  };
+}
 
-  try
-    set cdpReady to do shell script "/usr/bin/curl -fsS --max-time 1 http://127.0.0.1:9229/json/version >/dev/null 2>&1; echo $?"
-    if cdpReady is "0" then
-      do shell script shellSetup & "nohup " & quoted form of nodePath & " " & quoted form of injectorPath & " --daemon --open >> " & quoted form of logPath & " 2>&1 </dev/null &"
-      delay 1
-      do shell script "/usr/bin/open -a " & quoted form of codexAppPath
-      return
-    end if
+export async function sha256File(filePath) {
+  return createHash("sha256").update(await readFile(filePath)).digest("hex");
+}
 
-    set codexRunning to do shell script "/usr/bin/pgrep -x ChatGPT >/dev/null 2>&1; echo $?"
-    if codexRunning is "0" then
-      display dialog "Codex 正在运行，但没有启用 CDP。请完全退出 Codex，再点击 Codex。" buttons {"好"} default button "好" with icon caution
-      return
-    end if
+export function resolveCodexAppExecutablePath(codexAppPath = officialCodexAppPath) {
+  const executableName = plistValue(codexAppPath, "CFBundleExecutable");
+  if (!executableName || path.basename(executableName) !== executableName) {
+    throw new Error(`Invalid Codex application executable: ${executableName || "missing"}`);
+  }
+  return path.join(codexAppPath, "Contents", "MacOS", executableName);
+}
 
-    do shell script shellSetup & "nohup " & quoted form of nodePath & " " & quoted form of injectorPath & " --launch --watch --open >> " & quoted form of logPath & " 2>&1 </dev/null &"
-  on error errorMessage
-    display dialog "Codex Panel 启动失败：" & return & errorMessage buttons {"好"} default button "好" with icon stop
-  end try
-end run
+function verifiedDesignatedRequirement(appPath, label) {
+  const verification = run(
+    "/usr/bin/codesign",
+    ["--verify", "--deep", "--strict", appPath],
+    { allowFailure: true },
+  );
+  if (verification.status !== 0) {
+    const detail = verification.stderr?.trim()
+      || verification.stdout?.trim()
+      || verification.error?.message
+      || `exit status ${verification.status}`;
+    throw new Error(`${label} signature verification failed: ${detail}`);
+  }
+  const requirement = codeSigningDetails(appPath).designatedRequirement;
+  if (!requirement) throw new Error(`Unable to read ${label} designated requirement`);
+  return requirement;
+}
+
+async function collectLauncherSourceFiles(directory, relativeDirectory = "") {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    if (entry.name === ".build") continue;
+    const relativePath = path.join(relativeDirectory, entry.name);
+    const absolutePath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await collectLauncherSourceFiles(absolutePath, relativePath));
+    } else if (entry.name === "Package.swift" || entry.name.endsWith(".swift")) {
+      files.push({ absolutePath, relativePath });
+    }
+  }
+  return files;
+}
+
+async function nativeLauncherSourceHash(configuration) {
+  const hash = createHash("sha256");
+  const files = await collectLauncherSourceFiles(nativeLauncherRoot);
+  for (const file of files.sort((left, right) => (
+    left.relativePath.localeCompare(right.relativePath)
+  ))) {
+    hash.update(file.relativePath);
+    hash.update("\0");
+    hash.update(await readFile(file.absolutePath));
+    hash.update("\0");
+  }
+  hash.update(JSON.stringify(configuration));
+  return hash.digest("hex");
+}
+
+async function launcherBundleMetadataIsCurrent(launcherPath) {
+  return bundleIdentifier(launcherPath) === launcherBundleIdentifier
+    && plistValue(launcherPath, "CFBundleDisplayName") === "Codex Panel"
+    && plistValue(launcherPath, "CFBundleExecutable") === launcherExecutableName
+    && plistValue(launcherPath, "CFBundleIconFile") === "CodexPanel"
+    && plistValue(launcherPath, "NSRequiresAquaSystemAppearance") === "false"
+    && plistValue(launcherPath, "LSUIElement") === null
+    && await pathExists(path.join(launcherPath, "Contents", "MacOS", launcherExecutableName))
+    && await pathExists(path.join(launcherPath, "Contents", "Resources", "CodexPanel.icns"))
+    && await pathExists(path.join(launcherPath, "Contents", "Resources", "CodexPanelDark.icns"))
+    && await pathExists(path.join(launcherPath, "Contents", "Resources", "CodexBaseLight.png"))
+    && await pathExists(path.join(launcherPath, "Contents", "Resources", "CodexBaseDark.png"))
+    && await pathExists(path.join(
+      launcherPath,
+      "Contents",
+      "Resources",
+      "runtime",
+      "scripts",
+      "codex-injector.mjs",
+    ))
+    && await pathExists(path.join(
+      launcherPath,
+      "Contents",
+      "Resources",
+      "runtime",
+      "server",
+      "index.mjs",
+    ))
+    && await pathExists(path.join(launcherPath, "Contents", "Resources", launcherConfigurationName));
+}
+
+function signingIdentityName(signingIdentity) {
+  if (signingIdentity === "-") return null;
+  const identities = run(
+    "/usr/bin/security",
+    ["find-identity", "-p", "codesigning", "-v"],
+    { allowFailure: true },
+  );
+  if (identities.status !== 0) return /^[0-9a-f]{40}$/i.test(signingIdentity)
+    ? null
+    : signingIdentity;
+  const match = parseCodeSigningIdentities(identities.stdout).find(({ hash, name }) => (
+    hash === signingIdentity || name === signingIdentity
+  ));
+  return match?.name ?? (/^[0-9a-f]{40}$/i.test(signingIdentity) ? null : signingIdentity);
+}
+
+async function launcherIsCurrent(launcherPath, expectedMarker) {
+  const marker = await managedMarker(launcherPath);
+  const signatureValid = run(
+    "/usr/bin/codesign",
+    ["--verify", "--deep", "--strict", launcherPath],
+    { allowFailure: true },
+  ).status === 0;
+  if (!signatureValid) return false;
+  const signingDetails = codeSigningDetails(launcherPath);
+  const expectedAuthority = signingIdentityName(expectedMarker.signingIdentity);
+  if (
+    expectedMarker.signingIdentity === "-"
+    || !expectedAuthority
+    || signingDetails.authority !== expectedAuthority
+    || !signingDetails.designatedRequirement
+    || marker?.designatedRequirement !== signingDetails.designatedRequirement
+  ) return false;
+  const comparableMarker = { ...marker, designatedRequirement: null };
+  return JSON.stringify(comparableMarker) === JSON.stringify(expectedMarker)
+    && await launcherBundleMetadataIsCurrent(launcherPath);
+}
+
+export async function resolveLauncherIcons(codexAppPath = officialCodexAppPath) {
+  const officialResourcesPath = path.join(
+    codexAppPath,
+    "Contents",
+    "Resources",
+  );
+  const lightSourcePath = path.join(officialResourcesPath, "icon-codex-light.png");
+  const darkSourcePath = path.join(officialResourcesPath, "icon-codex-dark-color.png");
+  for (const sourcePath of [lightSourcePath, darkSourcePath]) {
+    if (!(await pathExists(sourcePath))) {
+      throw new Error(`Required official Codex icon is missing: ${sourcePath}`);
+    }
+  }
+  return { darkSourcePath, lightSourcePath };
+}
+
+function launcherInfoPlist() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>zh_CN</string>
+  <key>CFBundleDisplayName</key>
+  <string>Codex Panel</string>
+  <key>CFBundleExecutable</key>
+  <string>${launcherExecutableName}</string>
+  <key>CFBundleIconFile</key>
+  <string>CodexPanel</string>
+  <key>CFBundleIdentifier</key>
+  <string>${launcherBundleIdentifier}</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Codex Panel</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>CFBundleVersion</key>
+  <string>${launcherDefinitionVersion}</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.developer-tools</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>LSMultipleInstancesProhibited</key>
+  <true/>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
+  <key>NSRequiresAquaSystemAppearance</key>
+  <false/>
+</dict>
+</plist>
 `;
 }
 
-function setPlistValue(plistPath, key, value) {
-  const result = run(
-    plistBuddyPath,
-    ["-c", `Set :${key} ${value}`, plistPath],
-    { allowFailure: true },
-  );
-  if (result.status !== 0) {
-    run(plistBuddyPath, ["-c", `Add :${key} string ${value}`, plistPath]);
+async function buildNativeLauncherProducts(temporaryDirectory) {
+  const scratchPath = path.join(temporaryDirectory, "swift-build");
+  const swiftArguments = [
+    "swift",
+    "build",
+    "--package-path",
+    nativeLauncherRoot,
+    "--configuration",
+    "release",
+    "--scratch-path",
+    scratchPath,
+  ];
+  run("/usr/bin/xcrun", swiftArguments);
+  const binPath = run("/usr/bin/xcrun", [
+    ...swiftArguments,
+    "--show-bin-path",
+  ]).stdout.trim();
+  return {
+    launcherBinary: path.join(binPath, launcherExecutableName),
+    iconBuilderBinary: path.join(binPath, launcherIconBuilderName),
+  };
+}
+
+const launcherIconSizes = [
+  { filename: "icon_16x16.png", idiomSize: "16x16", pixels: 16, scale: "1x" },
+  { filename: "icon_16x16@2x.png", idiomSize: "16x16", pixels: 32, scale: "2x" },
+  { filename: "icon_32x32.png", idiomSize: "32x32", pixels: 32, scale: "1x" },
+  { filename: "icon_32x32@2x.png", idiomSize: "32x32", pixels: 64, scale: "2x" },
+  { filename: "icon_128x128.png", idiomSize: "128x128", pixels: 128, scale: "1x" },
+  { filename: "icon_128x128@2x.png", idiomSize: "128x128", pixels: 256, scale: "2x" },
+  { filename: "icon_256x256.png", idiomSize: "256x256", pixels: 256, scale: "1x" },
+  { filename: "icon_256x256@2x.png", idiomSize: "256x256", pixels: 512, scale: "2x" },
+  { filename: "icon_512x512.png", idiomSize: "512x512", pixels: 512, scale: "1x" },
+  { filename: "icon_512x512@2x.png", idiomSize: "512x512", pixels: 1024, scale: "2x" },
+];
+
+async function buildIcns(sourcePng, iconsetPath, outputPath) {
+  await mkdir(iconsetPath);
+  for (const icon of launcherIconSizes) {
+    run("/usr/bin/sips", [
+      "-z",
+      String(icon.pixels),
+      String(icon.pixels),
+      sourcePng,
+      "--out",
+      path.join(iconsetPath, icon.filename),
+    ]);
   }
+  run("/usr/bin/iconutil", ["-c", "icns", iconsetPath, "-o", outputPath]);
+  await rm(iconsetPath, { recursive: true });
 }
 
-function setPlistBoolean(plistPath, key, value) {
-  deletePlistValue(plistPath, key);
-  run(plistBuddyPath, [
-    "-c",
-    `Add :${key} bool ${value ? "true" : "false"}`,
-    plistPath,
-  ]);
-}
-
-function deletePlistValue(plistPath, key) {
-  const result = run(
-    plistBuddyPath,
-    ["-c", `Delete :${key}`, plistPath],
-    { allowFailure: true },
+async function buildLauncherIcons(
+  iconBuilderBinary,
+  lightSourcePath,
+  darkSourcePath,
+  resourcesPath,
+  temporaryDirectory,
+) {
+  const lightPng = path.join(temporaryDirectory, "CodexPanel-light.png");
+  const darkPng = path.join(temporaryDirectory, "CodexPanel-dark.png");
+  run(iconBuilderBinary, [lightSourcePath, darkSourcePath, lightPng, darkPng]);
+  await buildIcns(
+    lightPng,
+    path.join(temporaryDirectory, "CodexPanel.iconset"),
+    path.join(resourcesPath, "CodexPanel.icns"),
   );
-  if (result.status === 0) return;
-  const detail = result.stderr?.trim()
-    || result.stdout?.trim()
-    || result.error?.message
-    || `exit status ${result.status}`;
-  if (detail.includes("Does Not Exist")) return;
-  throw new Error(`${path.basename(plistBuddyPath)} failed: ${detail}`);
+  await buildIcns(
+    darkPng,
+    path.join(temporaryDirectory, "CodexPanelDark.iconset"),
+    path.join(resourcesPath, "CodexPanelDark.icns"),
+  );
 }
 
-async function removeMistakenLauncher(applicationsDirectory) {
-  const mistakenLauncherPath = path.join(applicationsDirectory, mistakenLauncherName);
-  if (!(await pathExists(mistakenLauncherPath))) return;
-  await assertManagedLauncher(mistakenLauncherPath);
-  run(launchServicesRegister, ["-u", mistakenLauncherPath], { allowFailure: true });
-  await rm(mistakenLauncherPath, { recursive: true });
+async function writeNativeLauncherBundle({
+  configuration,
+  iconSourcePaths,
+  launcherPath,
+  marker,
+  runtimeSourcePath,
+  temporaryDirectory,
+}) {
+  const contentsPath = path.join(launcherPath, "Contents");
+  const macOSPath = path.join(contentsPath, "MacOS");
+  const resourcesPath = path.join(contentsPath, "Resources");
+  await mkdir(macOSPath, { recursive: true });
+  await mkdir(resourcesPath, { recursive: true });
+  await cp(runtimeSourcePath, path.join(resourcesPath, "runtime"), {
+    preserveTimestamps: true,
+    recursive: true,
+  });
+
+  const products = await buildNativeLauncherProducts(temporaryDirectory);
+  const launcherBinaryPath = path.join(macOSPath, launcherExecutableName);
+  await copyFile(products.launcherBinary, launcherBinaryPath);
+  await chmod(launcherBinaryPath, 0o755);
+  const baseLightPath = path.join(resourcesPath, "CodexBaseLight.png");
+  const baseDarkPath = path.join(resourcesPath, "CodexBaseDark.png");
+  for (const [sourcePath, outputPath] of [
+    [iconSourcePaths.lightSourcePath, baseLightPath],
+    [iconSourcePaths.darkSourcePath, baseDarkPath],
+  ]) {
+    run("/usr/bin/sips", ["-s", "format", "png", sourcePath, "--out", outputPath]);
+  }
+  await buildLauncherIcons(
+    products.iconBuilderBinary,
+    baseLightPath,
+    baseDarkPath,
+    resourcesPath,
+    temporaryDirectory,
+  );
+  await writeFile(path.join(contentsPath, "Info.plist"), launcherInfoPlist());
+  await writeFile(path.join(contentsPath, "PkgInfo"), "APPL????");
+  await writeFile(
+    path.join(resourcesPath, launcherConfigurationName),
+    `${JSON.stringify(configuration, null, 2)}\n`,
+  );
+  await writeFile(
+    path.join(resourcesPath, launcherMarkerName),
+    `${JSON.stringify(marker, null, 2)}\n`,
+  );
 }
 
-export async function installLauncher(layout) {
+async function removeLegacyLauncher(applicationsDirectory) {
+  const legacyLauncherPath = path.join(applicationsDirectory, legacyLauncherName);
+  if (!(await pathExists(legacyLauncherPath))) return;
+  const marker = await managedMarker(legacyLauncherPath);
+  if (
+    marker?.generator !== "codex-panel"
+    && bundleIdentifier(legacyLauncherPath) !== legacyLauncherBundleIdentifier
+  ) return;
+  run(launchServicesRegister, ["-u", legacyLauncherPath], { allowFailure: true });
+  await rm(legacyLauncherPath, { recursive: true });
+}
+
+export async function installLauncher(layout, options = {}) {
   if (process.platform !== "darwin") {
     console.log("Skipping Codex launcher installation outside macOS.");
     return;
@@ -516,60 +819,123 @@ export async function installLauncher(layout) {
 
   const applicationsDirectory = layout.applicationsDirectory;
   const launcherPath = path.join(applicationsDirectory, launcherName);
-  const source = launcherSource({
+  const launcherExists = await pathExists(launcherPath);
+  const signingIdentity = options.signingIdentity
+    ?? resolveLauncherSigningIdentity(launcherExists ? launcherPath : null);
+  const codexAppPath = options.codexAppPath ?? officialCodexAppPath;
+  const codexAppExecutablePath = options.codexAppExecutablePath
+    ?? resolveCodexAppExecutablePath(codexAppPath);
+  const codexExecutablePath = options.codexExecutablePath
+    ?? path.join(codexAppPath, "Contents", "Resources", "codex");
+  for (const [label, executablePath] of [
+    ["Codex application", codexAppExecutablePath],
+    ["Codex CLI", codexExecutablePath],
+  ]) {
+    if (!(await pathExists(executablePath))) {
+      throw new Error(`Required ${label} executable is missing: ${executablePath}`);
+    }
+  }
+  const codexAppDesignatedRequirement = options.codexAppDesignatedRequirement
+    ?? verifiedDesignatedRequirement(codexAppPath, "Codex application");
+  const configuration = launcherConfiguration({
+    codexAppPath,
+    codexAppDesignatedRequirement,
+    codexAppExecutablePath,
+    codexAppExecutableSha256: await sha256File(codexAppExecutablePath),
+    codexExecutablePath,
+    codexExecutableSha256: await sha256File(codexExecutablePath),
     dataDirectory: layout.dataDirectory,
     logPath: layout.logPath,
     nodeBinPath: path.dirname(process.execPath),
     nodePath: process.execPath,
-    runtimeDirectory: layout.runtimeDirectory,
+    nodeSha256: await sha256File(process.execPath),
+    runtimeRelativePath: "runtime",
     userBinDirectory: layout.userBinDirectory,
   });
-  const marker = launcherMarker(layout, source);
+  const runtimeHash = await directoryContentHash(layout.runtimeDirectory);
+  const marker = launcherMarker(
+    layout,
+    await nativeLauncherSourceHash(configuration),
+    runtimeHash,
+    signingIdentity,
+  );
 
-  if (await pathExists(launcherPath)) {
-    await assertManagedLauncher(launcherPath, { allowCurrentCodexLauncher: true });
-    if (await launcherIsCurrent(launcherPath, marker, source)) {
+  if (launcherExists) {
+    await assertManagedLauncher(launcherPath);
+    if (await launcherIsCurrent(launcherPath, marker)) {
       run(launchServicesRegister, ["-f", launcherPath]);
-      await removeMistakenLauncher(applicationsDirectory);
-      console.log(`Codex launcher already current at ${launcherPath}`);
+      await removeLegacyLauncher(applicationsDirectory);
+      console.log(`Codex Panel launcher already current at ${launcherPath}`);
       return;
     }
   }
 
-  const iconSourcePath = await resolveLauncherIcon(launcherPath);
+  const iconSourcePaths = options.iconSourcePaths ?? await resolveLauncherIcons(codexAppPath);
   await mkdir(applicationsDirectory, { recursive: true });
   const temporaryDirectory = await mkdtemp(
-    path.join(applicationsDirectory, ".codex-launcher-"),
+    path.join(applicationsDirectory, ".codex-panel-launcher-"),
   );
   const temporaryLauncherPath = path.join(temporaryDirectory, launcherName);
-  const sourcePath = path.join(temporaryDirectory, "Codex.applescript");
 
   try {
-    await writeFile(sourcePath, source);
-    run("/usr/bin/osacompile", ["-o", temporaryLauncherPath, sourcePath]);
-
-    const plistPath = path.join(temporaryLauncherPath, "Contents", "Info.plist");
-    setPlistValue(plistPath, "CFBundleIdentifier", launcherBundleIdentifier);
-    setPlistValue(plistPath, "CFBundleDisplayName", "Codex");
-    setPlistValue(plistPath, "CFBundleName", "Codex");
-    setPlistValue(plistPath, "CFBundleIconFile", "Codex");
-    deletePlistValue(plistPath, "CFBundleIconName");
-    setPlistBoolean(plistPath, "NSRequiresAquaSystemAppearance", false);
-    setPlistBoolean(plistPath, "LSUIElement", true);
-
-    const resourcesPath = path.join(temporaryLauncherPath, "Contents", "Resources");
-    await copyFile(iconSourcePath, path.join(resourcesPath, "Codex.icns"));
-    await writeFile(
-      path.join(resourcesPath, launcherMarkerName),
-      `${JSON.stringify(marker, null, 2)}\n`,
-    );
-    run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", temporaryLauncherPath]);
+    await writeNativeLauncherBundle({
+      configuration,
+      iconSourcePaths,
+      launcherPath: temporaryLauncherPath,
+      marker,
+      runtimeSourcePath: layout.runtimeDirectory,
+      temporaryDirectory,
+    });
+    run("/usr/bin/codesign", [
+      "--force",
+      "--deep",
+      "--sign",
+      signingIdentity,
+      temporaryLauncherPath,
+    ]);
+    if (signingIdentity !== "-") {
+      const designatedRequirement = codeSigningDetails(
+        temporaryLauncherPath,
+      ).designatedRequirement;
+      if (!designatedRequirement) {
+        throw new Error("Unable to read the launcher's designated requirement");
+      }
+      const signedMarker = launcherMarker(
+        layout,
+        marker.sourceHash,
+        marker.runtimeHash,
+        signingIdentity,
+        designatedRequirement,
+      );
+      await writeFile(
+        path.join(
+          temporaryLauncherPath,
+          "Contents",
+          "Resources",
+          launcherMarkerName,
+        ),
+        `${JSON.stringify(signedMarker, null, 2)}\n`,
+      );
+      run("/usr/bin/codesign", [
+        "--force",
+        "--deep",
+        "--sign",
+        signingIdentity,
+        temporaryLauncherPath,
+      ]);
+      const finalRequirement = codeSigningDetails(
+        temporaryLauncherPath,
+      ).designatedRequirement;
+      if (finalRequirement !== designatedRequirement) {
+        throw new Error("Launcher designated requirement changed during final signing");
+      }
+    }
 
     if (await pathExists(launcherPath)) await rm(launcherPath, { recursive: true });
     await rename(temporaryLauncherPath, launcherPath);
     run(launchServicesRegister, ["-f", launcherPath]);
-    await removeMistakenLauncher(applicationsDirectory);
-    console.log(`Codex launcher installed at ${launcherPath}`);
+    await removeLegacyLauncher(applicationsDirectory);
+    console.log(`Codex Panel launcher installed at ${launcherPath}`);
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }

@@ -6,5 +6,6 @@ dist/
 .tmp/
 cloud-migration-exports/
 .playwright-cli/
+macos/CodexPanelLauncher/.build/
 *.log
 .DS_Store

@@ -16,9 +16,12 @@ import {
 import {
   findResidentInjectorPids,
   handleHostBindingPayload,
+  injectionReadinessMatches,
   reconcileInjectionRuntime,
+  residentInjectorCommandMatches,
   restartResidentInjector,
   sameFrameDocumentUrl,
+  stopResidentInjectors,
 } from "./codex-injector-runtime.mjs";
 import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
 
@@ -61,10 +64,15 @@ function parseArgs(argv) {
     refresh: false,
     refreshIfRunning: false,
     attachExisting: false,
+    discoverPort: false,
+    openExisting: false,
+    status: false,
     startupToken: null,
     daemon: false,
+    stopResidents: false,
     screenshot: null,
     appPath: "/Applications/ChatGPT.app",
+    appExecutable: null,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -75,6 +83,9 @@ function parseArgs(argv) {
     else if (arg === "--refresh") options.refresh = true;
     else if (arg === "--refresh-if-running") options.refreshIfRunning = true;
     else if (arg === "--attach-existing") options.attachExisting = true;
+    else if (arg === "--discover-port") options.discoverPort = true;
+    else if (arg === "--open-existing") options.openExisting = true;
+    else if (arg === "--status") options.status = true;
     else if (arg === "--startup-token") {
       options.startupToken = argv[++index];
       if (!/^[a-z0-9-]{1,100}$/i.test(options.startupToken || "")) {
@@ -82,12 +93,14 @@ function parseArgs(argv) {
       }
     }
     else if (arg === "--daemon") options.daemon = true;
+    else if (arg === "--stop-residents") options.stopResidents = true;
     else if (arg === "--port") {
       options.port = Number(argv[++index]);
       options.portExplicit = true;
     }
     else if (arg === "--screenshot") options.screenshot = path.resolve(argv[++index]);
     else if (arg === "--app-path") options.appPath = path.resolve(argv[++index]);
+    else if (arg === "--app-executable") options.appExecutable = path.resolve(argv[++index]);
     else throw new Error(`Unknown option: ${arg}`);
   }
 
@@ -193,9 +206,28 @@ function createPanelSupervisor({ detached }) {
     }
   }
 
-  function stop() {
+  async function stop() {
     stopping = true;
-    if (child?.exitCode === null && !child.killed) child.kill("SIGTERM");
+    const stoppingChild = child;
+    if (!stoppingChild || stoppingChild.exitCode !== null) return;
+    const waitForExit = (timeoutMs) => new Promise((resolve) => {
+      const finish = (stopped) => {
+        clearTimeout(timer);
+        stoppingChild.off("exit", onExit);
+        resolve(stopped);
+      };
+      const onExit = () => finish(true);
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      stoppingChild.once("exit", onExit);
+      if (stoppingChild.exitCode !== null) finish(true);
+    });
+    const gracefulExit = waitForExit(5_000);
+    if (!stoppingChild.killed) stoppingChild.kill("SIGTERM");
+    if (await gracefulExit) return;
+    try {
+      stoppingChild.kill("SIGKILL");
+    } catch {}
+    await waitForExit(1_000);
   }
 
   return { ensure, stop };
@@ -205,7 +237,7 @@ function codexIsRunning() {
   return spawnSync("/usr/bin/pgrep", ["-x", "ChatGPT"], { stdio: "ignore" }).status === 0;
 }
 
-function codexExecutablePath(appPath) {
+export function codexExecutablePath(appPath) {
   const plistPath = path.join(appPath, "Contents", "Info.plist");
   const plistResult = spawnSync("/usr/bin/plutil", [
     "-extract",
@@ -235,17 +267,26 @@ function codexExecutablePath(appPath) {
   return executablePath;
 }
 
-export function launchCodex(appPath, port) {
-  const executablePath = codexExecutablePath(appPath);
-  return spawn(
+export function launchCodex(executablePath, port) {
+  try {
+    accessSync(executablePath, constants.X_OK);
+  } catch {
+    throw new Error(`Codex application executable is not runnable: ${executablePath}`);
+  }
+  const child = spawn(
     executablePath,
     [
       `--remote-debugging-port=${port}`,
       `--remote-allow-origins=http://127.0.0.1:${port}`,
       "--disable-features=LocalNetworkAccessForSubframeNavigations",
     ],
-    { stdio: "ignore" },
+    {
+      detached: true,
+      stdio: "ignore",
+    },
   );
+  child.unref();
+  return child;
 }
 
 class CdpConnection {
@@ -344,16 +385,46 @@ class CdpConnection {
   }
 }
 
+export function validatedCdpWebSocketUrl(value, port) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("Invalid CDP WebSocket URL");
+  }
+  if (
+    url.protocol !== "ws:"
+    || url.hostname !== "127.0.0.1"
+    || !value.startsWith(`ws://127.0.0.1:${port}/devtools/`)
+    || !url.pathname.startsWith("/devtools/")
+    || url.username
+    || url.password
+    || url.hash
+  ) {
+    throw new Error("CDP WebSocket URL must use the selected loopback endpoint");
+  }
+  return url.href;
+}
+
 async function codexTargets(port) {
   const targets = await fetchJson(`http://127.0.0.1:${port}/json/list`);
-  return targets.filter(
-    (target) =>
-      target.type === "page" &&
-      target.webSocketDebuggerUrl &&
-      !target.url?.includes("initialRoute=%2Fglobal-dictation") &&
-      !target.url?.includes("initialRoute=%2Favatar-overlay") &&
-      (target.url?.startsWith("app://") || target.title === "Codex"),
-  );
+  return targets.flatMap((target) => {
+    if (
+      target.type !== "page"
+      || !target.webSocketDebuggerUrl
+      || target.url?.includes("initialRoute=%2Fglobal-dictation")
+      || target.url?.includes("initialRoute=%2Favatar-overlay")
+      || (!target.url?.startsWith("app://") && target.title !== "Codex")
+    ) return [];
+    try {
+      return [{
+        ...target,
+        webSocketDebuggerUrl: validatedCdpWebSocketUrl(target.webSocketDebuggerUrl, port),
+      }];
+    } catch {
+      return [];
+    }
+  });
 }
 
 async function waitForCodexTargets(port, timeoutMs) {
@@ -426,21 +497,12 @@ function codexDebuggingPorts(preferredPort) {
   return [...ports];
 }
 
-function processCwd(pid) {
-  const result = spawnSync("/usr/sbin/lsof", [
-    "-a",
-    "-p",
-    String(pid),
-    "-d",
-    "cwd",
-    "-Fn",
-  ], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024,
-  });
-  if (result.status !== 0) return null;
-  const cwd = result.stdout.split("\n").find((line) => line.startsWith("n"))?.slice(1);
-  return cwd ? path.resolve(cwd) : null;
+async function discoverCodexPort(preferredPort) {
+  for (const candidate of codexDebuggingPorts(preferredPort)) {
+    if (!(await isReachable(`http://127.0.0.1:${candidate}/json/version`))) continue;
+    if ((await codexTargets(candidate)).length > 0) return candidate;
+  }
+  return null;
 }
 
 function residentInjectorPids(port) {
@@ -453,10 +515,8 @@ function residentInjectorPids(port) {
     processList: processes.stdout,
     currentPid: process.pid,
     injectorPath,
-    projectRoot,
     port,
     defaultPort: defaultCodexDebuggingPort,
-    cwdForPid: processCwd,
   });
 }
 
@@ -481,7 +541,22 @@ function startResidentInjector(
   return { pid: child.pid, started: true };
 }
 
-async function stopResidentInjector(pid) {
+async function stopResidentInjector(pid, port) {
+  const processResult = spawnSync("/bin/ps", ["-ww", "-p", String(pid), "-o", "command="], {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+  });
+  if (
+    processResult.status !== 0
+    || !residentInjectorCommandMatches(
+      processResult.stdout.trim(),
+      injectorPath,
+      port,
+      defaultCodexDebuggingPort,
+    )
+  ) {
+    throw new Error(`Refusing to stop unowned Panel injector ${pid}`);
+  }
   process.kill(pid, "SIGTERM");
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
@@ -507,17 +582,17 @@ async function waitForResidentInjectorReady(port, pid, startupToken, expectedSou
         try {
           const readiness = await cdp.send("Runtime.evaluate", {
             expression: `({
-              token: window[${JSON.stringify(hostStartupTokenName)}],
-              panelEntryMounted: Boolean(document.getElementById("codex-panel-entry")),
+              startupToken: window[${JSON.stringify(hostStartupTokenName)}],
+              heartbeatAt: window[${JSON.stringify(hostHeartbeatName)}],
+              entryMounted: Boolean(document.getElementById("codex-panel-entry")),
               sourceHash: window.__codexPanelInjection__?.sourceHash || null
             })`,
             returnByValue: true,
           });
-          if (
-            readiness.result.value?.token === startupToken
-            && readiness.result.value.panelEntryMounted
-            && readiness.result.value.sourceHash === expectedSourceHash
-          ) return;
+          if (injectionReadinessMatches(readiness.result.value, {
+            expectedSourceHash,
+            expectedStartupToken: startupToken,
+          })) return;
         } finally {
           cdp.close();
         }
@@ -532,7 +607,7 @@ async function restartResidentInjectorForRefresh(port, shouldOpen = false) {
   const { sourceHash } = await currentInjectionSource();
   return restartResidentInjector(port, {
     findResidents: residentInjectorPids,
-    stopResident: stopResidentInjector,
+    stopResident: (pid) => stopResidentInjector(pid, port),
     createStartupToken: randomUUID,
     startResident: (targetPort, startupToken) => (
       startResidentInjector(targetPort, shouldOpen, true, startupToken)
@@ -543,13 +618,18 @@ async function restartResidentInjectorForRefresh(port, shouldOpen = false) {
   });
 }
 
-async function openResidentPanel(port, expectedSourceHash) {
+async function openResidentPanel(port, expectedSourceHash, expectedStartupToken = null) {
   const targets = await codexTargets(port);
   for (const target of targets) {
     const cdp = new CdpConnection(target.webSocketDebuggerUrl);
     await cdp.open();
     try {
       await cdp.send("Runtime.enable");
+      const currentStatus = await readInjectionStatus(cdp);
+      if (expectedStartupToken && !injectionReadinessMatches(currentStatus, {
+        expectedSourceHash,
+        expectedStartupToken,
+      })) continue;
       const opened = await cdp.send("Runtime.evaluate", {
         expression: `(() => {
           const panel = window.__codexPanelInjection__;
@@ -563,6 +643,11 @@ async function openResidentPanel(port, expectedSourceHash) {
       await new Promise((resolve) => setTimeout(resolve, 250));
       const status = await readInjectionStatus(cdp);
       if (
+        (!expectedStartupToken || injectionReadinessMatches(status, {
+          expectedSourceHash,
+          expectedStartupToken,
+        }))
+        &&
         status.pageVisible
         && status.frameUrl
         && await waitForFrameDocument(cdp, status.frameUrl, 5_000)
@@ -1142,6 +1227,8 @@ async function readInjectionStatus(cdp) {
       version: window.__codexPanelInjection__?.version || null,
       sourceHash: window.__codexPanelInjection__?.sourceHash || null,
       scriptIdentifier: window[${JSON.stringify(injectionScriptIdentifierName)}] || null,
+      heartbeatAt: window[${JSON.stringify(hostHeartbeatName)}] || null,
+      startupToken: window[${JSON.stringify(hostStartupTokenName)}] || null,
       entryMounted: Boolean(document.getElementById("codex-panel-entry")),
       pageMounted: Boolean(document.getElementById("codex-panel-page")),
       pageVisible: document.getElementById("codex-panel-page")?.hidden === false,
@@ -1150,6 +1237,24 @@ async function readInjectionStatus(cdp) {
     returnByValue: true,
   });
   return status.result.value;
+}
+
+async function inspectInjectionReadiness(port, expectedSourceHash, expectedStartupToken) {
+  const targets = await codexTargets(port);
+  for (const target of targets) {
+    const cdp = new CdpConnection(target.webSocketDebuggerUrl);
+    await cdp.open();
+    try {
+      const status = await readInjectionStatus(cdp);
+      if (injectionReadinessMatches(status, {
+        expectedSourceHash,
+        expectedStartupToken,
+      })) return { ready: true, status, targetId: target.id };
+    } finally {
+      cdp.close();
+    }
+  }
+  return { ready: false };
 }
 
 async function waitForInjectionStatus(cdp, shouldOpen, expectedSourceHash, timeoutMs) {
@@ -1370,17 +1475,58 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const cdpVersionUrl = `http://127.0.0.1:${options.port}/json/version`;
 
+  if (options.stopResidents) {
+    const ports = options.portExplicit
+      ? [options.port]
+      : codexDebuggingPorts(options.port);
+    const stoppedPids = [];
+    for (const port of ports) {
+      stoppedPids.push(...await stopResidentInjectors(
+        residentInjectorPids(port),
+        (pid) => stopResidentInjector(pid, port),
+      ));
+    }
+    console.log(JSON.stringify({ stoppedPids }, null, 2));
+    return;
+  }
+
+  if (options.discoverPort) {
+    const port = await discoverCodexPort(options.port);
+    if (!port) throw new Error("No debuggable Codex window found");
+    console.log(JSON.stringify({ port }));
+    return;
+  }
+
+  if (options.status) {
+    if (!options.startupToken) throw new Error("--status requires --startup-token");
+    const { sourceHash } = await currentInjectionSource();
+    const readiness = await inspectInjectionReadiness(
+      options.port,
+      sourceHash,
+      options.startupToken,
+    );
+    if (!readiness.ready) throw new Error("Panel renderer injection is not ready");
+    console.log(JSON.stringify(readiness));
+    return;
+  }
+
+  if (options.openExisting) {
+    if (!options.startupToken) throw new Error("--open-existing requires --startup-token");
+    const { sourceHash } = await currentInjectionSource();
+    const opened = await openResidentPanel(
+      options.port,
+      sourceHash,
+      options.startupToken,
+    );
+    if (!opened) throw new Error("Managed Panel renderer is not ready to open");
+    console.log(JSON.stringify({ opened: true, port: options.port }));
+    return;
+  }
+
   if (options.daemon) {
     let port = options.port;
     if (!options.portExplicit) {
-      const candidates = codexDebuggingPorts(options.port);
-      const activePort = await Promise.any(candidates.map(async (candidate) => {
-        if (!(await isReachable(`http://127.0.0.1:${candidate}/json/version`))) {
-          throw new Error("unreachable");
-        }
-        if ((await codexTargets(candidate)).length === 0) throw new Error("not Codex");
-        return candidate;
-      })).catch(() => null);
+      const activePort = await discoverCodexPort(options.port);
       if (!activePort) throw new Error("No debuggable Codex window found");
       port = activePort;
     }
@@ -1439,7 +1585,8 @@ async function main() {
     await supervisor.ensure({ force: true });
 
     if (!cdpReachable) {
-      codexProcess = launchCodex(options.appPath, options.port);
+      const executablePath = options.appExecutable ?? codexExecutablePath(options.appPath);
+      codexProcess = launchCodex(executablePath, options.port);
       await waitUntilReachable(cdpVersionUrl, 30_000);
     }
 
@@ -1473,13 +1620,16 @@ async function main() {
       return;
     }
 
-    const stop = () => {
+    let stopping = false;
+    const stop = async () => {
+      if (stopping) return;
+      stopping = true;
       injectedTargets.forEach((connection) => connection.close());
-      supervisor.stop();
+      await supervisor.stop();
       process.exit(0);
     };
-    process.once("SIGINT", stop);
-    process.once("SIGTERM", stop);
+    process.once("SIGINT", () => { void stop(); });
+    process.once("SIGTERM", () => { void stop(); });
 
     while (true) {
       await new Promise((resolve) => setTimeout(resolve, 2_000));
@@ -1519,9 +1669,9 @@ async function main() {
       }
     }
     injectedTargets.forEach((connection) => connection.close());
-    supervisor.stop();
+    await supervisor.stop();
   } catch (error) {
-    supervisor.stop();
+    await supervisor.stop();
     throw error;
   }
 }

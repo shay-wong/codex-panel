@@ -30,9 +30,12 @@ export async function readCodexQuotaStatus(model) {
 }
 
 function startAppServer() {
-  const child = spawn("codex", ["app-server", "--stdio"], {
+  const child = spawn(
+    process.env.CODEX_EXECUTABLE || "codex",
+    ["app-server", "--stdio"], {
     stdio: ["pipe", "pipe", "ignore"],
-  });
+    },
+  );
   const pending = new Map();
   let sequence = 0;
   let closed = false;
