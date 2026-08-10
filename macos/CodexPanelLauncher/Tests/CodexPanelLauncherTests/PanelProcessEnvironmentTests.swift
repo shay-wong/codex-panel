@@ -27,7 +27,8 @@ final class PanelProcessEnvironmentTests: XCTestCase {
       pathValue: "/trusted/bin",
       dataDirectory: "/trusted/data",
       panelPort: 47_823,
-      codexExecutablePath: "/trusted/codex"
+      codexExecutablePath: "/trusted/codex",
+      runtimeFilePath: "/trusted/data/launcher-runtime.json"
     )
 
     for key in [
@@ -52,5 +53,9 @@ final class PanelProcessEnvironmentTests: XCTestCase {
     XCTAssertEqual(environment["CODEX_PANEL_DATA_DIR"], "/trusted/data")
     XCTAssertEqual(environment["CODEX_PANEL_PORT"], "47823")
     XCTAssertEqual(environment["CODEX_EXECUTABLE"], "/trusted/codex")
+    XCTAssertEqual(
+      environment["CODEX_PANEL_RUNTIME_FILE"],
+      "/trusted/data/launcher-runtime.json"
+    )
   }
 }

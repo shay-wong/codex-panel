@@ -29,6 +29,20 @@ import {
 
 const scriptPath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(scriptPath), "..");
+const projectManifest = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8"));
+
+export function launcherVersionMetadata(version) {
+  const match = typeof version === "string"
+    ? /^((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(version)
+    : null;
+  if (!match) throw new Error(`Invalid launcher version in package.json: ${version}`);
+  return { bundleShortVersion: match[1], fullVersion: version };
+}
+
+const {
+  bundleShortVersion: launcherBundleShortVersion,
+  fullVersion: launcherVersion,
+} = launcherVersionMetadata(projectManifest.version);
 const nativeLauncherRoot = path.join(projectRoot, "macos", "CodexPanelLauncher");
 const panelSkillSource = path.join(projectRoot, "skills", "manage-panel");
 const handoffPanelSkillSource = path.join(projectRoot, "skills", "handoff-panel");
@@ -53,6 +67,7 @@ const runtimePayloadPaths = [
 ];
 const runtimeScriptNames = [
   "codex-cdp-pipe.mjs",
+  "codex-injector-control.mjs",
   "codex-injector-runtime.mjs",
   "codex-injector.mjs",
   "codex-rate-limits.mjs",
@@ -64,7 +79,7 @@ const launcherExecutableName = "CodexPanelLauncher";
 const launcherIconBuilderName = "CodexPanelIconBuilder";
 const launcherBundleIdentifier = "com.shay.codex-panel";
 const legacyLauncherBundleIdentifier = "com.shay.codex-taskboard-launcher";
-const launcherDefinitionVersion = 9;
+const launcherDefinitionVersion = 10;
 const launcherMarkerName = "codex-panel-launcher.json";
 const launcherConfigurationName = "launcher-config.json";
 const officialCodexAppPath = "/Applications/ChatGPT.app";
@@ -477,6 +492,7 @@ function launcherMarker(
   return {
     generator: "codex-panel",
     definitionVersion: launcherDefinitionVersion,
+    launcherVersion,
     launcher: launcherName,
     dataDirectory: layout.dataDirectory,
     nodePath: process.execPath,
@@ -554,6 +570,9 @@ async function launcherBundleMetadataIsCurrent(launcherPath) {
     && plistValue(launcherPath, "CFBundleDisplayName") === "Codex Panel"
     && plistValue(launcherPath, "CFBundleExecutable") === launcherExecutableName
     && plistValue(launcherPath, "CFBundleIconFile") === "CodexPanel"
+    && plistValue(launcherPath, "CFBundleShortVersionString") === launcherBundleShortVersion
+    && plistValue(launcherPath, "CodexPanelVersion") === launcherVersion
+    && plistValue(launcherPath, "CFBundleVersion") === String(launcherDefinitionVersion)
     && plistValue(launcherPath, "NSRequiresAquaSystemAppearance") === "false"
     && plistValue(launcherPath, "LSUIElement") === null
     && await pathExists(path.join(launcherPath, "Contents", "MacOS", launcherExecutableName))
@@ -634,7 +653,8 @@ export async function resolveLauncherIcons(codexAppPath = officialCodexAppPath) 
   return { darkSourcePath, lightSourcePath };
 }
 
-function launcherInfoPlist() {
+export function launcherInfoPlist(version = launcherVersion) {
+  const { bundleShortVersion, fullVersion } = launcherVersionMetadata(version);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -656,9 +676,11 @@ function launcherInfoPlist() {
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>${bundleShortVersion}</string>
   <key>CFBundleVersion</key>
   <string>${launcherDefinitionVersion}</string>
+  <key>CodexPanelVersion</key>
+  <string>${fullVersion}</string>
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.developer-tools</string>
   <key>LSMinimumSystemVersion</key>

@@ -813,7 +813,7 @@ async function resolvePanelBaseUrl(env, overrides) {
       details: error instanceof Error ? error.message : String(error),
     });
   }
-  if (descriptor?.version !== 1 || typeof descriptor.url !== "string") {
+  if (![1, 2].includes(descriptor?.version) || typeof descriptor.url !== "string") {
     throw new PanelctlError("The active Panel launcher endpoint is invalid", {
       code: "INVALID_RESPONSE",
       exitCode: 4,

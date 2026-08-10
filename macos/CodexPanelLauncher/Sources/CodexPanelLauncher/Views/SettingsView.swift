@@ -58,8 +58,43 @@ struct SettingsView: View {
       .tabItem {
         Label("位置", systemImage: "folder")
       }
+
+      Form {
+        Section("版本") {
+          LabeledContent("当前版本", value: manager.currentVersion)
+          LabeledContent("更新状态") {
+            HStack(spacing: 8) {
+              if manager.isCheckingForUpdates {
+                ProgressView()
+                  .controlSize(.small)
+              }
+              Text(manager.updateMessage)
+                .foregroundStyle(.secondary)
+            }
+          }
+        }
+
+        Section {
+          HStack {
+            Button("检查更新") {
+              Task { await manager.checkForUpdates() }
+            }
+            .disabled(manager.isCheckingForUpdates)
+
+            if manager.availableReleaseVersion != nil {
+              Button("查看 Release") {
+                manager.openAvailableRelease()
+              }
+            }
+          }
+        }
+      }
+      .formStyle(.grouped)
+      .tabItem {
+        Label("更新", systemImage: "arrow.down.circle")
+      }
     }
-    .frame(width: 480, height: 300)
+    .frame(width: 500, height: 340)
     .padding(12)
     .onAppear {
       loginItems.refresh()

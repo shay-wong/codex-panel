@@ -3,7 +3,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { accessSync, constants } from "node:fs";
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -29,6 +29,15 @@ import {
   CdpPipeBrowser,
   validatedLoopbackCdpWebSocketUrl,
 } from "./codex-cdp-pipe.mjs";
+import {
+  closeInjectorControlServer,
+  injectorControlSocketPath,
+  publishInjectorRuntime,
+  removeInjectorRuntime,
+  sendInjectorControlRequest,
+  startInjectorControlServer,
+  stopManagedInjector,
+} from "./codex-injector-control.mjs";
 
 const injectorPath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(injectorPath), "..");
@@ -116,6 +125,8 @@ function parseArgs(argv) {
     startupToken: null,
     daemon: false,
     stopResidents: false,
+    stopManaged: false,
+    controlAction: null,
     screenshot: null,
     appPath: "/Applications/ChatGPT.app",
     appExecutable: null,
@@ -141,6 +152,13 @@ function parseArgs(argv) {
     }
     else if (arg === "--daemon") options.daemon = true;
     else if (arg === "--stop-residents") options.stopResidents = true;
+    else if (arg === "--stop-managed") options.stopManaged = true;
+    else if (arg === "--control") {
+      options.controlAction = argv[++index];
+      if (!["status", "open", "shutdown"].includes(options.controlAction)) {
+        throw new Error("--control must be status, open, or shutdown");
+      }
+    }
     else if (arg === "--port") {
       options.port = Number(argv[++index]);
       options.portExplicit = true;
@@ -246,32 +264,6 @@ function startPanel({ detached }) {
 
 function codexIsRunning() {
   return spawnSync("/usr/bin/pgrep", ["-x", "ChatGPT"], { stdio: "ignore" }).status === 0;
-}
-
-async function publishPanelRuntime() {
-  if (!privatePanelMode || !panelRuntimeFile) return;
-  const temporaryPath = `${panelRuntimeFile}.${process.pid}.tmp`;
-  await mkdir(path.dirname(panelRuntimeFile), { recursive: true });
-  await writeFile(
-    temporaryPath,
-    `${JSON.stringify({ version: 1, pid: process.pid, url: panelBaseUrl })}\n`,
-    { mode: 0o600 },
-  );
-  await chmod(temporaryPath, 0o600);
-  await rename(temporaryPath, panelRuntimeFile);
-  await chmod(panelRuntimeFile, 0o600);
-}
-
-async function removePanelRuntime() {
-  if (!privatePanelMode || !panelRuntimeFile) return;
-  try {
-    const descriptor = JSON.parse(await readFile(panelRuntimeFile, "utf8"));
-    if (descriptor.pid === process.pid && descriptor.url === panelBaseUrl) {
-      await unlink(panelRuntimeFile);
-    }
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
 }
 
 export function codexExecutablePath(appPath) {
@@ -1383,10 +1375,21 @@ async function waitForInjectionStatus(cdp, shouldOpen, expectedSourceHash, timeo
 }
 
 async function inspectInjectionReadiness(port, expectedSourceHash, expectedStartupToken) {
-  const targets = await codexTargets(port);
+  return inspectRuntimeInjectionReadiness(
+    tcpCdpRuntime(port),
+    expectedSourceHash,
+    expectedStartupToken,
+  );
+}
+
+async function inspectRuntimeInjectionReadiness(
+  runtime,
+  expectedSourceHash,
+  expectedStartupToken,
+) {
+  const targets = await runtime.targets();
   for (const target of targets) {
-    const cdp = new CdpConnection(target.webSocketDebuggerUrl);
-    await cdp.open();
+    const cdp = await runtime.connect(target);
     try {
       const status = await readInjectionStatus(cdp);
       if (injectionReadinessMatches(status, {
@@ -1401,10 +1404,13 @@ async function inspectInjectionReadiness(port, expectedSourceHash, expectedStart
 }
 
 async function openResidentPanel(port, expectedSourceHash, expectedStartupToken = null) {
-  const targets = await codexTargets(port);
+  return openRuntimePanel(tcpCdpRuntime(port), expectedSourceHash, expectedStartupToken);
+}
+
+async function openRuntimePanel(runtime, expectedSourceHash, expectedStartupToken = null) {
+  const targets = await runtime.targets();
   for (const target of targets) {
-    const cdp = new CdpConnection(target.webSocketDebuggerUrl);
-    await cdp.open();
+    const cdp = await runtime.connect(target);
     try {
       const status = await readInjectionStatus(cdp);
       if (status.sourceHash !== expectedSourceHash || !status.entryMounted) continue;
@@ -1639,6 +1645,28 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const cdpVersionUrl = `http://127.0.0.1:${options.port}/json/version`;
 
+  if (options.stopManaged) {
+    if (!panelRuntimeFile) throw new Error("--stop-managed requires CODEX_PANEL_RUNTIME_FILE");
+    const result = await stopManagedInjector({
+      runtimeFile: panelRuntimeFile,
+      ownership: { nodePath: process.execPath, injectorPath },
+    });
+    console.log(JSON.stringify(result));
+    return;
+  }
+
+  if (options.controlAction) {
+    if (!panelRuntimeFile) throw new Error("--control requires CODEX_PANEL_RUNTIME_FILE");
+    const result = await sendInjectorControlRequest({
+      runtimeFile: panelRuntimeFile,
+      startupToken: options.startupToken,
+      action: options.controlAction,
+      ownership: { nodePath: process.execPath, injectorPath },
+    });
+    console.log(JSON.stringify(result));
+    return;
+  }
+
   if (options.stopResidents) {
     const ports = options.portExplicit ? [options.port] : codexDebuggingPorts(options.port);
     const stoppedPids = [];
@@ -1721,6 +1749,7 @@ async function main() {
 
   let codexProcess = null;
   let cdpRuntime = null;
+  let controlServer = null;
   const injectedTargets = new Map();
   let stopping = false;
   let wakeStop;
@@ -1760,8 +1789,15 @@ async function main() {
       const launchedCodex = codexProcess;
       codexProcess = null;
       launchedCodex?.unref();
+      await closeInjectorControlServer(controlServer);
+      controlServer = null;
       await supervisor.stop();
-      await removePanelRuntime();
+      if (panelRuntimeFile && options.startupToken) {
+        await removeInjectorRuntime(panelRuntimeFile, {
+          pid: process.pid,
+          startupToken: options.startupToken,
+        });
+      }
     })();
     return cleanupPromise;
   };
@@ -1785,7 +1821,6 @@ async function main() {
 
     await assertPanelServiceModeAvailable();
     await supervisor.ensure({ force: true });
-    await publishPanelRuntime();
 
     if (options.cdpPipe) {
       const launched = await launchCodexWithPipe(executablePath);
@@ -1800,6 +1835,45 @@ async function main() {
     }
 
     const { source, sourceHash } = await currentInjectionSource();
+    if (panelRuntimeFile && options.startupToken) {
+      const controlSocket = injectorControlSocketPath(panelRuntimeFile);
+      controlServer = await startInjectorControlServer({
+        controlSocket,
+        startupToken: options.startupToken,
+        handlers: {
+          status: async () => {
+            const readiness = await inspectRuntimeInjectionReadiness(
+              cdpRuntime,
+              sourceHash,
+              options.startupToken,
+            );
+            if (!readiness.ready) throw new Error("Panel renderer injection is not ready");
+            return readiness;
+          },
+          open: async () => {
+            const opened = await openRuntimePanel(
+              cdpRuntime,
+              sourceHash,
+              options.startupToken,
+            );
+            if (!opened) throw new Error("Managed Panel renderer is not ready to open");
+            return { opened: true };
+          },
+          shutdown: async () => {
+            setImmediate(requestStop);
+            return { stopping: true };
+          },
+        },
+      });
+      await publishInjectorRuntime(panelRuntimeFile, {
+        pid: process.pid,
+        url: panelBaseUrl,
+        controlSocket,
+        startupToken: options.startupToken,
+        transport: options.cdpPipe ? "pipe" : "tcp",
+        ...(!options.cdpPipe ? { port: options.port } : {}),
+      });
+    }
     let firstResults = [];
     try {
       firstResults = await injectAll(
@@ -1839,7 +1913,16 @@ async function main() {
       if (stopping) break;
       try {
         const service = await supervisor.ensure();
-        if (service.restarted) await publishPanelRuntime();
+        if (service.restarted && panelRuntimeFile && options.startupToken) {
+          await publishInjectorRuntime(panelRuntimeFile, {
+            pid: process.pid,
+            url: panelBaseUrl,
+            controlSocket: injectorControlSocketPath(panelRuntimeFile),
+            startupToken: options.startupToken,
+            transport: options.cdpPipe ? "pipe" : "tcp",
+            ...(!options.cdpPipe ? { port: options.port } : {}),
+          });
+        }
       } catch (error) {
         console.error(`Waiting for Panel service: ${error.message}`);
       }

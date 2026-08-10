@@ -2,12 +2,23 @@ import AppKit
 import Darwin
 import Foundation
 
+func installedPanelVersion(from infoDictionary: [String: Any]?) -> String {
+  for key in ["CodexPanelVersion", "CFBundleShortVersionString"] {
+    if let value = infoDictionary?[key] as? String {
+      let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !trimmed.isEmpty { return trimmed }
+    }
+  }
+  return "development"
+}
+
 func sanitizedPanelProcessEnvironment(
   inheriting inherited: [String: String],
   pathValue: String,
   dataDirectory: String,
   panelPort: Int,
-  codexExecutablePath: String
+  codexExecutablePath: String,
+  runtimeFilePath: String
 ) -> [String: String] {
   let blockedKeys = Set([
     "NODE_OPTIONS",
@@ -17,9 +28,12 @@ func sanitizedPanelProcessEnvironment(
     "ENV",
     "ZDOTDIR",
     "CODEX_TASKBOARD_PORT",
+    "CODEX_TASKBOARD_RUNTIME_FILE",
   ])
   var environment = inherited.filter { key, _ in
     !blockedKeys.contains(key)
+      && !key.hasPrefix("CODEX_PANEL_")
+      && !key.hasPrefix("CODEX_TASKBOARD_")
       && !key.hasPrefix("DYLD_")
       && !key.hasPrefix("LD_")
   }
@@ -27,6 +41,7 @@ func sanitizedPanelProcessEnvironment(
   environment["CODEX_PANEL_HOST"] = "127.0.0.1"
   environment["CODEX_PANEL_DATA_DIR"] = dataDirectory
   environment["CODEX_PANEL_PORT"] = String(panelPort)
+  environment["CODEX_PANEL_RUNTIME_FILE"] = runtimeFilePath
   environment["CODEX_EXECUTABLE"] = codexExecutablePath
   return environment
 }
@@ -52,6 +67,9 @@ final class PanelManager: ObservableObject {
     level: .working
   )
   @Published private(set) var isBusy = false
+  @Published private(set) var isCheckingForUpdates = false
+  @Published private(set) var updateMessage = "尚未检查更新"
+  @Published private(set) var availableReleaseVersion: String?
   @Published var lastError: String?
 
   private let configuration: LauncherConfiguration?
@@ -63,7 +81,15 @@ final class PanelManager: ObservableObject {
   private var monitoringTask: Task<Void, Never>?
   private var activeCDPPort: Int?
   private var integrationStartupToken: String?
+  private var availableReleaseURL: URL?
+  private var recoveryPolicy = IntegrationRecoveryPolicy()
+  private var recoveryTask: Task<Void, Never>?
+  private var recoveryGeneration = 0
+  private var lifecycleGeneration = 0
+  private var panelGeneration = 0
+  private var integrationGeneration = 0
   private var didActivate = false
+  private var didCheckForUpdates = false
   private var desiredRunning = false
   private var isShuttingDown = false
 
@@ -82,16 +108,24 @@ final class PanelManager: ObservableObject {
     panelStatus.level == .healthy && integrationStatus.level == .healthy
   }
 
+  var currentVersion: String {
+    installedPanelVersion(from: Bundle.main.infoDictionary)
+  }
+
   func activate() async {
     guard !didActivate else { return }
     didActivate = true
     startMonitoring()
+    Task { [weak self] in
+      await self?.checkForUpdates(startup: true)
+    }
     guard configuration != nil else {
       await refreshStatuses()
       return
     }
 
     desiredRunning = true
+    let lifecycleGeneration = self.lifecycleGeneration
     isBusy = true
     defer { isBusy = false }
     do {
@@ -103,13 +137,16 @@ final class PanelManager: ObservableObject {
         let port = try await prepareIntegrationPort()
         try await retireExistingInjectors(port: port)
       }
-      try await startPanelService()
+      try await startPanelService(lifecycleGeneration: lifecycleGeneration)
       if autoConnect {
         let shouldOpen = defaultedPreference(
           forKey: PreferenceKey.autoOpenPanel,
           defaultValue: true
         )
-        try await startIntegration(openPanel: shouldOpen)
+        try await startIntegration(
+          openPanel: shouldOpen,
+          lifecycleGeneration: lifecycleGeneration
+        )
       }
       lastError = nil
     } catch {
@@ -121,6 +158,9 @@ final class PanelManager: ObservableObject {
   func startAll(openPanel: Bool = true) async {
     guard !isBusy else { return }
     desiredRunning = true
+    recoveryPolicy.reset()
+    cancelIntegrationRecovery()
+    let lifecycleGeneration = self.lifecycleGeneration
     isBusy = true
     defer { isBusy = false }
     do {
@@ -128,8 +168,11 @@ final class PanelManager: ObservableObject {
         let port = try await prepareIntegrationPort()
         try await retireExistingInjectors(port: port)
       }
-      try await startPanelService()
-      try await startIntegration(openPanel: openPanel)
+      try await startPanelService(lifecycleGeneration: lifecycleGeneration)
+      try await startIntegration(
+        openPanel: openPanel,
+        lifecycleGeneration: lifecycleGeneration
+      )
       lastError = nil
     } catch {
       lastError = error.localizedDescription
@@ -140,6 +183,7 @@ final class PanelManager: ObservableObject {
   func stopAll() async {
     guard !isBusy else { return }
     desiredRunning = false
+    cancelIntegrationRecovery()
     isBusy = true
     defer { isBusy = false }
     await terminateManagedProcesses()
@@ -150,15 +194,21 @@ final class PanelManager: ObservableObject {
   func restartAll() async {
     guard !isBusy else { return }
     desiredRunning = false
+    cancelIntegrationRecovery()
     isBusy = true
     defer { isBusy = false }
     await terminateManagedProcesses()
     desiredRunning = true
+    recoveryPolicy.reset()
+    let lifecycleGeneration = self.lifecycleGeneration
     do {
       let port = try await prepareIntegrationPort()
       try await retireExistingInjectors(port: port)
-      try await startPanelService()
-      try await startIntegration(openPanel: false)
+      try await startPanelService(lifecycleGeneration: lifecycleGeneration)
+      try await startIntegration(
+        openPanel: false,
+        lifecycleGeneration: lifecycleGeneration
+      )
       lastError = nil
     } catch {
       lastError = error.localizedDescription
@@ -179,12 +229,11 @@ final class PanelManager: ObservableObject {
     isBusy = true
     defer { isBusy = false }
     do {
-      guard let port = activeCDPPort, let startupToken = integrationStartupToken else {
+      guard let startupToken = integrationStartupToken else {
         throw ManagerError.integrationUnavailable
       }
       _ = try await runOneShotInjector([
-        "--open-existing",
-        "--port", String(port),
+        "--control", "open",
         "--startup-token", startupToken,
       ])
       _ = try await NSWorkspace.shared.openApplication(
@@ -231,11 +280,49 @@ final class PanelManager: ObservableObject {
     await refreshStatuses()
   }
 
+  func checkForUpdates(startup: Bool = false) async {
+    if startup {
+      guard !didCheckForUpdates else { return }
+      didCheckForUpdates = true
+    }
+    guard !isCheckingForUpdates else { return }
+    isCheckingForUpdates = true
+    if !startup { updateMessage = "正在检查更新..." }
+    defer { isCheckingForUpdates = false }
+
+    do {
+      switch try await ReleaseUpdateChecker().check(currentVersion: currentVersion) {
+      case .noPublishedRelease:
+        availableReleaseVersion = nil
+        availableReleaseURL = nil
+        updateMessage = "Fork 暂无已发布版本"
+      case .current:
+        availableReleaseVersion = nil
+        availableReleaseURL = nil
+        updateMessage = "当前已是最新版本"
+      case .available(let version, let url):
+        availableReleaseVersion = version
+        availableReleaseURL = url
+        updateMessage = "发现新版本 \(version)"
+      }
+    } catch {
+      availableReleaseVersion = nil
+      availableReleaseURL = nil
+      updateMessage = startup ? "自动检查更新失败" : error.localizedDescription
+    }
+  }
+
+  func openAvailableRelease() {
+    guard let availableReleaseURL else { return }
+    NSWorkspace.shared.open(availableReleaseURL)
+  }
+
   func shutdown() async {
     guard !isShuttingDown else { return }
     isShuttingDown = true
     desiredRunning = false
     monitoringTask?.cancel()
+    cancelIntegrationRecovery()
     await terminateManagedProcesses()
     integrationLogHandle?.closeFile()
     panelLogHandle?.closeFile()
@@ -373,21 +460,39 @@ final class PanelManager: ObservableObject {
   }
 
   private func retireExistingInjectors(port: Int) async throws {
+    _ = try await runOneShotInjector(["--stop-managed"])
     _ = try await runOneShotInjector([
       "--stop-residents", "--port", String(port),
     ])
   }
 
-  private func startPanelService() async throws {
+  private func startPanelService(
+    lifecycleGeneration expectedLifecycleGeneration: Int,
+    recoveryGeneration expectedRecoveryGeneration: Int? = nil,
+    panelRestartGeneration expectedPanelGeneration: Int? = nil
+  ) async throws {
     guard let configuration else {
       throw ManagerError.configuration(configurationError ?? "配置不可用")
     }
-    if await endpointIsReachable(configuration.panelHealthURL) { return }
+    try assertStartTransaction(
+      lifecycleGeneration: expectedLifecycleGeneration,
+      recoveryGeneration: expectedRecoveryGeneration,
+      panelGeneration: expectedPanelGeneration
+    )
+    let panelIsReachable = await endpointIsReachable(configuration.panelHealthURL)
+    try assertStartTransaction(
+      lifecycleGeneration: expectedLifecycleGeneration,
+      recoveryGeneration: expectedRecoveryGeneration,
+      panelGeneration: expectedPanelGeneration
+    )
+    if panelIsReachable { return }
     if panelProcess?.isRunning == true { return }
 
     let (process, logHandle) = try configuredProcess(
       arguments: [configuration.serverPath]
     )
+    panelGeneration += 1
+    let generation = panelGeneration
     panelProcess = process
     panelLogHandle = logHandle
     process.terminationHandler = { [weak self] endedProcess in
@@ -396,10 +501,22 @@ final class PanelManager: ObservableObject {
         self.panelProcess = nil
         self.panelLogHandle?.closeFile()
         self.panelLogHandle = nil
-        if self.desiredRunning && !self.isShuttingDown {
-          try? await Task.sleep(nanoseconds: 1_500_000_000)
-          try? await self.startPanelService()
-        }
+        guard
+          generation == self.panelGeneration,
+          self.desiredRunning,
+          !self.isShuttingDown
+        else { return }
+        let lifecycleGeneration = self.lifecycleGeneration
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        guard
+          generation == self.panelGeneration,
+          self.desiredRunning,
+          !self.isShuttingDown
+        else { return }
+        try? await self.startPanelService(
+          lifecycleGeneration: lifecycleGeneration,
+          panelRestartGeneration: generation
+        )
       }
     }
     do {
@@ -411,13 +528,44 @@ final class PanelManager: ObservableObject {
       throw error
     }
 
-    try await waitUntilReachable(configuration.panelHealthURL, timeoutSeconds: 10)
+    do {
+      try await waitUntilReachable(
+        configuration.panelHealthURL,
+        timeoutSeconds: 10,
+        lifecycleGeneration: expectedLifecycleGeneration,
+        recoveryGeneration: expectedRecoveryGeneration
+      )
+    } catch {
+      panelGeneration += 1
+      process.terminate()
+      await waitUntilStopped(process)
+      if panelProcess === process {
+        panelProcess = nil
+        panelLogHandle?.closeFile()
+        panelLogHandle = nil
+      }
+      throw error
+    }
+    guard
+      generation == panelGeneration,
+      panelProcess === process,
+      desiredRunning,
+      !isShuttingDown
+    else { throw CancellationError() }
   }
 
-  private func startIntegration(openPanel: Bool) async throws {
+  private func startIntegration(
+    openPanel: Bool,
+    lifecycleGeneration expectedLifecycleGeneration: Int,
+    recoveryGeneration expectedRecoveryGeneration: Int? = nil
+  ) async throws {
     guard let configuration else {
       throw ManagerError.configuration(configurationError ?? "配置不可用")
     }
+    try assertStartTransaction(
+      lifecycleGeneration: expectedLifecycleGeneration,
+      recoveryGeneration: expectedRecoveryGeneration
+    )
     if integrationProcess?.isRunning == true {
       if openPanel { await openEmbeddedPanel() }
       return
@@ -428,8 +576,16 @@ final class PanelManager: ObservableObject {
       port = activeCDPPort
     } else {
       port = try await prepareIntegrationPort()
+      try assertStartTransaction(
+        lifecycleGeneration: expectedLifecycleGeneration,
+        recoveryGeneration: expectedRecoveryGeneration
+      )
     }
     let cdpReachable = await endpointIsReachable(configuration.cdpVersionURL(port: port))
+    try assertStartTransaction(
+      lifecycleGeneration: expectedLifecycleGeneration,
+      recoveryGeneration: expectedRecoveryGeneration
+    )
     let startupToken = UUID().uuidString.lowercased()
 
     let codexAppExecutable = try configuration.validatedCodexAppExecutableURL()
@@ -451,6 +607,8 @@ final class PanelManager: ObservableObject {
     let (process, logHandle) = try configuredProcess(
       arguments: arguments
     )
+    integrationGeneration += 1
+    let generation = integrationGeneration
     integrationProcess = process
     integrationStartupToken = startupToken
     integrationLogHandle = logHandle
@@ -461,12 +619,22 @@ final class PanelManager: ObservableObject {
         self.integrationStartupToken = nil
         self.integrationLogHandle?.closeFile()
         self.integrationLogHandle = nil
+        guard
+          generation == self.integrationGeneration,
+          self.desiredRunning,
+          !self.isShuttingDown
+        else {
+          await self.refreshStatuses()
+          return
+        }
+        self.scheduleIntegrationRecovery()
         await self.refreshStatuses()
       }
     }
     do {
       try process.run()
     } catch {
+      integrationGeneration += 1
       integrationProcess = nil
       integrationStartupToken = nil
       integrationLogHandle?.closeFile()
@@ -475,27 +643,137 @@ final class PanelManager: ObservableObject {
     }
 
     do {
-      try await waitUntilIntegrationReady(port: port, timeoutSeconds: 30)
+      try await waitUntilIntegrationReady(
+        port: port,
+        timeoutSeconds: 30,
+        lifecycleGeneration: expectedLifecycleGeneration,
+        recoveryGeneration: expectedRecoveryGeneration
+      )
     } catch {
+      integrationGeneration += 1
       process.terminate()
       await waitUntilStopped(process)
       if integrationProcess === process {
         integrationProcess = nil
         integrationStartupToken = nil
+        integrationLogHandle?.closeFile()
+        integrationLogHandle = nil
       }
       throw error
     }
+    guard
+      generation == integrationGeneration,
+      integrationProcess === process,
+      desiredRunning,
+      !isShuttingDown
+    else { throw CancellationError() }
   }
 
   private func terminateManagedProcesses() async {
+    panelGeneration += 1
+    integrationGeneration += 1
+    cancelIntegrationRecovery()
     let integration = integrationProcess
     let panel = panelProcess
     integration?.terminate()
     await waitUntilStopped(integration)
+    if integrationProcess === integration {
+      integrationProcess = nil
+      integrationStartupToken = nil
+      integrationLogHandle?.closeFile()
+      integrationLogHandle = nil
+    }
     panel?.terminate()
     await waitUntilStopped(panel)
-    integrationStartupToken = nil
+    if panelProcess === panel {
+      panelProcess = nil
+      panelLogHandle?.closeFile()
+      panelLogHandle = nil
+    }
     activeCDPPort = nil
+  }
+
+  private func scheduleIntegrationRecovery() {
+    guard recoveryTask == nil else { return }
+    guard let delay = recoveryPolicy.recordUnexpectedExit() else {
+      lastError = "内嵌集成在 60 秒内连续退出，已停止自动恢复；请查看运行日志"
+      return
+    }
+    integrationStatus = ComponentStatus(
+      title: "内嵌集成",
+      detail: "将在 \(Int(delay)) 秒后恢复",
+      systemImage: "arrow.triangle.2.circlepath",
+      level: .warning
+    )
+    recoveryGeneration += 1
+    let generation = recoveryGeneration
+    let lifecycleGeneration = self.lifecycleGeneration
+    recoveryTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+      guard let self, self.shouldContinueRecovery(generation: generation) else { return }
+      do {
+        let port = try await self.prepareIntegrationPort()
+        guard self.shouldContinueRecovery(generation: generation) else { return }
+        try await self.retireExistingInjectors(port: port)
+        guard self.shouldContinueRecovery(generation: generation) else { return }
+        try await self.startPanelService(
+          lifecycleGeneration: lifecycleGeneration,
+          recoveryGeneration: generation
+        )
+        guard self.shouldContinueRecovery(generation: generation) else { return }
+        try await self.startIntegration(
+          openPanel: false,
+          lifecycleGeneration: lifecycleGeneration,
+          recoveryGeneration: generation
+        )
+        guard self.shouldContinueRecovery(generation: generation) else { return }
+        self.lastError = nil
+      } catch {
+        guard self.shouldContinueRecovery(generation: generation) else { return }
+        self.lastError = "内嵌集成自动恢复失败：\(error.localizedDescription)"
+        self.recoveryTask = nil
+        self.scheduleIntegrationRecovery()
+        return
+      }
+      guard self.recoveryGeneration == generation else { return }
+      self.recoveryTask = nil
+      await self.refreshStatuses()
+    }
+  }
+
+  private func cancelIntegrationRecovery() {
+    lifecycleGeneration += 1
+    recoveryGeneration += 1
+    recoveryTask?.cancel()
+    recoveryTask = nil
+  }
+
+  private func shouldContinueRecovery(generation: Int) -> Bool {
+    !Task.isCancelled
+      && recoveryGeneration == generation
+      && desiredRunning
+      && !isShuttingDown
+  }
+
+  private func assertStartTransaction(
+    lifecycleGeneration expectedLifecycleGeneration: Int,
+    recoveryGeneration expectedRecoveryGeneration: Int? = nil,
+    panelGeneration expectedPanelGeneration: Int? = nil
+  ) throws {
+    guard
+      !Task.isCancelled,
+      lifecycleGeneration == expectedLifecycleGeneration,
+      desiredRunning,
+      !isShuttingDown
+    else {
+      throw CancellationError()
+    }
+    if let expectedRecoveryGeneration {
+      guard recoveryGeneration == expectedRecoveryGeneration else { throw CancellationError() }
+    }
+    if let expectedPanelGeneration {
+      guard panelGeneration == expectedPanelGeneration else { throw CancellationError() }
+    }
   }
 
   private func waitUntilStopped(_ process: Process?) async {
@@ -569,32 +847,45 @@ final class PanelManager: ObservableObject {
       pathValue: configuration.pathValue,
       dataDirectory: configuration.dataDirectory,
       panelPort: configuration.panelPort,
-      codexExecutablePath: codexURL.path
+      codexExecutablePath: codexURL.path,
+      runtimeFilePath: configuration.runtimeFileURL.path
     )
     return process
   }
 
-  private func assertIntegrationReady(port: Int) async throws {
+  private func assertIntegrationReady(port _: Int) async throws {
     guard let startupToken = integrationStartupToken else {
       throw ManagerError.integrationUnavailable
     }
     _ = try await runOneShotInjector([
-      "--status",
-      "--port", String(port),
+      "--control", "status",
       "--startup-token", startupToken,
     ])
   }
 
-  private func waitUntilIntegrationReady(port: Int, timeoutSeconds: Int) async throws {
+  private func waitUntilIntegrationReady(
+    port: Int,
+    timeoutSeconds: Int,
+    lifecycleGeneration expectedLifecycleGeneration: Int,
+    recoveryGeneration expectedRecoveryGeneration: Int? = nil
+  ) async throws {
     for _ in 0..<(timeoutSeconds * 4) {
+      try assertStartTransaction(
+        lifecycleGeneration: expectedLifecycleGeneration,
+        recoveryGeneration: expectedRecoveryGeneration
+      )
       guard integrationProcess?.isRunning == true else {
         throw ManagerError.integrationUnavailable
       }
       do {
         try await assertIntegrationReady(port: port)
+        try assertStartTransaction(
+          lifecycleGeneration: expectedLifecycleGeneration,
+          recoveryGeneration: expectedRecoveryGeneration
+        )
         return
       } catch ManagerError.commandFailed(_) {
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        try await Task.sleep(nanoseconds: 250_000_000)
       }
     }
     throw ManagerError.timeout("Codex renderer injection")
@@ -611,10 +902,24 @@ final class PanelManager: ObservableObject {
     }
   }
 
-  private func waitUntilReachable(_ url: URL, timeoutSeconds: Int) async throws {
+  private func waitUntilReachable(
+    _ url: URL,
+    timeoutSeconds: Int,
+    lifecycleGeneration expectedLifecycleGeneration: Int,
+    recoveryGeneration expectedRecoveryGeneration: Int? = nil
+  ) async throws {
     for _ in 0..<(timeoutSeconds * 4) {
-      if await endpointIsReachable(url) { return }
-      try? await Task.sleep(nanoseconds: 250_000_000)
+      try assertStartTransaction(
+        lifecycleGeneration: expectedLifecycleGeneration,
+        recoveryGeneration: expectedRecoveryGeneration
+      )
+      let isReachable = await endpointIsReachable(url)
+      try assertStartTransaction(
+        lifecycleGeneration: expectedLifecycleGeneration,
+        recoveryGeneration: expectedRecoveryGeneration
+      )
+      if isReachable { return }
+      try await Task.sleep(nanoseconds: 250_000_000)
     }
     throw ManagerError.timeout(url.absoluteString)
   }

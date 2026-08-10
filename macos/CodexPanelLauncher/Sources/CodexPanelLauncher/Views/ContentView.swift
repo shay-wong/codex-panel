@@ -51,6 +51,9 @@ struct ContentView: View {
           .font(.title2.weight(.semibold))
         Text("本机服务与 Codex 内嵌集成")
           .foregroundStyle(.secondary)
+        Text("版本 \(manager.currentVersion)")
+          .font(.caption)
+          .foregroundStyle(.tertiary)
       }
       Spacer()
       if manager.isBusy {

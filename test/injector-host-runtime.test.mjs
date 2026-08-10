@@ -5,6 +5,7 @@ import {
   findResidentInjectorPids,
   handleHostBindingPayload,
   injectionReadinessMatches,
+  managedInjectorCommandMatches,
   reconcileInjectionRuntime,
   residentInjectorCommandMatches,
   restartResidentInjector,
@@ -338,6 +339,35 @@ test("resident discovery is scoped to the exact current injector path and port",
     ),
     false,
   );
+});
+
+test("managed injector ownership pins Node, the absolute injector, and watch mode", () => {
+  const nodePath = "/opt/homebrew/Cellar/node/24.14.1/bin/node";
+  const injectorPath = "/Users/example/Library/Application Support/Codex Panel/runtime/scripts/codex-injector.mjs";
+  const command = `${nodePath} ${injectorPath} --launch --watch --cdp-pipe --startup-token managed-token`;
+
+  assert.equal(managedInjectorCommandMatches(command, {
+    nodePath,
+    injectorPath,
+    startupToken: "managed-token",
+  }), true);
+  assert.equal(managedInjectorCommandMatches(
+    command.replace(nodePath, "/usr/local/bin/node"),
+    { nodePath, injectorPath },
+  ), false);
+  assert.equal(managedInjectorCommandMatches(
+    command.replace(injectorPath, "/workspace/other/scripts/codex-injector.mjs"),
+    { nodePath, injectorPath },
+  ), false);
+  assert.equal(managedInjectorCommandMatches(
+    command.replace(" --watch", ""),
+    { nodePath, injectorPath },
+  ), false);
+  assert.equal(managedInjectorCommandMatches(command, {
+    nodePath,
+    injectorPath,
+    startupToken: "another-token",
+  }), false);
 });
 
 test("renderer readiness requires the current source, manager token, mounted entry, and fresh heartbeat", () => {

@@ -77,11 +77,13 @@ npm run codex:install
 open "$HOME/Applications/Codex Panel.app"
 ```
 
-管理器会作为普通 Dock 应用持续运行。主窗口显示 Panel 服务、Codex/CDP 和内嵌集成状态，可以打开任务面板、启动、重启或停止受管进程，也可以打开浏览器页面、日志和数据目录。“已连接”表示当前签名版本的注入已挂载到 renderer，并持续发布属于本次管理器的心跳；仅有 HTTP 服务或 CDP 端口可达不会再误报嵌入成功。设置中可以注册 macOS 登录项，并分别控制启动时是否连接 Codex、连接后是否自动打开任务面板；后两项默认开启。
+管理器会作为普通 Dock 应用持续运行。主窗口显示 Panel 服务、Codex/CDP 和内嵌集成状态，可以打开任务面板、启动、重启或停止受管进程，也可以打开浏览器页面、日志和数据目录。“已连接”表示当前签名版本的注入已挂载到 renderer，并持续发布属于本次管理器的心跳；仅有 HTTP 服务或 CDP 端口可达不会再误报嵌入成功。如果受管集成意外退出，管理器会在 2、5、15 秒后依次尝试恢复；60 秒内退出超过三次后停止自动恢复，并提示查看日志。设置中可以注册 macOS 登录项，并分别控制启动时是否连接 Codex、连接后是否自动打开任务面板；后两项默认开启。
+
+“更新”标签页会显示完整 Fork 版本，在每次启动时检查一次 Fork 的 GitHub Releases，也支持手动检查。只有规范化的 `vX.Y.Z-fork.N` 标签会成为更新候选，发现新版本时只会打开经过校验的 `shay-wong/codex-panel` Release 页面。当前 Fork 还没有带固定公钥的签名、公证 updater archive，因此应用不会自行下载或替换自身。
 
 应用图标直接使用 `ChatGPT.app` 内官方的 Codex 浅色和深色资源，并在右上角增加斜向 `PANEL` 角标；缺少任一官方外观资源时安装会明确失败，运行中的 Dock 图标会跟随 macOS 当前外观切换。如果本机存在与全局 Git 邮箱匹配的有效 Apple Development 身份，安装器会使用它，让后续更新保持稳定的 macOS 权限要求；也可以通过 `CODEX_PANEL_CODESIGN_IDENTITY` 指定身份。安装器会记录真实 designated requirement，只有 requirement、真实 signer 和内容摘要都匹配时才复用未变化的 bundle。没有稳定身份时会回退到 ad-hoc 签名，并在显式重装时重建启动器，因此 macOS 可能再次请求文件访问权限。
 
-管理器启动代码前会校验自身 App 签名、bundle 内 runtime、安装时记录的 Node.js 哈希，以及官方 `ChatGPT.app` 与其内置 Codex CLI 的签名要求、固定 bundle 路径和真实可执行文件路径。同一 OpenAI 身份签名的正常 ChatGPT 更新无需重新安装 Panel；未签名修改、签名身份变化、符号链接和逃出已签名 App bundle 的可执行路径都会被拒绝。随后运行仅监听回环地址的 Panel 服务，并连接 Codex 实际使用的 CDP 端口，或先以 CDP 启动官方 `/Applications/ChatGPT.app`，再注入 Panel 侧边栏；它只退役选中端口上的 Panel injector，也不会把自己管理的 injector 替换为 detached 进程。正常打开的 Codex 无法在运行中补开 CDP；如果管理器提示需要重启 Codex，请完全退出 Codex 后再次点击“启动服务”。停止或退出管理器只会等待它负责的 Panel 服务和 injector 进程结束；官方 ChatGPT/Codex 应用及其 CDP 端口会继续运行，直到你主动退出 ChatGPT。它不会修改官方应用或其 `app.asar`。
+管理器启动代码前会校验自身 App 签名、bundle 内 runtime、安装时记录的 Node.js 哈希，以及官方 `ChatGPT.app` 与其内置 Codex CLI 的签名要求、固定 bundle 路径和真实可执行文件路径。同一 OpenAI 身份签名的正常 ChatGPT 更新无需重新安装 Panel；未签名修改、签名身份变化、符号链接和逃出已签名 App bundle 的可执行路径都会被拒绝。随后运行仅监听回环地址的 Panel 服务，并连接 Codex 实际使用的 CDP 端口，或先以 CDP 启动官方 `/Applications/ChatGPT.app`，再注入 Panel 侧边栏。管理器的状态、打开和停止请求使用受启动 token 保护的 Unix socket，描述文件与 socket 均只允许当前用户访问；清理旧进程时会在发信号前再次校验固定 Node 路径、injector 绝对路径、watch 模式和启动 token。它只退役选中端口上的 Panel injector，也不会把自己管理的 injector 替换为 detached 进程。正常打开的 Codex 无法在运行中补开 CDP；如果管理器提示需要重启 Codex，请完全退出 Codex 后再次点击“启动服务”。停止或退出管理器只会等待它负责的 Panel 服务和 injector 进程结束；官方 ChatGPT/Codex 应用及其 CDP 端口会继续运行，直到你主动退出 ChatGPT。Swift 管理器有意继续使用回环 TCP CDP，而不启用上游私有 pipe：pipe 必须由 injector 持有整个 ChatGPT 生命周期，但当前管理器明确允许 ChatGPT 在自己退出后继续运行，并在下次启动时重新连接。它不会修改官方应用或其 `app.asar`。
 
 更新仓库代码或替换 Node.js 后，请重新运行 `npm run codex:install`。OpenAI 正常签名的 `ChatGPT.app` 更新无需重新安装 Panel。`npm run launcher:install` 仍作为兼容别名保留。最近一次管理器日志位于 `~/Library/Logs/Codex Panel.log`。
 

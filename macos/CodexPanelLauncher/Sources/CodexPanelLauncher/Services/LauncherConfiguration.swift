@@ -70,6 +70,10 @@ struct LauncherConfiguration: Decodable {
     URL(fileURLWithPath: logPath)
   }
 
+  var runtimeFileURL: URL {
+    dataURL.appendingPathComponent("launcher-runtime.json")
+  }
+
   var injectorPath: String {
     runtimeURL.appendingPathComponent("scripts/codex-injector.mjs").path
   }

@@ -26,6 +26,8 @@ import {
   installPanelTools,
   installRuntime,
   launcherConfiguration,
+  launcherInfoPlist,
+  launcherVersionMetadata,
   panelctlLauncher,
   resolveLauncherIcons,
   resolveInstallLayout,
@@ -82,6 +84,7 @@ const runtimeDirectories = [
 ];
 const runtimeScripts = [
   "codex-cdp-pipe.mjs",
+  "codex-injector-control.mjs",
   "codex-injector-runtime.mjs",
   "codex-injector.mjs",
   "codex-rate-limits.mjs",
@@ -129,6 +132,23 @@ test("Panel uses the standard user Skill directory and a stable support root", (
   assert.equal(layout.skillsDirectory, "/Users/example/.agents/skills");
   assert.equal(layout.userBinDirectory, "/Users/example/.local/bin");
   assert.equal(layout.runtimeDirectory, "/Users/example/Library/Application Support/Codex Panel/runtime");
+});
+
+test("Fork prerelease versions use a numeric macOS version and preserve the full release", () => {
+  assert.deepEqual(launcherVersionMetadata("0.2.0-fork.1"), {
+    bundleShortVersion: "0.2.0",
+    fullVersion: "0.2.0-fork.1",
+  });
+  const plist = launcherInfoPlist("0.2.0-fork.1");
+  assert.match(
+    plist,
+    /<key>CFBundleShortVersionString<\/key>\s*<string>0\.2\.0<\/string>/,
+  );
+  assert.match(
+    plist,
+    /<key>CodexPanelVersion<\/key>\s*<string>0\.2\.0-fork\.1<\/string>/,
+  );
+  assert.throws(() => launcherVersionMetadata("0.2-fork.1"), /Invalid launcher version/);
 });
 
 test("runtime and native launcher configuration use installed files instead of repository paths", async () => {
@@ -237,11 +257,89 @@ test("the launcher accepts signed ChatGPT updates while pinning runtime and Node
 });
 
 test("the manager waits for renderer injection and never detaches ownership when opening Panel", () => {
-  assert.match(panelManagerSource, /--status/);
+  assert.match(panelManagerSource, /--control", "status/);
   assert.match(panelManagerSource, /--startup-token/);
-  assert.match(panelManagerSource, /--open-existing/);
+  assert.match(panelManagerSource, /--control", "open/);
   assert.doesNotMatch(panelManagerSource, /--daemon/);
   assert.match(panelManagerSource, /--stop-residents", "--port"/);
+  assert.match(launcherConfigurationSource, /launcher-runtime\.json/);
+  assert.match(panelManagerSource, /CodexPanelVersion/);
+});
+
+test("cancelled recovery cannot launch managed processes after an async probe", () => {
+  const panelStart = panelManagerSource.indexOf("private func startPanelService(");
+  const integrationStart = panelManagerSource.indexOf("private func startIntegration(");
+  const terminateStart = panelManagerSource.indexOf("private func terminateManagedProcesses(");
+  assert.ok(panelStart >= 0 && integrationStart > panelStart && terminateStart > integrationStart);
+
+  const panelFunction = panelManagerSource.slice(panelStart, integrationStart);
+  const panelProbe = panelFunction.indexOf(
+    "let panelIsReachable = await endpointIsReachable",
+  );
+  const panelRecheck = panelFunction.indexOf(
+    "lifecycleGeneration: expectedLifecycleGeneration",
+    panelProbe + 1,
+  );
+  const panelRun = panelFunction.indexOf("try process.run()");
+  assert.ok(panelProbe >= 0 && panelRecheck > panelProbe && panelRun > panelRecheck);
+
+  const integrationFunction = panelManagerSource.slice(integrationStart, terminateStart);
+  const integrationProbe = integrationFunction.indexOf(
+    "let cdpReachable = await endpointIsReachable",
+  );
+  const integrationRecheck = integrationFunction.indexOf(
+    "lifecycleGeneration: expectedLifecycleGeneration",
+    integrationProbe + 1,
+  );
+  const integrationRun = integrationFunction.indexOf("try process.run()");
+  assert.ok(
+    integrationProbe >= 0
+      && integrationRecheck > integrationProbe
+      && integrationRun > integrationRecheck,
+  );
+
+  assert.match(
+    panelManagerSource,
+    /let isReachable = await endpointIsReachable\(url\)\s+try assertStartTransaction\(\s+lifecycleGeneration: expectedLifecycleGeneration/,
+  );
+  assert.match(
+    panelManagerSource,
+    /try await assertIntegrationReady\(port: port\)\s+try assertStartTransaction\(\s+lifecycleGeneration: expectedLifecycleGeneration/,
+  );
+  assert.match(panelManagerSource, /private var lifecycleGeneration = 0/);
+  assert.match(
+    panelManagerSource,
+    /private func cancelIntegrationRecovery\(\) \{\s+lifecycleGeneration \+= 1/,
+  );
+  const integrationWaitStart = panelManagerSource.indexOf(
+    "private func waitUntilIntegrationReady(",
+  );
+  const endpointProbeStart = panelManagerSource.indexOf(
+    "private func endpointIsReachable(",
+    integrationWaitStart,
+  );
+  const reachableWaitStart = panelManagerSource.indexOf(
+    "private func waitUntilReachable(",
+    endpointProbeStart,
+  );
+  const processLookupStart = panelManagerSource.indexOf(
+    "private func processIsRunning(",
+    reachableWaitStart,
+  );
+  assert.ok(
+    integrationWaitStart >= 0
+      && endpointProbeStart > integrationWaitStart
+      && reachableWaitStart > endpointProbeStart
+      && processLookupStart > reachableWaitStart,
+  );
+  assert.doesNotMatch(
+    panelManagerSource.slice(integrationWaitStart, endpointProbeStart),
+    /try\? await Task\.sleep/,
+  );
+  assert.doesNotMatch(
+    panelManagerSource.slice(reachableWaitStart, processLookupStart),
+    /try\? await Task\.sleep/,
+  );
 });
 
 test("launcher termination awaits only managed children, preserves ChatGPT, and development restarts request a normal quit", () => {

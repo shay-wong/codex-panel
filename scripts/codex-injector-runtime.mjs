@@ -174,6 +174,23 @@ export function residentInjectorCommandMatches(
     && (port === null || commandPort(command, defaultPort) === port);
 }
 
+export function managedInjectorCommandMatches(command, {
+  nodePath,
+  injectorPath,
+  startupToken = null,
+  port = null,
+  defaultPort = 9229,
+} = {}) {
+  if (typeof command !== "string" || !nodePath || !injectorPath) return false;
+  const absoluteNode = new RegExp(`^${escapeRegExp(nodePath)}(?=\\s|$)`);
+  return absoluteNode.test(command)
+    && residentInjectorCommandMatches(command, injectorPath, port, defaultPort)
+    && (
+      startupToken === null
+      || commandArgumentMatches(command, "--startup-token", startupToken)
+    );
+}
+
 export function injectionReadinessMatches(status, {
   expectedSourceHash,
   expectedStartupToken,
@@ -227,6 +244,14 @@ export function sameFrameDocumentUrl(candidate, expected) {
 function commandPort(command, defaultPort) {
   const match = command.match(/(?:^|\s)--port(?:=(\d+)|\s+(\d+))(?=\s|$)/);
   return match ? Number(match[1] ?? match[2]) : defaultPort;
+}
+
+function commandArgumentMatches(command, option, value) {
+  const escapedOption = escapeRegExp(option);
+  const escapedValue = escapeRegExp(value);
+  return new RegExp(
+    `(?:^|\\s)${escapedOption}(?:=${escapedValue}|\\s+${escapedValue})(?=\\s|$)`,
+  ).test(command);
 }
 
 function escapeRegExp(value) {

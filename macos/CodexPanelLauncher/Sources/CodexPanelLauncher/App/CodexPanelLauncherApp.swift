@@ -97,6 +97,13 @@ struct CodexPanelLauncherApp: App {
         Button("打开运行日志") {
           manager.openLog()
         }
+
+        Divider()
+
+        Button("检查更新") {
+          Task { await manager.checkForUpdates() }
+        }
+        .disabled(manager.isCheckingForUpdates)
       }
     }
 
