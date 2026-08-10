@@ -9,3 +9,5 @@ cloud-migration-exports/
 macos/CodexPanelLauncher/.build/
 *.log
 .DS_Store
+/*-proof.png
+/workflow-telemetry.json
