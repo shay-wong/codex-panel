@@ -79,9 +79,9 @@ open "$HOME/Applications/Codex Panel.app"
 
 应用图标直接使用 `ChatGPT.app` 内官方的 Codex 浅色和深色资源，并在右上角增加斜向 `PANEL` 角标；缺少任一官方外观资源时安装会明确失败，运行中的 Dock 图标会跟随 macOS 当前外观切换。如果本机存在与全局 Git 邮箱匹配的有效 Apple Development 身份，安装器会使用它，让后续更新保持稳定的 macOS 权限要求；也可以通过 `CODEX_PANEL_CODESIGN_IDENTITY` 指定身份。安装器会记录真实 designated requirement，只有 requirement、真实 signer 和内容摘要都匹配时才复用未变化的 bundle。没有稳定身份时会回退到 ad-hoc 签名，并在显式重装时重建启动器，因此 macOS 可能再次请求文件访问权限。
 
-管理器启动代码前会校验自身 App 签名、bundle 内 runtime、安装时记录的 Node.js 和官方 Codex CLI 哈希，以及官方 `ChatGPT.app` 的 designated requirement、固定的主程序路径和主程序哈希。随后运行仅监听回环地址的 Panel 服务，并连接 Codex 实际使用的 CDP 端口，或先以 CDP 启动官方 `/Applications/ChatGPT.app`，再注入 Panel 侧边栏；它只退役选中端口上的 Panel injector，也不会把自己管理的 injector 替换为 detached 进程。正常打开的 Codex 无法在运行中补开 CDP；如果管理器提示需要重启 Codex，请完全退出 Codex 后再次点击“启动服务”。停止或退出管理器只会等待它负责的 Panel 服务和 injector 进程结束；官方 ChatGPT/Codex 应用及其 CDP 端口会继续运行，直到你主动退出 ChatGPT。它不会修改官方应用或其 `app.asar`。
+管理器启动代码前会校验自身 App 签名、bundle 内 runtime、安装时记录的 Node.js 哈希，以及官方 `ChatGPT.app` 与其内置 Codex CLI 的签名要求、固定 bundle 路径和真实可执行文件路径。同一 OpenAI 身份签名的正常 ChatGPT 更新无需重新安装 Panel；未签名修改、签名身份变化、符号链接和逃出已签名 App bundle 的可执行路径都会被拒绝。随后运行仅监听回环地址的 Panel 服务，并连接 Codex 实际使用的 CDP 端口，或先以 CDP 启动官方 `/Applications/ChatGPT.app`，再注入 Panel 侧边栏；它只退役选中端口上的 Panel injector，也不会把自己管理的 injector 替换为 detached 进程。正常打开的 Codex 无法在运行中补开 CDP；如果管理器提示需要重启 Codex，请完全退出 Codex 后再次点击“启动服务”。停止或退出管理器只会等待它负责的 Panel 服务和 injector 进程结束；官方 ChatGPT/Codex 应用及其 CDP 端口会继续运行，直到你主动退出 ChatGPT。它不会修改官方应用或其 `app.asar`。
 
-更新仓库代码、替换 Node.js，或安装新版 `ChatGPT.app` 后，请重新运行 `npm run codex:install`，以刷新固定的应用身份和可执行文件哈希。`npm run launcher:install` 仍作为兼容别名保留。最近一次管理器日志位于 `~/Library/Logs/Codex Panel.log`。
+更新仓库代码或替换 Node.js 后，请重新运行 `npm run codex:install`。OpenAI 正常签名的 `ChatGPT.app` 更新无需重新安装 Panel。`npm run launcher:install` 仍作为兼容别名保留。最近一次管理器日志位于 `~/Library/Logs/Codex Panel.log`。
 
 ### 备选：在终端运行启动器
 
@@ -127,7 +127,7 @@ npm run codex:inject -- --port 9229 --open
 
 脚本会在 Codex 侧边栏中添加 Panel 入口，并让 iframe 覆盖 Codex 的整个主工作区，包括上下文标题栏区域，从而避免 Panel 自身标题栏上方出现空白。完整的矩形标题栏位于 Electron 可拖拽层之上，并标记为 `no-drag`；Panel 激活时会隐藏原生上下文操作，因此其自身操作可以保持正常的边缘间距，不需要额外的右侧留白。原生侧边栏会继续保留，之前的页面选择和上下文标题栏会暂时隐藏；选择其他 Codex 页面后会恢复。
 
-无论当前位于会话页，还是 Plugins、Sites 等原生页面，都可以直接点击 Panel 入口打开任务面板。
+无论当前位于会话页，还是 Plugins、Sites 等原生页面，都可以直接点击 Panel 入口打开任务面板。Panel 激活时，通过 Codex 全局命令菜单选择对话、插件、设置、站点、Pull Requests、已安排任务等原生目的地，会在鼠标点击和 Enter 选择后恢复 Codex 原生界面；切换主题等工具命令不会关闭 Panel。不会改变路由的命令目前匹配简体中文、繁体中文和英文标题，其他界面语言留待 Codex 在菜单 DOM 中提供稳定命令标识后支持。
 
 “在对话中打开”会在存在对应项目时选择原生 Codex 项目，并打开一个尚未发送的 `$manage-panel` 输入框。Panel 会先读取 Issue 的最新“AI 对话交接”评论，把 Issue 编号、标题、读取位置和交接内容预填给新任务；新任务仍会先通过 `panelctl` 重新读取最新 Issue 内容和全部评论。未发送的输入框还不是 Codex 任务，因此第一次发送创建出原生 thread 后，Panel 才会自动把该 thread ID 写回 Issue。记录的 ID 可通过 Codex 原生路由桥接点击打开。每个 Issue 可以绑定一个 Git 分支或一个 worktree；选项从所选 Codex 项目的仓库中扫描，而不是手工输入。该集成复用 Codex 现有的项目、输入框和路由标记，不会修改 React、替换 `fetch`、加载私有代码块或编辑 Codex 数据文件。
 

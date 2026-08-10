@@ -14,7 +14,7 @@ The SwiftUI manager is a normal foreground Dock application. It displays the Pan
 
 The app icon is generated from the official `icon-codex-light.png` and `icon-codex-dark-color.png` resources in `ChatGPT.app`. Both variants use the same clipped 45-degree `PANEL` corner ribbon, and the running Dock icon switches with the effective macOS appearance. Missing official light or dark resources are installation errors rather than silent fallbacks. The installer honors `CODEX_PANEL_CODESIGN_IDENTITY`, otherwise reuses the real current signer when it remains available or selects the single valid Apple Development identity matching the global Git email. It records and verifies the actual designated requirement before reusing an unchanged bundle. Systems without a stable identity fall back to ad-hoc signing, rebuild on explicit reinstall, and may need to approve file access again.
 
-On launch, the manager verifies its bundle signature and bundled runtime, the pinned hashes of Node.js and the official Codex CLI, and the official `ChatGPT.app` designated requirement plus its installed main-executable path and hash before executing code. It starts the loopback Panel service and either discovers and attaches to the active Codex CDP port or starts the official application with CDP. Only Panel residents on that selected port are retired. Opening an already managed Panel uses a one-shot request against the existing renderer and never replaces the owned injector with a detached resident. Stop, quit, and development reinstall paths wait for only the managed injector and Panel service to exit. The official ChatGPT/Codex process and its unauthenticated local CDP endpoint intentionally remain running until the user quits ChatGPT; only trusted local code should run during that full interval. The `ChatGPT.app` bundle remains unmodified, and installing a new ChatGPT version requires rerunning `npm run codex:install` to refresh the pinned identity and hashes.
+On launch, the manager verifies its bundle signature and bundled runtime, the pinned Node.js hash, and the official signing requirements plus fixed bundle-contained executable paths of `ChatGPT.app` and its bundled Codex CLI before executing code. A normal update signed with the same OpenAI identity remains valid without reinstalling Panel; unsigned changes, identity changes, symlinks, and executable paths outside the signed app are rejected. It starts the loopback Panel service and either discovers and attaches to the active Codex CDP port or starts the official application with CDP. Only Panel residents on that selected port are retired. Opening an already managed Panel uses a one-shot request against the existing renderer and never replaces the owned injector with a detached resident. Stop, quit, and development reinstall paths wait for only the managed injector and Panel service to exit. The official ChatGPT/Codex process and its unauthenticated local CDP endpoint intentionally remain running until the user quits ChatGPT; only trusted local code should run during that full interval. The `ChatGPT.app` bundle remains unmodified.
 
 Install or refresh the app after updating the repository or changing the Node.js installation:
 
@@ -38,11 +38,13 @@ CODEX_PANEL_HOST=127.0.0.1 npm run codex
 
 The wait duration is fixed. If no main renderer appears within 30 seconds, the launcher exits with `Timed out waiting for a Codex renderer target`.
 
-## Open Panel from any native page
+## Switch between Panel and native Codex destinations
 
 The Panel sidebar entry opens from conversations as well as native pages such as Plugins and Sites. No configuration or migration is required.
 
 This fix accepts a main content frame that covers most of the Codex viewport even when that frame also includes the native titlebar region.
+
+While Panel is active, selecting a native destination from Codex's global command menu restores the native view for both mouse and Enter selection. Chat, Work, Codex, Settings, Skills, Scheduled Tasks, new conversations, and other commands that change the native route are covered; utility commands such as theme changes leave Panel open. Route-neutral commands currently recognize Simplified Chinese, Traditional Chinese, and English labels because the command menu DOM exposes localized titles but no stable command identifier. Other UI languages remain pending until that identifier is available.
 
 ## Link embedded AI conversations to issues
 
