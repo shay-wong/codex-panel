@@ -9,12 +9,12 @@ const skillSource = await readFile(
 
 test("the panel skill coordinates safe issue execution and review handoff", () => {
   assert.match(skillSource, /read the latest issue content and all comments/i);
-  assert.match(skillSource, /completed work.*returned|returned.*completed work/i);
-  assert.match(skillSource, /claim.*`todo`.*`in_progress`.*`--if-version`/is);
-  assert.match(skillSource, /version conflict.*skip the issue.*do not implement/is);
+  assert.match(skillSource, /completed work has been returned for changes/i);
+  assert.match(skillSource, /claim a `todo` issue, move it to `in_progress` with `--if-version`/i);
+  assert.match(skillSource, /version conflict[\s\S]*skip the issue and do not implement/i);
 
   assert.match(
     skillSource,
-    /after implementation[^\n]*add a comment[^\n]*key changes[^\n]*verification[^\n]*result[^\n]*risks[^\n]*then move[^\n]*`in_review`/i,
+    /verify the requested work and acceptance criteria[\s\S]*add a comment summarizing the key changes, verification, result, and remaining risks[\s\S]*move the issue to `in_review`/i,
   );
 });

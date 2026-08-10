@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { isIP } from "node:net";
 import os from "node:os";
@@ -16,8 +16,11 @@ import {
   isTaskStatus,
 } from "../shared/domain.mjs";
 import { resolvePanelDataDirectory } from "../shared/panel-paths.mjs";
+import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
+import { withoutPanelLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { normalizeWorkflowSnapshot } from "../shared/workflow-control-flow.mjs";
 import { AiChatService } from "./ai-chat.mjs";
+import { resolveAiWorkspace, resolveMappedAiWorkspace } from "./ai-chat-catalog.mjs";
 import { createCloudConfigStore } from "./cloud-config.mjs";
 import {
   CloudProxyError,
@@ -25,6 +28,7 @@ import {
   isLocalCompanionRoute,
 } from "./cloud-proxy.mjs";
 import { ApiError, PanelDatabase } from "./database.mjs";
+import { ProjectSummaryService } from "./project-summary.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -33,6 +37,8 @@ const ATTACHMENT_BODY_LIMIT = 25 * 1024 * 1024;
 const AI_CHAT_TURN_BODY_LIMIT = 25 * 1024 * 1024;
 const AI_CHAT_ATTACHMENT_LIMIT = 10;
 const AI_CHAT_SKILL_MARKER = "\uFFFC";
+const HOST_RUNTIME_TTL_MS = 3_000;
+const CODEX_PLAN_TAIL_BYTES = 16 * 1024 * 1024;
 const INLINE_ATTACHMENT_TYPES = new Set([
   "application/pdf",
   "image/avif",
@@ -151,7 +157,7 @@ function isTrustedNetworkHost(hostname) {
   return false;
 }
 
-function assertTrustedNetworkRequest(request) {
+function assertTrustedNetworkRequest(request, allowOpaqueOrigin = false) {
   let host;
   try {
     host = new URL(`http://${request.headers.host ?? ""}`).hostname;
@@ -165,6 +171,7 @@ function assertTrustedNetworkRequest(request) {
   const origin = request.headers.origin;
   if (!origin) return;
   if (TRUSTED_EMBED_ORIGINS.has(origin)) return;
+  if (allowOpaqueOrigin && origin === "null") return;
   let originHost;
   try {
     originHost = new URL(origin).hostname;
@@ -574,7 +581,7 @@ function parseTaskCreate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
     "projectId", "title", "description", "status", "priority", "labels", "sortOrder", "threadId",
-    "assigneeTarget", "workflowId", "developmentContext", "dueDate", "recurrence",
+    "assigneeTarget", "workflowId", "developmentContext", "startDate", "dueDate", "recurrence",
   ]));
   const projectId = validateProjectId(body.projectId ?? DEFAULT_PROJECT_ID);
   const task = {
@@ -589,6 +596,7 @@ function parseTaskCreate(body) {
     assigneeTarget: parseAssigneeTarget(body.assigneeTarget),
     workflowId: parseWorkflowId(body.workflowId ?? null),
     developmentContext: parseDevelopmentContext(body.developmentContext ?? null),
+    startDate: parseDueDate(body.startDate ?? null, "startDate"),
     dueDate: parseDueDate(body.dueDate ?? null),
     recurrence: parseRecurrence(body.recurrence ?? null),
   };
@@ -601,13 +609,14 @@ function parseTaskCreate(body) {
 function parseTaskPatch(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
-    "version", "title", "description", "status", "priority", "labels", "threadId",
-    "assigneeTarget", "workflowId", "developmentContext", "dueDate", "recurrence",
+    "version", "projectId", "title", "description", "status", "priority", "labels", "threadId",
+    "assigneeTarget", "workflowId", "developmentContext", "startDate", "dueDate", "recurrence",
   ]));
   const version = parseVersion(body.version);
   const threadId = parseThreadId(body.threadId);
   const assigneeTarget = parseAssigneeTarget(body.assigneeTarget);
   const changes = {};
+  if (body.projectId !== undefined) changes.projectId = validateProjectId(body.projectId);
   if (body.title !== undefined) changes.title = stringField(body.title, "title", { required: true, maxLength: 240 });
   if (body.description !== undefined) changes.description = stringField(body.description, "description", { maxLength: 100_000 });
   if (body.status !== undefined) changes.status = parseStatus(body.status);
@@ -615,6 +624,7 @@ function parseTaskPatch(body) {
   if (body.labels !== undefined) changes.labels = parseLabels(body.labels);
   if (body.workflowId !== undefined) changes.workflowId = parseWorkflowId(body.workflowId);
   if (body.developmentContext !== undefined) changes.developmentContext = parseDevelopmentContext(body.developmentContext);
+  if (body.startDate !== undefined) changes.startDate = parseDueDate(body.startDate, "startDate");
   if (body.dueDate !== undefined) changes.dueDate = parseDueDate(body.dueDate);
   if (body.recurrence !== undefined) changes.recurrence = parseRecurrence(body.recurrence);
   if (changes.recurrence && body.dueDate === null) {
@@ -1103,20 +1113,24 @@ function parseWorktrees(output) {
   return contexts;
 }
 
-async function scanDevelopmentContexts(workspacePath) {
+async function scanDevelopmentContexts(workspacePath, processEnv = process.env) {
   if (!workspacePath) return { workspacePath: null, contexts: [] };
+  const environment = withoutPanelLauncherEnvironment(processEnv);
   try {
     const rootResult = await execFileAsync("git", ["-C", workspacePath, "rev-parse", "--show-toplevel"], {
+      env: environment,
       timeout: 4_000,
       maxBuffer: 1024 * 1024,
     });
     const root = rootResult.stdout.trim();
     const [branchesResult, worktreesResult] = await Promise.all([
       execFileAsync("git", ["-C", root, "for-each-ref", "--format=%(refname:short)", "refs/heads"], {
+        env: environment,
         timeout: 4_000,
         maxBuffer: 1024 * 1024,
       }),
       execFileAsync("git", ["-C", root, "worktree", "list", "--porcelain"], {
+        env: environment,
         timeout: 4_000,
         maxBuffer: 1024 * 1024,
       }),
@@ -1134,10 +1148,11 @@ async function scanDevelopmentContexts(workspacePath) {
   }
 }
 
-async function discoverSkills(codexExecutable, workspacePath) {
+async function discoverSkills(codexExecutable, workspacePath, processEnv) {
   const entries = await new Promise((resolve, reject) => {
     const child = spawn(codexExecutable, ["app-server", "--stdio"], {
       cwd: workspacePath,
+      env: processEnv,
       stdio: ["pipe", "pipe", "ignore"],
     });
     let settled = false;
@@ -1248,8 +1263,9 @@ async function discoverSkills(codexExecutable, workspacePath) {
   return [...unique.values()].sort((left, right) => left.label.localeCompare(right.label));
 }
 
-async function discoverMcpServers(codexExecutable) {
+async function discoverMcpServers(codexExecutable, processEnv) {
   const result = await execFileAsync(codexExecutable, ["mcp", "list", "--json"], {
+    env: processEnv,
     timeout: 8_000,
     maxBuffer: 2 * 1024 * 1024,
   });
@@ -1273,10 +1289,10 @@ async function discoverMcpServers(codexExecutable) {
     .sort((left, right) => left.label.localeCompare(right.label));
 }
 
-async function discoverWorkflowCapabilities(resolved, workspacePath) {
+async function discoverWorkflowCapabilities(resolved, workspacePath, processEnv) {
   const [skills, mcpServers] = await Promise.all([
-    discoverSkills(resolved.codexExecutable, workspacePath),
-    discoverMcpServers(resolved.codexExecutable),
+    discoverSkills(resolved.codexExecutable, workspacePath, processEnv),
+    discoverMcpServers(resolved.codexExecutable, processEnv),
   ]);
   return { skills, mcpServers };
 }
@@ -1286,18 +1302,41 @@ export function resolveServerOptions(options = {}) {
     ? path.resolve(options.dataDirectory)
     : resolvePanelDataDirectory();
   const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  const instanceToken = String(options.instanceToken
+    ?? process.env.CODEX_PANEL_INSTANCE_TOKEN
+    ?? process.env.CODEX_TASKBOARD_INSTANCE_TOKEN
+    ?? "").trim();
+  if (instanceToken && !/^[a-z0-9-]{16,128}$/i.test(instanceToken)) {
+    throw new Error("CODEX_PANEL_INSTANCE_TOKEN must be an identifier");
+  }
+  const instanceSecret = String(options.instanceSecret
+    ?? process.env.CODEX_PANEL_INSTANCE_SECRET
+    ?? process.env.CODEX_TASKBOARD_INSTANCE_SECRET
+    ?? "").trim();
+  if (instanceToken && !/^[a-f0-9-]{32,128}$/i.test(instanceSecret)) {
+    throw new Error("CODEX_PANEL_INSTANCE_SECRET must be set in launcher mode");
+  }
   return {
     dataDirectory,
     databasePath: options.databasePath ?? path.join(dataDirectory, "panel.sqlite"),
     attachmentsDirectory: options.attachmentsDirectory ?? path.join(dataDirectory, "attachments"),
     cloudConfigPath: options.cloudConfigPath ?? path.join(dataDirectory, "cloud-companion.json"),
+    clientStoragePath: options.clientStoragePath ?? path.join(dataDirectory, "client-storage.json"),
     staticDirectory: options.staticDirectory ?? path.join(PROJECT_ROOT, "dist", "web"),
     skillPath: options.skillPath ?? path.join(PROJECT_ROOT, "skills", "manage-panel", "SKILL.md"),
-    codexExecutable: options.codexExecutable ?? process.env.CODEX_EXECUTABLE ?? "codex",
+    codexExecutable: resolveCodexExecutable({ explicit: options.codexExecutable }),
     codexStatePath: options.codexStatePath
       ?? path.join(codexHome, ".codex-global-state.json"),
     codexProcessesPath: options.codexProcessesPath
       ?? path.join(codexHome, "process_manager", "chat_processes.json"),
+    instanceToken,
+    instanceSecret,
+    version: String(
+      options.version
+        ?? process.env.CODEX_PANEL_VERSION
+        ?? process.env.CODEX_TASKBOARD_VERSION
+        ?? "development",
+    ).trim(),
   };
 }
 
@@ -1327,8 +1366,42 @@ export function resolveHost(value = (
 
 export function createPanelServer(options = {}) {
   const resolved = resolveServerOptions(options);
+  const codexProcessEnvironment = withoutPanelLauncherEnvironment(
+    options.processEnv ?? process.env,
+  );
+  const routePrefix = resolved.instanceToken ? `/${resolved.instanceToken}` : "";
   const database = new PanelDatabase(resolved.databasePath);
   const events = new EventHub();
+  let clientStorageWrite = Promise.resolve();
+
+  async function readClientStorage() {
+    try {
+      const value = JSON.parse(await readFile(resolved.clientStoragePath, "utf8"));
+      return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    } catch (error) {
+      if (error.code === "ENOENT") return {};
+      throw error;
+    }
+  }
+
+  async function updateClientStorage(body) {
+    assertPlainObject(body);
+    assertAllowedKeys(body, new Set(["key", "value"]));
+    const key = stringField(body.key, "key", { required: true, maxLength: 512 });
+    const value = stringField(body.value, "value", { nullable: true, maxLength: 100_000 });
+    clientStorageWrite = clientStorageWrite.catch(() => {}).then(async () => {
+      const entries = await readClientStorage();
+      if (value === null) delete entries[key];
+      else entries[key] = value;
+      await mkdir(path.dirname(resolved.clientStoragePath), { recursive: true });
+      const temporaryPath = `${resolved.clientStoragePath}.${process.pid}.tmp`;
+      await writeFile(temporaryPath, `${JSON.stringify(entries)}\n`, { mode: 0o600 });
+      await chmod(temporaryPath, 0o600);
+      await rename(temporaryPath, resolved.clientStoragePath);
+      await chmod(resolved.clientStoragePath, 0o600);
+    });
+    await clientStorageWrite;
+  }
   const cloudConfig = options.cloudConfigStore ?? createCloudConfigStore({
     configPath: resolved.cloudConfigPath,
   });
@@ -1340,12 +1413,112 @@ export function createPanelServer(options = {}) {
       const config = await cloudConfig.read();
       const workspacePath = config.projectMappings[projectId];
       if (!workspacePath) return null;
-      const result = await scanDevelopmentContexts(workspacePath);
+      const result = await scanDevelopmentContexts(workspacePath, codexProcessEnvironment);
       return result.contexts.find((candidate) => (
         candidate.type === "worktree" && candidate.branch === context.branch
       )) ?? null;
     },
+    assertTaskProjectMoveAllowed: (taskId, targetProjectId) => {
+      if (!database.hasAiChatThreadProjectConflict(taskId, targetProjectId)) return;
+      throw new CloudProxyError(
+        409,
+        "AI_CHAT_PROJECT_MOVE_BLOCKED",
+        "Delete issue-linked AI conversations before moving the issue to another project",
+      );
+    },
   });
+  async function readCloudJson(pathname) {
+    const upstream = await cloudProxy.forward(new Request(`http://127.0.0.1${pathname}`, {
+      headers: { accept: "application/json" },
+    }));
+    let payload;
+    try {
+      payload = await upstream.json();
+    } catch {
+      throw new ApiError(
+        upstream.ok ? 502 : upstream.status,
+        "INVALID_CLOUD_RESPONSE",
+        "Cloud panel returned an invalid JSON response",
+      );
+    }
+    if (!upstream.ok) {
+      throw new ApiError(
+        upstream.status,
+        payload?.error?.code ?? "CLOUD_REQUEST_FAILED",
+        payload?.error?.message ?? "Cloud panel request failed",
+        payload?.error?.details,
+      );
+    }
+    return payload;
+  }
+
+  async function resolveAiChatContext(projectId, issueId) {
+    const config = await cloudConfig.read();
+    if (!config.remoteUrl) {
+      let resolvedWorkspace;
+      try {
+        resolvedWorkspace = await resolveAiWorkspace(
+          projectId,
+          resolved.codexStatePath,
+          database,
+        );
+      } catch (error) {
+        if (
+          !(error instanceof ApiError)
+          || error.code !== "PROJECT_WORKSPACE_UNAVAILABLE"
+          || projectId !== DEFAULT_PROJECT_ID
+        ) {
+          throw error;
+        }
+        resolvedWorkspace = {
+          workspacePath: PROJECT_ROOT,
+          addDirectories: [],
+          project: database.getProject(projectId),
+        };
+      }
+      let issue;
+      if (issueId !== undefined) {
+        issue = database.getTask(issueId);
+        if (!issue || issue.projectId !== projectId || issue.archivedAt != null) {
+          throw new ApiError(
+            404,
+            "AI_CHAT_ISSUE_NOT_FOUND",
+            `Task '${issueId}' is not an active task in project '${projectId}'`,
+          );
+        }
+      }
+      return { ...resolvedWorkspace, issue };
+    }
+
+    const projectPayload = await readCloudJson("/api/projects");
+    const project = Array.isArray(projectPayload.projects)
+      ? projectPayload.projects.find((candidate) => candidate?.id === projectId)
+      : null;
+    if (!project) {
+      throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+    }
+
+    let issue;
+    if (issueId !== undefined) {
+      const issuePayload = await readCloudJson(`/api/tasks/${encodeURIComponent(issueId)}`);
+      issue = issuePayload.task;
+      if (!issue || issue.projectId !== projectId || issue.archivedAt != null) {
+        throw new ApiError(
+          404,
+          "AI_CHAT_ISSUE_NOT_FOUND",
+          `Task '${issueId}' is not an active task in project '${projectId}'`,
+        );
+      }
+    }
+
+    const resolvedWorkspace = await resolveMappedAiWorkspace(
+      projectId,
+      project,
+      config.projectMappings,
+    );
+    return { ...resolvedWorkspace, issue };
+  }
+
   const aiChat = new AiChatService({
     database,
     codexExecutable: resolved.codexExecutable,
@@ -1355,14 +1528,179 @@ export function createPanelServer(options = {}) {
     onIssueCommentCreated: ({ comment, task }) => {
       events.emit("comment.created", { comment, task });
     },
+    processEnv: codexProcessEnvironment,
+    resolveContext: resolveAiChatContext,
+  });
+  const projectSummary = new ProjectSummaryService({
+    database,
+    codexExecutable: resolved.codexExecutable,
+    processEnv: codexProcessEnvironment,
+    workspacePath: PROJECT_ROOT,
   });
   const aiEventResponses = new Set();
+  const codexSessionSearches = new Map();
+  const codexSessionStateCache = new Map();
+  const codexSessionsDirectory = path.join(path.dirname(resolved.codexStatePath), "sessions");
+  let hostRuntime = null;
+
+  async function findCodexSession(threadId) {
+    const cached = codexSessionSearches.get(threadId);
+    if (cached && (cached.path || Date.now() - cached.checkedAt < 5_000)) return cached.path;
+
+    const suffix = `-${threadId}.jsonl`;
+    const directories = [codexSessionsDirectory];
+    while (directories.length > 0) {
+      const directory = directories.pop();
+      let entries;
+      try {
+        entries = await readdir(directory, { withFileTypes: true });
+      } catch (error) {
+        if (error.code === "ENOENT") continue;
+        throw error;
+      }
+      for (const entry of entries) {
+        const entryPath = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          directories.push(entryPath);
+        } else if (entry.isFile() && entry.name.endsWith(suffix)) {
+          codexSessionSearches.set(threadId, { path: entryPath, checkedAt: Date.now() });
+          return entryPath;
+        }
+      }
+    }
+
+    codexSessionSearches.set(threadId, { path: null, checkedAt: Date.now() });
+    return null;
+  }
+
+  async function readCodexSessionState(threadId) {
+    const sessionPath = await findCodexSession(threadId);
+    if (!sessionPath) return null;
+
+    const sessionStat = await stat(sessionPath);
+    const cached = codexSessionStateCache.get(sessionPath);
+    if (cached?.size === sessionStat.size && cached.mtimeMs === sessionStat.mtimeMs) {
+      return cached.state;
+    }
+
+    const length = Math.min(sessionStat.size, CODEX_PLAN_TAIL_BYTES);
+    const buffer = Buffer.alloc(length);
+    const handle = await open(sessionPath, "r");
+    try {
+      await handle.read(buffer, 0, length, sessionStat.size - length);
+    } finally {
+      await handle.close();
+    }
+
+    const lines = buffer.toString("utf8").split("\n");
+    if (length < sessionStat.size) lines.shift();
+    const records = [];
+    for (const line of lines) {
+      try {
+        records.push(JSON.parse(line));
+      } catch {}
+    }
+
+    const turnStates = new Map();
+    for (const record of records) {
+      const payload = record?.payload;
+      if (record?.type !== "event_msg" || typeof payload?.turn_id !== "string") continue;
+      if (payload.type === "task_started") turnStates.set(payload.turn_id, true);
+      if (payload.type === "task_complete" || payload.type === "turn_aborted") {
+        turnStates.set(payload.turn_id, false);
+      }
+    }
+
+    let progress = null;
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+      const record = records[index];
+      const payload = record?.payload;
+      if (payload?.type !== "custom_tool_call" || typeof payload.input !== "string") continue;
+
+      let statuses = [];
+      if (payload.name === "update_plan") {
+        try {
+          const input = JSON.parse(payload.input);
+          statuses = Array.isArray(input.plan)
+            ? input.plan.map((item) => item?.status).filter(Boolean)
+            : [];
+        } catch {}
+      } else if (payload.name === "exec") {
+        const callIndex = payload.input.lastIndexOf("tools.update_plan(");
+        if (callIndex < 0) continue;
+        statuses = [...payload.input.slice(callIndex).matchAll(
+          /["']?status["']?\s*:\s*["'](completed|in_progress|pending)["']/g,
+        )].map((match) => match[1]);
+      }
+
+      if (statuses.length > 0) {
+        progress = {
+          completed: statuses.filter((status) => status === "completed").length,
+          total: statuses.length,
+        };
+        break;
+      }
+    }
+
+    const state = {
+      completed: progress?.completed ?? null,
+      total: progress?.total ?? null,
+      running: [...turnStates.values()].some(Boolean),
+    };
+    codexSessionStateCache.set(sessionPath, {
+      size: sessionStat.size,
+      mtimeMs: sessionStat.mtimeMs,
+      state,
+    });
+    return state;
+  }
 
   const server = createServer(async (request, response) => {
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader("referrer-policy", "no-referrer");
     try {
-      assertTrustedNetworkRequest(request);
+      const incomingUrl = new URL(request.url, "http://127.0.0.1");
+      if (resolved.instanceToken && incomingUrl.pathname !== "/health") {
+        if (
+          incomingUrl.pathname !== routePrefix
+          && !incomingUrl.pathname.startsWith(`${routePrefix}/`)
+        ) {
+          throw new ApiError(404, "NOT_FOUND", "Route not found");
+        }
+        request.url = `${incomingUrl.pathname.slice(routePrefix.length) || "/"}${incomingUrl.search}`;
+      }
+
+      assertTrustedNetworkRequest(request, Boolean(resolved.instanceToken));
+      const origin = request.headers.origin;
+      const trustedEmbedOrigin = TRUSTED_EMBED_ORIGINS.has(origin)
+        || (Boolean(resolved.instanceToken) && origin === "null");
+      if (trustedEmbedOrigin) {
+        response.setHeader("access-control-allow-origin", origin);
+        response.setHeader("access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS");
+        response.setHeader(
+          "access-control-allow-headers",
+          request.headers["access-control-request-headers"] ?? "content-type",
+        );
+        response.setHeader("access-control-expose-headers", "x-codex-panel-proof");
+        response.setHeader("access-control-allow-private-network", "true");
+        response.setHeader("vary", "origin");
+        if (request.method === "OPTIONS") {
+          response.writeHead(204);
+          response.end();
+          return;
+        }
+      }
+      if (resolved.instanceToken && origin === "app://-") {
+        const challenge = request.headers["x-codex-panel-challenge"]
+          ?? request.headers["x-codex-taskboard-challenge"];
+        if (typeof challenge !== "string" || !/^[a-f0-9]{32,128}$/i.test(challenge)) {
+          throw new ApiError(401, "INVALID_INSTANCE_CHALLENGE", "Launcher challenge is required");
+        }
+        response.setHeader(
+          "x-codex-panel-proof",
+          createHmac("sha256", resolved.instanceSecret).update(challenge).digest("hex"),
+        );
+      }
       const url = new URL(request.url, "http://127.0.0.1");
       const pathname = url.pathname;
       const isLocalAiRoute = pathname === "/api/local/ai" || pathname.startsWith("/api/local/ai/");
@@ -1382,7 +1720,89 @@ export function createPanelServer(options = {}) {
 
       if (pathname === "/health") {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        if (resolved.instanceToken) {
+          const challenge = request.headers["x-codex-panel-challenge"]
+            ?? request.headers["x-codex-taskboard-challenge"];
+          if (typeof challenge !== "string" || !/^[a-f0-9]{32,128}$/i.test(challenge)) {
+            throw new ApiError(401, "INVALID_INSTANCE_CHALLENGE", "Launcher challenge is required");
+          }
+          return sendJson(response, 200, {
+            status: "ok",
+            product: "codex-panel",
+            version: resolved.version,
+            proof: createHmac("sha256", resolved.instanceSecret)
+              .update(challenge)
+              .digest("hex"),
+          });
+        }
         return sendJson(response, 200, { status: "ok" });
+      }
+
+      if (pathname === "/api/client-storage") {
+        if (request.method === "GET") {
+          await clientStorageWrite;
+          return sendJson(response, 200, { entries: await readClientStorage() });
+        }
+        if (request.method === "PATCH") {
+          await updateClientStorage(await readJson(request));
+          return sendEmpty(response, 204);
+        }
+        return methodNotAllowed(response, ["GET", "PATCH"]);
+      }
+
+      if (pathname === "/api/local/codex-thread-progress") {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        if ([...url.searchParams.keys()].some((key) => key !== "threadId")) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Only 'threadId' is supported");
+        }
+        const threadIds = [...new Set(url.searchParams.getAll("threadId").map((value) => (
+          value.trim().replace(/^(?:local|cloud):/i, "")
+        )))];
+        if (threadIds.length > 64 || threadIds.some((threadId) => (
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(threadId)
+        ))) {
+          throw new ApiError(400, "INVALID_FIELD", "'threadId' must contain valid Codex thread IDs");
+        }
+        const entries = await Promise.all(threadIds.map(async (threadId) => (
+          [threadId, await readCodexSessionState(threadId)]
+        )));
+        return sendJson(response, 200, { progress: Object.fromEntries(entries) });
+      }
+
+      if (pathname === "/api/local/host-runtime") {
+        if (request.method === "GET") {
+          const runtime = hostRuntime && Date.now() - hostRuntime.updatedAt <= HOST_RUNTIME_TTL_MS
+            ? hostRuntime
+            : null;
+          return sendJson(response, 200, { runtime });
+        }
+        if (request.method === "PUT") {
+          const body = await readJson(request);
+          assertPlainObject(body);
+          assertAllowedKeys(body, new Set(["threadId", "threadRunning", "threadTodoProgress"]));
+          const threadId = stringField(body.threadId, "threadId", { required: true, maxLength: 256 });
+          if (typeof body.threadRunning !== "boolean") {
+            throw new ApiError(400, "INVALID_FIELD", "'threadRunning' must be a boolean");
+          }
+          let threadTodoProgress = null;
+          if (body.threadTodoProgress != null) {
+            assertPlainObject(body.threadTodoProgress);
+            assertAllowedKeys(body.threadTodoProgress, new Set(["completed", "total"]));
+            const { completed, total } = body.threadTodoProgress;
+            if (!Number.isInteger(completed) || !Number.isInteger(total) || completed < 0 || total < 1) {
+              throw new ApiError(400, "INVALID_FIELD", "'threadTodoProgress' is invalid");
+            }
+            threadTodoProgress = { completed: Math.min(completed, total), total };
+          }
+          hostRuntime = {
+            threadId,
+            threadRunning: body.threadRunning,
+            threadTodoProgress,
+            updatedAt: Date.now(),
+          };
+          return sendJson(response, 200, { runtime: hostRuntime });
+        }
+        return methodNotAllowed(response, ["GET", "PUT"]);
       }
 
       if (pathname === "/api/local/cloud-session") {
@@ -1474,6 +1894,16 @@ export function createPanelServer(options = {}) {
         assertAllowedQuery(url.searchParams, new Set(["projectId"]), "GET /api/local/ai/catalog");
         const projectId = validateProjectId(url.searchParams.get("projectId") ?? undefined);
         return sendJson(response, 200, await aiChat.getCatalog(projectId));
+      }
+
+      const projectSummaryRoute = pathname.match(/^\/api\/local\/projects\/([^/]+)\/summary$/);
+      if (projectSummaryRoute) {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        assertNoQuery(url.searchParams, "GET /api/local/projects/:id/summary");
+        const projectId = validateProjectId(
+          decodeRouteSegment(projectSummaryRoute[1], "Project id"),
+        );
+        return sendJson(response, 200, projectSummary.get(projectId));
       }
 
       if (pathname === "/api/local/ai/threads") {
@@ -1592,7 +2022,11 @@ export function createPanelServer(options = {}) {
         return sendJson(
           response,
           200,
-          await discoverWorkflowCapabilities(resolved, workspacePath ?? PROJECT_ROOT),
+          await discoverWorkflowCapabilities(
+            resolved,
+            workspacePath ?? PROJECT_ROOT,
+            codexProcessEnvironment,
+          ),
         );
       }
 
@@ -1615,7 +2049,13 @@ export function createPanelServer(options = {}) {
           if ([...url.searchParams.keys()].length > 0) {
             throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/projects does not accept query parameters");
           }
-          return sendJson(response, 200, { projects: database.listProjects() });
+          const projects = database.listProjects().map((project) => ({
+            ...project,
+            workspacePath: project.id === DEFAULT_PROJECT_ID
+              ? null
+              : currentCloudConfig?.projectMappings[project.id] ?? project.workspacePath,
+          }));
+          return sendJson(response, 200, { projects });
         }
         if (request.method === "POST") {
           const project = database.createProject(parseProjectCreate(await readJson(request)));
@@ -1623,6 +2063,25 @@ export function createPanelServer(options = {}) {
           return sendJson(response, 201, { project });
         }
         return methodNotAllowed(response, ["GET", "POST"]);
+      }
+
+      const projectRoute = pathname.match(/^\/api\/projects\/([^/]+)$/);
+      if (projectRoute) {
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Project routes do not accept query parameters");
+        }
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        if (request.method === "DELETE") {
+          database.deleteProject(projectId);
+          return sendEmpty(response, 204);
+        }
+        return methodNotAllowed(response, ["DELETE"]);
       }
 
       const workflowWorkspaceRoute = pathname.match(/^\/api\/projects\/([^/]+)\/workflow-workspace$/);
@@ -1671,7 +2130,9 @@ export function createPanelServer(options = {}) {
         const project = currentCloudConfig.remoteUrl
           ? {
             id: projectId,
-            workspacePath: currentCloudConfig.projectMappings[projectId] ?? null,
+            workspacePath: projectId === DEFAULT_PROJECT_ID
+              ? null
+              : currentCloudConfig.projectMappings[projectId] ?? null,
           }
           : database.getProject(projectId);
         if (!project) throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
@@ -1698,7 +2159,11 @@ export function createPanelServer(options = {}) {
           resolved.codexStatePath,
           resolved.codexProcessesPath,
         );
-        return sendJson(response, 200, await scanDevelopmentContexts(workspacePath));
+        return sendJson(
+          response,
+          200,
+          await scanDevelopmentContexts(workspacePath, codexProcessEnvironment),
+        );
       }
 
       if (pathname === "/api/tasks") {
@@ -1762,6 +2227,7 @@ export function createPanelServer(options = {}) {
             relationType,
             relatedTaskId,
             threadId,
+            actorFromRequest(request),
           );
           events.emit("task.relation.updated", result);
           return sendJson(response, 200, result);
@@ -1774,11 +2240,32 @@ export function createPanelServer(options = {}) {
             relationType,
             relatedTaskId,
             threadId,
+            actorFromRequest(request),
           );
           events.emit("task.relation.updated", result);
           return sendJson(response, 200, result);
         }
         return methodNotAllowed(response, ["POST", "DELETE"]);
+      }
+
+      const taskActivitiesRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/activities$/);
+      if (taskActivitiesRoute) {
+        let taskId;
+        try {
+          taskId = decodeURIComponent(taskActivitiesRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Task id contains invalid encoding");
+        }
+        if (taskId.length === 0 || taskId.length > 128) {
+          throw new ApiError(400, "INVALID_PATH", "Task id is invalid");
+        }
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Activity routes do not accept query parameters");
+        }
+        if (request.method === "GET") {
+          return sendJson(response, 200, { activities: database.listTaskActivities(taskId) });
+        }
+        return methodNotAllowed(response, ["GET"]);
       }
 
       const taskCommentsRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/comments$/);
@@ -1927,7 +2414,7 @@ export function createPanelServer(options = {}) {
         return methodNotAllowed(response, ["GET", "POST"]);
       }
 
-      const attachmentContentRoute = pathname.match(/^\/api\/attachments\/([^/]+)\/content$/);
+      const attachmentContentRoute = pathname.match(/^\/api\/attachments\/([^/]+)\/(content|download)$/);
       if (attachmentContentRoute) {
         let id;
         try {
@@ -1950,7 +2437,8 @@ export function createPanelServer(options = {}) {
         const encodedFilename = encodeURIComponent(attachment.filename).replace(/['()*]/g, (character) => (
           `%${character.charCodeAt(0).toString(16).toUpperCase()}`
         ));
-        const canOpenInline = INLINE_ATTACHMENT_TYPES.has(attachment.contentType);
+        const canOpenInline = attachmentContentRoute[2] === "content"
+          && INLINE_ATTACHMENT_TYPES.has(attachment.contentType);
         response.writeHead(200, {
           "cache-control": "private, no-store",
           "content-disposition": `${canOpenInline ? "inline" : "attachment"}; filename*=UTF-8''${encodedFilename}`,
@@ -2011,29 +2499,37 @@ export function createPanelServer(options = {}) {
           return sendJson(response, 200, { task });
         }
         if (!action && request.method === "PATCH") {
+          const actor = actorFromRequest(request);
           const { version, changes, threadId, assigneeTarget } = parseTaskPatch(await readJson(request));
           if (assigneeTarget !== undefined) {
-            changes.assignee = resolveAssignee(assigneeTarget, actorFromRequest(request));
+            changes.assignee = resolveAssignee(assigneeTarget, actor);
           }
-          const task = database.updateTask(id, version, changes, threadId);
+          const task = database.updateTask(id, version, changes, threadId, actor);
           events.emit("task.updated", { task });
           return sendJson(response, 200, { task });
         }
         if (action === "move" && request.method === "POST") {
           const move = parseMove(await readJson(request));
-          const task = database.moveTask(id, move.version, move.status, move.sortOrder, move.threadId);
+          const task = database.moveTask(
+            id,
+            move.version,
+            move.status,
+            move.sortOrder,
+            move.threadId,
+            actorFromRequest(request),
+          );
           events.emit("task.moved", { task });
           return sendJson(response, 200, { task });
         }
         if (action === "archive" && request.method === "POST") {
           const { version, threadId } = parseArchive(await readJson(request));
-          const task = database.archiveTask(id, version, threadId);
+          const task = database.archiveTask(id, version, threadId, actorFromRequest(request));
           events.emit("task.archived", { task });
           return sendJson(response, 200, { task });
         }
         if (action === "restore" && request.method === "POST") {
           const { version, threadId } = parseArchive(await readJson(request));
-          const task = database.restoreTask(id, version, threadId);
+          const task = database.restoreTask(id, version, threadId, actorFromRequest(request));
           events.emit("task.restored", { task });
           return sendJson(response, 200, { task });
         }
@@ -2073,9 +2569,12 @@ export function createPanelServer(options = {}) {
     aiChat,
     server,
     options: resolved,
-    async listen({ host = "127.0.0.1", port = resolvePort() } = {}) {
+    async listen({ host = "127.0.0.1", port = resolvePort(), fd = null } = {}) {
       if (host !== "127.0.0.1" && host !== "0.0.0.0") {
         throw new Error("Panel server must bind to 127.0.0.1 or 0.0.0.0");
+      }
+      if (fd !== null && (!Number.isInteger(fd) || fd < 3 || fd > 255)) {
+        throw new Error("Panel server listen fd must be an inherited file descriptor");
       }
       await new Promise((resolve, reject) => {
         const onError = (error) => {
@@ -2088,7 +2587,8 @@ export function createPanelServer(options = {}) {
         };
         server.once("error", onError);
         server.once("listening", onListening);
-        server.listen(port, host);
+        if (fd === null) server.listen(port, host);
+        else server.listen({ fd });
       });
       listening = true;
       return server.address();
@@ -2104,6 +2604,7 @@ export function createPanelServer(options = {}) {
       aiEventResponses.clear();
       server.closeAllConnections();
       await aiChat.close();
+      await projectSummary.close();
       await serverClosed;
       listening = false;
       database.close();

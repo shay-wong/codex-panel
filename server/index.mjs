@@ -3,12 +3,20 @@ import { pathToFileURL } from "node:url";
 
 import { createPanelServer, resolveHost, resolvePort } from "./app.mjs";
 
-export { createPanelServer, resolveHost, resolvePort, resolveServerOptions } from "./app.mjs";
+export {
+  createPanelServer,
+  resolveHost,
+  resolvePort,
+  resolveServerOptions,
+} from "./app.mjs";
 
 async function main() {
   const app = createPanelServer();
   const host = resolveHost();
-  const address = await app.listen({ host, port: resolvePort() });
+  const configuredListenFd = process.env.CODEX_PANEL_LISTEN_FD
+    ?? process.env.CODEX_TASKBOARD_LISTEN_FD;
+  const listenFd = configuredListenFd === undefined ? null : Number(configuredListenFd);
+  const address = await app.listen({ host, port: resolvePort(), fd: listenFd });
   console.log(`Codex Panel listening on http://127.0.0.1:${address.port}`);
   if (host === "0.0.0.0") {
     const addresses = Object.values(os.networkInterfaces())

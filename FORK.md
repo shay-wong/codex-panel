@@ -24,26 +24,25 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- Fork 创建后最近一次上游合并提交：无
-- 该合并的上游父提交：不适用
-- 精确 Fork 创建基线：`677b54451db707ae6132486b6593b7be11e4ee09`
-- 比较范围：`677b54451db707ae6132486b6593b7be11e4ee09..HEAD`
+- 本次合并的上游父提交：`05de40b57eb011ba852c2998444bb05b55a33dbb`
+- 精确已合并上游基线：`05de40b57eb011ba852c2998444bb05b55a33dbb`
+- 比较范围：`05de40b57eb011ba852c2998444bb05b55a33dbb..HEAD`
 
-持续移动的 `upstream/main` 是待合并候选，不是本文档的基线。当前本地 `origin/main` 和 `upstream/main` 均指向上述精确基线；本地 `main` 已包含 Fork 提交，并继续以该基线计算比较范围。
+持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
-基线提交本身是一个上游合并提交，父提交分别为 `c9fe427d91e5be1a96b8eae7ec66fa48806379bd` 和 `d02b834d28e6b63b03c3ee3e0c66b65aeb32d56a`。该提交早于本 Fork 创建，不属于“上游合并到 Fork”的提交，两个父提交都不是 Fork 比较基线。
+本次上游合并吸收了 `0.2.0` 的 Dashboard、列表、甘特图、日期、项目移动、完整活动流、云端迁移、AI 进程回收、私有 CDP pipe 与不透明 iframe 加固。上游的 Tauri App、updater、发布工作流和 `taskctl` 打包链与 Fork 已有 Swift 管理器冲突，未纳入 Fork 产品入口。
 
 ## Fork 发布版本策略
 
 - 权威上游版本来源：精确合并基线中的 `package.json`
 - 当前 Fork 版本来源：`package.json` 和 `package-lock.json` 的根包条目
-- 精确基线的上游版本：`0.1.0`
+- 精确基线的上游版本：`0.2.0`
 - 当前 Fork 版本：`0.1.0`
 - 匹配的 Fork 标签或 GitHub Release：无
 
 每个 Fork 发布版本都必须使用 `<upstream-version>-fork.<N>`。上游版本变化时从 `fork.1` 开始；同一上游版本的后续 Fork 发布递增 `N`。已准备但尚未发布的版本号在未被占用时可以保留。
 
-当前不带后缀的 `0.1.0` 不是有效的 Fork 发布版本。下一个规范化 Fork 发布版本是 `0.1.0-fork.1`。不得仅因本次审计而修改版本文件；只能在已授权的发布任务中更新。
+当前不带后缀的 `0.1.0` 不是有效的 Fork 发布版本，并且落后于已合并上游的 `0.2.0`。下一个规范化 Fork 发布版本是 `0.2.0-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
 
 ## 活跃 Fork 能力
 
@@ -52,7 +51,7 @@
 - 生命周期：`长期保留`
 - 原始目的：让浏览器标题、中英文仓库入口和 GitHub 仓库使用 Fork 项目名 `Codex Panel` / `codex-panel`，避免继续显示旧 Fork 名或上游通用名称。
 - 行为不变量：`web/index.html`、中英文 README、Skill、CLI、环境变量、注入协议、本地存储、SQLite 和尚未部署的 Cloudflare 资源统一使用 `Codex Panel` / `panel` / `manage-panel` / `panelctl` / `CODEX_PANEL_*`；旧浏览器键、环境变量、自动任务名称及本仓库管理的旧链接必须自动迁移或兼容读取，不能因改名丢失本地状态。数据库只使用已完成改名的 `panel.sqlite`，不再保留旧数据库文件名迁移逻辑；用户级默认数据位置统一为固定支持目录，首次自包含安装只做一次在线快照且保留仓库源数据。
-- 代码和测试路径：`web/index.html`、`package.json`、`package-lock.json`、`skills/manage-panel`、`cli/panelctl.mjs`、`server/index.mjs`、`server/app.mjs`、`shared/panel-paths.mjs`、`web/src/storageMigration.ts`、`scripts/install-macos-launcher.mjs`、`scripts/managed-install.mjs`、`scripts/codex-rate-limits.mjs`、`cloud/src/index.mjs`、`test/integration-installer.test.mjs` 和 `test/panel-naming.test.mjs`。
+- 代码和测试路径：`web/index.html`、`package.json`、`package-lock.json`、`skills/manage-panel`、`cli/panelctl.mjs`、`server/index.mjs`、`server/app.mjs`、`shared/panel-paths.mjs`、`web/src/storageMigration.ts`、`scripts/install-macos-launcher.mjs`、`scripts/managed-install.mjs`、`scripts/panel-supervisor.mjs`、`scripts/codex-rate-limits.mjs`、`cloud/src/index.mjs`、`test/integration-installer.test.mjs`、`test/panel-supervisor.test.mjs` 和 `test/panel-naming.test.mjs`。
 - 用户文档：`README.md`、`README.zh-CN.md`、`docs/fork-capabilities.md` 和 `docs/cloud-collaboration.md`。
 - 来源：Fork 初始定制及本次改名；可用 `git log -S'<title>Codex Panel</title>' -- web/index.html` 定位。
 - 合并指引：合并上游 HTML、包清单和服务入口改动时保留 Panel 主命名和上述单向迁移边界；旧名称不能重新成为新写入或用户文档的主入口。
@@ -64,7 +63,7 @@
 - 生命周期：`长期保留`
 - 原始目的：提供一个可见、可持续运行的 `~/Applications/Codex Panel.app` 原生管理器，让用户查看本地服务与内嵌状态、控制启动和停止、配置登录项，并在不运行终端命令的情况下启动带 Panel 的官方 Codex。
 - 行为不变量：macOS 上只有显式 `npm run codex:install` 创建或刷新 `~/Applications/Codex Panel.app`；`npm ci` 不得写入用户应用或全局集成。安装器只删除带本项目 marker 或旧兼容 bundle id 的受管 `~/Applications/Codex.app`，不得覆盖其他同名用户应用。管理器使用 bundle id `com.shay.codex-panel`，作为普通前台 Dock 应用提供 Panel 服务、Codex/CDP 和内嵌集成状态，以及打开 Panel、启动、重启、停止、打开浏览器、日志和数据目录的控制；设置通过 `SMAppService` 管理登录项，并分别保存“启动时连接 Codex”和“连接后打开 Panel”，两项默认开启。SwiftPM 源码、构建脚本和 Codex Run action 分别位于 `macos/CodexPanelLauncher`、`script/build_and_run.sh` 和 `.codex/environments/environment.toml`。安装 bundle 必须包含受签名保护的 runtime，只通过相对资源路径读取，不得执行支持目录或源仓库中的可写脚本；每次启动子进程前必须验证管理器 App 签名、runtime 无符号链接和安装时固定的 Node.js SHA-256。官方 `ChatGPT.app` 及其内置 Codex CLI 必须分别通过安装时记录的 OpenAI designated requirement，路径必须是无符号链接且位于固定的已签名 App bundle 内；同一 OpenAI 身份签名的正常版本更新无需重新安装 Panel，未签名修改、签名身份变化和路径逃逸必须拒绝。管理器还必须从继承环境中移除 `NODE_OPTIONS`、`NODE_PATH`、`NPM_CONFIG_NODE_OPTIONS`、`BASH_ENV`、`ENV`、`ZDOTDIR` 和所有 `DYLD_*` / `LD_*` 加载器变量；子进程的 `CODEX_PANEL_PORT` 必须强制使用安装配置中的端口，旧 `CODEX_TASKBOARD_PORT` 不得覆盖它。明暗图标必须精确取自官方 `ChatGPT.app` 的 `icon-codex-light.png` 与 `icon-codex-dark-color.png`，缺少任一资源即失败；两个变体使用同一套两端贴边裁切的 45 度右上角 `PANEL` 色带，运行中的 Dock 图标必须随 `effectiveAppearance` 切换。签名优先级固定为 `CODEX_PANEL_CODESIGN_IDENTITY`、当前 bundle 的真实且仍可用 signer、唯一匹配全局 Git 邮箱的 Apple Development 身份、最后才是 ad-hoc；marker 必须记录真实 designated requirement，只有真实 signer、requirement、bundle 元数据和内容摘要全部匹配的稳定签名 bundle 才能跳过重建，ad-hoc 不得冒充稳定权限身份。启用自动连接或手动启动时必须发现 Codex 实际 CDP 端口，renderer 返回的 WebSocket 地址必须是同一选定端口上的精确 `ws://127.0.0.1:<port>/devtools/` 地址。只退役命令行包含当前绝对 injector 路径、`--watch` 和选定端口的 Panel resident，并在发信号前重新验证这三项；相对路径、其他仓库副本及其他端口进程均视为用户或外部进程。关闭自动连接时不得清理 resident。管理器必须持有 injector 进程所有权，打开 Panel 只能请求现有 renderer，不得切换为 detached resident。“内嵌集成已连接”必须同时验证当前 source hash、管理器启动 token、renderer 挂载点和新鲜心跳，不能只凭进程、CDP 与 HTTP。停止、退出和开发重装必须按顺序等待 injector 与 Panel 子进程结束；开发重装至少等待 30 秒，超时后只可强制终止启动时捕获且仍精确匹配 `CodexPanelLauncher` 可执行文件的 PID，绝不能操作 ChatGPT。不得遗留 PPID 1 Panel 服务；由管理器冷启动的官方 ChatGPT/Codex 必须使用独立进程组并脱离 injector 生命周期，关闭管理器不得退出官方应用。为满足这一产品约束，启用 CDP 的 ChatGPT 及其无认证本机 CDP 会持续到用户退出 ChatGPT，因此该实例整个运行期间只能运行可信本地代码。正常打开且无 CDP 的 Codex 必须提示完全退出后重试；官方 `/Applications/ChatGPT.app` 和 `app.asar` 不得修改。首次 renderer 注入、CSP bypass、Local Network Access 兼容、自动打开单次消费和退役连接释放继续遵守既有不变量。非 macOS 环境应成功跳过 App 生成。
-- 代码和测试路径：`macos/CodexPanelLauncher`、`macos/CodexPanelLauncher/Tests/CodexPanelLauncherTests/LauncherConfigurationTests.swift`、`macos/CodexPanelLauncher/Tests/CodexPanelLauncherTests/PanelProcessEnvironmentTests.swift`、`script/build_and_run.sh`、`.codex/environments/environment.toml`、`scripts/install-macos-launcher.mjs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-runtime.mjs`、`scripts/codex-rate-limits.mjs`、`server/app.mjs`、`test/integration-installer.test.mjs`、`test/injector.test.mjs`、`test/injector-host-runtime.test.mjs`、`test/ai-chat-server.test.mjs` 和 `package.json`。
+- 代码和测试路径：`macos/CodexPanelLauncher`、`macos/CodexPanelLauncher/Tests/CodexPanelLauncherTests/LauncherConfigurationTests.swift`、`macos/CodexPanelLauncher/Tests/CodexPanelLauncherTests/PanelProcessEnvironmentTests.swift`、`script/build_and_run.sh`、`.codex/environments/environment.toml`、`.github/workflows/check.yml`、`scripts/install-macos-launcher.mjs`、`scripts/codex-cdp-pipe.mjs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-runtime.mjs`、`scripts/panel-supervisor.mjs`、`scripts/codex-rate-limits.mjs`、`server/app.mjs`、`test/integration-installer.test.mjs`、`test/codex-cdp-pipe.test.mjs`、`test/injector.test.mjs`、`test/injector-host-runtime.test.mjs`、`test/ai-chat-server.test.mjs` 和 `package.json`。
 - 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
 - 来源：原自动生成启动器能力及本次原生管理器替换；提交后可用 `git log -S'CodexPanelLauncher' -- macos/CodexPanelLauncher scripts/install-macos-launcher.mjs` 定位。
 - 合并指引：上游调整安装、注入器或 macOS 入口时，保留“显式安装原生前台管理器”“签名 bundle runtime、Node 哈希固定、ChatGPT 与内置 CLI 跨版本签名身份及包内路径校验、净化执行环境”“服务状态与控制 UI”“登录项和两个独立自动连接选项”“官方明暗图标和对称斜角标”“真实 signer 与 designated requirement 一致才复用”“CDP HTTP 与 WebSocket 精确同端点”“resident 绝对路径、端口和发信号前身份复核”“renderer token/心跳就绪”“打开不脱管”“退出等待受管子进程且保留官方应用”“开发超时只强制终止原启动器 PID”“受管旧入口才可删除”“首次注入等待 bootstrap 后单次 reload”“自动打开只消费一次”这些行为不变量；不得恢复短生命周期 AppleScript 引导器、执行外部可写 runtime、把正常 OpenAI 签名更新误判为必须重装、仅靠变化的 ad-hoc `cdhash` 维持权限身份，或把 CDP 可达误报为注入成功。
@@ -136,9 +135,9 @@
 - 生命周期：`等待上游吸收`
 - 原始目的：替换 Chromium 原生下拉层，修复暗黑模式下菜单变白且视觉与 Codex / Panel 不一致的问题。
 - 行为不变量：状态、优先级、负责人、工作流、开发上下文和重复周期使用同一套 Panel 菜单；菜单必须使用现有主题变量，保留选中图标、键盘导航、点击外部关闭和上下自适应定位，并在桌面与窄屏视口内完整显示。`Escape` 只关闭当前菜单，不关闭 Issue 详情。
-- 代码和测试路径：`web/src/components/DetailPropertySelect.tsx`、`web/src/components/TaskDetail.tsx` 和 `web/src/styles.css`。本次按仓库直接路径确认规则未新增自动化测试。
+- 代码和测试路径：`web/src/components/TaskPropertyPicker.tsx`、`web/src/components/TaskDetail.tsx` 和 `web/src/styles.css`。本次按仓库直接路径确认规则未新增自动化测试。
 - 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
-- 来源：本次 Fork 修复；可用 `git log -S'DetailPropertySelect' -- web/src/components/TaskDetail.tsx web/src/components/DetailPropertySelect.tsx` 定位。
+- 来源：本次 Fork 修复；可用 `git log -S'TaskPropertyPicker' -- web/src/components/TaskDetail.tsx web/src/components/TaskPropertyPicker.tsx` 定位。
 - 合并指引：上游调整 Issue 侧栏属性控件时，不得退回依赖浏览器原生 `<select>` 弹层；继续复用主题变量和紧凑属性行布局，并验证暗色、窄屏和 `Escape` 行为。
 - 移除条件：上游提供等价的主题化属性选择控件及明暗主题、键盘和响应式行为后同步移除。
 - 针对性验证：运行 `npm run typecheck` 和 `npm run build`；在暗色 Issue 详情中打开状态菜单，确认浮层颜色、图标和间距与 Panel 一致，再按 `Escape` 确认只关闭菜单；以 600px 宽视口确认菜单不溢出。
@@ -160,3 +159,4 @@
 - 仅存在于上游的轻量标签 `pre-cloud-collaboration-2026-07-24` 不是 Fork 发布版本。
 - 不含有意 Fork 解决结果的纯上游合并、生成产物噪声、被忽略的本地状态，以及最终效果已被回退的行为都不属于 Fork 能力。
 - 尚未合并的上游独有工作属于待合并输入，不属于 Fork 能力。
+- 上游 `0.2.0` 的 `src-tauri/`、macOS updater/release 脚本、`release-macos.yml`、`rust-toolchain.toml` 和 `taskctl` 打包验证属于被替代的重复产品链；Fork 只维护 `macos/CodexPanelLauncher` Swift 管理器及对应 CI。

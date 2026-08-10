@@ -13,7 +13,7 @@ const webApp = await readFile(new URL("../web/src/App.tsx", import.meta.url), "u
 
 test("injection is an idempotent IIFE guarded by its current source hash", () => {
   assert.match(source, /^\(\(\) => \{/);
-  assert.match(source, /const VERSION = "0\.6\.11"/);
+  assert.match(source, /const VERSION = "0\.6\.13"/);
   assert.match(source, /const SOURCE_HASH = window\.__CODEX_PANEL_SOURCE_HASH__/);
   assert.match(source, /const SENTINEL_KEY = "__codexPanelInjection__"/);
   assert.match(source, /previous\?\.sourceHash === SOURCE_HASH/);
@@ -22,12 +22,19 @@ test("injection is an idempotent IIFE guarded by its current source hash", () =>
   assert.match(source, /window\[SENTINEL_KEY\] = api/);
 });
 
-test("embedded page uses the local panel URL and supports a runtime override", () => {
+test("embedded page supports ordinary loopback and authenticated opaque modes", () => {
   assert.match(source, /http:\/\/127\.0\.0\.1:47823\/\?host=codex/);
   assert.match(source, /window\.__CODEX_PANEL_URL__/);
   assert.match(source, /window\.__CODEX_TASKBOARD_URL__/);
+  assert.match(source, /nextFrame\.name = frameName/);
+  assert.match(source, /nextFrame\.src = "about:blank"/);
+  assert.match(source, /requestHost\("load-frame", \{ frameName, frameCapability: capability \}\)/);
+  assert.match(source, /frameCapability = privateFrame \? crypto\.randomUUID\(\) : ""/);
+  assert.match(source, /nextFrame\.setAttribute\("sandbox", "allow-scripts/);
+  assert.match(source, /panelOrigin = panelUrl\.origin/);
+  assert.match(source, /frameOrigin = privateFrame \? "null" : panelUrl\.origin/);
   assert.match(source, /nextFrame\.src = panelUrl\.href/);
-  assert.match(source, /frameOrigin = panelUrl\.origin/);
+  assert.doesNotMatch(source, /allow-same-origin/);
 });
 
 test("entry clones the native Plugins row and the page covers the complete Codex workspace", () => {
@@ -142,12 +149,12 @@ test("the embedded header exposes Codex's native sidebar expansion when collapse
 });
 
 test("opening asks the resident launcher to ensure the service and rebuilds failed frames", () => {
-  assert.match(source, /const HOST_BINDING_NAME = "__codexPanelHostV1"/);
+  assert.match(source, /const HOST_REQUEST_MESSAGE = "__codexPanelHostRequestV1"/);
   assert.match(source, /return requestHost\("ensure"\)/);
   assert.match(source, /result\.restarted/);
   assert.match(source, /loadPanelFrame\(\)/);
   assert.match(source, /waitForFrameReady\(\)/);
-  assert.match(source, /hostResponse: onHostResponse/);
+  assert.match(source, /function onHostBridgeMessage/);
   assert.match(source, /function hasLiveHostBinding/);
   assert.match(source, /HOST_HEARTBEAT_MAX_AGE_MS/);
 });
@@ -159,11 +166,11 @@ test("the injected iframe can be cache-busted without reloading the Codex shell"
   assert.match(source, /reloadFrame,/);
 });
 
-test("the embedded Panel delegates Chromium local network access", () => {
-  assert.match(
-    source,
-    /local-network-access; loopback-network; local-network/,
-  );
+test("private Panel uses CDP while ordinary Panel retains loopback permission", () => {
+  assert.match(source, /requestHostLoadFrame\(frameRequest\)/);
+  assert.match(source, /if \(usesPrivateFrame\(\)\) await requestHostLoadFrame\(frameRequest\)/);
+  assert.match(source, /local-network-access; loopback-network; local-network/);
+  assert.match(source, /if \(!usesPrivateFrame\(\)\)[\s\S]*?panel:frame-awaiting-challenge[\s\S]*?postFrameChallenge\(\)/);
 });
 
 test("reopening reuses a ready cache-busted iframe without showing the startup placeholder", () => {
@@ -190,11 +197,13 @@ test("iframe messages require both the exact origin and source window", () => {
   );
   assert.match(source, /message\.type === "panel:open-thread"/);
   assert.match(source, /message\.type === "panel:create-thread"/);
-  assert.match(source, /postMessage\(message, frameOrigin\)/);
+  assert.match(source, /message\.capability !== frameCapability/);
+  assert.match(source, /message\.challenge !== frameChallenge/);
+  assert.match(source, /postMessage\(message, frameOrigin === "null" \? "\*" : frameOrigin\)/);
 });
 
 test("custom iframe origins are display-only and cannot cross the native Codex boundary", () => {
-  assert.match(source, /function isTrustedPanelOrigin\(origin = frameOrigin\)/);
+  assert.match(source, /function isTrustedPanelOrigin\(origin = panelOrigin \|\| frameOrigin\)/);
   assert.match(source, /return Boolean\(origin\) && origin === managedPanelOrigin\(\)/);
   const postHostContextSource = source.slice(
     source.indexOf("function postHostContext"),
@@ -246,7 +255,9 @@ test("the iframe automation contract is forwarded through the fixed host binding
   assert.match(source, /requestId,\s*ok: true,\s*item: response\.item/);
   assert.match(source, /items: response\.items/);
   assert.match(source, /requestId,\s*ok: false,\s*error:/);
-  assert.match(source, /binding\(JSON\.stringify\(\{ \.\.\.payload, id, action \}\)\)/);
+  assert.match(source, /type: HOST_REQUEST_MESSAGE/);
+  assert.match(source, /capability: HOST_CAPABILITY/);
+  assert.match(source, /payload: \{ \.\.\.payload, id, action \}/);
 });
 
 test("complete App automation payloads cross the injected forwarder into the current parser", () => {
@@ -288,7 +299,7 @@ test("complete App automation payloads cross the injected forwarder into the cur
 test("apply-policy is persisted and evaluated before returning automation state", () => {
   assert.match(
     injectorSource,
-    /request\.operation === "apply-policy"[\s\S]*?updateAndApplyQuotaPolicy\(request, cdp, rpc\)[\s\S]*?: await reconcilePanelAutomation\(request, rpc\)/,
+    /request\.operation === "apply-policy"[\s\S]*?updateAndApplyQuotaPolicy\(request, rpc\)[\s\S]*?: await reconcilePanelAutomation\(request, rpc\)/,
   );
   assert.match(
     injectorSource,
@@ -478,7 +489,8 @@ test("host context captures all Codex projects even when the sidebar section is 
   assert.match(source, /isTrustedPanelOrigin\(panelUrl\.origin\)\s*\? captureHostContext\(\)\s*:\s*Promise\.resolve\(null\)/);
   assert.match(source, /let lastNativeThreadId = ""/);
   assert.match(source, /clickedThreadId.*lastNativeThreadId/s);
-  assert.match(source, /activeThreadId \|\| lastNativeThreadId \|\| normalizeThreadId\(threadIdFromLocation\(\)\)/);
+  assert.match(source, /const currentThreadId = activeThreadId \|\| runningThreadId \|\| lastNativeThreadId/);
+  assert.match(source, /const threadId = currentThreadId \|\| lastNativeThreadId \|\| normalizeThreadId\(threadIdFromLocation\(\)\)/);
   assert.match(source, /replace\(\/\^\(\?:local\|cloud\):\/i, ""\)/);
   assert.match(source, /function findTasksSection\(\)/);
 });

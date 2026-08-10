@@ -81,9 +81,11 @@ const runtimeDirectories = [
   path.join("skills", "handoff-panel"),
 ];
 const runtimeScripts = [
+  "codex-cdp-pipe.mjs",
   "codex-injector-runtime.mjs",
   "codex-injector.mjs",
   "codex-rate-limits.mjs",
+  "panel-supervisor.mjs",
 ];
 const launchServicesRegister = [
   "/System/Library/Frameworks/CoreServices.framework",

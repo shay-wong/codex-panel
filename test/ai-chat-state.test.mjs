@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  AI_CHAT_SKILL_MARKER,
   aiChatEventStatus,
   buildThreadCreateInput,
   buildTurnInput,
@@ -109,12 +110,12 @@ test("model and effort selections are restricted to the real catalog", () => {
   assert.equal(normalizeChatSelection([], "missing-model", "high"), null);
 });
 
-test("composer fragments accept only known Skill markers and ids", () => {
+test("skill composer fragments keep opaque markers aligned with selected real ids", () => {
   assert.deepEqual(parseAiChatComposerFragment(JSON.stringify({
-    message: `请用 \uFFFC 检查`,
+    message: `请用 ${AI_CHAT_SKILL_MARKER} 检查`,
     skillIds: ["cloudflare"],
   }), ["cloudflare"]), {
-    message: `请用 \uFFFC 检查`,
+    message: `请用 ${AI_CHAT_SKILL_MARKER} 检查`,
     skillIds: ["cloudflare"],
   });
   assert.equal(parseAiChatComposerFragment(JSON.stringify({
@@ -124,9 +125,9 @@ test("composer fragments accept only known Skill markers and ids", () => {
 });
 
 test("turn input cannot contain cwd, hidden context, model overrides or arbitrary args", () => {
-  const input = buildTurnInput("检查 LOCAL-103", ["cloudflare"], false);
+  const input = buildTurnInput(`检查 ${AI_CHAT_SKILL_MARKER} LOCAL-103`, ["cloudflare"], false);
   assert.deepEqual(input, {
-    message: "检查 LOCAL-103",
+    message: `检查 ${AI_CHAT_SKILL_MARKER} LOCAL-103`,
     skillIds: ["cloudflare"],
   });
   assert.equal(JSON.stringify(input).includes("workspacePath"), false);

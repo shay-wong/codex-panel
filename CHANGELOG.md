@@ -4,6 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Merged upstream `0.2.0` board capabilities, including dashboard, list, Gantt, archive, scheduling dates, cross-project moves with conversation continuity, complete activity history, cloud migrations, and AI process recovery, while retaining the native Swift Codex Panel manager instead of the upstream Tauri app and updater.
 - Standardized the fork on `Panel` naming across the product, `$manage-panel` Skill, `panelctl` CLI, environment variables, integration protocol, local data, and undeployed Cloudflare resources, with migrations for existing local state and managed links.
 - Added a native `~/Applications/Codex Panel.app` manager with service, Codex/CDP, and embedded-integration status; start, restart, stop, Panel, browser, log, and data controls; optional launch at login; and independent automatic connect and Panel-open settings.
 - Added official light and dark Codex icon resources with the same clipped 45-degree `PANEL` corner ribbon, including live Dock icon switching with the current macOS appearance.

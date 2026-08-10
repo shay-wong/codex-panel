@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { access, chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import os from "node:os";
@@ -84,9 +85,40 @@ test("health and the default local project are available", async () => {
   assert.equal(result.response.status, 200);
   assert.equal(result.body.projects.length, 1);
   assert.equal(result.body.projects[0].id, "local");
-  assert.equal(result.body.projects[0].name, "Local");
+  assert.equal(result.body.projects[0].name, "全局");
   assert.equal(result.body.projects[0].workspacePath, null);
   assert.equal(result.body.projects[0].issueCount, 0);
+});
+
+test("launcher mode proves service identity and hides every route behind its instance token", async () => {
+  const instanceToken = "7a6f8d37-78ce-46c9-87a8-08e10db88da2";
+  const instanceSecret = "2e587946-96d6-47b5-930a-1ba70214fa88";
+  const version = "0.2.0";
+  const challenge = "8cbeea6e83e574def3f9d397cabddffc";
+  const baseUrl = await startServer(() => ({ instanceToken, instanceSecret, version }));
+
+  const unauthenticatedHealth = await request(baseUrl, "/health");
+  assert.equal(unauthenticatedHealth.response.status, 401);
+
+  const health = await request(baseUrl, "/health", {
+    headers: { "x-codex-panel-challenge": challenge },
+  });
+  assert.equal(health.response.status, 200);
+  assert.equal(health.body.product, "codex-panel");
+  assert.equal(health.body.version, version);
+  assert.equal(
+    health.body.proof,
+    createHmac("sha256", instanceSecret).update(challenge).digest("hex"),
+  );
+
+  const publicApi = await request(baseUrl, "/api/projects");
+  assert.equal(publicApi.response.status, 404);
+
+  const launcherApi = await request(baseUrl, `/${instanceToken}/api/projects`, {
+    headers: { origin: "null" },
+  });
+  assert.equal(launcherApi.response.status, 200);
+  assert.equal(launcherApi.response.headers.get("access-control-allow-origin"), "null");
 });
 
 test("workflow workspaces persist centrally with optimistic concurrency", async () => {
@@ -720,7 +752,7 @@ fi
 while IFS= read -r line; do
   case "$line" in
     *'"id":1'*) printf '%s\\n' '{"id":1,"result":{"platformFamily":"unix"}}' ;;
-    *'"id":2'*) printf '%s\\n' '{"id":2,"result":{"data":[{"cwd":"workspace","skills":[{"name":"user-skill","enabled":true,"scope":"user","description":"User workflow","path":"/skills/user-skill/SKILL.md","interface":null},{"name":"repo-skill","enabled":true,"scope":"repo","description":"Repository workflow","path":"/workspace/skills/repo-skill/SKILL.md","interface":{"displayName":"Repository Skill"}},{"name":"user-skill","enabled":true,"scope":"system","interface":{"displayName":"Duplicate"}},{"name":"disabled-skill","enabled":false,"scope":"user","interface":null}],"errors":[]}]}}' ;;
+    *'"id":2'*) printf '%s\\n' '{"id":2,"result":{"data":[{"cwd":"workspace","skills":[{"name":"user-skill","description":"User skill","path":"/user/skills/user-skill/SKILL.md","enabled":true,"scope":"user","interface":null},{"name":"repo-skill","description":"Repository skill","path":"/workspace/.agents/skills/repo-skill/SKILL.md","enabled":true,"scope":"repo","interface":{"displayName":"Repository Skill"}},{"name":"user-skill","enabled":true,"scope":"system","interface":{"displayName":"Duplicate"}},{"name":"disabled-skill","enabled":false,"scope":"user","interface":null}],"errors":[]}]}}' ;;
   esac
 done
 `);
@@ -738,15 +770,15 @@ done
       {
         id: "repo-skill",
         label: "Repository Skill",
-        description: "Repository workflow",
-        path: "/workspace/skills/repo-skill/SKILL.md",
+        description: "Repository skill",
+        path: "/workspace/.agents/skills/repo-skill/SKILL.md",
         scope: "repo",
       },
       {
         id: "user-skill",
         label: "user-skill",
-        description: "User workflow",
-        path: "/skills/user-skill/SKILL.md",
+        description: "User skill",
+        path: "/user/skills/user-skill/SKILL.md",
         scope: "user",
       },
     ],

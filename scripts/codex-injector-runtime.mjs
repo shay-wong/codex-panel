@@ -20,6 +20,21 @@ function parseHostRequest(payload, parseAutomationRequest) {
   ) ? request.id : null;
   if (!id) return { id: null, request: null, error: HOST_REQUEST_ERROR };
   if (request.action === "ensure") return { id, request, error: null };
+  if (
+    request.action === "load-frame"
+    && typeof request.frameName === "string"
+    && /^codex-(?:panel|taskboard)-[a-f0-9-]{36,80}$/i.test(request.frameName)
+    && typeof request.frameCapability === "string"
+    && /^[a-f0-9-]{36,80}$/i.test(request.frameCapability)
+  ) return { id, request, error: null };
+  if (request.action === "open-external" && typeof request.url === "string") {
+    try {
+      const url = new URL(request.url);
+      if (url.protocol === "https:" && url.href.length <= 2_048) {
+        return { id, request: { ...request, url: url.href }, error: null };
+      }
+    } catch {}
+  }
   if (request.action === "automation") {
     const parsed = parseAutomationRequest(request);
     return parsed
@@ -37,10 +52,10 @@ function parseHostRequest(payload, parseAutomationRequest) {
     && request.instruction.length > 0
     && request.instruction.length <= 1_024
     && typeof request.skillName === "string"
-    && /^[a-z0-9][a-z0-9-]{0,79}$/i.test(request.skillName)
+    && /^[a-z0-9-]{1,100}$/i.test(request.skillName)
     && typeof request.skillDisplayName === "string"
     && request.skillDisplayName.length > 0
-    && request.skillDisplayName.length <= 120
+    && request.skillDisplayName.length <= 1_024
     && typeof request.skillPath === "string"
     && request.skillPath.length > 0
     && request.skillPath.length <= 1_024
@@ -51,6 +66,13 @@ function parseHostRequest(payload, parseAutomationRequest) {
 }
 
 export async function handleHostBindingPayload(params, handlers) {
+  if (
+    typeof handlers.isAuthorizedContext === "function"
+    && !handlers.isAuthorizedContext(params.executionContextId)
+  ) {
+    return { responded: false, accepted: false };
+  }
+
   const parsed = parseHostRequest(params.payload, handlers.parseAutomationRequest);
   if (!parsed.request) {
     if (!parsed.id) return { responded: false, accepted: false };
@@ -67,6 +89,10 @@ export async function handleHostBindingPayload(params, handlers) {
     let result;
     if (parsed.request.action === "ensure") {
       result = await handlers.ensure();
+    } else if (parsed.request.action === "load-frame") {
+      result = await handlers.loadFrame(parsed.request);
+    } else if (parsed.request.action === "open-external") {
+      result = await handlers.openExternal(parsed.request);
     } else if (parsed.request.action === "automation") {
       result = await handlers.runAutomation(parsed.request, params.executionContextId);
     } else {

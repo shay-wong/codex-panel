@@ -4,6 +4,8 @@
 
 A local-first issue board that runs in a browser and can be embedded in Codex through the standalone CDP launcher or its injection script. The same HTTP API powers the React UI and the `panelctl` CLI used by the bundled Codex Skill.
 
+The board includes dashboard, list, Gantt, and archived-issue workflows. Issues can carry start and due dates and can be moved between projects while retaining their linked conversation.
+
 ## Requirements
 
 - Node.js 22.5 or newer

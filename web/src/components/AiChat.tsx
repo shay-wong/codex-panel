@@ -14,6 +14,7 @@ import {
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { panelStorage } from "../storage";
 import {
   createAiChatThread,
   deleteAiChatThread,
@@ -54,18 +55,24 @@ import type {
 } from "../types";
 import { STATUS_DETAILS } from "./BoardColumn";
 import { LinearIcon, LinearStatusIcon, type LinearIconName } from "./LinearIcon";
+import { PanelIcon } from "./PanelIcon";
 
-interface AiChatOpenRequest {
+export type AiChatOpenThreadRequest = {
   threadId: string;
-  sequence: number;
-}
+  requestId: number;
+} | {
+  projectId: string;
+  issueId: string | null;
+  composerText: string;
+  requestId: number;
+};
 
 interface AiChatProps {
   available: boolean;
   projectId: string | null;
   issueId: string | null;
-  openRequest: AiChatOpenRequest | null;
-  onThreadsChange: (threads: AiChatThread[]) => void;
+  onThreadsChange?: (threads: AiChatThread[]) => void;
+  openThreadRequest?: AiChatOpenThreadRequest | null;
 }
 
 type MenuName = "issue" | "model" | "model-list" | "effort-list" | "sandbox" | null;
@@ -163,7 +170,7 @@ function clampPanelGeometry(geometry: PanelGeometry): PanelGeometry {
 }
 
 function loadPanelGeometry(): PanelGeometry {
-  const stored = window.localStorage.getItem(PANEL_GEOMETRY_KEY);
+  const stored = panelStorage.getItem(PANEL_GEOMETRY_KEY);
   if (!stored) return clampPanelGeometry(PANEL_DEFAULT_GEOMETRY);
   try {
     const geometry = JSON.parse(stored) as PanelGeometry;
@@ -957,15 +964,15 @@ export function AiChat({
   available,
   projectId,
   issueId,
-  openRequest,
   onThreadsChange,
+  openThreadRequest,
 }: AiChatProps) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [menu, setMenu] = useState<MenuName>(null);
   const [threads, setThreads] = useState<AiChatThread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
-    () => window.localStorage.getItem(LAST_THREAD_KEY),
+    () => panelStorage.getItem(LAST_THREAD_KEY),
   );
   const [snapshot, setSnapshot] = useState<AiChatThreadSnapshot | null>(null);
   const [draftOrigin, setDraftOrigin] = useState<DraftThreadOrigin | null>(null);
@@ -975,6 +982,7 @@ export function AiChat({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [requestedComposerText, setRequestedComposerText] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [skillIds, setSkillIds] = useState<string[]>([]);
   const [skillMention, setSkillMention] = useState<ComposerSkillQuery | null>(null);
@@ -1007,6 +1015,7 @@ export function AiChat({
   const panelRef = useRef<HTMLElement>(null);
   const panelResizeSessionRef = useRef<PanelResizeSession | null>(null);
   const selectedThreadRef = useRef(selectedThreadId);
+  const handledOpenThreadRequestRef = useRef<number | null>(null);
   const draftReturnThreadIdRef = useRef<string | null>(null);
   const panelOpenRef = useRef(panelOpen);
   const snapshotRequestRef = useRef(0);
@@ -1022,13 +1031,9 @@ export function AiChat({
 
   useEffect(() => {
     selectedThreadRef.current = selectedThreadId;
-    if (selectedThreadId) window.localStorage.setItem(LAST_THREAD_KEY, selectedThreadId);
-    else window.localStorage.removeItem(LAST_THREAD_KEY);
+    if (selectedThreadId) panelStorage.setItem(LAST_THREAD_KEY, selectedThreadId);
+    else panelStorage.removeItem(LAST_THREAD_KEY);
   }, [selectedThreadId]);
-
-  useEffect(() => {
-    onThreadsChange(available ? threads : []);
-  }, [available, onThreadsChange, threads]);
 
   useEffect(() => {
     panelOpenRef.current = panelOpen;
@@ -1046,7 +1051,7 @@ export function AiChat({
         session.captureTarget.releasePointerCapture(session.pointerId);
       }
       if (window.innerWidth > 719) {
-        window.localStorage.setItem(
+        panelStorage.setItem(
           PANEL_GEOMETRY_KEY,
           JSON.stringify(session.geometry),
         );
@@ -1219,26 +1224,15 @@ export function AiChat({
   useEffect(() => {
     if (!available) {
       setPanelOpen(false);
+      setThreads([]);
       return;
     }
     void loadThreads();
   }, [available, loadThreads]);
 
   useEffect(() => {
-    if (
-      !openRequest
-      || handledOpenRequestRef.current === openRequest.sequence
-      || !threads.some((thread) => thread.id === openRequest.threadId)
-    ) return;
-    handledOpenRequestRef.current = openRequest.sequence;
-    if (selectedThreadRef.current !== openRequest.threadId) resetComposer();
-    draftReturnThreadIdRef.current = null;
-    setDraftOrigin(null);
-    selectThread(openRequest.threadId);
-    setHistoryOpen(false);
-    setMenu(null);
-    setPanelOpen(true);
-  }, [openRequest, selectThread, threads]);
+    onThreadsChange?.(available ? threads : []);
+  }, [available, onThreadsChange, threads]);
 
   useEffect(() => {
     setSnapshot(null);
@@ -1505,8 +1499,72 @@ export function AiChat({
     setSkillMention(null);
     setPendingDangerInput(null);
     setAttachmentDragActive(false);
+    setRequestedComposerText(null);
     skillMentionRangeRef.current = null;
   }
+
+  useEffect(() => {
+    if (!available || !openThreadRequest) return;
+    if (handledOpenThreadRequestRef.current === openThreadRequest.requestId) return;
+    if ("composerText" in openThreadRequest) {
+      handledOpenThreadRequestRef.current = openThreadRequest.requestId;
+      if (!draftOrigin) draftReturnThreadIdRef.current = selectedThreadRef.current;
+      resetComposer();
+      setDraftOrigin({
+        projectId: openThreadRequest.projectId,
+        issueId: openThreadRequest.issueId,
+      });
+      setSnapshot(null);
+      selectThread(null);
+      setHistoryOpen(false);
+      setMenu(null);
+      setError(null);
+      setRequestedComposerText(openThreadRequest.composerText);
+      setPanelOpen(true);
+      return;
+    }
+    if (!threads.some((thread) => thread.id === openThreadRequest.threadId)) return;
+    handledOpenThreadRequestRef.current = openThreadRequest.requestId;
+    const selectedChanged = selectedThreadRef.current !== openThreadRequest.threadId;
+    const leavingDraft = draftOrigin !== null;
+    draftReturnThreadIdRef.current = null;
+    setDraftOrigin(null);
+    if (selectedChanged || leavingDraft) {
+      setSnapshot(null);
+      resetComposer();
+    }
+    selectThread(openThreadRequest.threadId);
+    if (!selectedChanged && (leavingDraft || snapshot?.thread.id !== openThreadRequest.threadId)) {
+      void loadSnapshot(openThreadRequest.threadId);
+    }
+    setHistoryOpen(false);
+    setMenu(null);
+    setError(null);
+    setPanelOpen(true);
+  }, [
+    available,
+    draftOrigin,
+    loadSnapshot,
+    openThreadRequest,
+    selectThread,
+    snapshot?.thread.id,
+    threads,
+  ]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!panelOpen || requestedComposerText === null || !editor) return;
+    editor.replaceChildren(document.createTextNode(requestedComposerText));
+    setDraft(requestedComposerText);
+    setRequestedComposerText(null);
+    editor.focus();
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, [panelOpen, requestedComposerText]);
 
   function restorePersistedConversationFromDraft() {
     if (!draftOrigin) return;
@@ -1890,10 +1948,15 @@ export function AiChat({
       observedRunStatusesRef.current.set(run.id, run.status);
       setSnapshot((current) => current?.thread.id === thread.id ? {
           ...current,
-          thread: { ...current.thread, status: "running", currentRun: run },
+          thread: {
+            ...current.thread,
+            status: "running",
+            currentRun: run,
+            latestTodo: null,
+          },
           runs: [run, ...current.runs.filter((candidate) => candidate.id !== run.id)],
         } : current);
-      replaceThread({ ...thread, status: "running", currentRun: run });
+      replaceThread({ ...thread, status: "running", currentRun: run, latestTodo: null });
       if (selectedThreadRef.current === thread.id) {
         void selectedHintRefreshQueue.request(thread.id);
       }
@@ -2735,7 +2798,7 @@ export function AiChat({
           title="AI 对话"
           onClick={() => setPanelOpen(true)}
         >
-          <LinearIcon name="conversation" />
+          <PanelIcon name="aiLauncher" />
           {launcherState !== "idle" && <span className="ai-chat-launcher-state" aria-hidden="true" />}
         </button>
       )}

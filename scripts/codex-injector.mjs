@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { accessSync, constants } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { resolvePort } from "../server/app.mjs";
-import { resolvePanelDataDirectory } from "../shared/panel-paths.mjs";
+import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
+import { withoutPanelLauncherEnvironment } from "../shared/codex-environment.mjs";
 import {
   parsePanelAutomationHostRequest,
   reconcilePanelAutomation,
@@ -20,25 +21,67 @@ import {
   reconcileInjectionRuntime,
   residentInjectorCommandMatches,
   restartResidentInjector,
-  sameFrameDocumentUrl,
   stopResidentInjectors,
 } from "./codex-injector-runtime.mjs";
 import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
+import { createPanelSupervisor } from "./panel-supervisor.mjs";
+import {
+  CdpPipeBrowser,
+  validatedLoopbackCdpWebSocketUrl,
+} from "./codex-cdp-pipe.mjs";
 
 const injectorPath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(injectorPath), "..");
 const defaultCodexDebuggingPort = 9229;
+const panelEnvironment = (name) => (
+  process.env[`CODEX_PANEL_${name}`]?.trim()
+  || process.env[`CODEX_TASKBOARD_${name}`]?.trim()
+  || null
+);
+const independentCodexProfilePath = panelEnvironment("CODEX_PROFILE")
+  ? path.resolve(panelEnvironment("CODEX_PROFILE"))
+  : "/private/tmp/codex-panel-independent-profile-v2";
 const injectionPath = path.join(projectRoot, "inject", "codex-panel.user.js");
+const panelDataDirectory = panelEnvironment("DATA_DIR")
+  ? path.resolve(panelEnvironment("DATA_DIR"))
+  : path.join(projectRoot, ".data");
+const panelRuntimeFile = panelEnvironment("RUNTIME_FILE")
+  ? path.resolve(panelEnvironment("RUNTIME_FILE"))
+  : null;
+const listenFdValue = panelEnvironment("LISTEN_FD");
+const panelListenFd = listenFdValue === null
+  ? null
+  : Number(listenFdValue);
+if (panelListenFd !== null && (
+  !Number.isInteger(panelListenFd)
+  || panelListenFd < 3
+  || panelListenFd > 255
+)) {
+  throw new Error("CODEX_PANEL_LISTEN_FD must be an inherited file descriptor");
+}
 const automationPoliciesPath = path.join(
-  resolvePanelDataDirectory(),
+  panelDataDirectory,
   "codex-automation-policies.json",
 );
+const panelInstanceToken = panelEnvironment("INSTANCE_TOKEN");
+const panelInstanceSecret = panelEnvironment("INSTANCE_SECRET");
+if (Boolean(panelInstanceToken) !== Boolean(panelInstanceSecret)) {
+  throw new Error("Panel instance token and secret must be configured together");
+}
+const privatePanelMode = Boolean(panelInstanceToken && panelInstanceSecret);
+const panelVersion = panelEnvironment("VERSION") || "development";
 const panelOrigin = `http://127.0.0.1:${resolvePort()}`;
 const panelHealthUrl = `${panelOrigin}/health`;
-const panelPageUrl = `${panelOrigin}/?host=codex`;
+const panelBaseUrl = privatePanelMode
+  ? `${panelOrigin}/${encodeURIComponent(panelInstanceToken)}`
+  : panelOrigin;
+const panelPageUrl = `${panelBaseUrl}/?host=codex`;
 const hostBindingName = "__codexPanelHostV1";
-const hostHeartbeatName = "__codexPanelHostHeartbeatV1";
+const hostRequestMessage = "__codexPanelHostRequestV1";
+const hostResponseMessage = "__codexPanelHostResponseV1";
+const hostHeartbeatMessage = "__codexPanelHostHeartbeatV1";
 const hostStartupTokenName = "__codexPanelHostStartupTokenV1";
+const hostCapability = randomUUID();
 const injectionSourceHashName = "__CODEX_PANEL_SOURCE_HASH__";
 const injectionScriptIdentifierName = "__CODEX_PANEL_SCRIPT_IDENTIFIER__";
 const codexAutomationMethods = new Set([
@@ -50,14 +93,17 @@ let codexAutomationRequestSequence = 0;
 const quotaPolicyTimers = new Map();
 const quotaPolicyRecords = new Map();
 const quotaPolicyQueues = new Map();
+const quotaPolicyCdps = new Set();
+const restoredQuotaPolicyCdps = new WeakSet();
+const quotaPolicyRestorePromises = new WeakMap();
 let quotaPoliciesLoadPromise = null;
 let quotaPoliciesWritePromise = Promise.resolve();
-let quotaPoliciesRestored = false;
 
 function parseArgs(argv) {
   const options = {
     port: defaultCodexDebuggingPort,
     portExplicit: false,
+    cdpPipe: false,
     launch: false,
     watch: false,
     open: false,
@@ -78,6 +124,7 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--launch") options.launch = true;
+    else if (arg === "--cdp-pipe") options.cdpPipe = true;
     else if (arg === "--watch") options.watch = true;
     else if (arg === "--open") options.open = true;
     else if (arg === "--refresh") options.refresh = true;
@@ -107,18 +154,10 @@ function parseArgs(argv) {
   if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535) {
     throw new Error("--port must be an integer between 1 and 65535");
   }
+  if (options.cdpPipe && !options.launch) {
+    throw new Error("--cdp-pipe requires --launch");
+  }
   return options;
-}
-
-export function createInitialOpenRequest(enabled) {
-  let pending = Boolean(enabled);
-  return {
-    claim(targets) {
-      if (!pending || targets.length === 0) return false;
-      pending = false;
-      return true;
-    },
-  };
 }
 
 async function fetchJson(url) {
@@ -136,6 +175,28 @@ async function isReachable(url) {
   }
 }
 
+async function isPanelReachable() {
+  if (!privatePanelMode) return isReachable(panelHealthUrl);
+  const challenge = randomBytes(32).toString("hex");
+  try {
+    const response = await fetch(panelHealthUrl, {
+      headers: { "x-codex-panel-challenge": challenge },
+      signal: AbortSignal.timeout(1_500),
+    });
+    if (!response.ok) return false;
+    const body = await response.json();
+    const proof = createHmac("sha256", panelInstanceSecret)
+      .update(challenge)
+      .digest("hex");
+    return body?.status === "ok"
+      && body.product === "codex-panel"
+      && body.version === panelVersion
+      && body.proof === proof;
+  } catch {
+    return false;
+  }
+}
+
 async function waitUntilReachable(url, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -145,107 +206,78 @@ async function waitUntilReachable(url, timeoutMs) {
   throw new Error(`Timed out waiting for ${url}`);
 }
 
+async function waitUntilPanelReachable(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isPanelReachable()) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Timed out waiting for authenticated ${panelHealthUrl}`);
+}
+
+async function assertPanelServiceModeAvailable() {
+  if (!privatePanelMode || !(await isReachable(panelHealthUrl))) return;
+  if (!(await isPanelReachable())) {
+    throw new Error(
+      `Panel service on ${panelOrigin} is already running without the configured private identity`,
+    );
+  }
+}
+
 function startPanel({ detached }) {
+  const stdio = panelListenFd === null
+    ? (detached ? "ignore" : "inherit")
+    : Array.from(
+      { length: panelListenFd + 1 },
+      (_, fd) => (fd === panelListenFd ? "inherit" : (fd < 3 && !detached ? "inherit" : "ignore")),
+    );
   return spawn(process.execPath, [path.join(projectRoot, "server", "index.mjs")], {
     cwd: projectRoot,
     detached,
-    stdio: detached ? "ignore" : "inherit",
+    env: privatePanelMode ? {
+      ...process.env,
+      CODEX_PANEL_INSTANCE_TOKEN: panelInstanceToken,
+      CODEX_PANEL_INSTANCE_SECRET: panelInstanceSecret,
+      CODEX_PANEL_VERSION: panelVersion,
+    } : process.env,
+    stdio,
   });
-}
-
-function createPanelSupervisor({ detached }) {
-  let child = null;
-  let ensureInFlight = null;
-  let retryAfter = 0;
-  let stopping = false;
-
-  async function ensure({ force = false } = {}) {
-    if (await isReachable(panelHealthUrl)) {
-      return { status: "ok", restarted: false };
-    }
-    if (ensureInFlight) return ensureInFlight;
-    if (!force && Date.now() < retryAfter) {
-      throw new Error("Panel restart is waiting before its next attempt");
-    }
-
-    ensureInFlight = (async () => {
-      if (child?.exitCode === null && !child.killed) {
-        try {
-          await waitUntilReachable(panelHealthUrl, 3_000);
-          return { status: "ok", restarted: false };
-        } catch (_) {}
-      }
-
-      const started = startPanel({ detached });
-      child = started;
-      if (detached) started.unref();
-      started.once("error", (error) => {
-        if (!stopping) console.error(`Panel process error: ${error.message}`);
-      });
-      started.once("exit", (code, signal) => {
-        if (child === started) child = null;
-        if (!stopping && !detached && code !== 0) {
-          console.error(`Panel exited (${signal || code}); it will be restarted automatically.`);
-        }
-      });
-
-      try {
-        await waitUntilReachable(panelHealthUrl, 10_000);
-        retryAfter = 0;
-        return { status: "ok", restarted: true };
-      } catch (error) {
-        retryAfter = Date.now() + 2_000;
-        throw error;
-      }
-    })();
-
-    try {
-      return await ensureInFlight;
-    } finally {
-      ensureInFlight = null;
-    }
-  }
-
-  async function stop() {
-    stopping = true;
-    const stoppingChild = child;
-    if (!stoppingChild || stoppingChild.exitCode !== null) return;
-    const waitForExit = (timeoutMs) => new Promise((resolve) => {
-      const finish = (stopped) => {
-        clearTimeout(timer);
-        stoppingChild.off("exit", onExit);
-        resolve(stopped);
-      };
-      const onExit = () => finish(true);
-      const timer = setTimeout(() => finish(false), timeoutMs);
-      stoppingChild.once("exit", onExit);
-      if (stoppingChild.exitCode !== null) finish(true);
-    });
-    const gracefulExit = waitForExit(5_000);
-    if (!stoppingChild.killed) stoppingChild.kill("SIGTERM");
-    if (await gracefulExit) return;
-    try {
-      stoppingChild.kill("SIGKILL");
-    } catch {}
-    await waitForExit(1_000);
-  }
-
-  return { ensure, stop };
 }
 
 function codexIsRunning() {
   return spawnSync("/usr/bin/pgrep", ["-x", "ChatGPT"], { stdio: "ignore" }).status === 0;
 }
 
+async function publishPanelRuntime() {
+  if (!privatePanelMode || !panelRuntimeFile) return;
+  const temporaryPath = `${panelRuntimeFile}.${process.pid}.tmp`;
+  await mkdir(path.dirname(panelRuntimeFile), { recursive: true });
+  await writeFile(
+    temporaryPath,
+    `${JSON.stringify({ version: 1, pid: process.pid, url: panelBaseUrl })}\n`,
+    { mode: 0o600 },
+  );
+  await chmod(temporaryPath, 0o600);
+  await rename(temporaryPath, panelRuntimeFile);
+  await chmod(panelRuntimeFile, 0o600);
+}
+
+async function removePanelRuntime() {
+  if (!privatePanelMode || !panelRuntimeFile) return;
+  try {
+    const descriptor = JSON.parse(await readFile(panelRuntimeFile, "utf8"));
+    if (descriptor.pid === process.pid && descriptor.url === panelBaseUrl) {
+      await unlink(panelRuntimeFile);
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+
 export function codexExecutablePath(appPath) {
   const plistPath = path.join(appPath, "Contents", "Info.plist");
   const plistResult = spawnSync("/usr/bin/plutil", [
-    "-extract",
-    "CFBundleExecutable",
-    "raw",
-    "-o",
-    "-",
-    plistPath,
+    "-extract", "CFBundleExecutable", "raw", "-o", "-", plistPath,
   ], { encoding: "utf8" });
   if (plistResult.status !== 0) {
     const detail = plistResult.stderr?.trim()
@@ -258,7 +290,10 @@ export function codexExecutablePath(appPath) {
   if (!executableName || path.basename(executableName) !== executableName) {
     throw new Error(`Invalid Codex application executable: ${executableName || "missing"}`);
   }
-  const executablePath = path.join(appPath, "Contents", "MacOS", executableName);
+  return validatedCodexExecutablePath(path.join(appPath, "Contents", "MacOS", executableName));
+}
+
+function validatedCodexExecutablePath(executablePath) {
   try {
     accessSync(executablePath, constants.X_OK);
   } catch {
@@ -268,25 +303,46 @@ export function codexExecutablePath(appPath) {
 }
 
 export function launchCodex(executablePath, port) {
-  try {
-    accessSync(executablePath, constants.X_OK);
-  } catch {
-    throw new Error(`Codex application executable is not runnable: ${executablePath}`);
-  }
   const child = spawn(
-    executablePath,
+    validatedCodexExecutablePath(executablePath),
     [
+      `--user-data-dir=${independentCodexProfilePath}`,
+      "--remote-debugging-address=127.0.0.1",
       `--remote-debugging-port=${port}`,
       `--remote-allow-origins=http://127.0.0.1:${port}`,
       "--disable-features=LocalNetworkAccessForSubframeNavigations",
     ],
     {
       detached: true,
+      env: withoutPanelLauncherEnvironment(process.env),
       stdio: "ignore",
     },
   );
   child.unref();
   return child;
+}
+
+async function launchCodexWithPipe(executablePath) {
+  const child = spawn(
+    validatedCodexExecutablePath(executablePath),
+    [
+      `--user-data-dir=${independentCodexProfilePath}`,
+      "--remote-debugging-pipe",
+      "--disable-features=LocalNetworkAccessForSubframeNavigations",
+    ],
+    {
+      env: withoutPanelLauncherEnvironment(process.env),
+      stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"],
+    },
+  );
+  const browser = new CdpPipeBrowser(child);
+  try {
+    await browser.open();
+    return { child, browser };
+  } catch (error) {
+    child.kill("SIGTERM");
+    throw error;
+  }
 }
 
 class CdpConnection {
@@ -301,10 +357,23 @@ class CdpConnection {
 
   async open() {
     await new Promise((resolve, reject) => {
-      this.socket.addEventListener("open", resolve, { once: true });
-      this.socket.addEventListener("error", () => reject(new Error("CDP WebSocket connection failed")), {
-        once: true,
-      });
+      const cleanup = () => {
+        this.socket.removeEventListener("open", handleOpen);
+        this.socket.removeEventListener("error", handleFailure);
+        this.socket.removeEventListener("close", handleFailure);
+      };
+      const handleOpen = () => {
+        cleanup();
+        resolve();
+      };
+      const handleFailure = () => {
+        cleanup();
+        this.closed = true;
+        reject(new Error("CDP WebSocket connection failed"));
+      };
+      this.socket.addEventListener("open", handleOpen, { once: true });
+      this.socket.addEventListener("error", handleFailure, { once: true });
+      this.socket.addEventListener("close", handleFailure, { once: true });
     });
     this.socket.addEventListener("message", (event) => {
       const message = JSON.parse(String(event.data));
@@ -342,6 +411,9 @@ class CdpConnection {
   }
 
   send(method, params = {}) {
+    if (this.closed || this.socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error("CDP WebSocket closed"));
+    }
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -385,106 +457,56 @@ class CdpConnection {
   }
 }
 
-export function validatedCdpWebSocketUrl(value, port) {
-  let url;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error("Invalid CDP WebSocket URL");
-  }
-  if (
-    url.protocol !== "ws:"
-    || url.hostname !== "127.0.0.1"
-    || !value.startsWith(`ws://127.0.0.1:${port}/devtools/`)
-    || !url.pathname.startsWith("/devtools/")
-    || url.username
-    || url.password
-    || url.hash
-  ) {
-    throw new Error("CDP WebSocket URL must use the selected loopback endpoint");
-  }
-  return url.href;
-}
-
 async function codexTargets(port) {
   const targets = await fetchJson(`http://127.0.0.1:${port}/json/list`);
-  return targets.flatMap((target) => {
-    if (
-      target.type !== "page"
-      || !target.webSocketDebuggerUrl
-      || target.url?.includes("initialRoute=%2Fglobal-dictation")
-      || target.url?.includes("initialRoute=%2Favatar-overlay")
-      || (!target.url?.startsWith("app://") && target.title !== "Codex")
-    ) return [];
-    try {
-      return [{
-        ...target,
-        webSocketDebuggerUrl: validatedCdpWebSocketUrl(target.webSocketDebuggerUrl, port),
-      }];
-    } catch {
-      return [];
-    }
+  return targets.filter(isCodexTarget).map((target) => {
+    return {
+      ...target,
+      webSocketDebuggerUrl: validatedLoopbackCdpWebSocketUrl(
+        target.webSocketDebuggerUrl,
+        port,
+      ),
+    };
   });
 }
 
-async function waitForCodexTargets(port, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const targets = await codexTargets(port);
-      if (targets.length > 0) return targets;
-    } catch (_) {}
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error("Timed out waiting for a Codex renderer target");
+function isCodexTarget(target) {
+  return (
+      target.type === "page" &&
+      !target.url?.includes("initialRoute=%2Fglobal-dictation") &&
+      !target.url?.includes("initialRoute=%2Favatar-overlay") &&
+      (target.url?.startsWith("app://") || target.title === "Codex")
+  );
 }
 
-export async function waitForRendererReady(cdp, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  let lastState = "unknown";
-  let lastError = null;
-
-  while (Date.now() < deadline) {
-    try {
-      const evaluation = await cdp.send("Runtime.evaluate", {
-        expression: "({ readyState: document.readyState, href: window.location.href })",
-        returnByValue: true,
-      });
-      if (evaluation.exceptionDetails) {
-        throw new Error(
-          evaluation.exceptionDetails.exception?.description
-            || "Unable to inspect Codex renderer readiness",
-        );
-      }
-      const state = evaluation.result?.value;
-      lastState = state?.readyState || "unknown";
-      if (state?.readyState === "complete" && state?.href?.startsWith("app://")) {
-        return state;
-      }
-      lastError = null;
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-
-  const detail = lastError
-    ? `: ${lastError.message}`
-    : ` (last state: ${lastState})`;
-  throw new Error(`Timed out waiting for the Codex renderer to finish loading${detail}`);
+function tcpCdpRuntime(port) {
+  return {
+    targets: () => codexTargets(port),
+    connect: async (target) => {
+      const connection = new CdpConnection(target.webSocketDebuggerUrl);
+      await connection.open();
+      return connection;
+    },
+    close: () => {},
+  };
 }
 
-export async function reloadRenderer(cdp, timeoutMs) {
-  await Promise.all([
-    cdp.waitFor("Page.loadEventFired", timeoutMs),
-    cdp.send("Page.reload"),
-  ]);
+function pipeCdpRuntime(browser) {
+  return {
+    targets: async () => (await browser.targets())
+      .filter(isCodexTarget)
+      .map((target) => ({ ...target, id: target.targetId })),
+    connect: (target) => browser.connect(target.id),
+    isHealthy: () => !browser.closed,
+    close: () => browser.close(),
+  };
 }
 
 function codexDebuggingPorts(preferredPort) {
   const ports = new Set([preferredPort]);
   const processes = spawnSync("/bin/ps", ["-axo", "command="], {
     encoding: "utf8",
+    env: withoutPanelLauncherEnvironment(process.env),
     maxBuffer: 4 * 1024 * 1024,
   });
   if (processes.status !== 0) return [...ports];
@@ -505,9 +527,28 @@ async function discoverCodexPort(preferredPort) {
   return null;
 }
 
+function processCwd(pid) {
+  const result = spawnSync("/usr/sbin/lsof", [
+    "-a",
+    "-p",
+    String(pid),
+    "-d",
+    "cwd",
+    "-Fn",
+  ], {
+    encoding: "utf8",
+    env: withoutPanelLauncherEnvironment(process.env),
+    maxBuffer: 64 * 1024,
+  });
+  if (result.status !== 0) return null;
+  const cwd = result.stdout.split("\n").find((line) => line.startsWith("n"))?.slice(1);
+  return cwd ? path.resolve(cwd) : null;
+}
+
 function residentInjectorPids(port) {
   const processes = spawnSync("/bin/ps", ["-axo", "pid=,command="], {
     encoding: "utf8",
+    env: withoutPanelLauncherEnvironment(process.env),
     maxBuffer: 4 * 1024 * 1024,
   });
   if (processes.status !== 0) return [];
@@ -515,8 +556,10 @@ function residentInjectorPids(port) {
     processList: processes.stdout,
     currentPid: process.pid,
     injectorPath,
+    projectRoot,
     port,
     defaultPort: defaultCodexDebuggingPort,
+    cwdForPid: processCwd,
   });
 }
 
@@ -582,17 +625,17 @@ async function waitForResidentInjectorReady(port, pid, startupToken, expectedSou
         try {
           const readiness = await cdp.send("Runtime.evaluate", {
             expression: `({
-              startupToken: window[${JSON.stringify(hostStartupTokenName)}],
-              heartbeatAt: window[${JSON.stringify(hostHeartbeatName)}],
-              entryMounted: Boolean(document.getElementById("codex-panel-entry")),
+              token: window[${JSON.stringify(hostStartupTokenName)}],
+              panelEntryMounted: Boolean(document.getElementById("codex-panel-entry")),
               sourceHash: window.__codexPanelInjection__?.sourceHash || null
             })`,
             returnByValue: true,
           });
-          if (injectionReadinessMatches(readiness.result.value, {
-            expectedSourceHash,
-            expectedStartupToken: startupToken,
-          })) return;
+          if (
+            readiness.result.value?.token === startupToken
+            && readiness.result.value.panelEntryMounted
+            && readiness.result.value.sourceHash === expectedSourceHash
+          ) return;
         } finally {
           cdp.close();
         }
@@ -603,60 +646,19 @@ async function waitForResidentInjectorReady(port, pid, startupToken, expectedSou
   throw new Error(`Timed out waiting for resident Panel injector ${pid}`);
 }
 
-async function restartResidentInjectorForRefresh(port, shouldOpen = false) {
+async function restartResidentInjectorForRefresh(port) {
   const { sourceHash } = await currentInjectionSource();
   return restartResidentInjector(port, {
     findResidents: residentInjectorPids,
     stopResident: (pid) => stopResidentInjector(pid, port),
     createStartupToken: randomUUID,
     startResident: (targetPort, startupToken) => (
-      startResidentInjector(targetPort, shouldOpen, true, startupToken)
+      startResidentInjector(targetPort, false, true, startupToken)
     ),
     waitUntilReady: (targetPort, pid, startupToken) => (
       waitForResidentInjectorReady(targetPort, pid, startupToken, sourceHash)
     ),
   });
-}
-
-async function openResidentPanel(port, expectedSourceHash, expectedStartupToken = null) {
-  const targets = await codexTargets(port);
-  for (const target of targets) {
-    const cdp = new CdpConnection(target.webSocketDebuggerUrl);
-    await cdp.open();
-    try {
-      await cdp.send("Runtime.enable");
-      const currentStatus = await readInjectionStatus(cdp);
-      if (expectedStartupToken && !injectionReadinessMatches(currentStatus, {
-        expectedSourceHash,
-        expectedStartupToken,
-      })) continue;
-      const opened = await cdp.send("Runtime.evaluate", {
-        expression: `(() => {
-          const panel = window.__codexPanelInjection__;
-          if (panel?.sourceHash !== ${JSON.stringify(expectedSourceHash)}) return false;
-          panel.open();
-          return true;
-        })()`,
-        returnByValue: true,
-      });
-      if (opened.result.value !== true) continue;
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      const status = await readInjectionStatus(cdp);
-      if (
-        (!expectedStartupToken || injectionReadinessMatches(status, {
-          expectedSourceHash,
-          expectedStartupToken,
-        }))
-        &&
-        status.pageVisible
-        && status.frameUrl
-        && await waitForFrameDocument(cdp, status.frameUrl, 5_000)
-      ) return true;
-    } finally {
-      cdp.close();
-    }
-  }
-  return false;
 }
 
 async function refreshPanelFrames(port) {
@@ -725,29 +727,72 @@ async function waitForFrame(cdp, expectedUrl, timeoutMs) {
   return false;
 }
 
-function frameTreeContainsDocument(frameTree, expectedUrl) {
-  if (sameFrameDocumentUrl(frameTree.frame?.url, expectedUrl)) return true;
-  return frameTree.childFrames?.some((child) => (
-    frameTreeContainsDocument(child, expectedUrl)
-  )) || false;
+function findFrameByName(frameTree, frameName) {
+  if (frameTree.frame?.name === frameName) return frameTree.frame;
+  for (const child of frameTree.childFrames ?? []) {
+    const match = findFrameByName(child, frameName);
+    if (match) return match;
+  }
+  return null;
 }
 
-async function waitForFrameDocument(cdp, expectedUrl, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
+async function verifiedPanelDocument(frameCapability) {
+  if (!privatePanelMode) throw new Error("Private Panel frame loading is not configured");
+  const challenge = randomBytes(32).toString("hex");
+  const response = await fetch(panelPageUrl, {
+    cache: "no-store",
+    headers: {
+      origin: "app://-",
+      "x-codex-panel-challenge": challenge,
+    },
+  });
+  if (!response.ok) throw new Error(`Panel HTTP ${response.status}`);
+  const proof = response.headers.get("x-codex-panel-proof") ?? "";
+  const expectedProof = createHmac("sha256", panelInstanceSecret)
+    .update(challenge)
+    .digest("hex");
+  if (proof !== expectedProof) throw new Error("Panel service identity check failed");
+  const html = await response.text();
+  const head = "<head>";
+  if (!html.includes(head)) throw new Error("Panel document has no head element");
+  return html.replace(
+    head,
+    `${head}<base href=${JSON.stringify(panelPageUrl)}><script>globalThis.__CODEX_PANEL_FRAME_CAPABILITY__=${JSON.stringify(frameCapability)};</script>`,
+  );
+}
+
+async function loadPanelFrameViaCdp(cdp, frameName, frameCapability) {
+  const html = await verifiedPanelDocument(frameCapability);
+  const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
-    const [{ targetInfos }, { frameTree }] = await Promise.all([
-      cdp.send("Target.getTargets"),
-      cdp.send("Page.getFrameTree"),
-    ]);
-    if (
-      targetInfos.some((target) => (
-        target.type === "iframe" && sameFrameDocumentUrl(target.url, expectedUrl)
-      ))
-      || frameTreeContainsDocument(frameTree, expectedUrl)
-    ) return true;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    const { frameTree } = await cdp.send("Page.getFrameTree");
+    const targetFrame = findFrameByName(frameTree, frameName);
+    if (targetFrame) {
+      await cdp.send("Page.setDocumentContent", {
+        frameId: targetFrame.id,
+        html,
+      });
+      return { loaded: true };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  return false;
+  throw new Error("Timed out waiting for the isolated Panel frame");
+}
+
+async function openExternalUrl(request) {
+  await new Promise((resolve, reject) => {
+    const child = spawn("/usr/bin/open", [request.url], {
+      detached: true,
+      env: withoutPanelLauncherEnvironment(process.env),
+      stdio: "ignore",
+    });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
+  return { opened: true };
 }
 
 async function requestCodexAutomationViaCdp(cdp, executionContextId, method, params) {
@@ -870,12 +915,8 @@ function storedAutomationPolicy(request) {
 }
 
 function restoredAutomationPolicy(value) {
-  const normalized = value?.panelProjectId
-    ? value
-    : { ...value, panelProjectId: value?.taskboardProjectId };
-  if (normalized && "taskboardProjectId" in normalized) delete normalized.taskboardProjectId;
   return parsePanelAutomationHostRequest({
-    ...normalized,
+    ...value,
     id: "restored-policy",
     action: "automation",
     requestId: "restored-policy",
@@ -920,7 +961,25 @@ function persistQuotaPolicies() {
   return quotaPoliciesWritePromise;
 }
 
-function scheduleQuotaPolicyCheck(record, cdp, result) {
+function registerQuotaPolicyCdp(cdp) {
+  quotaPolicyCdps.delete(cdp);
+  quotaPolicyCdps.add(cdp);
+}
+
+function unregisterQuotaPolicyCdp(cdp) {
+  quotaPolicyCdps.delete(cdp);
+}
+
+function currentQuotaPolicyCdp() {
+  const candidates = [...quotaPolicyCdps].reverse();
+  for (const cdp of candidates) {
+    if (!cdp.closed) return cdp;
+    quotaPolicyCdps.delete(cdp);
+  }
+  throw new Error("No live Codex renderer is available for quota automation");
+}
+
+function scheduleQuotaPolicyCheck(record, result) {
   const { request, version } = record;
   const key = request.panelProjectId;
   const previous = quotaPolicyTimers.get(key);
@@ -939,12 +998,12 @@ function scheduleQuotaPolicyCheck(record, cdp, result) {
   const timer = setTimeout(async () => {
     if (quotaPolicyRecords.get(key)?.version !== version) return;
     try {
-      await enqueueCurrentQuotaPolicy(key, cdp);
+      await enqueueCurrentQuotaPolicy(key);
     } catch (error) {
       console.error(`Panel quota policy check failed: ${error.message}`);
       const current = quotaPolicyRecords.get(key);
       if (current?.version === version) {
-        scheduleQuotaPolicyCheck(current, cdp, { quota: { state: "unknown" } });
+        scheduleQuotaPolicyCheck(current, { quota: { state: "unknown" } });
       }
     }
   }, Math.min(nextRunDelay, resetDelay));
@@ -952,7 +1011,7 @@ function scheduleQuotaPolicyCheck(record, cdp, result) {
   quotaPolicyTimers.set(key, timer);
 }
 
-function enqueueQuotaPolicyMutation(record, cdp, rpc) {
+function enqueueQuotaPolicyMutation(record, rpc) {
   const key = record.request.panelProjectId;
   const previous = quotaPolicyQueues.get(key) ?? Promise.resolve();
   const run = previous
@@ -970,7 +1029,7 @@ function enqueueQuotaPolicyMutation(record, cdp, rpc) {
         current.request = { ...current.request, automationId: result.item.id };
         await persistQuotaPolicies();
       }
-      scheduleQuotaPolicyCheck(current, cdp, result);
+      scheduleQuotaPolicyCheck(current, result);
       return result;
     });
   const tracked = run.finally(() => {
@@ -980,7 +1039,7 @@ function enqueueQuotaPolicyMutation(record, cdp, rpc) {
   return tracked;
 }
 
-async function updateAndApplyQuotaPolicy(request, cdp, rpc) {
+async function updateAndApplyQuotaPolicy(request, rpc) {
   await ensureQuotaPoliciesLoaded();
   const previous = quotaPolicyRecords.get(request.panelProjectId);
   const record = {
@@ -990,7 +1049,7 @@ async function updateAndApplyQuotaPolicy(request, cdp, rpc) {
   quotaPolicyRecords.set(request.panelProjectId, record);
   try {
     await persistQuotaPolicies();
-    return await enqueueQuotaPolicyMutation(record, cdp, rpc);
+    return await enqueueQuotaPolicyMutation(record, rpc);
   } catch (error) {
     if (quotaPolicyRecords.get(request.panelProjectId)?.version === record.version) {
       if (previous) quotaPolicyRecords.set(request.panelProjectId, previous);
@@ -1007,44 +1066,50 @@ async function readStoredAutomationPolicy(projectId) {
   return record ? storedAutomationPolicy(record.request) : null;
 }
 
-async function enqueueCurrentQuotaPolicy(projectId, cdp) {
+async function enqueueCurrentQuotaPolicy(projectId) {
   await ensureQuotaPoliciesLoaded();
   const record = quotaPolicyRecords.get(projectId);
   if (!record) return { stale: true };
   return enqueueQuotaPolicyMutation(
     record,
-    cdp,
-    (method, body) => requestCodexAutomationViaCdp(cdp, undefined, method, body),
+    (method, body) => requestCodexAutomationViaCdp(
+      currentQuotaPolicyCdp(),
+      undefined,
+      method,
+      body,
+    ),
   );
 }
 
 async function restoreQuotaPolicies(cdp) {
-  if (quotaPoliciesRestored) return;
-  quotaPoliciesRestored = true;
-  await ensureQuotaPoliciesLoaded();
-  for (const [projectId, record] of quotaPolicyRecords) {
-    if (record.request.enabledByUser && record.request.quotaAware) {
-      void enqueueCurrentQuotaPolicy(projectId, cdp).catch((error) => {
-        console.error(`Panel quota policy restore failed: ${error.message}`);
-      });
+  registerQuotaPolicyCdp(cdp);
+  if (restoredQuotaPolicyCdps.has(cdp)) return;
+  const pending = quotaPolicyRestorePromises.get(cdp);
+  if (pending) return pending;
+  const restoring = (async () => {
+    await ensureQuotaPoliciesLoaded();
+    for (const [projectId, record] of quotaPolicyRecords) {
+      if (record.request.enabledByUser && record.request.quotaAware) {
+        await enqueueCurrentQuotaPolicy(projectId);
+      }
     }
+    restoredQuotaPolicyCdps.add(cdp);
+  })();
+  quotaPolicyRestorePromises.set(cdp, restoring);
+  try {
+    await restoring;
+  } finally {
+    quotaPolicyRestorePromises.delete(cdp);
   }
 }
 
 async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
-  const {
-    instruction,
-    skillDisplayName,
-    skillName,
-    skillPath,
-  } = request;
+  const { instruction, skillDisplayName, skillName, skillPath } = request;
   const deadline = Date.now() + 8_000;
   while (Date.now() < deadline) {
     const prepared = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
         const instruction = ${JSON.stringify(instruction)};
-        const skillName = ${JSON.stringify(skillName)};
-        const skillPath = ${JSON.stringify(skillPath)};
         const editor = Array.from(document.querySelectorAll(
           '[data-codex-composer="true"][contenteditable="true"]'
         )).find((candidate) => candidate.getClientRects().length > 0);
@@ -1104,9 +1169,7 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
     }
     await new Promise((resolve) => setTimeout(resolve, 80));
   }
-  if (!selectedSkill) {
-    throw new Error(`Timed out while selecting the ${skillDisplayName} Skill`);
-  }
+  if (!selectedSkill) throw new Error(`Timed out while selecting the ${skillDisplayName} Skill`);
 
   let mentionReady = false;
   while (Date.now() < deadline) {
@@ -1137,11 +1200,10 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
     }
     await new Promise((resolve) => setTimeout(resolve, 80));
   }
-  if (!mentionReady) {
-    throw new Error(`Timed out while creating the ${skillDisplayName} Skill mention`);
-  }
+  if (!mentionReady) throw new Error(`Timed out while creating the ${skillDisplayName} Skill mention`);
 
   await cdp.send("Input.insertText", { text: instruction });
+
   while (Date.now() < deadline) {
     const verified = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
@@ -1169,28 +1231,43 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
 
 async function sendHostResponse(cdp, executionContextId, response) {
   await cdp.send("Runtime.evaluate", {
-    expression: `window.__codexPanelInjection__?.hostResponse(${JSON.stringify(response)})`,
+    expression: `window.postMessage({
+      type: ${JSON.stringify(hostResponseMessage)},
+      capability: ${JSON.stringify(hostCapability)},
+      response: ${JSON.stringify(response)}
+    }, window.location.origin)`,
     contextId: executionContextId,
     returnByValue: true,
   });
 }
 
-async function installPanelHostBinding(cdp, supervisor) {
+function installPanelHostBinding(cdp, supervisor, startupToken) {
+  let activeContextId = null;
+  let installInFlight = null;
+
   cdp.on("Runtime.bindingCalled", async (params) => {
     if (params.name !== hostBindingName) return;
+    if (params.executionContextId !== activeContextId) return;
     await handleHostBindingPayload(params, {
+      isAuthorizedContext: (executionContextId) => executionContextId === activeContextId,
       parseAutomationRequest: parsePanelAutomationHostRequest,
       ensure: () => supervisor.ensure({ force: true }),
-      runAutomation: (request, executionContextId) => (
+      loadFrame: (request) => loadPanelFrameViaCdp(
+        cdp,
+        request.frameName,
+        request.frameCapability,
+      ),
+      openExternal: openExternalUrl,
+      runAutomation: (request) => (
         (async () => {
           const rpc = (method, body) => requestCodexAutomationViaCdp(
             cdp,
-            executionContextId,
+            undefined,
             method,
             body,
           );
           const result = request.operation === "apply-policy"
-            ? await updateAndApplyQuotaPolicy(request, cdp, rpc)
+            ? await updateAndApplyQuotaPolicy(request, rpc)
             : await reconcilePanelAutomation(request, rpc);
           if (request.operation === "list") {
             const policy = await readStoredAutomationPolicy(request.panelProjectId);
@@ -1199,26 +1276,74 @@ async function installPanelHostBinding(cdp, supervisor) {
           return result;
         })()
       ),
-      prefill: (request, executionContextId) => (
-        prefillTaskComposerViaCdp(cdp, executionContextId, request)
+      prefill: (request) => (
+        prefillTaskComposerViaCdp(cdp, undefined, request)
       ),
       sendResponse: (executionContextId, response) => (
         sendHostResponse(cdp, executionContextId, response)
       ),
     });
   });
-  await cdp.send("Runtime.addBinding", { name: hostBindingName });
-  await restoreQuotaPolicies(cdp);
-}
 
-async function publishHostHeartbeat(cdp, startupToken) {
-  await cdp.send("Runtime.evaluate", {
-    expression: `(() => {
-      window[${JSON.stringify(hostHeartbeatName)}] = Date.now();
-      window[${JSON.stringify(hostStartupTokenName)}] = ${JSON.stringify(startupToken)};
-    })()`,
-    returnByValue: true,
-  });
+  async function install() {
+    if (installInFlight) return installInFlight;
+    installInFlight = (async () => {
+      const { frameTree } = await cdp.send("Page.getFrameTree");
+      const isolatedWorld = await cdp.send("Page.createIsolatedWorld", {
+        frameId: frameTree.frame.id,
+        worldName: "codex-panel-host",
+      });
+      activeContextId = isolatedWorld.executionContextId;
+      await cdp.send("Runtime.addBinding", {
+        name: hostBindingName,
+        executionContextId: activeContextId,
+      });
+      await cdp.send("Runtime.evaluate", {
+        contextId: activeContextId,
+        expression: `(() => {
+          const capability = ${JSON.stringify(hostCapability)};
+          if (globalThis.__codexPanelIsolatedBridgeV1 === capability) return;
+          globalThis.__codexPanelIsolatedBridgeV1 = capability;
+          window.addEventListener("message", (event) => {
+            const message = event.data;
+            if (
+              event.source !== window
+              || event.origin !== window.location.origin
+              || !message
+              || typeof message !== "object"
+              || message.type !== ${JSON.stringify(hostRequestMessage)}
+              || message.capability !== capability
+            ) return;
+            globalThis[${JSON.stringify(hostBindingName)}](JSON.stringify(message.payload));
+          });
+        })()`,
+        returnByValue: true,
+      });
+      await restoreQuotaPolicies(cdp);
+      return activeContextId;
+    })();
+    try {
+      return await installInFlight;
+    } finally {
+      installInFlight = null;
+    }
+  }
+
+  async function publishHeartbeat() {
+    const executionContextId = await install();
+    await cdp.send("Runtime.evaluate", {
+      contextId: executionContextId,
+      expression: `window.postMessage({
+        type: ${JSON.stringify(hostHeartbeatMessage)},
+        capability: ${JSON.stringify(hostCapability)},
+        at: Date.now(),
+        startupToken: ${JSON.stringify(startupToken)}
+      }, window.location.origin)`,
+      returnByValue: true,
+    });
+  }
+
+  return { install, publishHeartbeat };
 }
 
 async function readInjectionStatus(cdp) {
@@ -1227,16 +1352,34 @@ async function readInjectionStatus(cdp) {
       version: window.__codexPanelInjection__?.version || null,
       sourceHash: window.__codexPanelInjection__?.sourceHash || null,
       scriptIdentifier: window[${JSON.stringify(injectionScriptIdentifierName)}] || null,
-      heartbeatAt: window[${JSON.stringify(hostHeartbeatName)}] || null,
-      startupToken: window[${JSON.stringify(hostStartupTokenName)}] || null,
       entryMounted: Boolean(document.getElementById("codex-panel-entry")),
       pageMounted: Boolean(document.getElementById("codex-panel-page")),
       pageVisible: document.getElementById("codex-panel-page")?.hidden === false,
+      frameReady: window.__codexPanelInjection__?.ready === true,
+      heartbeatAt: window.__codexPanelInjection__?.heartbeatAt || null,
+      startupToken: window.__codexPanelInjection__?.startupToken || null,
       frameUrl: document.getElementById("codex-panel-frame")?.src || null
     })`,
     returnByValue: true,
   });
   return status.result.value;
+}
+
+async function waitForInjectionStatus(cdp, shouldOpen, expectedSourceHash, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let status = await readInjectionStatus(cdp);
+  while (
+    Date.now() < deadline
+    && (
+      status.sourceHash !== expectedSourceHash
+      || !status.entryMounted
+      || (shouldOpen && (!status.pageVisible || !status.frameUrl || !status.frameReady))
+    )
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    status = await readInjectionStatus(cdp);
+  }
+  return status;
 }
 
 async function inspectInjectionReadiness(port, expectedSourceHash, expectedStartupToken) {
@@ -1257,21 +1400,31 @@ async function inspectInjectionReadiness(port, expectedSourceHash, expectedStart
   return { ready: false };
 }
 
-async function waitForInjectionStatus(cdp, shouldOpen, expectedSourceHash, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  let status = await readInjectionStatus(cdp);
-  while (
-    Date.now() < deadline
-    && (
-      status.sourceHash !== expectedSourceHash
-      || !status.entryMounted
-      || (shouldOpen && (!status.pageVisible || !status.frameUrl))
-    )
-  ) {
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    status = await readInjectionStatus(cdp);
+async function openResidentPanel(port, expectedSourceHash, expectedStartupToken = null) {
+  const targets = await codexTargets(port);
+  for (const target of targets) {
+    const cdp = new CdpConnection(target.webSocketDebuggerUrl);
+    await cdp.open();
+    try {
+      const status = await readInjectionStatus(cdp);
+      if (status.sourceHash !== expectedSourceHash || !status.entryMounted) continue;
+      if (expectedStartupToken) {
+        const token = await cdp.send("Runtime.evaluate", {
+          expression: `window[${JSON.stringify(hostStartupTokenName)}] || null`,
+          returnByValue: true,
+        });
+        if (token.result.value !== expectedStartupToken) continue;
+      }
+      await cdp.send("Runtime.evaluate", {
+        expression: "window.__codexPanelInjection__?.open()",
+        returnByValue: true,
+      });
+      return true;
+    } finally {
+      cdp.close();
+    }
   }
-  return status;
+  return false;
 }
 
 async function evaluateInjectionSource(cdp, source) {
@@ -1302,6 +1455,7 @@ async function registerInjectionSource(cdp, source) {
 }
 
 async function injectTarget(
+  runtime,
   target,
   source,
   sourceHash,
@@ -1312,14 +1466,17 @@ async function injectTarget(
   attachExisting,
   startupToken,
 ) {
-  const cdp = new CdpConnection(target.webSocketDebuggerUrl);
+  const cdp = await runtime.connect(target);
   let retained = false;
-  await cdp.open();
+  const hostBridge = keepAlive
+    ? installPanelHostBinding(cdp, supervisor, startupToken)
+    : null;
+  cdp.hostBridge = hostBridge;
   try {
     await cdp.send("Page.enable");
     await cdp.send("Page.setBypassCSP", { enabled: true });
     await cdp.send("Runtime.enable");
-    if (keepAlive) await installPanelHostBinding(cdp, supervisor);
+    if (keepAlive) await hostBridge.install();
     if (keepAlive && attachExisting) {
       const currentStatus = await readInjectionStatus(cdp);
       const reconciled = await reconcileInjectionRuntime({
@@ -1331,7 +1488,6 @@ async function injectTarget(
           { identifier },
         ),
         registerCurrentSource: (currentSource) => registerInjectionSource(cdp, currentSource),
-        reloadRenderer: () => reloadRenderer(cdp, 15_000),
         evaluateCurrentSource: (currentSource) => evaluateInjectionSource(cdp, currentSource),
         publishRegistration: (identifier) => publishInjectionScriptIdentifier(cdp, identifier),
         reopen: () => cdp.send("Runtime.evaluate", {
@@ -1339,28 +1495,23 @@ async function injectTarget(
           returnByValue: true,
         }),
       });
-      const shouldRemainOpen = shouldOpen || reconciled.shouldRemainOpen;
-      if (shouldOpen && !reconciled.shouldRemainOpen) {
-        await cdp.send("Runtime.evaluate", {
-          expression: "window.__codexPanelInjection__?.open()",
-          returnByValue: true,
-        });
-      }
-      cdp.on("Page.loadEventFired", () => (
-        publishInjectionScriptIdentifier(cdp, reconciled.scriptIdentifier)
-      ));
-      await publishHostHeartbeat(cdp, startupToken);
+      cdp.on("Page.loadEventFired", async () => {
+        await hostBridge.install();
+        await publishInjectionScriptIdentifier(cdp, reconciled.scriptIdentifier);
+        await hostBridge.publishHeartbeat();
+      });
+      await hostBridge.publishHeartbeat();
       const status = await waitForInjectionStatus(
         cdp,
-        shouldRemainOpen,
+        reconciled.shouldRemainOpen,
         sourceHash,
         15_000,
       );
       const frameLoaded = status.frameUrl
         ? await waitForFrame(cdp, status.frameUrl, 15_000)
         : false;
-      if (shouldRemainOpen && !frameLoaded) {
-        throw new Error("Panel iframe did not finish loading in the Codex renderer");
+      if (reconciled.shouldRemainOpen && (!status.frameReady || !frameLoaded)) {
+        throw new Error("Panel frame did not report ready in the Codex renderer");
       }
       retained = true;
       return {
@@ -1368,16 +1519,17 @@ async function injectTarget(
         connection: cdp,
       };
     }
-    await waitForRendererReady(cdp, 15_000);
     const scriptIdentifier = await registerInjectionSource(cdp, source);
-    cdp.on("Page.loadEventFired", () => (
-      publishInjectionScriptIdentifier(cdp, scriptIdentifier)
-    ));
-    await reloadRenderer(cdp, 15_000);
+    cdp.on("Page.loadEventFired", async () => {
+      if (keepAlive) await hostBridge.install();
+      await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
+      if (keepAlive) await hostBridge.publishHeartbeat();
+    });
     await evaluateInjectionSource(cdp, source);
     await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
-    if (keepAlive) await publishHostHeartbeat(cdp, startupToken);
+    if (keepAlive) await hostBridge.publishHeartbeat();
     if (shouldOpen) {
+      await waitForInjectionStatus(cdp, false, sourceHash, 60_000);
       await cdp.send("Runtime.evaluate", {
         expression: `(() => {
           const panel = window.__codexPanelInjection__;
@@ -1391,8 +1543,8 @@ async function injectTarget(
     const frameLoaded = status.frameUrl
       ? await waitForFrame(cdp, status.frameUrl, 15_000)
       : false;
-    if (shouldOpen && !frameLoaded) {
-      throw new Error("Panel iframe did not finish loading in the Codex renderer");
+    if (shouldOpen && (!status.frameReady || !frameLoaded)) {
+      throw new Error("Panel frame did not report ready in the Codex renderer");
     }
     const result = {
       ...status,
@@ -1407,12 +1559,15 @@ async function injectTarget(
     retained = keepAlive;
     return { result, connection: retained ? cdp : null };
   } finally {
-    if (!retained) cdp.close();
+    if (!retained) {
+      unregisterQuotaPolicyCdp(cdp);
+      cdp.close();
+    }
   }
 }
 
 async function injectAll(
-  port,
+  runtime,
   source,
   sourceHash,
   shouldOpen,
@@ -1422,14 +1577,17 @@ async function injectAll(
   supervisor,
   attachExisting,
   startupToken,
-  targets = null,
 ) {
-  targets ??= await codexTargets(port);
-  if (targets.length === 0) throw new Error("No Codex renderer target found");
+  const targets = await runtime.targets();
+  if (targets.length === 0) {
+    if (keepAlive) return [];
+    throw new Error("No Codex renderer target found");
+  }
 
   const activeIds = new Set(targets.map((target) => target.id));
   for (const [id, connection] of injectedTargets) {
     if (!activeIds.has(id) || connection.closed) {
+      unregisterQuotaPolicyCdp(connection);
       connection.close();
       injectedTargets.delete(id);
     }
@@ -1440,6 +1598,7 @@ async function injectAll(
     if (injectedTargets.has(target.id)) continue;
     const firstTarget = injectedTargets.size === 0 && results.length === 0;
     const { result, connection } = await injectTarget(
+      runtime,
       target,
       source,
       sourceHash,
@@ -1458,12 +1617,17 @@ async function injectAll(
 
 async function currentInjectionSource() {
   const userScript = await readFile(injectionPath, "utf8");
+  const sourceHash = createHash("sha256").update(JSON.stringify({
+    userScript,
+    managedOrigin: panelOrigin,
+    pageUrl: panelPageUrl,
+    privatePanelMode,
+  })).digest("hex");
   const runtimeSource = `window.__CODEX_PANEL_MANAGED_ORIGIN__ = ${JSON.stringify(panelOrigin)};
-if (typeof window.__CODEX_PANEL_URL__ !== "string" || !window.__CODEX_PANEL_URL__.trim()) {
-  window.__CODEX_PANEL_URL__ = ${JSON.stringify(panelPageUrl)};
-}
+window.__CODEX_PANEL_HOST_CAPABILITY__ = ${JSON.stringify(hostCapability)};
+window.__CODEX_PANEL_URL__ = ${JSON.stringify(panelPageUrl)};
+window.__CODEX_PANEL_PRIVATE_FRAME__ = ${JSON.stringify(privatePanelMode)};
 ${userScript}`;
-  const sourceHash = createHash("sha256").update(runtimeSource).digest("hex");
   return {
     sourceHash,
     source: `window[${JSON.stringify(injectionSourceHashName)}] = ${JSON.stringify(sourceHash)};
@@ -1476,9 +1640,7 @@ async function main() {
   const cdpVersionUrl = `http://127.0.0.1:${options.port}/json/version`;
 
   if (options.stopResidents) {
-    const ports = options.portExplicit
-      ? [options.port]
-      : codexDebuggingPorts(options.port);
+    const ports = options.portExplicit ? [options.port] : codexDebuggingPorts(options.port);
     const stoppedPids = [];
     for (const port of ports) {
       stoppedPids.push(...await stopResidentInjectors(
@@ -1513,11 +1675,7 @@ async function main() {
   if (options.openExisting) {
     if (!options.startupToken) throw new Error("--open-existing requires --startup-token");
     const { sourceHash } = await currentInjectionSource();
-    const opened = await openResidentPanel(
-      options.port,
-      sourceHash,
-      options.startupToken,
-    );
+    const opened = await openResidentPanel(options.port, sourceHash, options.startupToken);
     if (!opened) throw new Error("Managed Panel renderer is not ready to open");
     console.log(JSON.stringify({ opened: true, port: options.port }));
     return;
@@ -1530,17 +1688,7 @@ async function main() {
       if (!activePort) throw new Error("No debuggable Codex window found");
       port = activePort;
     }
-    const residentPids = residentInjectorPids(port);
-    let launcher = null;
-    if (residentPids.length === 1) {
-      const { sourceHash } = await currentInjectionSource();
-      const opened = !options.open || await openResidentPanel(port, sourceHash);
-      if (opened) launcher = { pid: residentPids[0], started: false, opened: options.open };
-    }
-    launcher ??= residentPids.length > 0
-      ? await restartResidentInjectorForRefresh(port, options.open)
-      : startResidentInjector(port, options.open, true);
-    console.log(JSON.stringify({ launcher, port }, null, 2));
+    console.log(JSON.stringify({ launcher: startResidentInjector(port, options.open), port }, null, 2));
     return;
   }
 
@@ -1566,121 +1714,237 @@ async function main() {
     return;
   }
 
-  let codexProcess = null;
-  const supervisor = createPanelSupervisor({ detached: !options.watch });
+  const executablePath = options.appExecutable
+    ? validatedCodexExecutablePath(options.appExecutable)
+    : codexExecutablePath(options.appPath);
+  process.env.CODEX_EXECUTABLE = resolveCodexExecutable({ appPath: options.appPath });
 
+  let codexProcess = null;
+  let cdpRuntime = null;
+  const injectedTargets = new Map();
+  let stopping = false;
+  let wakeStop;
+  const stopRequested = new Promise((resolve) => {
+    wakeStop = resolve;
+  });
+  const requestStop = () => {
+    if (stopping) return;
+    stopping = true;
+    wakeStop();
+  };
+  const detached = !options.watch;
+  const supervisor = createPanelSupervisor({
+    detached,
+    isReachable: isPanelReachable,
+    waitUntilReachable: waitUntilPanelReachable,
+    start: () => startPanel({ detached }),
+    onProcessError: (error) => {
+      console.error(`Panel process error: ${error.message}`);
+    },
+    onUnexpectedExit: (code, signal) => {
+      console.error(`Panel exited (${signal || code}); it will be restarted automatically.`);
+    },
+  });
+
+  let cleanupPromise = null;
+  const cleanup = () => {
+    if (cleanupPromise) return cleanupPromise;
+    cleanupPromise = (async () => {
+      injectedTargets.forEach((connection) => {
+        unregisterQuotaPolicyCdp(connection);
+        connection.close();
+      });
+      injectedTargets.clear();
+      cdpRuntime?.close();
+      cdpRuntime = null;
+      const launchedCodex = codexProcess;
+      codexProcess = null;
+      launchedCodex?.unref();
+      await supervisor.stop();
+      await removePanelRuntime();
+    })();
+    return cleanupPromise;
+  };
   try {
-    const cdpReachable = await isReachable(cdpVersionUrl);
-    if (!cdpReachable) {
-      if (!options.launch) {
+    let cdpReachable = false;
+    if (!options.cdpPipe) {
+      cdpReachable = await isReachable(cdpVersionUrl);
+      if (!cdpReachable && options.watch && !options.launch) {
+        await waitUntilReachable(cdpVersionUrl, 60_000);
+        cdpReachable = true;
+      }
+      if (!cdpReachable && !options.launch) {
         throw new Error(`Codex CDP is not listening on 127.0.0.1:${options.port}`);
       }
-      if (codexIsRunning()) {
+      if (!cdpReachable && options.launch && codexIsRunning()) {
         throw new Error(
           "Codex is already running without this CDP port. Quit Codex completely, then run this command again.",
         );
       }
     }
 
+    await assertPanelServiceModeAvailable();
     await supervisor.ensure({ force: true });
+    await publishPanelRuntime();
 
-    if (!cdpReachable) {
-      const executablePath = options.appExecutable ?? codexExecutablePath(options.appPath);
+    if (options.cdpPipe) {
+      const launched = await launchCodexWithPipe(executablePath);
+      codexProcess = launched.child;
+      cdpRuntime = pipeCdpRuntime(launched.browser);
+    } else if (!cdpReachable) {
       codexProcess = launchCodex(executablePath, options.port);
       await waitUntilReachable(cdpVersionUrl, 30_000);
+      cdpRuntime = tcpCdpRuntime(options.port);
+    } else {
+      cdpRuntime = tcpCdpRuntime(options.port);
     }
 
     const { source, sourceHash } = await currentInjectionSource();
-    const injectedTargets = new Map();
-    const initialOpenRequest = createInitialOpenRequest(options.open);
+    let firstResults = [];
     try {
-      const firstTargets = await waitForCodexTargets(options.port, 30_000);
-      const shouldOpen = initialOpenRequest.claim(firstTargets);
-      const firstResults = await injectAll(
-        options.port,
+      firstResults = await injectAll(
+        cdpRuntime,
         source,
         sourceHash,
-        shouldOpen,
+        options.open,
         options.screenshot,
         injectedTargets,
         options.watch,
         supervisor,
         options.attachExisting,
         options.startupToken,
-        firstTargets,
       );
-      console.log(JSON.stringify({ injected: firstResults }, null, 2));
     } catch (error) {
       if (!options.watch) throw error;
       console.error(`Waiting for Codex renderer: ${error.message}`);
     }
+    if (firstResults.length > 0) {
+      console.log(JSON.stringify({ injected: firstResults }, null, 2));
+    }
+    let openPending = options.open && firstResults.length === 0;
+    let idleAfterNormalExit = false;
 
     if (!options.watch) {
       codexProcess?.unref();
       return;
     }
 
-    let stopping = false;
-    const stop = async () => {
-      if (stopping) return;
-      stopping = true;
-      injectedTargets.forEach((connection) => connection.close());
-      await supervisor.stop();
-      process.exit(0);
-    };
-    process.once("SIGINT", () => { void stop(); });
-    process.once("SIGTERM", () => { void stop(); });
-
-    while (true) {
-      await new Promise((resolve) => setTimeout(resolve, 2_000));
-      if (options.attachExisting && !(await isReachable(cdpVersionUrl))) break;
+    process.once("SIGINT", requestStop);
+    process.once("SIGTERM", requestStop);
+    while (!stopping) {
+      await Promise.race([
+        new Promise((resolve) => setTimeout(resolve, 2_000)),
+        stopRequested,
+      ]);
+      if (stopping) break;
       try {
-        await supervisor.ensure();
+        const service = await supervisor.ensure();
+        if (service.restarted) await publishPanelRuntime();
       } catch (error) {
         console.error(`Waiting for Panel service: ${error.message}`);
       }
+      if (stopping) break;
       for (const connection of injectedTargets.values()) {
         try {
-          await publishHostHeartbeat(connection, options.startupToken);
+          await connection.hostBridge?.publishHeartbeat();
         } catch (_) {}
       }
+      if (idleAfterNormalExit) continue;
       try {
-        const targets = await codexTargets(options.port);
-        const shouldOpen = initialOpenRequest.claim(targets);
         const results = await injectAll(
-          options.port,
+          cdpRuntime,
           source,
           sourceHash,
-          shouldOpen,
+          openPending,
           null,
           injectedTargets,
           true,
           supervisor,
           options.attachExisting,
           options.startupToken,
-          targets,
         );
         if (results.length > 0) {
+          openPending = false;
           console.log(JSON.stringify({ injected: results }, null, 2));
         }
       } catch (error) {
-        if (codexProcess && codexProcess.exitCode !== null) break;
+        if (stopping) break;
+        if (options.cdpPipe && !cdpRuntime.isHealthy()) {
+          const launchedCodex = codexProcess;
+          if (
+            launchedCodex
+            && launchedCodex.exitCode === null
+            && launchedCodex.signalCode === null
+          ) {
+            await Promise.race([
+              new Promise((resolve) => launchedCodex.once("exit", resolve)),
+              new Promise((resolve) => setTimeout(resolve, 250)),
+            ]);
+          }
+          if (launchedCodex?.exitCode === 0) {
+            injectedTargets.forEach((connection) => {
+              unregisterQuotaPolicyCdp(connection);
+              connection.close();
+            });
+            injectedTargets.clear();
+            cdpRuntime.close();
+            cdpRuntime = null;
+            codexProcess = null;
+            idleAfterNormalExit = true;
+            console.error(
+              "Waiting for Codex after normal exit; open Codex Panel again to restart it.",
+            );
+            continue;
+          }
+          throw error;
+        }
+        const launchedCodexExited = codexProcess
+          && (codexProcess.exitCode !== null || codexProcess.signalCode !== null);
+        if (launchedCodexExited) {
+          injectedTargets.forEach((connection) => {
+            unregisterQuotaPolicyCdp(connection);
+            connection.close();
+          });
+          injectedTargets.clear();
+          cdpRuntime?.close();
+          const exitCode = codexProcess.exitCode;
+          codexProcess = null;
+          if (exitCode === 0) {
+            console.error(
+              "Waiting for Codex after normal exit; open Codex Panel again to restart it.",
+            );
+            continue;
+          }
+          console.error("Codex exited unexpectedly; restarting it for the Panel launcher.");
+          try {
+            if (options.cdpPipe) {
+              const launched = await launchCodexWithPipe(executablePath);
+              codexProcess = launched.child;
+              cdpRuntime = pipeCdpRuntime(launched.browser);
+            } else {
+              codexProcess = launchCodex(executablePath, options.port);
+              await waitUntilReachable(cdpVersionUrl, 30_000);
+              cdpRuntime = tcpCdpRuntime(options.port);
+            }
+            openPending = options.open;
+          } catch (restartError) {
+            console.error(`Waiting to restart Codex: ${restartError.message}`);
+          }
+          continue;
+        }
         console.error(`Waiting for Codex renderer: ${error.message}`);
       }
     }
-    injectedTargets.forEach((connection) => connection.close());
-    await supervisor.stop();
-  } catch (error) {
-    await supervisor.stop();
-    throw error;
+  } finally {
+    if (options.watch) {
+      process.removeListener("SIGINT", requestStop);
+      process.removeListener("SIGTERM", requestStop);
+      await cleanup();
+    }
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === injectorPath) {
-  main().catch((error) => {
-    console.error(error.message);
-    process.exitCode = 1;
-  });
-}
-
-export { waitForCodexTargets };
+main().catch((error) => {
+  console.error(error.message);
+  process.exitCode = 1;
+});

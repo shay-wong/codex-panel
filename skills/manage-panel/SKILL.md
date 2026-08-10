@@ -5,7 +5,7 @@ description: Manage panel projects, issues, issue relations, and comments throug
 
 # Manage Panel
 
-Use `panelctl` for every project, issue, and comment operation. Read [references/cli.md](references/cli.md) before choosing a command or option.
+Use `panelctl` for every project, issue, relation, and comment operation. Consume its JSON output. Use the exact issue identifier returned by Panel or supplied in the prompt; never assume, derive, or rewrite an identifier prefix. Open only the relevant section of [references/cli.md](references/cli.md) when command syntax is needed.
 
 ## Workflow
 
@@ -19,6 +19,7 @@ Use `panelctl` for every project, issue, and comment operation. Read [references
    - A comment headed `AI 对话交接` is a handoff summary from a prior Codex conversation, created either by embedded chat or `$handoff-panel`. Use the latest such comment as prior discussion context, while newer issue content and later comments take precedence.
    - In a description or comment, `![alt](/api/attachments/<id>/content)` marks an inline image at that exact position in the text.
    - When understanding that image is necessary, use `attachment download` to save it locally, then inspect the saved file with an available image-viewing tool.
+   - Execute the requested work in the issue's bound branch or worktree when one is present.
 3. Create or update issues with the CLI; consume its JSON output.
    Issues created through `panelctl` are assigned to Codex Agent by default. Later CLI updates do not change the assignee.
 4. Let `panelctl` attribute every issue, relation, or comment mutation to the current Codex conversation through `CODEX_THREAD_ID`. Outside Codex, pass the exact conversation id with `--thread-id`.
@@ -28,5 +29,7 @@ Use `panelctl` for every project, issue, and comment operation. Read [references
 8. After implementation and self-verification, add a comment summarizing the key changes, verification, result, and remaining risks; then move the issue to `in_review`. Never move it directly to `done`.
 9. Move an issue from `in_review` to `done` only when the user explicitly confirms acceptance or explicitly asks to mark it complete. Codex self-verification alone is not sufficient.
 10. Move work that cannot continue to `blocked`, and work that will not continue to `canceled`.
+
+Use `issue list --archived true|false|all` when archived state matters. Issue creation and updates support `--start-date`; `issue update --project` moves an issue to another project while preserving its linked conversation when no other conversation change is requested.
 
 For version conflicts outside the initial claim, read the issue again, reconcile the newer state, and retry with its current version.

@@ -52,9 +52,11 @@ const runtimePayloadPaths = [
   path.join("skills", "handoff-panel"),
 ];
 const runtimeScriptNames = [
+  "codex-cdp-pipe.mjs",
   "codex-injector-runtime.mjs",
   "codex-injector.mjs",
   "codex-rate-limits.mjs",
+  "panel-supervisor.mjs",
 ];
 const launcherName = "Codex Panel.app";
 const legacyLauncherName = "Codex.app";

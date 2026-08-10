@@ -43,12 +43,21 @@ async function createFixture() {
     realpath(otherWorkspacePath),
   ]);
   const capturePath = path.join(directory, "capture.jsonl");
+  const environmentCapturePath = path.join(directory, "environment-capture.jsonl");
   const descendantPath = path.join(directory, "descendant-alive");
   const executable = path.join(directory, "fake-codex.mjs");
   await writeFile(executable, `#!/usr/bin/env node
 import { appendFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 const args = process.argv.slice(2);
+if (process.env.FAKE_ENVIRONMENT_CAPTURE_PATH) {
+  appendFileSync(process.env.FAKE_ENVIRONMENT_CAPTURE_PATH, JSON.stringify({
+    args,
+    launcherKeys: Object.keys(process.env).filter((name) => (
+      name.startsWith("CODEX_PANEL_") || name.startsWith("CODEX_TASKBOARD_")
+    )),
+  }) + "\\n");
+}
 if (args[0] === "debug" && args[1] === "models") {
   if (args.length !== 2) process.exit(2);
   process.stdout.write(JSON.stringify({models:[{
@@ -70,7 +79,7 @@ if (args[0] === "app-server") {
       if (!line.trim()) continue;
       const message = JSON.parse(line);
       if (message.id === 1) process.stdout.write('{"id":1,"result":{"platformFamily":"unix"}}\\n');
-      if (message.id === 2) process.stdout.write('{"id":2,"result":{"data":[{"skills":[{"name":"handoff","enabled":true,"scope":"user","path":"/fixture/handoff/SKILL.md","description":"Write a temporary handoff","interface":{"displayName":"Handoff"}},{"name":"real-skill","enabled":true,"scope":"repo","interface":{"displayName":"Real Skill"}},{"name":"disabled","enabled":false,"scope":"user"}]}]}}\\n');
+      if (message.id === 2) process.stdout.write('{"id":2,"result":{"data":[{"skills":[{"name":"handoff","enabled":true,"scope":"user","path":"/fixture/handoff/SKILL.md","description":"Write a temporary handoff","interface":{"displayName":"Handoff"}},{"name":"real-skill","enabled":true,"scope":"repo","description":"Real fixture skill","path":"/fixture/real-skill/SKILL.md","interface":{"displayName":"Real Skill"}},{"name":"disabled","enabled":false,"scope":"user"}]}]}}\\n');
     }
   });
 } else if (args[0] === "exec") {
@@ -156,6 +165,15 @@ if (args[0] === "app-server") {
       ...process.env,
       FAKE_CAPTURE_PATH: capturePath,
       FAKE_DESCENDANT_PATH: descendantPath,
+      FAKE_ENVIRONMENT_CAPTURE_PATH: environmentCapturePath,
+      CODEX_PANEL_INSTANCE_TOKEN: "must-not-reach-codex",
+      CODEX_PANEL_INSTANCE_SECRET: "must-not-reach-codex",
+      CODEX_PANEL_PORT: "47823",
+      CODEX_PANEL_VERSION: "0.2.0",
+      CODEX_TASKBOARD_INSTANCE_TOKEN: "must-not-reach-codex",
+      CODEX_TASKBOARD_INSTANCE_SECRET: "must-not-reach-codex",
+      CODEX_TASKBOARD_PORT: "47823",
+      CODEX_TASKBOARD_VERSION: "0.2.0",
     },
     onIssueCommentCreated: (event) => createdComments.push(event),
     killGraceMs: 50,
@@ -167,6 +185,7 @@ if (args[0] === "app-server") {
     databasePath,
     descendantPath,
     directory,
+    environmentCapturePath,
     otherWorkspace,
     service,
     workspace,
@@ -218,8 +237,8 @@ test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized
       {
         id: "real-skill",
         label: "Real Skill",
-        description: "",
-        path: "",
+        description: "Real fixture skill",
+        path: "/fixture/real-skill/SKILL.md",
         scope: "repo",
       },
     ]);
@@ -233,7 +252,7 @@ test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized
     assert.equal(thread.origin.workspacePath, fixture.workspace);
 
     const first = await fixture.service.startTurn(thread.id, {
-      message: "\uFFFC HIDDEN_SENTINEL first",
+      message: "HIDDEN_SENTINEL \uFFFC first",
       skillIds: ["real-skill"],
     });
     await waitFor(() => fixture.service.getRun(first.id)?.status !== "running");
@@ -241,6 +260,11 @@ test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized
     await waitFor(() => fixture.service.getRun(second.id)?.status !== "running");
 
     const captures = (await readFile(fixture.capturePath, "utf8")).trim().split("\n").map(JSON.parse);
+    const environmentCaptures = (
+      await readFile(fixture.environmentCapturePath, "utf8")
+    ).trim().split("\n").map(JSON.parse);
+    assert.ok(environmentCaptures.length >= 3);
+    assert.equal(environmentCaptures.every((entry) => entry.launcherKeys.length === 0), true);
     assert.deepEqual(captures[0].args, [
       "exec", "--json", "--color", "never",
       "-C", fixture.workspace,
@@ -254,8 +278,10 @@ test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized
     ]);
     assert.equal(captures[0].args.join(" ").includes("HIDDEN_SENTINEL"), false);
     assert.match(captures[0].prompt, /\[\$manage-panel\]\(\/fixture\/manage-panel\/SKILL\.md\) e-panel/);
-    assert.match(captures[0].prompt, /\$real-skill/);
-    assert.match(captures[0].prompt, /HIDDEN_SENTINEL first/);
+    assert.match(
+      captures[0].prompt,
+      /HIDDEN_SENTINEL \[\$real-skill\]\(\/fixture\/real-skill\/SKILL\.md\) first/,
+    );
     assert.deepEqual(captures[1].args, [
       "exec", "--json", "--color", "never",
       "-C", fixture.workspace,

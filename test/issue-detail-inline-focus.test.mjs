@@ -8,7 +8,7 @@ const detailSource = await readFile(new URL("../web/src/components/TaskDetail.ts
 test("issue title and description keep Linear-style inline editing when focused", () => {
   assert.match(
     styles,
-    /\.issue-title-input:focus:not\(:disabled\),\s*\.issue-title-input:focus-visible:not\(:disabled\),\s*\.issue-description-input:focus:not\(:disabled\),\s*\.issue-description-input:focus-visible:not\(:disabled\),\s*\.issue-description-read:focus-visible\s*\{[^}]*border-color:\s*transparent;[^}]*outline:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s,
+    /\.issue-title-input:focus:not\(:disabled\),\s*\.issue-title-input:focus-visible:not\(:disabled\),\s*\.issue-description-input:focus:not\(:disabled\),\s*\.issue-description-input:focus-visible:not\(:disabled\),\s*\.issue-description-composer:focus-within,\s*\.issue-description-read:focus-visible\s*\{[^}]*border-color:\s*transparent;[^}]*outline:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s,
   );
   assert.match(
     styles,
@@ -18,11 +18,17 @@ test("issue title and description keep Linear-style inline editing when focused"
 });
 
 test("editing and composing comments do not add focus chrome", () => {
-  assert.equal([...detailSource.matchAll(/className="comment-input"/g)].length, 1);
-  assert.match(detailSource, /<InlineMediaComposer[\s\S]*?className="comment-inline-media"/);
+  assert.match(
+    detailSource,
+    /<div className="inline-media-composer comment-inline-media">[\s\S]*?<textarea[\s\S]*?aria-label="编辑评论"/,
+  );
+  assert.match(
+    detailSource,
+    /<InlineMediaComposer[\s\S]*?className="comment-inline-media"[\s\S]*?ariaLabel="留下评论"/,
+  );
   assert.match(
     styles,
-    /\.comment-edit-form textarea,\s*\.inline-media-composer textarea\s*\{[^}]*border:\s*0;[^}]*outline:\s*0;[^}]*background:\s*transparent;/s,
+    /\.inline-media-composer textarea\s*\{[^}]*border:\s*0;[^}]*outline:\s*0;[^}]*background:\s*transparent;/s,
   );
   assert.doesNotMatch(styles, /\.comment-composer:focus-within\s*\{/);
 });

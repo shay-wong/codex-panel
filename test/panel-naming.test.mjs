@@ -13,13 +13,23 @@ async function missing(targetPath) {
   await assert.rejects(access(targetPath), { code: "ENOENT" });
 }
 
-test("Panel is the canonical Skill and CLI identity", async () => {
-  const [skillSource, agentMetadata, packageSource, mainSource, storageMigrationSource] = await Promise.all([
+test("Panel is the canonical Skill, CLI, runtime, and integration identity", async () => {
+  const [
+    skillSource,
+    agentMetadata,
+    packageSource,
+    mainSource,
+    storageMigrationSource,
+    injectorSource,
+    embeddedHostSource,
+  ] = await Promise.all([
     readFile(path.join(projectRoot, "skills", "manage-panel", "SKILL.md"), "utf8"),
     readFile(path.join(projectRoot, "skills", "manage-panel", "agents", "openai.yaml"), "utf8"),
     readFile(path.join(projectRoot, "package.json"), "utf8"),
     readFile(path.join(projectRoot, "web", "src", "main.tsx"), "utf8"),
     readFile(path.join(projectRoot, "web", "src", "storageMigration.ts"), "utf8"),
+    readFile(path.join(projectRoot, "scripts", "codex-injector.mjs"), "utf8"),
+    readFile(path.join(projectRoot, "web", "src", "embeddedHost.mjs"), "utf8"),
   ]);
   const packageJson = JSON.parse(packageSource);
 
@@ -34,9 +44,17 @@ test("Panel is the canonical Skill and CLI identity", async () => {
   assert.match(mainSource, /migrateLegacyPanelStorage\(window\.localStorage\)/);
   assert.match(storageMigrationSource, /"taskboard\.theme", "panel\.theme"/);
   assert.match(storageMigrationSource, /"taskboard\.comment-draft\.", "panel\.comment-draft\."/);
+  assert.match(injectorSource, /createPanelSupervisor/);
+  assert.match(injectorSource, /__CODEX_PANEL_FRAME_CAPABILITY__/);
+  assert.match(embeddedHostSource, /type: "panel:open-external"/);
+  assert.doesNotMatch(injectorSource, /createTaskboardSupervisor/);
   await access(path.join(projectRoot, "cli", "panelctl.mjs"));
+  await access(path.join(projectRoot, "scripts", "panel-supervisor.mjs"));
+  await access(path.join(projectRoot, "inject", "workbuddy-panel.user.js"));
   await missing(path.join(projectRoot, "skills", "manage-taskboard"));
   await missing(path.join(projectRoot, "cli", "taskctl.mjs"));
+  await missing(path.join(projectRoot, "scripts", "taskboard-supervisor.mjs"));
+  await missing(path.join(projectRoot, "inject", "workbuddy-taskboard.user.js"));
 });
 
 test("a configured data path uses panel.sqlite without migrating legacy files", async () => {
