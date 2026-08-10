@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "0.6.10";
+  const VERSION = "0.6.11";
   const SOURCE_HASH = window.__CODEX_PANEL_SOURCE_HASH__;
   const SENTINEL_KEY = "__codexPanelInjection__";
   const DEFAULT_PANEL_URL = "http://127.0.0.1:47823/?host=codex";
@@ -26,22 +26,58 @@
   const THREAD_ASSOCIATION_TIMEOUT_MS = 10 * 60_000;
   const MACOS_TITLEBAR_SAFE_LEFT = 80;
   const FRAME_REFRESH_PARAM = "__codex_panel_refresh";
-  const PLUGIN_LABELS = ["插件", "plugins"];
+  const PLUGIN_LABELS = ["插件", "外掛程式", "plugins"];
   const NATIVE_PAGE_LABELS = [
     "新建任务",
     "new task",
     "new chat",
     "拉取请求",
+    "pull request",
     "pull requests",
     "站点",
+    "工作站",
+    "網站",
     "sites",
     "已安排",
+    "已排程",
     "scheduled",
     "插件",
+    "外掛程式",
     "plugins",
   ];
   const PROJECT_SECTION_LABELS = ["projects", "项目"];
   const TASK_SECTION_LABELS = ["tasks", "任务", "chats", "对话"];
+  // TODO: Prefer stable command IDs if Codex exposes them, then support every app locale.
+  const NATIVE_DESTINATION_COMMAND_LABELS = [
+    ...NATIVE_PAGE_LABELS,
+    "切换到聊天",
+    "切換至對話",
+    "switch to chat",
+    "切换到工作",
+    "切換至工作",
+    "switch to work",
+    "切换到 codex",
+    "切換至 codex",
+    "switch to codex",
+    "设置",
+    "設定",
+    "settings",
+    "前往技能",
+    "go to skills",
+    "管理已安排任务",
+    "管理已排程任務",
+    "manage scheduled tasks",
+    "新聊天",
+    "新對話",
+    "new chat",
+    "新建独立聊天",
+    "新增獨立對話",
+    "new standalone chat",
+    "进程管理器",
+    "程序管理工具",
+    "程序管理員",
+    "process manager",
+  ];
 
   const previous = window[SENTINEL_KEY];
   if (previous?.sourceHash === SOURCE_HASH && typeof previous.refresh === "function") {
@@ -1209,10 +1245,36 @@
     ));
   }
 
+  function handleNativeDestinationCommand(target) {
+    const item = target?.closest?.(
+      '.global-command-menu-dialog [cmdk-item][role="option"]',
+    );
+    if (!active || !item) return false;
+    if (NATIVE_DESTINATION_COMMAND_LABELS.includes(
+      normalizedLabel(item.getAttribute("data-value")),
+    )) {
+      closePanel(false);
+      return true;
+    }
+
+    const previousPath = window.location.pathname;
+    window.setTimeout(() => {
+      if (!destroyed && active && window.location.pathname !== previousPath) {
+        closePanel(false);
+      }
+    }, 0);
+    return false;
+  }
+
+  function onCommandMenuSelect(event) {
+    handleNativeDestinationCommand(event.target);
+  }
+
   function onDocumentClick(event) {
     const threadRow = event.target?.closest?.("[data-app-action-sidebar-thread-id]");
     const clickedThreadId = normalizeThreadId(threadRow?.getAttribute?.("data-app-action-sidebar-thread-id"));
     if (clickedThreadId) lastNativeThreadId = clickedThreadId;
+    if (handleNativeDestinationCommand(event.target)) return;
     if (!active || !isNativePageNavigation(event.target)) return;
     closePanel(false);
   }
@@ -1272,6 +1334,7 @@
     pendingThreadAssociation = null;
     document.removeEventListener("DOMContentLoaded", mount);
     document.removeEventListener("click", onDocumentClick, true);
+    document.removeEventListener("cmdk-item-select", onCommandMenuSelect, true);
     window.removeEventListener("message", onFrameMessage);
     window.removeEventListener("popstate", onNativeRouteChange);
     window.removeEventListener("hashchange", onNativeRouteChange);
@@ -1311,6 +1374,7 @@
   window.addEventListener("hashchange", onNativeRouteChange);
   window.addEventListener("resize", scheduleRefresh);
   document.addEventListener("click", onDocumentClick, true);
+  document.addEventListener("cmdk-item-select", onCommandMenuSelect, true);
   if (document.documentElement) mount();
   else document.addEventListener("DOMContentLoaded", mount, { once: true });
 })();

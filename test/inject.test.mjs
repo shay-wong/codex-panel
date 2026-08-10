@@ -13,7 +13,7 @@ const webApp = await readFile(new URL("../web/src/App.tsx", import.meta.url), "u
 
 test("injection is an idempotent IIFE guarded by its current source hash", () => {
   assert.match(source, /^\(\(\) => \{/);
-  assert.match(source, /const VERSION = "0\.6\.10"/);
+  assert.match(source, /const VERSION = "0\.6\.11"/);
   assert.match(source, /const SOURCE_HASH = window\.__CODEX_PANEL_SOURCE_HASH__/);
   assert.match(source, /const SENTINEL_KEY = "__codexPanelInjection__"/);
   assert.match(source, /previous\?\.sourceHash === SOURCE_HASH/);
@@ -31,7 +31,7 @@ test("embedded page uses the local panel URL and supports a runtime override", (
 });
 
 test("entry clones the native Plugins row and the page covers the complete Codex workspace", () => {
-  assert.match(source, /const PLUGIN_LABELS = \["插件", "plugins"\]/);
+  assert.match(source, /const PLUGIN_LABELS = \["插件", "外掛程式", "plugins"\]/);
   assert.match(source, /if \(siblings\.length >= 3\) return plugin;/);
   assert.match(source, /return directButtons\.length >= 3/);
   assert.match(source, /const button = reference\.cloneNode\(true\)/);
@@ -356,6 +356,108 @@ test("host navigation follows Codex's renderer message bus", () => {
   assert.match(source, /function dispatchHostMessage\(message\)/);
   assert.match(source, /window\.postMessage\(message, window\.location\.origin\)/);
   assert.doesNotMatch(source, /new CustomEvent\("codex-message-from-view"/);
+});
+
+test("command-menu native destinations close Panel without global history interception", () => {
+  const labelsStart = source.indexOf("const NATIVE_PAGE_LABELS");
+  const labelsEnd = source.indexOf("\n\n  const previous", labelsStart);
+  const handlerStart = source.indexOf("function handleNativeDestinationCommand");
+  const handlerEnd = source.indexOf("\n\n  function onCommandMenuSelect", handlerStart);
+  assert.notEqual(labelsStart, -1, "native destination labels must exist");
+  assert.ok(labelsEnd > labelsStart, "native destination labels must be extractable");
+  assert.notEqual(handlerStart, -1, "native destination handler must exist");
+  assert.ok(handlerEnd > handlerStart, "native destination handler must be extractable");
+  assert.match(source, /const NATIVE_DESTINATION_COMMAND_LABELS = \[/);
+  assert.doesNotMatch(source, /installNativeHistoryInterceptor/);
+  assert.doesNotMatch(source, /historyInterceptors/);
+
+  const nativeDestinationLabels = vm.runInNewContext(
+    `(() => { ${source.slice(labelsStart, labelsEnd)}; return NATIVE_DESTINATION_COMMAND_LABELS; })()`,
+  );
+  const traditionalChineseDestinations = [
+    "外掛程式",
+    "網站",
+    "工作站",
+    "已排程",
+    "Pull Request",
+    "程序管理工具",
+  ];
+  for (const label of traditionalChineseDestinations) {
+    assert.ok(
+      nativeDestinationLabels.includes(label.toLowerCase()),
+      `production labels must include ${label}`,
+    );
+  }
+
+  let active = true;
+  let destroyed = false;
+  let closeCount = 0;
+  const timers = [];
+  const window = {
+    location: { pathname: "/local/current" },
+    setTimeout: (callback) => {
+      timers.push(callback);
+      return timers.length;
+    },
+  };
+  const handleNativeDestinationCommand = vm.runInNewContext(
+    `(${source.slice(handlerStart, handlerEnd)})`,
+    {
+      get active() {
+        return active;
+      },
+      get destroyed() {
+        return destroyed;
+      },
+      NATIVE_DESTINATION_COMMAND_LABELS: nativeDestinationLabels,
+      closePanel: () => {
+        active = false;
+        closeCount += 1;
+      },
+      normalizedLabel: (value) => String(value || "").trim().toLowerCase(),
+      window,
+    },
+  );
+  const target = (label, global = true) => {
+    const item = { getAttribute: (name) => name === "data-value" ? label : null };
+    return {
+      closest: (selector) => selector === '.global-command-menu-dialog [cmdk-item][role="option"]' && global
+        ? item
+        : null,
+    };
+  };
+
+  for (const label of [
+    "切换到聊天",
+    "设置",
+    "插件",
+    ...traditionalChineseDestinations,
+  ]) {
+    active = true;
+    assert.equal(handleNativeDestinationCommand(target(label)), true, label);
+  }
+  assert.equal(closeCount, 3 + traditionalChineseDestinations.length);
+
+  active = true;
+  assert.equal(handleNativeDestinationCommand(target("切换到深色主题")), false);
+  timers.shift()();
+  assert.equal(closeCount, 3 + traditionalChineseDestinations.length);
+  assert.equal(active, true);
+
+  assert.equal(handleNativeDestinationCommand(target("打开其他原生页面")), false);
+  window.location.pathname = "/native-page";
+  timers.shift()();
+  assert.equal(closeCount, 4 + traditionalChineseDestinations.length);
+  assert.equal(active, false);
+
+  active = true;
+  assert.equal(handleNativeDestinationCommand(target("设置", false)), false);
+  assert.equal(timers.length, 0);
+  assert.equal(active, true);
+
+  destroyed = true;
+  assert.match(source, /document\.addEventListener\("cmdk-item-select", onCommandMenuSelect, true\)/);
+  assert.match(source, /document\.removeEventListener\("cmdk-item-select", onCommandMenuSelect, true\)/);
 });
 
 test("the standalone web page opens unlinked issues as prefilled empty Codex tasks", () => {
