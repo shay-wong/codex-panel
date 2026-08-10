@@ -32,9 +32,8 @@ struct LauncherConfiguration: Decodable {
   let codexAppPath: String
   let codexAppDesignatedRequirement: String
   let codexAppExecutablePath: String
-  let codexAppExecutableSha256: String
   let codexExecutablePath: String
-  let codexExecutableSha256: String
+  let codexExecutableDesignatedRequirement: String
   let panelPort: Int
   let cdpPort: Int
   private var resourcesDirectory: String? = nil
@@ -50,9 +49,8 @@ struct LauncherConfiguration: Decodable {
     case codexAppPath
     case codexAppDesignatedRequirement
     case codexAppExecutablePath
-    case codexAppExecutableSha256
     case codexExecutablePath
-    case codexExecutableSha256
+    case codexExecutableDesignatedRequirement
     case panelPort
     case cdpPort
   }
@@ -101,22 +99,35 @@ struct LauncherConfiguration: Decodable {
   }
 
   func validatedCodexExecutableURL() throws -> URL {
-    try validatedExecutableURL(
-      path: codexExecutablePath,
-      expectedSha256: codexExecutableSha256,
-      label: "Codex CLI"
-    )
-  }
-
-  func validatedCodexAppExecutableURL() throws -> URL {
+    let appURL = URL(fileURLWithPath: codexAppPath, isDirectory: true)
     try validateCodeSignature(
-      at: URL(fileURLWithPath: codexAppPath, isDirectory: true),
+      at: appURL,
       designatedRequirement: codexAppDesignatedRequirement,
       label: "ChatGPT/Codex"
     )
-    return try validatedExecutableURL(
+    let executableURL = try validatedBundledExecutableURL(
+      path: codexExecutablePath,
+      within: appURL,
+      label: "Codex CLI"
+    )
+    try validateCodeSignature(
+      at: executableURL,
+      designatedRequirement: codexExecutableDesignatedRequirement,
+      label: "Codex CLI"
+    )
+    return executableURL
+  }
+
+  func validatedCodexAppExecutableURL() throws -> URL {
+    let appURL = URL(fileURLWithPath: codexAppPath, isDirectory: true)
+    try validateCodeSignature(
+      at: appURL,
+      designatedRequirement: codexAppDesignatedRequirement,
+      label: "ChatGPT/Codex"
+    )
+    return try validatedBundledExecutableURL(
       path: codexAppExecutablePath,
-      expectedSha256: codexAppExecutableSha256,
+      within: appURL,
       label: "ChatGPT/Codex 主程序"
     )
   }
@@ -168,7 +179,7 @@ struct LauncherConfiguration: Decodable {
       LauncherConfiguration.self,
       from: Data(contentsOf: url)
     )
-    guard configuration.version == 3, let resourceURL = bundle.resourceURL else {
+    guard configuration.version == 4, let resourceURL = bundle.resourceURL else {
       throw ConfigurationError.unsupportedVersion
     }
     configuration.resourcesDirectory = resourceURL.path
@@ -224,6 +235,29 @@ struct LauncherConfiguration: Decodable {
     return url
   }
 
+  private func validatedBundledExecutableURL(
+    path: String,
+    within bundleURL: URL,
+    label: String
+  ) throws -> URL {
+    let standardizedBundleURL = bundleURL.standardizedFileURL
+    let executableURL = URL(fileURLWithPath: path).standardizedFileURL
+    var fileStat = stat()
+    guard
+      standardizedBundleURL.resolvingSymlinksInPath() == standardizedBundleURL,
+      executableURL.path.hasPrefix(standardizedBundleURL.path + "/"),
+      executableURL.resolvingSymlinksInPath() == executableURL,
+      lstat(executableURL.path, &fileStat) == 0,
+      (fileStat.st_mode & S_IFMT) == S_IFREG,
+      FileManager.default.isExecutableFile(atPath: executableURL.path)
+    else {
+      throw ConfigurationError.untrustedExecutable(
+        "\(label) 必须是官方 ChatGPT.app 内的真实可执行文件"
+      )
+    }
+    return executableURL
+  }
+
   private func validateBundleSignature(bundle: Bundle) throws {
     try validateCodeSignature(
       at: bundle.bundleURL,
@@ -261,7 +295,9 @@ struct LauncherConfiguration: Decodable {
         throw ConfigurationError.invalidCodeSignature(label, requirementStatus)
       }
     }
-    let validationFlags = SecCSFlags(rawValue: kSecCSStrictValidate | kSecCSCheckAllArchitectures)
+    let validationFlags = SecCSFlags(
+      rawValue: kSecCSStrictValidate | kSecCSCheckAllArchitectures | kSecCSCheckNestedCode
+    )
     let validationStatus = SecStaticCodeCheckValidity(staticCode, validationFlags, requirement)
     guard validationStatus == errSecSuccess else {
       throw ConfigurationError.invalidCodeSignature(label, validationStatus)

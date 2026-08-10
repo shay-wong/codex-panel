@@ -62,7 +62,7 @@ const launcherExecutableName = "CodexPanelLauncher";
 const launcherIconBuilderName = "CodexPanelIconBuilder";
 const launcherBundleIdentifier = "com.shay.codex-panel";
 const legacyLauncherBundleIdentifier = "com.shay.codex-taskboard-launcher";
-const launcherDefinitionVersion = 8;
+const launcherDefinitionVersion = 9;
 const launcherMarkerName = "codex-panel-launcher.json";
 const launcherConfigurationName = "launcher-config.json";
 const officialCodexAppPath = "/Applications/ChatGPT.app";
@@ -427,9 +427,8 @@ export function launcherConfiguration({
   codexAppPath = officialCodexAppPath,
   codexAppDesignatedRequirement,
   codexAppExecutablePath,
-  codexAppExecutableSha256,
   codexExecutablePath = officialCodexExecutablePath,
-  codexExecutableSha256,
+  codexExecutableDesignatedRequirement,
   dataDirectory,
   logPath,
   nodeBinPath,
@@ -449,7 +448,7 @@ export function launcherConfiguration({
     "/sbin",
   ].join(":");
   return {
-    version: 3,
+    version: 4,
     runtimeRelativePath,
     dataDirectory,
     logPath,
@@ -459,9 +458,8 @@ export function launcherConfiguration({
     codexAppPath,
     codexAppDesignatedRequirement,
     codexAppExecutablePath,
-    codexAppExecutableSha256,
     codexExecutablePath,
-    codexExecutableSha256,
+    codexExecutableDesignatedRequirement,
     panelPort: 47823,
     cdpPort: 9229,
   };
@@ -837,13 +835,14 @@ export async function installLauncher(layout, options = {}) {
   }
   const codexAppDesignatedRequirement = options.codexAppDesignatedRequirement
     ?? verifiedDesignatedRequirement(codexAppPath, "Codex application");
+  const codexExecutableDesignatedRequirement = options.codexExecutableDesignatedRequirement
+    ?? verifiedDesignatedRequirement(codexExecutablePath, "Codex CLI");
   const configuration = launcherConfiguration({
     codexAppPath,
     codexAppDesignatedRequirement,
     codexAppExecutablePath,
-    codexAppExecutableSha256: await sha256File(codexAppExecutablePath),
     codexExecutablePath,
-    codexExecutableSha256: await sha256File(codexExecutablePath),
+    codexExecutableDesignatedRequirement,
     dataDirectory: layout.dataDirectory,
     logPath: layout.logPath,
     nodeBinPath: path.dirname(process.execPath),

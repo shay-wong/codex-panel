@@ -158,12 +158,11 @@ test("runtime and native launcher configuration use installed files instead of r
       runtimeRelativePath: "runtime",
       codexAppDesignatedRequirement: "identifier test.codex",
       codexAppExecutablePath: "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
-      codexAppExecutableSha256: "codex-app-sha256",
       codexExecutablePath: "/Applications/ChatGPT.app/Contents/Resources/codex",
-      codexExecutableSha256: "codex-cli-sha256",
+      codexExecutableDesignatedRequirement: "identifier test.codex-cli",
       userBinDirectory: path.join(directory, "bin"),
     });
-    assert.equal(appConfiguration.version, 3);
+    assert.equal(appConfiguration.version, 4);
     assert.equal(appConfiguration.runtimeRelativePath, "runtime");
     assert.equal(appConfiguration.dataDirectory, path.join(directory, "data"));
     assert.equal(appConfiguration.nodePath, "/node/bin/node");
@@ -172,11 +171,16 @@ test("runtime and native launcher configuration use installed files instead of r
       appConfiguration.codexAppExecutablePath,
       "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
     );
-    assert.equal(appConfiguration.codexAppExecutableSha256, "codex-app-sha256");
     assert.equal(
       appConfiguration.codexExecutablePath,
       "/Applications/ChatGPT.app/Contents/Resources/codex",
     );
+    assert.equal(
+      appConfiguration.codexExecutableDesignatedRequirement,
+      "identifier test.codex-cli",
+    );
+    assert.equal(Object.hasOwn(appConfiguration, "codexAppExecutableSha256"), false);
+    assert.equal(Object.hasOwn(appConfiguration, "codexExecutableSha256"), false);
     assert.match(appConfiguration.pathValue, new RegExp(path.join(directory, "bin")));
     assert.doesNotMatch(
       JSON.stringify(appConfiguration),
@@ -210,16 +214,20 @@ test("launcher icon resolution fails when either official appearance resource is
   }
 });
 
-test("the launcher executes only its signed runtime and hash-pinned Node binary", () => {
+test("the launcher accepts signed ChatGPT updates while pinning runtime and Node identity", () => {
   assert.match(installerSource, /runtimeRelativePath/);
   assert.match(installerSource, /nodeSha256/);
   assert.match(installerSource, /runtimeHash/);
   assert.match(installerSource, /codexAppDesignatedRequirement/);
-  assert.match(installerSource, /codexAppExecutableSha256/);
+  assert.match(installerSource, /codexExecutableDesignatedRequirement/);
+  assert.doesNotMatch(installerSource, /codexAppExecutableSha256/);
+  assert.doesNotMatch(installerSource, /codexExecutableSha256/);
   assert.match(installerSource, /Contents["']?,\s*["']Resources["']?,\s*["']runtime/);
   assert.match(launcherConfigurationSource, /validatedNodeURL/);
   assert.match(launcherConfigurationSource, /validatedCodexAppExecutableURL/);
+  assert.match(launcherConfigurationSource, /validatedBundledExecutableURL/);
   assert.match(launcherConfigurationSource, /SecRequirementCreateWithString/);
+  assert.match(launcherConfigurationSource, /kSecCSCheckNestedCode/);
   assert.match(launcherConfigurationSource, /SHA256/);
   assert.match(launcherConfigurationSource, /isSymbolicLink/);
   assert.match(panelManagerSource, /CODEX_EXECUTABLE/);
