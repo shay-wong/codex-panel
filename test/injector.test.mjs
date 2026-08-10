@@ -149,6 +149,13 @@ test("validated executable launch preserves TCP and pipe security flags", () => 
   assert.match(source, /--remote-debugging-port=\$\{port\}/);
   assert.match(source, /--remote-debugging-pipe/);
   assert.match(source, /--disable-features=LocalNetworkAccessForSubframeNavigations/);
+
+  const tcpLaunchStart = source.indexOf("export function launchCodex");
+  const tcpLaunchEnd = source.indexOf("async function launchCodexWithPipe", tcpLaunchStart);
+  const tcpLaunchSource = source.slice(tcpLaunchStart, tcpLaunchEnd);
+  assert.match(tcpLaunchSource, /spawn\(\s*"\/usr\/bin\/open"/);
+  assert.match(tcpLaunchSource, /"-W",\s*"-n",\s*"-a",\s*applicationPath,\s*"--args"/);
+  assert.doesNotMatch(tcpLaunchSource, /spawn\(\s*validatedCodexExecutablePath/);
 });
 
 test("private CDP pipe launch and renderer recovery remain enabled", () => {
@@ -160,6 +167,29 @@ test("private CDP pipe launch and renderer recovery remain enabled", () => {
   assert.match(source, /hostBridge\.publishHeartbeat\(\)/);
   assert.match(source, /let openPending = options\.open && firstResults\.length === 0/);
   assert.match(source, /if \(idleAfterNormalExit\) continue/);
+});
+
+test("CSP bypass is activated by one controlled renderer reload", () => {
+  assert.match(
+    source,
+    /export async function waitForRendererReady\([\s\S]*?document\.readyState[\s\S]*?state\?\.href\?\.startsWith\("app:\/\/"\)/,
+  );
+  assert.match(
+    source,
+    /export async function reloadRenderer\([\s\S]*?Page\.loadEventFired[\s\S]*?Page\.reload/,
+  );
+
+  const injectionStart = source.indexOf("async function injectTarget");
+  const injectionEnd = source.indexOf("async function injectAll", injectionStart);
+  const injectionSource = source.slice(injectionStart, injectionEnd);
+  assert.match(
+    injectionSource,
+    /waitForRendererReady\(cdp, 15_000\)[\s\S]*?Page\.setBypassCSP[\s\S]*?registerInjectionSource\(cdp, source\)[\s\S]*?reloadRenderer\(cdp, 15_000\)/,
+  );
+  assert.match(
+    injectionSource,
+    /reconcileInjectionRuntime\([\s\S]*?reloadRenderer: \(\) => reloadRenderer\(cdp, 15_000\)/,
+  );
 });
 
 test("injector cleanup never terminates the launched ChatGPT process", () => {

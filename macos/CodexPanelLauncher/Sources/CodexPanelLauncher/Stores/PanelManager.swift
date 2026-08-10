@@ -150,7 +150,9 @@ final class PanelManager: ObservableObject {
       }
       lastError = nil
     } catch {
-      lastError = error.localizedDescription
+      let message = error.localizedDescription
+      lastError = message
+      NSLog("Codex Panel activation failed: %@", message)
     }
     await refreshStatuses()
   }
@@ -807,28 +809,16 @@ final class PanelManager: ObservableObject {
     let process = try configuredNodeProcess(
       arguments: [configuration.injectorPath] + arguments
     )
-    let output = Pipe()
-    process.standardOutput = output
-    process.standardError = output
-
-    return try await withCheckedThrowingContinuation { continuation in
-      process.terminationHandler = { finishedProcess in
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        if finishedProcess.terminationStatus == 0 {
-          continuation.resume(returning: text)
-        } else {
-          continuation.resume(throwing: ManagerError.commandFailed(
-            text.isEmpty ? "命令退出码 \(finishedProcess.terminationStatus)" : text
-          ))
-        }
-      }
-      do {
-        try process.run()
-      } catch {
-        continuation.resume(throwing: error)
-      }
+    let output = try await runOneShotCommand(process, timeoutSeconds: 10)
+    if output.terminationStatus == 0 {
+      return output.standardOutput
     }
+    let message = [output.standardError, output.standardOutput]
+      .filter { !$0.isEmpty }
+      .joined(separator: "\n")
+    throw ManagerError.commandFailed(
+      message.isEmpty ? "命令退出码 \(output.terminationStatus)" : message
+    )
   }
 
   private func configuredNodeProcess(arguments: [String]) throws -> Process {

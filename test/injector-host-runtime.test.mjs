@@ -248,6 +248,37 @@ test("attach is idempotent for the same source hash and does not open a closed p
   ]);
 });
 
+test("an explicit attach open request reopens a previously closed page", async () => {
+  const calls = [];
+  const result = await reconcileInjectionRuntime({
+    currentStatus: {
+      version: "0.6.13",
+      sourceHash: "current-hash",
+      pageVisible: false,
+      scriptIdentifier: "current-registration",
+    },
+    source: "current-source",
+    sourceHash: "current-hash",
+    shouldOpen: true,
+    removeRegisteredSource: async (identifier) => calls.push(["remove", identifier]),
+    registerCurrentSource: async (source) => {
+      calls.push(["register", source]);
+      return "replacement-registration";
+    },
+    reloadRenderer: async () => calls.push(["reload"]),
+    evaluateCurrentSource: async (source) => calls.push(["evaluate", source]),
+    publishRegistration: async (identifier) => calls.push(["publish", identifier]),
+    reopen: async () => calls.push(["open"]),
+  });
+
+  assert.deepEqual(result, {
+    replaced: false,
+    scriptIdentifier: "replacement-registration",
+    shouldRemainOpen: true,
+  });
+  assert.deepEqual(calls.at(-1), ["open"]);
+});
+
 test("attach reloads the renderer and restores an open page even when the source is current", async () => {
   const calls = [];
   const result = await reconcileInjectionRuntime({

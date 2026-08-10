@@ -83,6 +83,46 @@ test("the injector control socket requires the manager token and stays user-only
   );
 });
 
+test("the control client keeps the socket open for asynchronous handler replies", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-control-async-"));
+  const runtimeFile = path.join(directory, "launcher-runtime.json");
+  const controlSocket = injectorControlSocketPath(runtimeFile);
+  const startupToken = "manager-token";
+  const server = await startInjectorControlServer({
+    controlSocket,
+    startupToken,
+    handlers: {
+      status: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return { ready: true };
+      },
+      open: async () => ({}),
+      shutdown: async () => ({}),
+    },
+  });
+  context.after(async () => closeInjectorControlServer(server));
+  await publishInjectorRuntime(runtimeFile, {
+    pid: process.pid,
+    url: "http://127.0.0.1:47823",
+    controlSocket,
+    startupToken,
+    transport: "pipe",
+  });
+
+  assert.deepEqual(await sendInjectorControlRequest({
+    runtimeFile,
+    startupToken,
+    action: "status",
+    ownership: {
+      nodePath: process.execPath,
+      injectorPath: "/tmp/codex-injector.mjs",
+      readCommand: async () => (
+        `${process.execPath} /tmp/codex-injector.mjs --watch --startup-token manager-token`
+      ),
+    },
+  }), { ready: true });
+});
+
 test("a runtime descriptor cannot redirect the manager token to another socket", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-control-path-"));
   const runtimeFile = path.join(directory, "launcher-runtime.json");
@@ -145,6 +185,40 @@ test("legacy runtime descriptors defer to exact resident cleanup during upgrade"
     pid: process.pid,
   });
   assert.equal(JSON.parse(await readFile(runtimeFile, "utf8")).version, 1);
+});
+
+test("a reused stale runtime PID is discarded without signaling the unrelated process", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-control-stale-pid-"));
+  const runtimeFile = path.join(directory, "launcher-runtime.json");
+  const controlSocket = injectorControlSocketPath(runtimeFile);
+  const stalePID = 99_998;
+  await publishInjectorRuntime(runtimeFile, {
+    pid: stalePID,
+    url: "http://127.0.0.1:47823",
+    controlSocket,
+    startupToken: "stale-manager-token",
+    transport: "tcp",
+    port: 9_229,
+  });
+
+  const signals = [];
+  assert.deepEqual(await stopManagedInjector({
+    runtimeFile,
+    ownership: {
+      nodePath: "/trusted/node",
+      injectorPath: "/trusted/codex-injector.mjs",
+      readCommand: async () => "/unrelated/process --still-running",
+      killProcess: (_pid, signal) => {
+        if (signal !== 0) signals.push(signal);
+      },
+    },
+  }), {
+    stopped: false,
+    reason: "stale-ownership",
+    pid: stalePID,
+  });
+  assert.deepEqual(signals, []);
+  await assert.rejects(readFile(runtimeFile, "utf8"), { code: "ENOENT" });
 });
 
 test("managed shutdown revalidates ownership immediately before every signal", async (context) => {

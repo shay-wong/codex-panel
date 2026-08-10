@@ -190,7 +190,7 @@ function exchangeControlMessage(controlSocket, request) {
       }
     });
     socket.once("connect", () => {
-      socket.end(`${JSON.stringify(request)}\n`);
+      socket.write(`${JSON.stringify(request)}\n`);
     });
   });
 }
@@ -254,7 +254,12 @@ export async function stopManagedInjector({
     await removeInjectorRuntime(runtimeFile, descriptor);
     return { stopped: false, reason: "stale-descriptor", pid: descriptor.pid };
   }
-  await assertManagedRuntimeOwnership(descriptor, ownership);
+  try {
+    await assertManagedRuntimeOwnership(descriptor, ownership);
+  } catch {
+    await removeInjectorRuntime(runtimeFile, descriptor);
+    return { stopped: false, reason: "stale-ownership", pid: descriptor.pid };
+  }
   try {
     await exchangeControlMessage(descriptor.controlSocket, {
       action: "shutdown",

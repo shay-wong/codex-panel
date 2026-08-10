@@ -295,9 +295,21 @@ function validatedCodexExecutablePath(executablePath) {
 }
 
 export function launchCodex(executablePath, port) {
+  const validatedExecutablePath = validatedCodexExecutablePath(executablePath);
+  const macOSDirectory = path.dirname(validatedExecutablePath);
+  const contentsDirectory = path.dirname(macOSDirectory);
+  const applicationPath = path.dirname(contentsDirectory);
+  if (
+    path.basename(macOSDirectory) !== "MacOS"
+    || path.basename(contentsDirectory) !== "Contents"
+    || path.extname(applicationPath) !== ".app"
+  ) {
+    throw new Error(`Codex application executable is outside an App bundle: ${executablePath}`);
+  }
   const child = spawn(
-    validatedCodexExecutablePath(executablePath),
+    "/usr/bin/open",
     [
+      "-W", "-n", "-a", applicationPath, "--args",
       `--user-data-dir=${independentCodexProfilePath}`,
       "--remote-debugging-address=127.0.0.1",
       `--remote-debugging-port=${port}`,
@@ -469,6 +481,48 @@ function isCodexTarget(target) {
       !target.url?.includes("initialRoute=%2Favatar-overlay") &&
       (target.url?.startsWith("app://") || target.title === "Codex")
   );
+}
+
+export async function waitForRendererReady(cdp, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let lastState = "unknown";
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    try {
+      const evaluation = await cdp.send("Runtime.evaluate", {
+        expression: "({ readyState: document.readyState, href: window.location.href })",
+        returnByValue: true,
+      });
+      if (evaluation.exceptionDetails) {
+        throw new Error(
+          evaluation.exceptionDetails.exception?.description
+            || "Unable to inspect Codex renderer readiness",
+        );
+      }
+      const state = evaluation.result?.value;
+      lastState = state?.readyState || "unknown";
+      if (state?.readyState === "complete" && state?.href?.startsWith("app://")) {
+        return state;
+      }
+      lastError = null;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  const detail = lastError
+    ? `: ${lastError.message}`
+    : ` (last state: ${lastState})`;
+  throw new Error(`Timed out waiting for the Codex renderer to finish loading${detail}`);
+}
+
+export async function reloadRenderer(cdp, timeoutMs) {
+  await Promise.all([
+    cdp.waitFor("Page.loadEventFired", timeoutMs),
+    cdp.send("Page.reload"),
+  ]);
 }
 
 function tcpCdpRuntime(port) {
@@ -1480,20 +1534,23 @@ async function injectTarget(
   cdp.hostBridge = hostBridge;
   try {
     await cdp.send("Page.enable");
-    await cdp.send("Page.setBypassCSP", { enabled: true });
     await cdp.send("Runtime.enable");
     if (keepAlive) await hostBridge.install();
+    await waitForRendererReady(cdp, 15_000);
+    await cdp.send("Page.setBypassCSP", { enabled: true });
     if (keepAlive && attachExisting) {
       const currentStatus = await readInjectionStatus(cdp);
       const reconciled = await reconcileInjectionRuntime({
         currentStatus,
         source,
         sourceHash,
+        shouldOpen,
         removeRegisteredSource: (identifier) => cdp.send(
           "Page.removeScriptToEvaluateOnNewDocument",
           { identifier },
         ),
         registerCurrentSource: (currentSource) => registerInjectionSource(cdp, currentSource),
+        reloadRenderer: () => reloadRenderer(cdp, 15_000),
         evaluateCurrentSource: (currentSource) => evaluateInjectionSource(cdp, currentSource),
         publishRegistration: (identifier) => publishInjectionScriptIdentifier(cdp, identifier),
         reopen: () => cdp.send("Runtime.evaluate", {
@@ -1531,6 +1588,7 @@ async function injectTarget(
       await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
       if (keepAlive) await hostBridge.publishHeartbeat();
     });
+    await reloadRenderer(cdp, 15_000);
     await evaluateInjectionSource(cdp, source);
     await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
     if (keepAlive) await hostBridge.publishHeartbeat();
