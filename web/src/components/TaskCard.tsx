@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { attachmentContentUrl, resolvePersistedAttachmentUrl } from "../api";
 import {
   TASK_PRIORITIES,
@@ -83,16 +83,50 @@ function firstTaskImage(task: Task) {
 }
 
 function TaskCardMedia({ src }: { src: string }) {
-  const [clamped, setClamped] = useState(false);
+  const mediaRef = useRef<HTMLDivElement>(null);
+  const imageSizeRef = useRef<{ naturalWidth: number; naturalHeight: number } | null>(null);
+  const [presentation, setPresentation] = useState<{ width: number; clamped: boolean } | null>(null);
+  const clamped = presentation?.clamped ?? false;
+  const updatePresentation = useCallback(() => {
+    const media = mediaRef.current;
+    const imageSize = imageSizeRef.current;
+    if (!media || !imageSize) return;
+    const renderedWidth = Math.min(imageSize.naturalWidth, media.clientWidth);
+    const nextPresentation = {
+      width: imageSize.naturalWidth,
+      clamped: imageSize.naturalHeight * renderedWidth / imageSize.naturalWidth > 300,
+    };
+    setPresentation((current) => (
+      current?.width === nextPresentation.width && current.clamped === nextPresentation.clamped
+        ? current
+        : nextPresentation
+    ));
+  }, []);
+
+  useEffect(() => {
+    const media = mediaRef.current;
+    if (!media) return;
+    const observer = new ResizeObserver(updatePresentation);
+    observer.observe(media);
+    return () => observer.disconnect();
+  }, [updatePresentation]);
 
   return (
-    <div className={`task-card-media${clamped ? " is-clamped" : ""}`}>
+    <div
+      ref={mediaRef}
+      className={`task-card-media${clamped ? " is-clamped" : ""}`}
+      style={presentation ? { width: presentation.width } : undefined}
+    >
       <img
         src={src}
         alt=""
         loading="lazy"
         onLoad={(event) => {
-          setClamped(event.currentTarget.naturalWidth / event.currentTarget.naturalHeight < 3 / 4);
+          imageSizeRef.current = {
+            naturalWidth: event.currentTarget.naturalWidth,
+            naturalHeight: event.currentTarget.naturalHeight,
+          };
+          updatePresentation();
         }}
       />
     </div>

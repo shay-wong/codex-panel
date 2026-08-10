@@ -66,6 +66,12 @@ test("scrollbars stay proportional while the workflow node library hides its bar
   assert.match(styles, /\.workflow-node-groups::\-webkit-scrollbar \{[\s\S]*?display: none;[\s\S]*?width: 0;[\s\S]*?height: 0/);
 });
 
+test("native select options remain readable in dark theme", () => {
+  assert.match(styles, /:root\[data-theme="dark"\] select \{[\s\S]*?color-scheme: dark/);
+  assert.match(styles, /:root\[data-theme="dark"\] select option \{[\s\S]*?background-color: var\(--surface-raised\);[\s\S]*?color: var\(--text-primary\)/);
+  assert.match(styles, /:root\[data-theme="dark"\] select option:checked \{[\s\S]*?background-color: var\(--surface-active\)/);
+});
+
 test("each status column remains a drop target for the full board height", () => {
   assert.match(styles, /\.board \{[\s\S]*?align-items: stretch;[\s\S]*?height: 100%/);
   assert.match(styles, /\.board-column \{[\s\S]*?display: flex;[\s\S]*?flex-direction: column;[\s\S]*?height: 100%/);

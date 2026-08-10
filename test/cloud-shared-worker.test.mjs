@@ -451,6 +451,86 @@ test("R2 attachment upload, download, delete, and D1 failure compensation form o
   assert.deepEqual(await cloud.listAttachmentKeys(), beforeKeys);
 });
 
+test("permanent task deletion requires archiving and cleans D1 and R2", async () => {
+  await createProject("temp-cloud-delete");
+  const created = await createTask("temp-cloud-delete", "Delete permanently");
+  const task = created.body.task;
+  const keysBefore = await cloud.listAttachmentKeys();
+  const uploaded = await cloud.request(`/api/tasks/${task.id}/attachments`, {
+    method: "POST",
+    actorName: alice,
+    headers: {
+      "content-type": "text/plain",
+      "x-taskboard-filename": "evidence.txt",
+    },
+    body: "attachment",
+  });
+  assert.equal(uploaded.response.status, 201);
+  const comment = await cloud.request(`/api/tasks/${task.id}/comments`, {
+    method: "POST",
+    actorName: alice,
+    json: { body: "Comment with attachment" },
+  });
+  assert.equal(comment.response.status, 201);
+  const commentUpload = await cloud.request(
+    `/api/comments/${comment.body.comment.id}/attachments`,
+    {
+      method: "POST",
+      actorName: alice,
+      headers: {
+        "content-type": "text/plain",
+        "x-taskboard-filename": "comment-evidence.txt",
+      },
+      body: "comment attachment",
+    },
+  );
+  assert.equal(commentUpload.response.status, 201);
+  const attachmentIds = [uploaded.body.attachment.id, commentUpload.body.attachment.id];
+  const keysAfterUpload = await cloud.listAttachmentKeys();
+  for (const attachmentId of attachmentIds) {
+    assert.ok(keysAfterUpload.includes(attachmentId));
+  }
+
+  const activeDelete = await cloud.request(`/api/tasks/${task.id}`, {
+    method: "DELETE",
+    actorName: alice,
+    json: { version: task.version },
+  });
+  assert.equal(activeDelete.response.status, 409);
+  assert.equal(activeDelete.body.error.code, "TASK_NOT_ARCHIVED");
+
+  const archived = await cloud.request(`/api/tasks/${task.id}/archive`, {
+    method: "POST",
+    actorName: alice,
+    json: { version: task.version },
+  });
+  const deleted = await cloud.request(`/api/tasks/${task.id}`, {
+    method: "DELETE",
+    actorName: alice,
+    json: { version: archived.body.task.version },
+  });
+  assert.equal(deleted.response.status, 204);
+  assert.deepEqual(await cloud.listAttachmentKeys(), keysBefore);
+  assert.equal((await cloud.request(`/api/tasks/${task.id}`, { actorName: alice })).response.status, 404);
+  assert.equal(
+    await cloud.db.prepare("SELECT 1 FROM tasks WHERE id = ?").bind(task.id).first(),
+    null,
+  );
+  assert.equal(
+    await cloud.db.prepare("SELECT 1 FROM comments WHERE id = ?")
+      .bind(comment.body.comment.id).first(),
+    null,
+  );
+  const remainingAttachments = await cloud.db.prepare(`
+    SELECT id FROM attachments WHERE id IN (?, ?)
+  `).bind(...attachmentIds).all();
+  assert.deepEqual(remainingAttachments.results, []);
+  assert.equal((await cloud.request("/api/projects/temp-cloud-delete", {
+    method: "DELETE",
+    actorName: alice,
+  })).response.status, 204);
+});
+
 test("the global revision is monotonic and lets clients poll only when data changed", async () => {
   const initial = await cloud.request("/api/revisions?since=0", { actorName: alice });
   assert.equal(initial.response.status, 200);

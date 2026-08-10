@@ -296,14 +296,14 @@ test("complete App automation payloads cross the injected forwarder into the cur
   }
 });
 
-test("apply-policy is persisted and evaluated before returning automation state", () => {
+test("stored automation policies are reconciled before returning automation state", () => {
   assert.match(
     injectorSource,
-    /request\.operation === "apply-policy"[\s\S]*?updateAndApplyQuotaPolicy\(request, rpc\)[\s\S]*?: await reconcilePanelAutomation\(request, rpc\)/,
+    /request\.operation === "list"[\s\S]*?reconcileStoredAutomationPolicy\([\s\S]*?request\.panelProjectId,[\s\S]*?return stored \?\? reconcilePanelAutomation\(request, rpc\)/,
   );
   assert.match(
     injectorSource,
-    /const shouldRun = request\.enabledByUser[\s\S]*?quota\?\.state === "available"[\s\S]*?operation: shouldRun \? "ensure-active" : "pause"/,
+    /request\.operation === "apply-policy"[\s\S]*?updateAndApplyQuotaPolicy\(request, rpc\)[\s\S]*?: reconcilePanelAutomation\(request, rpc\)/,
   );
 });
 

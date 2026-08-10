@@ -24,12 +24,14 @@ import {
   archiveTask as archiveTaskRequest,
   createProject as createProjectRequest,
   createTask as createTaskRequest,
+  deleteArchivedTask as deleteArchivedTaskRequest,
   deleteProject as deleteProjectRequest,
   getCodexThreadProgress,
   getHostRuntime,
   getPanelRevision,
   getWorkflowWorkspace,
   getPanelMetadata,
+  listArchivedTasks,
   listDevelopmentContexts,
   listDeviceWorkspaces,
   listComments,
@@ -74,7 +76,7 @@ import {
 import { buildIssueUrl, readIssueIdentifier } from "./issueRoute";
 import {
   MAIN_STATUSES,
-  type SecondaryTaskStatus,
+  type OtherTaskTab,
 } from "./issueBoardStatuses";
 import { DEFAULT_LABELS } from "./labels";
 import {
@@ -281,6 +283,7 @@ const EVENT_NAMES = [
   "task.moved",
   "task.archived",
   "task.restored",
+  "task.deleted",
   "task.relation.updated",
   "comment.created",
   "comment.updated",
@@ -615,6 +618,7 @@ export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [hasLoadedTasks, setHasLoadedTasks] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -631,7 +635,10 @@ export function App() {
   const [otherTasksOpen, setOtherTasksOpen] = useState(false);
   const [otherTasksMounted, setOtherTasksMounted] = useState(false);
   const [otherTasksVisible, setOtherTasksVisible] = useState(false);
-  const [otherTasksStatus, setOtherTasksStatus] = useState<SecondaryTaskStatus>("backlog");
+  const [otherTasksTab, setOtherTasksTab] = useState<OtherTaskTab>("backlog");
+  const [restoringTaskId, setRestoringTaskId] = useState<string | null>(null);
+  const [pendingArchivedTaskDelete, setPendingArchivedTaskDelete] = useState<Task | null>(null);
+  const [deletingArchivedTaskId, setDeletingArchivedTaskId] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [newTaskDraft, setNewTaskDraft] = useState<NewTaskEditorDraft | null>(null);
   const [detailTaskIdentifier, setDetailTaskIdentifier] = useState<string | null>(
@@ -670,6 +677,8 @@ export function App() {
   const undoStackRef = useRef<UndoOperation[]>([]);
   const undoInFlightRef = useRef(false);
   const dragRegionRef = useRef<HTMLDivElement>(null);
+  const issueListRef = useRef<HTMLDivElement>(null);
+  const pendingIssueListScrollRef = useRef<{ projectId: string; scrollTop: number } | null>(null);
   const selectedProjectIdRef = useRef(selectedProjectId);
   selectedProjectIdRef.current = selectedProjectId;
 
@@ -948,17 +957,18 @@ export function App() {
         ...DEFAULT_AUTOMATION_OPTIONS,
       };
       const response = await sendAutomationRequest(
-        stored ? "apply-policy" : "list",
+        "list",
         options,
         stored?.automationId,
       );
       const items = Array.isArray(response.items)
         ? response.items.filter(isAutomationHostItem)
         : [];
+      const policy = isAutomationHostPolicy(response.policy) ? response.policy : null;
       if (!stored) {
-        const policy = isAutomationHostPolicy(response.policy) ? response.policy : null;
         if (!policy) return;
-        const item = items.find((candidate) => candidate.id === policy.automationId)
+        const item = (isAutomationHostItem(response.item) ? response.item : undefined)
+          ?? items.find((candidate) => candidate.id === policy.automationId)
           ?? (items.length === 1 ? items[0] : undefined);
         writeProjectAutomation(selectedProjectId, {
           automationId: item?.id ?? policy.automationId,
@@ -966,6 +976,7 @@ export function App() {
           status: item?.status ?? "PAUSED",
           enabledByUser: policy.enabledByUser,
           quotaAware: policy.quotaAware,
+          ...(response.quota ? { quota: response.quota } : {}),
           intervalMinutes: policy.intervalMinutes,
           model: policy.model,
           reasoningEffort: policy.reasoningEffort,
@@ -981,6 +992,8 @@ export function App() {
             ...stored,
             automationId: undefined,
             status: "PAUSED",
+            enabledByUser: policy?.enabledByUser ?? stored.enabledByUser,
+            quotaAware: policy?.quotaAware ?? stored.quotaAware,
             ...(response.quota ? { quota: response.quota } : {}),
           });
         }
@@ -992,9 +1005,15 @@ export function App() {
         automationId: item.id,
         codexProjectId: automationProjectContext.codexProjectId,
         status: item.status,
-        enabledByUser: stored.enabledByUser,
-        quotaAware: stored.quotaAware,
-        ...(response.quota ? { quota: response.quota } : {}),
+        enabledByUser: policy?.enabledByUser ?? stored.enabledByUser,
+        quotaAware: policy?.quotaAware ?? stored.quotaAware,
+        ...(
+          response.quota
+            ? { quota: response.quota }
+            : stored.quota
+              ? { quota: stored.quota }
+              : {}
+        ),
         intervalMinutes,
         model: item.model,
         reasoningEffort: item.reasoningEffort,
@@ -1062,6 +1081,12 @@ export function App() {
   function openTaskDetail(task: Pick<Task, "identifier" | "projectId">) {
     const fullTask = tasksRef.current.find((candidate) => candidate.identifier === task.identifier);
     if (fullTask) markTaskRead(fullTask);
+    if (issueListRef.current) {
+      pendingIssueListScrollRef.current = {
+        projectId: selectedProjectId,
+        scrollTop: issueListRef.current.scrollTop,
+      };
+    }
     closeContextMenu();
     setProjectMenuOpen(false);
     setDetailTaskIdentifier(task.identifier);
@@ -1084,11 +1109,31 @@ export function App() {
     window.history.replaceState(window.history.state, "", url);
   }
 
+  useLayoutEffect(() => {
+    if (detailTaskIdentifier) return;
+    const pendingScroll = pendingIssueListScrollRef.current;
+    if (!pendingScroll) return;
+    if (boardView !== "list" || pendingScroll.projectId !== selectedProjectId) {
+      pendingIssueListScrollRef.current = null;
+      return;
+    }
+    if (!issueListRef.current) return;
+    issueListRef.current.scrollTop = pendingScroll.scrollTop;
+    pendingIssueListScrollRef.current = null;
+  }, [boardView, detailTaskIdentifier, selectedProjectId]);
+
   useEffect(() => {
     function syncRouteFromLocation() {
       const url = new URL(window.location.href);
       const routeProjectId = url.searchParams.get("project") ?? GLOBAL_PROJECT_ID;
-      setDetailTaskIdentifier(readIssueIdentifier(url.search));
+      const routeIssueIdentifier = readIssueIdentifier(url.search);
+      if (routeIssueIdentifier && issueListRef.current) {
+        pendingIssueListScrollRef.current = {
+          projectId: selectedProjectId,
+          scrollTop: issueListRef.current.scrollTop,
+        };
+      }
+      setDetailTaskIdentifier(routeIssueIdentifier);
       if (routeProjectId === selectedProjectId) return;
       setBoardView(readProjectBoardView(routeProjectId));
       setSelectedProjectId(routeProjectId);
@@ -1368,9 +1413,13 @@ export function App() {
     if (!options.quiet) setTasksLoading(true);
     setLoadError(null);
     try {
-      const nextTasks = await listTasks(projectId, options.signal);
+      const [nextTasks, nextArchivedTasks] = await Promise.all([
+        listTasks(projectId, options.signal),
+        listArchivedTasks(projectId, options.signal),
+      ]);
       if (requestId !== tasksRequestRef.current) return;
       setTasks(sortTasks(nextTasks));
+      setArchivedTasks(sortTasks(nextArchivedTasks));
       setHasLoadedTasks(true);
     } catch (error) {
       if ((error as Error).name !== "AbortError" && requestId === tasksRequestRef.current) {
@@ -1384,6 +1433,7 @@ export function App() {
   useEffect(() => {
     if (!selectedProjectId) {
       setTasks([]);
+      setArchivedTasks([]);
       setHasLoadedTasks(false);
       return;
     }
@@ -1582,6 +1632,10 @@ export function App() {
       (task) => matchesTaskSearch(task, search) && matchesTaskFilters(task, filters),
     );
   }, [filters, search, tasks]);
+
+  const filteredArchivedTasks = useMemo(() => archivedTasks.filter(
+    (task) => matchesTaskSearch(task, search) && matchesTaskFilters(task, filters),
+  ), [archivedTasks, filters, search]);
 
   const activeFilterCount = taskFilterCount(filters);
   const hasActiveTaskFilters = Boolean(search.trim()) || activeFilterCount > 0;
@@ -1953,8 +2007,13 @@ export function App() {
     try {
       const archived = await archiveTaskRequest(task);
       setTasks((current) => current.filter((candidate) => candidate.id !== task.id));
+      setArchivedTasks((current) => sortTasks([
+        ...current.filter((candidate) => candidate.id !== archived.id),
+        archived,
+      ]));
       pushUndo(`${task.identifier} 已归档。`, async () => {
         const restored = await restoreTaskRequest(archived);
+        setArchivedTasks((current) => current.filter((candidate) => candidate.id !== restored.id));
         setTasks((current) => sortTasks([
           ...current.filter((candidate) => candidate.id !== restored.id),
           restored,
@@ -1965,6 +2024,47 @@ export function App() {
         ? "该议题已在其他位置更新，看板已重新同步。"
         : errorMessage(error));
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
+    }
+  }
+
+  async function restoreArchivedTask(task: Task) {
+    setActionError(null);
+    setRestoringTaskId(task.id);
+    try {
+      const restored = await restoreTaskRequest(task);
+      setArchivedTasks((current) => current.filter((candidate) => candidate.id !== restored.id));
+      setTasks((current) => sortTasks([
+        ...current.filter((candidate) => candidate.id !== restored.id),
+        restored,
+      ]));
+      setAnnouncement(`${restored.identifier} 已恢复。`);
+    } catch (error) {
+      setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
+        ? "该议题已在其他位置更新，看板已重新同步。"
+        : errorMessage(error));
+      if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
+    } finally {
+      setRestoringTaskId(null);
+    }
+  }
+
+  async function deletePendingArchivedTask() {
+    if (!pendingArchivedTaskDelete || deletingArchivedTaskId) return;
+    const task = pendingArchivedTaskDelete;
+    setActionError(null);
+    setDeletingArchivedTaskId(task.id);
+    try {
+      await deleteArchivedTaskRequest(task);
+      setArchivedTasks((current) => current.filter((candidate) => candidate.id !== task.id));
+      setPendingArchivedTaskDelete(null);
+      setAnnouncement(`${task.identifier} 已永久删除。`);
+    } catch (error) {
+      setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
+        ? "该议题已在其他位置更新，看板已重新同步。"
+        : errorMessage(error));
+      if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
+    } finally {
+      setDeletingArchivedTaskId(null);
     }
   }
 
@@ -2395,18 +2495,31 @@ export function App() {
             )}
           </div>
           {(boardView === "issues" || boardView === "list" || boardView === "gantt") && <div className="toolbar-tools">
-            <label className={`search-field${search ? " has-value" : ""}`} title="搜索议题 (/)" >
+            <div className={`search-field${search ? " has-value" : ""}`} title="搜索议题 (/)" >
               <PanelIcon className="search-icon" name="search" />
-              <span className="sr-only">搜索议题</span>
               <input
                 id="task-search"
                 type="search"
+                aria-label="搜索议题"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="搜索议题…"
               />
               {!search && <kbd>/</kbd>}
-            </label>
+              {search && (
+                <button
+                  className="search-clear"
+                  type="button"
+                  aria-label="清除搜索"
+                  onClick={() => {
+                    setSearch("");
+                    document.getElementById("task-search")?.focus();
+                  }}
+                >
+                  <LinearIcon name="close" />
+                </button>
+              )}
+            </div>
             {boardView === "gantt" && (
               <div className="gantt-toolbar-controls">
                 <label className="gantt-hide-completed">
@@ -2512,6 +2625,7 @@ export function App() {
           />
         ) : boardView === "list" ? (
           <IssueListView
+            scrollRef={issueListRef}
             tasks={filteredTasks}
             presentations={taskPresentations}
             currentUser={currentUser}
@@ -2604,12 +2718,13 @@ export function App() {
                 {otherTasksMounted && (
                   <OtherTasksPanel
                     open={otherTasksVisible}
-                    activeStatus={otherTasksStatus}
+                    activeTab={otherTasksTab}
                     tasksByStatus={tasksByStatus}
+                    archivedTasks={filteredArchivedTasks}
                     presentations={taskPresentations}
                     now={processingNow}
                     hasActiveFilters={hasActiveTaskFilters}
-                    isDropTarget={dropTarget === otherTasksStatus}
+                    isDropTarget={otherTasksTab !== "archived" && dropTarget === otherTasksTab}
                     draggedTaskId={draggedTaskId}
                     draggedTaskHeight={draggedTaskHeight}
                     movingTaskId={movingTaskId}
@@ -2617,8 +2732,12 @@ export function App() {
                     contextMenuTaskId={contextMenu?.taskId ?? null}
                     availableLabels={availableLabels}
                     currentUser={currentUser}
-                    onStatusChange={setOtherTasksStatus}
+                    restoringTaskId={restoringTaskId}
+                    deletingTaskId={deletingArchivedTaskId}
+                    onTabChange={setOtherTasksTab}
                     onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
+                    onRestore={(task) => void restoreArchivedTask(task)}
+                    onDelete={setPendingArchivedTaskDelete}
                     onEdit={openTaskDetail}
                     onUpdate={updateTaskProperties}
                     onContextMenu={(task, position) => setContextMenu({ taskId: task.id, ...position })}
@@ -2760,6 +2879,50 @@ export function App() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {pendingArchivedTaskDelete && (
+        <div
+          className="delete-backdrop"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget && !deletingArchivedTaskId) {
+              setPendingArchivedTaskDelete(null);
+            }
+          }}
+        >
+          <div
+            className="delete-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="archived-task-delete-title"
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !deletingArchivedTaskId) {
+                setPendingArchivedTaskDelete(null);
+              }
+            }}
+          >
+            <h2 id="archived-task-delete-title">永久删除 {pendingArchivedTaskDelete.identifier}？</h2>
+            <p>“{pendingArchivedTaskDelete.title}”及其评论和附件将被永久删除，此操作无法撤销。</p>
+            <div>
+              <button
+                className="button secondary"
+                type="button"
+                disabled={deletingArchivedTaskId !== null}
+                onClick={() => setPendingArchivedTaskDelete(null)}
+              >
+                取消
+              </button>
+              <button
+                className="button danger"
+                type="button"
+                disabled={deletingArchivedTaskId !== null}
+                onClick={() => void deletePendingArchivedTask()}
+              >
+                {deletingArchivedTaskId ? "删除中…" : "永久删除"}
+              </button>
+            </div>
           </div>
         </div>
       )}

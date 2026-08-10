@@ -1779,6 +1779,86 @@ test("issue attachments can be uploaded, listed, opened, downloaded, and deleted
   assert.equal(deletedContent.body.error.code, "ATTACHMENT_NOT_FOUND");
 });
 
+test("permanent task deletion requires archiving and removes attachment files", async () => {
+  const baseUrl = await startServer();
+  await request(baseUrl, "/api/projects", {
+    method: "POST",
+    body: { id: "temp-delete-project", name: "Delete project", workspacePath: null },
+  });
+  const created = await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { projectId: "temp-delete-project", title: "Delete permanently" },
+  });
+  const task = created.body.task;
+  const uploaded = await request(baseUrl, `/api/tasks/${task.id}/attachments`, {
+    method: "POST",
+    headers: {
+      "content-type": "text/plain",
+      "x-taskboard-filename": "evidence.txt",
+    },
+    body: "attachment",
+  });
+  assert.equal(uploaded.response.status, 201);
+  const comment = await request(baseUrl, `/api/tasks/${task.id}/comments`, {
+    method: "POST",
+    body: { body: "Comment with attachment" },
+  });
+  assert.equal(comment.response.status, 201);
+  const commentUpload = await request(
+    baseUrl,
+    `/api/comments/${comment.body.comment.id}/attachments`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "text/plain",
+        "x-taskboard-filename": "comment-evidence.txt",
+      },
+      body: "comment attachment",
+    },
+  );
+  assert.equal(commentUpload.response.status, 201);
+  const attachmentIds = [uploaded.body.attachment.id, commentUpload.body.attachment.id];
+  const storagePaths = attachmentIds.map((attachmentId) => path.join(
+    runningApps.at(-1).app.options.attachmentsDirectory,
+    attachmentId,
+  ));
+  await Promise.all(storagePaths.map((storagePath) => access(storagePath)));
+
+  const activeDelete = await request(baseUrl, `/api/tasks/${task.id}`, {
+    method: "DELETE",
+    body: { version: task.version },
+  });
+  assert.equal(activeDelete.response.status, 409);
+  assert.equal(activeDelete.body.error.code, "TASK_NOT_ARCHIVED");
+
+  const archived = await request(baseUrl, `/api/tasks/${task.id}/archive`, {
+    method: "POST",
+    body: { version: task.version },
+  });
+  const deleted = await request(baseUrl, `/api/tasks/${task.id}`, {
+    method: "DELETE",
+    body: { version: archived.body.task.version },
+  });
+  assert.equal(deleted.response.status, 204);
+  await Promise.all(storagePaths.map((storagePath) => (
+    assert.rejects(access(storagePath), { code: "ENOENT" })
+  )));
+  assert.equal((await request(baseUrl, `/api/tasks/${task.id}`)).response.status, 404);
+  const database = runningApps.at(-1).app.database.database;
+  assert.equal(database.prepare("SELECT 1 FROM tasks WHERE id = ?").get(task.id), undefined);
+  assert.equal(
+    database.prepare("SELECT 1 FROM comments WHERE id = ?").get(comment.body.comment.id),
+    undefined,
+  );
+  const attachmentExists = database.prepare("SELECT 1 FROM attachments WHERE id = ?");
+  for (const attachmentId of attachmentIds) {
+    assert.equal(attachmentExists.get(attachmentId), undefined);
+  }
+  assert.equal((await request(baseUrl, "/api/projects/temp-delete-project", {
+    method: "DELETE",
+  })).response.status, 204);
+});
+
 test("comments support attachments and deleting a comment removes its files", async () => {
   const baseUrl = await startServer();
   const createTaskResult = await request(baseUrl, "/api/tasks", {

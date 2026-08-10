@@ -9,6 +9,14 @@ const componentFiles = (await readdir(componentsUrl))
 const productFiles = [new URL("../web/src/App.tsx", import.meta.url), ...componentFiles];
 const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 const iconSource = await readFile(new URL("../web/src/components/LinearIcon.tsx", import.meta.url), "utf8");
+const panelIconSource = await readFile(
+  new URL("../web/src/components/PanelIcon.tsx", import.meta.url),
+  "utf8",
+);
+const dashboardStyles = await readFile(
+  new URL("../web/src/components/DashboardView.css", import.meta.url),
+  "utf8",
+);
 
 test("product UI uses the reverse-engineered Linear icon system", async () => {
   for (const file of productFiles) {
@@ -43,4 +51,13 @@ test("new workflow statuses use the central Linear icon mapping and semantic col
   assert.match(styles, /\.status-icon-review \{ color: var\(--status-review\); \}/);
   assert.match(styles, /\.status-icon-blocked \{ color: var\(--status-blocked\); \}/);
   assert.match(styles, /\.status-icon-canceled \{ color: var\(--status-canceled\); \}/);
+});
+
+test("dark mode keeps monochrome image icons visible without changing colored icons", () => {
+  assert.match(panelIconSource, /const MONOCHROME_ICONS = new Set<PanelIconName>/);
+  assert.match(panelIconSource, /MONOCHROME_ICONS\.has\(name\) \? "panel-icon-monochrome"/);
+  assert.match(styles, /\[data-theme="dark"\] \.panel-icon-monochrome,[\s\S]*?filter: invert\(1\)/);
+  assert.match(styles, /\[data-theme="dark"\] \.detail-copy-action-icon img/);
+  assert.match(styles, /\[data-theme="dark"\] \.gantt_tree_icon img/);
+  assert.match(dashboardStyles, /\[data-theme="dark"\][^{]*\.dashboard-upcoming-row img \{\s*filter: invert\(1\)/);
 });

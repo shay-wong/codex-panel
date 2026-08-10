@@ -24,25 +24,25 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`05de40b57eb011ba852c2998444bb05b55a33dbb`
-- 精确已合并上游基线：`05de40b57eb011ba852c2998444bb05b55a33dbb`
-- 比较范围：`05de40b57eb011ba852c2998444bb05b55a33dbb..HEAD`
+- 本次合并的上游父提交：`0ddec1f2ccc2effa420882ef7a2d84e5d22258dd`
+- 精确已合并上游基线：`0ddec1f2ccc2effa420882ef7a2d84e5d22258dd`
+- 比较范围：`0ddec1f2ccc2effa420882ef7a2d84e5d22258dd..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
-本次上游合并吸收了 `0.2.0` 的 Dashboard、列表、甘特图、日期、项目移动、完整活动流、云端迁移、AI 进程回收、私有 CDP pipe 与不透明 iframe 加固。上游的 Tauri App、updater、发布工作流和 `taskctl` 打包链与 Fork 已有 Swift 管理器冲突，未纳入 Fork 产品入口；其中有价值的有限恢复、运行状态和更新发现能力已按 Swift 管理器现有生命周期重新实现。私有 CDP pipe 仍保留在 Node 启动器中，但没有用于 Swift 管理器，因为它无法在管理器退出而 ChatGPT 继续运行后重新接管。
+本次上游合并吸收了 `0.2.0` 的 Dashboard、列表、甘特图、日期、项目移动、完整活动流、云端迁移、AI 进程回收、私有 CDP pipe 与不透明 iframe 加固，并继续吸收 `0.2.1` 的 Dashboard 运行会话对齐、归档删除原子性、自动认领生命周期、搜索清除、Gantt 响应与清理、暗黑图标等修复。上游的 Tauri App、updater、发布工作流和 `taskctl` 打包链与 Fork 已有 Swift 管理器冲突，未纳入 Fork 产品入口；其中有价值的有限恢复、运行状态和更新发现能力已按 Swift 管理器现有生命周期重新实现。私有 CDP pipe 仍保留在 Node 启动器中，但没有用于 Swift 管理器，因为它无法在管理器退出而 ChatGPT 继续运行后重新接管。
 
 ## Fork 发布版本策略
 
 - 权威上游版本来源：精确合并基线中的 `package.json`
 - 当前 Fork 版本来源：`package.json` 和 `package-lock.json` 的根包条目
-- 精确基线的上游版本：`0.2.0`
+- 精确基线的上游版本：`0.2.1`
 - 当前 Fork 版本：`0.1.0`
 - 匹配的 Fork 标签或 GitHub Release：无
 
 每个 Fork 发布版本都必须使用 `<upstream-version>-fork.<N>`。上游版本变化时从 `fork.1` 开始；同一上游版本的后续 Fork 发布递增 `N`。已准备但尚未发布的版本号在未被占用时可以保留。
 
-当前不带后缀的 `0.1.0` 不是有效的 Fork 发布版本，并且落后于已合并上游的 `0.2.0`。下一个规范化 Fork 发布版本是 `0.2.0-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
+当前不带后缀的 `0.1.0` 不是有效的 Fork 发布版本，并且落后于已合并上游的 `0.2.1`。下一个规范化 Fork 发布版本是 `0.2.1-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
 
 ## 活跃 Fork 能力
 

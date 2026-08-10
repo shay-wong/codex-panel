@@ -1268,14 +1268,33 @@ export class PanelDatabase {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const project = this.database.prepare(`
-        SELECT id, next_task_number FROM projects WHERE id = ?
+        SELECT
+          projects.id,
+          projects.next_task_number,
+          (
+            SELECT tasks.identifier
+            FROM tasks
+            WHERE tasks.project_id = projects.id
+            ORDER BY tasks.created_at, tasks.id
+            LIMIT 1
+          ) AS first_identifier
+        FROM projects
+        WHERE projects.id = ?
       `).get(input.projectId);
       if (!project) {
         throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${input.projectId}' does not exist`);
       }
 
-      const number = project.next_task_number;
-      const identifier = `${projectPrefix(project.id)}-${number}`;
+      const prefix = project.first_identifier
+        ? project.first_identifier.replace(/-\d+$/, "")
+        : projectPrefix(project.id);
+      const maximum = this.database.prepare(`
+        SELECT MAX(CAST(substr(identifier, ?) AS INTEGER)) AS number
+        FROM tasks
+        WHERE identifier GLOB ?
+      `).get(prefix.length + 2, `${prefix}-[0-9]*`).number;
+      const number = Math.max(project.next_task_number, maximum === null ? 1 : maximum + 1);
+      const identifier = `${prefix}-${number}`;
       const id = randomUUID();
       const timestamp = now();
       let sortOrder = input.sortOrder;
@@ -1289,8 +1308,8 @@ export class PanelDatabase {
       }
 
       this.database.prepare(`
-        UPDATE projects SET next_task_number = next_task_number + 1, updated_at = ? WHERE id = ?
-      `).run(timestamp, input.projectId);
+        UPDATE projects SET next_task_number = ?, updated_at = ? WHERE id = ?
+      `).run(number + 1, timestamp, input.projectId);
       this.database.prepare(`
         INSERT INTO tasks (
           id, identifier, project_id, title, description, status, priority, labels,
@@ -1562,6 +1581,29 @@ export class PanelDatabase {
       throw error;
     }
     return this.getTask(current.id);
+  }
+
+  deleteArchivedTask(id, version) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.#requireTask(id);
+      this.#requireVersion(current, version);
+      if (current.archivedAt === null) {
+        throw new ApiError(409, "TASK_NOT_ARCHIVED", "Only archived tasks can be deleted");
+      }
+      const attachmentIds = this.database.prepare(
+        "SELECT id FROM attachments WHERE task_id = ? ORDER BY created_at, id",
+      ).all(current.id).map((attachment) => attachment.id);
+      const result = this.database.prepare(
+        "DELETE FROM tasks WHERE id = ? AND version = ? AND archived_at IS NOT NULL",
+      ).run(current.id, version);
+      if (result.changes !== 1) this.#throwMissingOrConflict(id, version);
+      this.database.exec("COMMIT");
+      return { task: current, attachmentIds };
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   addTaskRelation(id, version, type, relatedId, threadId, actor) {

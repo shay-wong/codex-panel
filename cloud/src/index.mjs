@@ -1334,7 +1334,26 @@ async function listTasks(env, filters) {
 }
 
 async function createTask(env, input, actor) {
-  await requireProject(env, input.projectId);
+  const project = await env.DB.prepare(`
+    SELECT
+      projects.id,
+      (
+        SELECT tasks.identifier
+        FROM tasks
+        WHERE tasks.project_id = projects.id
+        ORDER BY tasks.created_at, tasks.id
+        LIMIT 1
+      ) AS first_identifier
+    FROM projects
+    WHERE projects.id = ?
+  `).bind(input.projectId).first();
+  if (!project) {
+    throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${input.projectId}' does not exist`);
+  }
+  const prefix = project.first_identifier
+    ? project.first_identifier.replace(/-\d+$/, "")
+    : projectPrefix(project.id);
+  const suffixStart = prefix.length + 2;
   let sortOrder = input.sortOrder;
   if (sortOrder === undefined) {
     const row = await env.DB.prepare(`
@@ -1359,7 +1378,14 @@ async function createTask(env, input, actor) {
       )
       SELECT
         ?,
-        ? || '-' || CAST(next_task_number AS TEXT),
+        ? || '-' || CAST(MAX(
+          projects.next_task_number,
+          COALESCE((
+            SELECT MAX(CAST(substr(tasks.identifier, ?) AS INTEGER)) + 1
+            FROM tasks
+            WHERE tasks.identifier GLOB ?
+          ), 1)
+        ) AS TEXT),
         projects.id,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
@@ -1368,7 +1394,9 @@ async function createTask(env, input, actor) {
       WHERE projects.id = ?
     `).bind(
       id,
-      projectPrefix(input.projectId),
+      prefix,
+      suffixStart,
+      `${prefix}-[0-9]*`,
       input.title,
       input.description,
       input.status,
@@ -1397,9 +1425,15 @@ async function createTask(env, input, actor) {
     ),
     env.DB.prepare(`
       UPDATE projects
-      SET next_task_number = next_task_number + 1, updated_at = ?
+      SET
+        next_task_number = (
+          SELECT CAST(substr(identifier, ?) AS INTEGER) + 1
+          FROM tasks
+          WHERE id = ?
+        ),
+        updated_at = ?
       WHERE id = ?
-    `).bind(timestamp, input.projectId),
+    `).bind(suffixStart, id, timestamp, input.projectId),
   ]);
   if (!changed(results[0]) || !changed(results[1])) {
     throw new ApiError(
@@ -1696,6 +1730,28 @@ async function restoreTask(env, id, input, actor) {
     );
   }
   return getTask(env, current.id);
+}
+
+async function deleteArchivedTask(env, id, expectedVersion) {
+  const current = await requireTaskRow(env, id);
+  assertTaskVersion(current, expectedVersion);
+  if (current.archived_at === null) {
+    throw new ApiError(409, "TASK_NOT_ARCHIVED", "Only archived tasks can be deleted");
+  }
+  const results = await env.DB.batch([
+    env.DB.prepare("SELECT id FROM attachments WHERE task_id = ?").bind(current.id),
+    env.DB.prepare(`
+      DELETE FROM tasks
+      WHERE id = ? AND version = ? AND archived_at IS NOT NULL
+    `).bind(current.id, expectedVersion),
+  ]);
+  if (!changed(results[1])) {
+    const latest = await requireTaskRow(env, current.id);
+    assertTaskVersion(latest, expectedVersion);
+    throw new ApiError(409, "TASK_NOT_ARCHIVED", "Only archived tasks can be deleted");
+  }
+  const attachmentIds = results[0].results.map((attachment) => attachment.id);
+  await Promise.all(attachmentIds.map((attachmentId) => env.ATTACHMENTS.delete(attachmentId)));
 }
 
 function relationEndpoints(type, taskId, relatedTaskId) {
@@ -2568,6 +2624,11 @@ async function routeApi(request, env, actor, url) {
         ),
       });
     }
+    if (!action && request.method === "DELETE") {
+      const { version } = parseVersionMutation(await readJson(request));
+      await deleteArchivedTask(env, taskId, version);
+      return empty(204);
+    }
     if (action === "move" && request.method === "POST") {
       return json(200, {
         task: await moveTask(env, taskId, parseMove(await readJson(request)), actor),
@@ -2593,7 +2654,7 @@ async function routeApi(request, env, actor, url) {
         ),
       });
     }
-    methodNotAllowed(action ? ["POST"] : ["GET", "PATCH"]);
+    methodNotAllowed(action ? ["POST"] : ["GET", "PATCH", "DELETE"]);
   }
 
   throw new ApiError(404, "NOT_FOUND", "API route not found");

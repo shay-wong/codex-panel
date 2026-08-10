@@ -13,6 +13,7 @@ import { withoutPanelLauncherEnvironment } from "../shared/codex-environment.mjs
 import {
   parsePanelAutomationHostRequest,
   reconcilePanelAutomation,
+  panelAutomationPolicyOperation,
 } from "../shared/panel-automation.mjs";
 import {
   findResidentInjectorPids,
@@ -927,21 +928,40 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
   }
 }
 
-async function applyPanelAutomationPolicy(request, rpc, stillCurrent = () => true) {
+async function applyPanelAutomationPolicy(
+  request,
+  rpc,
+  stillCurrent = () => true,
+  { explicit = false, previousQuotaState } = {},
+) {
   const quota = request.quotaAware
     ? await readCodexQuotaStatus(request.model)
     : null;
   if (!stillCurrent()) return { quota, stale: true };
-  const shouldRun = request.enabledByUser
-    && (!request.quotaAware || quota?.state === "available");
-  const result = await reconcilePanelAutomation(
-    { ...request, operation: shouldRun ? "ensure-active" : "pause" },
-    rpc,
-  );
-  if (result?.error === "not-found") {
-    return { ...(quota ? { quota } : {}) };
+  let listed = null;
+  let currentItem;
+  if (!explicit && request.enabledByUser) {
+    listed = await reconcilePanelAutomation({ ...request, operation: "list" }, rpc);
+    const items = Array.isArray(listed.items) ? listed.items : [];
+    currentItem = (
+      request.automationId
+        ? items.find((item) => item.id === request.automationId)
+        : null
+    ) ?? items[0];
   }
-  return { ...result, ...(quota ? { quota } : {}) };
+  const operation = panelAutomationPolicyOperation(request, {
+    explicit,
+    previousQuotaState,
+    quotaState: quota?.state,
+    currentStatus: currentItem?.status,
+  });
+  const result = operation === "list"
+    ? { item: currentItem, items: listed.items }
+    : await reconcilePanelAutomation({ ...request, operation }, rpc);
+  if (result?.error === "not-found") {
+    return { operation, ...(quota ? { quota } : {}) };
+  }
+  return { ...result, operation, ...(quota ? { quota } : {}) };
 }
 
 function storedAutomationPolicy(request) {
@@ -961,13 +981,16 @@ function storedAutomationPolicy(request) {
 }
 
 function restoredAutomationPolicy(value) {
-  return parsePanelAutomationHostRequest({
-    ...value,
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const { quota, ...stored } = value;
+  const request = parsePanelAutomationHostRequest({
+    ...stored,
     id: "restored-policy",
     action: "automation",
     requestId: "restored-policy",
     operation: "apply-policy",
   });
+  return request ? { request, ...(quota ? { quota } : {}) } : null;
 }
 
 async function ensureQuotaPoliciesLoaded() {
@@ -981,9 +1004,12 @@ async function ensureQuotaPoliciesLoaded() {
     }
     if (!stored || typeof stored !== "object" || Array.isArray(stored)) return;
     for (const value of Object.values(stored)) {
-      const request = restoredAutomationPolicy(value);
-      if (!request) continue;
-      quotaPolicyRecords.set(request.panelProjectId, { version: 1, request });
+      const restored = restoredAutomationPolicy(value);
+      if (!restored) continue;
+      quotaPolicyRecords.set(restored.request.panelProjectId, {
+        version: 1,
+        ...restored,
+      });
     }
   })();
   return quotaPoliciesLoadPromise;
@@ -993,7 +1019,10 @@ function persistQuotaPolicies() {
   const data = Object.fromEntries(
     [...quotaPolicyRecords.entries()].map(([projectId, record]) => [
       projectId,
-      storedAutomationPolicy(record.request),
+      {
+        ...storedAutomationPolicy(record.request),
+        ...(record.quota ? { quota: record.quota } : {}),
+      },
     ]),
   );
   quotaPoliciesWritePromise = quotaPoliciesWritePromise
@@ -1057,7 +1086,7 @@ function scheduleQuotaPolicyCheck(record, result) {
   quotaPolicyTimers.set(key, timer);
 }
 
-function enqueueQuotaPolicyMutation(record, rpc) {
+function enqueueQuotaPolicyMutation(record, rpc, { explicit = false } = {}) {
   const key = record.request.panelProjectId;
   const previous = quotaPolicyQueues.get(key) ?? Promise.resolve();
   const run = previous
@@ -1069,12 +1098,22 @@ function enqueueQuotaPolicyMutation(record, rpc) {
         current.request,
         rpc,
         () => quotaPolicyRecords.get(key)?.version === current.version,
+        {
+          explicit,
+          previousQuotaState: current.quota?.state,
+        },
       );
       if (result.stale) return result;
-      if (result.item?.id && quotaPolicyRecords.get(key)?.version === current.version) {
-        current.request = { ...current.request, automationId: result.item.id };
-        await persistQuotaPolicies();
+      if (!explicit && result.operation === "list" && result.item?.status === "PAUSED") {
+        current.version += 1;
+        current.request = { ...current.request, enabledByUser: false };
       }
+      if (result.item?.id) {
+        current.request = { ...current.request, automationId: result.item.id };
+      }
+      if (current.request.quotaAware && result.quota) current.quota = result.quota;
+      else delete current.quota;
+      await persistQuotaPolicies();
       scheduleQuotaPolicyCheck(current, result);
       return result;
     });
@@ -1091,11 +1130,12 @@ async function updateAndApplyQuotaPolicy(request, rpc) {
   const record = {
     version: (previous?.version ?? 0) + 1,
     request,
+    ...(request.quotaAware && previous?.quota ? { quota: previous.quota } : {}),
   };
   quotaPolicyRecords.set(request.panelProjectId, record);
   try {
     await persistQuotaPolicies();
-    return await enqueueQuotaPolicyMutation(record, rpc);
+    return await enqueueQuotaPolicyMutation(record, rpc, { explicit: true });
   } catch (error) {
     if (quotaPolicyRecords.get(request.panelProjectId)?.version === record.version) {
       if (previous) quotaPolicyRecords.set(request.panelProjectId, previous);
@@ -1106,10 +1146,17 @@ async function updateAndApplyQuotaPolicy(request, rpc) {
   }
 }
 
-async function readStoredAutomationPolicy(projectId) {
+async function reconcileStoredAutomationPolicy(projectId, rpc) {
   await ensureQuotaPoliciesLoaded();
   const record = quotaPolicyRecords.get(projectId);
-  return record ? storedAutomationPolicy(record.request) : null;
+  if (!record) return null;
+  const result = await enqueueQuotaPolicyMutation(record, rpc);
+  const current = quotaPolicyRecords.get(projectId);
+  return {
+    ...result,
+    policy: storedAutomationPolicy(current.request),
+    ...(current.quota ? { quota: current.quota } : {}),
+  };
 }
 
 async function enqueueCurrentQuotaPolicy(projectId) {
@@ -1312,14 +1359,16 @@ function installPanelHostBinding(cdp, supervisor, startupToken) {
             method,
             body,
           );
-          const result = request.operation === "apply-policy"
-            ? await updateAndApplyQuotaPolicy(request, rpc)
-            : await reconcilePanelAutomation(request, rpc);
           if (request.operation === "list") {
-            const policy = await readStoredAutomationPolicy(request.panelProjectId);
-            return { ...result, ...(policy ? { policy } : {}) };
+            const stored = await reconcileStoredAutomationPolicy(
+              request.panelProjectId,
+              rpc,
+            );
+            return stored ?? reconcilePanelAutomation(request, rpc);
           }
-          return result;
+          return request.operation === "apply-policy"
+            ? updateAndApplyQuotaPolicy(request, rpc)
+            : reconcilePanelAutomation(request, rpc);
         })()
       ),
       prefill: (request) => (

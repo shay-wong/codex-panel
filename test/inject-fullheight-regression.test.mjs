@@ -287,7 +287,7 @@ test("Panel fills the workspace, opens HTTPS links and revokes hostile iframe na
       "--virtual-time-budget=12000",
       "--dump-dom",
       url,
-    ], { maxBuffer: 5 * 1024 * 1024, timeout: 20_000 }));
+    ], { maxBuffer: 5 * 1024 * 1024, timeout: 30_000 }));
   } catch (error) {
     if (!String(error?.stdout ?? "").trim()) {
       t.skip("Chrome or Chromium cannot run headless dump-dom in this environment");

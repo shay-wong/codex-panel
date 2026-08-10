@@ -145,8 +145,25 @@ test("pending completion reconciles the optimistic draft to confirmed host state
 });
 
 test("opening settings and changing projects reconcile with the host list", () => {
-  assert.match(appSource, /sendAutomationRequest\(\s*stored \? "apply-policy" : "list",\s*options,\s*stored\?\.automationId,\s*\)/);
+  const reconcileSource = appSource.slice(
+    appSource.indexOf("const reconcileProjectAutomation"),
+    appSource.indexOf("const saveProjectAutomation"),
+  );
+  const saveSource = appSource.slice(
+    appSource.indexOf("const saveProjectAutomation"),
+    appSource.indexOf("function openTaskDetail"),
+  );
+  assert.match(
+    reconcileSource,
+    /sendAutomationRequest\(\s*"list",\s*options,\s*stored\?\.automationId,\s*\)/,
+  );
+  assert.doesNotMatch(reconcileSource, /"apply-policy"/);
+  assert.match(
+    saveSource,
+    /sendAutomationRequest\("apply-policy", options, stored\?\.automationId\)/,
+  );
   assert.match(appSource, /const policy = isAutomationHostPolicy\(response\.policy\) \? response\.policy : null/);
+  assert.match(appSource, /const item = \(isAutomationHostItem\(response\.item\) \? response\.item : undefined\)\s*\?\? items\.find\(\(candidate\) => candidate\.id === policy\.automationId\)/);
   assert.match(appSource, /items\.find\(\(candidate\) => candidate\.id === policy\.automationId\)/);
   assert.match(appSource, /items\.length === 1 \? items\[0\] : undefined/);
   assert.match(appSource, /automationId: item\?\.id \?\? policy\.automationId/);

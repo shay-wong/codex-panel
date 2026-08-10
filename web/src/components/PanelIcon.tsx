@@ -63,6 +63,27 @@ const PANEL_ICONS = {
 
 export type PanelIconName = keyof typeof PANEL_ICONS;
 
+const MONOCHROME_ICONS = new Set<PanelIconName>([
+  "aiLauncher",
+  "automationPlay",
+  "breadcrumb",
+  "calendar",
+  "columnAdd",
+  "conversation",
+  "create",
+  "dropdown",
+  "filter",
+  "home",
+  "panel",
+  "projectFolder",
+  "search",
+  "sidebarAdd",
+  "statusBlocked",
+  "statusProgress",
+  "statusReview",
+  "statusTodo",
+]);
+
 export function panelIconSource(name: PanelIconName) {
   return PANEL_ICONS[name];
 }
@@ -72,10 +93,16 @@ interface PanelIconProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, "alt"
 }
 
 export function PanelIcon({ name, className, ...props }: PanelIconProps) {
+  const classes = [
+    "panel-icon",
+    MONOCHROME_ICONS.has(name) ? "panel-icon-monochrome" : "",
+    className ?? "",
+  ].filter(Boolean).join(" ");
+
   return (
     <img
       {...props}
-      className={`panel-icon${className ? ` ${className}` : ""}`}
+      className={classes}
       src={PANEL_ICONS[name]}
       alt=""
       aria-hidden="true"

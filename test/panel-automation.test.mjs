@@ -5,6 +5,7 @@ import {
   buildPanelAutomationName,
   buildPanelAutomationPrompt,
   buildPanelAutomationSpec,
+  panelAutomationPolicyOperation,
   parsePanelAutomationHostRequest,
   reconcilePanelAutomation,
 } from "../shared/panel-automation.mjs";
@@ -171,6 +172,9 @@ test("the stable name and generated prompt are project-scoped and encode the cla
     /\[\$manage-panel\]\(\/Users\/example\/panel\/skills\/manage-panel\/SKILL\.md\)/,
   );
   assert.match(prompt, /\[\$manage-panel\]\([^)]*\) e-panel /);
+  assert.match(prompt, /本轮所有 panelctl 操作都使用完整命令前缀/);
+  assert.match(prompt, /\/Users\/example\/panel\/cli\/panelctl\.mjs/);
+  assert.doesNotMatch(prompt, /taskctl/);
   assert.match(prompt, /PPT Skill/);
   assert.match(prompt, /每 5 分钟检查/);
   assert.match(prompt, /ppt-skill/);
@@ -184,6 +188,7 @@ test("the stable name and generated prompt are project-scoped and encode the cla
   assert.match(prompt, /关键改动、验证结果、执行结果和剩余风险/);
   assert.match(prompt, /in_review/);
   assert.match(prompt, /已绑定.*branch.*worktree/);
+  assert.match(prompt, /若没有 todo.*PAUSED/);
 });
 
 test("the generated cron spec uses the selected whitelisted local Codex options", () => {
@@ -212,10 +217,54 @@ test("the generated cron spec uses the selected whitelisted local Codex options"
   });
 });
 
+test("passive policy checks resume only after quota recovery", () => {
+  const passiveAvailable = {
+    explicit: false,
+    previousQuotaState: "available",
+    quotaState: "available",
+    currentStatus: "PAUSED",
+  };
+  assert.equal(
+    panelAutomationPolicyOperation(
+      { ...baseRequest, quotaAware: true },
+      passiveAvailable,
+    ),
+    "list",
+  );
+  assert.equal(
+    panelAutomationPolicyOperation(
+      { ...baseRequest, quotaAware: true },
+      { ...passiveAvailable, quotaState: "unknown" },
+    ),
+    "list",
+  );
+  assert.equal(
+    panelAutomationPolicyOperation(
+      { ...baseRequest, quotaAware: true },
+      { ...passiveAvailable, previousQuotaState: "blocked" },
+    ),
+    "ensure-active",
+  );
+  assert.equal(
+    panelAutomationPolicyOperation(
+      { ...baseRequest, quotaAware: true },
+      { ...passiveAvailable, explicit: true },
+    ),
+    "ensure-active",
+  );
+  assert.equal(
+    panelAutomationPolicyOperation(
+      { ...baseRequest, quotaAware: false },
+      { ...passiveAvailable, currentStatus: "ACTIVE" },
+    ),
+    "ensure-active",
+  );
+});
+
 test("ensure-active updates a matching automation by id with a complete active spec", async () => {
   const existing = {
     id: "automation-1",
-    status: "PAUSED",
+    status: "ACTIVE",
     kind: "cron",
     name: "Panel 自动认领 · ppt-skill",
     prompt: "old prompt",

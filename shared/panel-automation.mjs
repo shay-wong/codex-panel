@@ -63,13 +63,32 @@ function legacyAutomationName(request) {
 }
 
 export function buildPanelAutomationPrompt(request) {
+  const automationName = buildPanelAutomationName(request);
+  const panelctlCommand = buildPanelctlCommand(request);
   return [
     `[$manage-panel](${request.skillPath}) e-panel 每 ${request.intervalMinutes} 分钟检查任务面板中的「${request.projectName}」项目（项目 ID：${request.panelProjectId}，项目目录：${request.workspacePath}）。`,
-    "每次仅处理一个 todo：先用 issue get 读取最新议题内容，并用 comment list 读取全部评论，确认是否包含已完成后被打回的返工要求。",
+    `本轮所有 panelctl 操作都使用完整命令前缀 ${panelctlCommand}，不要使用 PATH 中的 panelctl。`,
+    `开始时先运行 ${panelctlCommand} issue list --project ${request.panelProjectId} --status todo --json。若没有 todo，使用 Codex automation_update 将名为「${automationName}」的当前自动化设为 PAUSED，保留其他字段，然后结束；不要创建或打开新的任务会话。`,
+    "每次仅处理一个 todo：选定后用 issue get 读取最新议题内容，并用 comment list 读取全部评论，确认是否包含已完成后被打回的返工要求。",
     "认领时使用最新 version 将议题移动到 in_progress；若发生版本冲突或最新状态已变化，立即跳过，避免多个 Agent 抢同一任务。",
+    "若 issue get 返回 threadId，认领时将 --thread-id 设为该值以保留绑定，再使用 Codex send_message_to_thread 向原会话发送继续处理此议题的指令；当前自动化会话不要重复处理。若没有 threadId，则在当前自动化会话处理。",
     "若议题已绑定 branch 或 worktree，必须在该议题绑定的开发上下文执行，避免并行 Agent 修改同一工作目录。",
     "执行完成并验证后，先用 comment add 记录关键改动、验证结果、执行结果和剩余风险，再使用最新 version 将议题移动到 in_review；不要直接标记为 done。",
+    `本次处理或交接后，再次运行 ${panelctlCommand} issue list --project ${request.panelProjectId} --status todo --json。若没有 todo，使用 Codex automation_update 将名为「${automationName}」的当前自动化设为 PAUSED，保留其他字段，避免后续创建空会话。`,
   ].join("\n");
+}
+
+function buildPanelctlCommand(request) {
+  const cliPath = path.resolve(path.dirname(request.skillPath), "../..", "cli/panelctl.mjs");
+  const command = `${shellQuote(process.execPath)} ${shellQuote(cliPath)}`;
+  const runtimeFilePath = process.env.CODEX_PANEL_RUNTIME_FILE;
+  return runtimeFilePath
+    ? `CODEX_PANEL_RUNTIME_FILE=${shellQuote(runtimeFilePath)} ${command}`
+    : command;
+}
+
+function shellQuote(value) {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 export function buildPanelAutomationSpec(request) {
@@ -84,6 +103,27 @@ export function buildPanelAutomationSpec(request) {
     reasoningEffort: request.reasoningEffort,
     rrule: `RRULE:FREQ=MINUTELY;INTERVAL=${request.intervalMinutes}`,
   };
+}
+
+export function panelAutomationPolicyOperation(request, {
+  explicit,
+  previousQuotaState,
+  quotaState,
+  currentStatus,
+}) {
+  if (!request.enabledByUser) return "pause";
+  if (
+    !explicit
+    && currentStatus === "PAUSED"
+    && (!request.quotaAware || previousQuotaState === "available")
+  ) return "list";
+  if (request.quotaAware && quotaState !== "available") return "pause";
+  if (
+    explicit
+    || currentStatus === undefined
+    || (request.quotaAware && previousQuotaState !== "available")
+  ) return "ensure-active";
+  return "ensure-active";
 }
 
 export async function reconcilePanelAutomation(request, rpc) {

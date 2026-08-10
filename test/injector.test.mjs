@@ -75,6 +75,18 @@ test("the CDP bridge exposes only the fixed Panel automation operations", () => 
   assert.doesNotMatch(source, /automations\.toml/);
 });
 
+test("passive automation policy keeps idle pauses and only resumes quota pauses", () => {
+  assert.match(source, /panelAutomationPolicyOperation/);
+  assert.match(source, /previousQuotaState: current\.quota\?\.state/);
+  assert.match(source, /enqueueQuotaPolicyMutation\(record, rpc, \{ explicit: true \}\)/);
+  assert.match(
+    source,
+    /!explicit && result\.operation === "list" && result\.item\?\.status === "PAUSED"/,
+  );
+  assert.match(source, /enabledByUser: false/);
+  assert.match(source, /record\.quota \? \{ quota: record\.quota \} : \{\}/);
+});
+
 test("the package injection command remains resident for tab-triggered recovery", () => {
   assert.match(packageJson.scripts["codex:inject"], /--watch/);
   assert.match(packageJson.scripts["codex:daemon"], /--daemon --open/);
