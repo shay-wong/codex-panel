@@ -12,6 +12,7 @@ import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
 import { withoutPanelLauncherEnvironment } from "../shared/codex-environment.mjs";
 import {
   parsePanelAutomationHostRequest,
+  reconcileJiraAutomation,
   reconcilePanelAutomation,
   panelAutomationPolicyOperation,
 } from "../shared/panel-automation.mjs";
@@ -98,11 +99,14 @@ const codexAutomationMethods = new Set([
   "list-automations",
   "automation-create",
   "automation-update",
+  "automation-run-now",
+  "inbox-items",
 ]);
 let codexAutomationRequestSequence = 0;
 const quotaPolicyTimers = new Map();
 const quotaPolicyRecords = new Map();
 const quotaPolicyQueues = new Map();
+const jiraAutomationRunQueues = new Map();
 const quotaPolicyCdps = new Set();
 const restoredQuotaPolicyCdps = new WeakSet();
 const quotaPolicyRestorePromises = new WeakMap();
@@ -980,6 +984,20 @@ function storedAutomationPolicy(request) {
   };
 }
 
+function runJiraAutomationRequest(request, rpc) {
+  if (request.operation !== "run-now") return reconcileJiraAutomation(request, rpc);
+  if (jiraAutomationRunQueues.has(request.providerKey)) {
+    return Promise.resolve({ run: "already-running" });
+  }
+  const run = reconcileJiraAutomation(request, rpc);
+  jiraAutomationRunQueues.set(request.providerKey, run);
+  return run.finally(() => {
+    if (jiraAutomationRunQueues.get(request.providerKey) === run) {
+      jiraAutomationRunQueues.delete(request.providerKey);
+    }
+  });
+}
+
 function restoredAutomationPolicy(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const { quota, ...stored } = value;
@@ -1359,6 +1377,9 @@ function installPanelHostBinding(cdp, supervisor, startupToken) {
             method,
             body,
           );
+          if (request.template === "jira-sync") {
+            return runJiraAutomationRequest(request, rpc);
+          }
           if (request.operation === "list") {
             const stored = await reconcileStoredAutomationPolicy(
               request.panelProjectId,

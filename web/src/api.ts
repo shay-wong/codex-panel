@@ -120,7 +120,7 @@ export async function createJiraProvider(input: JiraProviderDraft): Promise<Jira
 
 export async function updateJiraProvider(
   provider: JiraProvider,
-  changes: Partial<Omit<JiraProviderDraft, "key">>,
+  changes: Partial<Omit<JiraProviderDraft, "key">> & { scheduledTaskId?: string | null },
 ): Promise<JiraProvider> {
   const data = await request<{ provider: JiraProvider }>(
     `/api/local/jira-providers/${encodeURIComponent(provider.key)}`,

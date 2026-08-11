@@ -4732,6 +4732,51 @@ kbd {
   font-size: 11px;
 }
 
+.jira-scheduled-task {
+  display: grid;
+  gap: 7px;
+  padding-top: 13px;
+  border-top: var(--border-hairline) solid var(--border);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.jira-scheduled-task-heading,
+.jira-scheduled-task-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.jira-scheduled-task-heading strong {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 560;
+}
+
+.jira-scheduled-task-heading strong[data-state="normal"] {
+  color: var(--success);
+}
+
+.jira-scheduled-task-heading strong[data-state="drifted"],
+.jira-scheduled-task-heading strong[data-state="missing"] {
+  color: var(--warning);
+}
+
+.jira-scheduled-task small {
+  color: var(--text-tertiary);
+}
+
+.jira-scheduled-task-actions {
+  justify-content: flex-end;
+}
+
+.jira-provider-notice {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
 .jira-provider-error {
   margin: 10px 0 0;
   color: var(--danger);

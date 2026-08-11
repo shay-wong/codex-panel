@@ -4,7 +4,7 @@
 
 A local-first issue board that runs in a browser and can be embedded in Codex through the standalone CDP launcher or its injection script. The same HTTP API powers the React UI and the `panelctl` CLI used by the bundled Codex Skill.
 
-The board includes dashboard, list, Gantt, and archived-issue workflows. Issues can carry start and due dates and can be moved from their detail view while retaining their linked conversation. Jira settings discover local Jira CLI configs before falling back to manual provider entry, and support separate aliases, config paths, JQL, preview, and completion policies; when JQL changes while preview is disabled, Panel asks whether to re-enable it. Synchronization is added by the later Jira workflow rather than provider registration itself.
+The board includes dashboard, list, Gantt, and archived-issue workflows. Issues can carry start and due dates and can be moved from their detail view while retaining their linked conversation. Jira settings discover local Jira CLI configs before falling back to manual provider entry, and support separate aliases, config paths, JQL, preview, and completion policies; when JQL changes while preview is disabled, Panel asks whether to re-enable it. In Codex Panel.app, each enabled provider gets an isolated daily Scheduled Task that reads Jira and Panel and produces a reviewable synchronization plan without applying it.
 
 ## Requirements
 

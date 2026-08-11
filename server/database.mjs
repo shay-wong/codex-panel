@@ -264,6 +264,7 @@ function jiraProviderFromRow(row) {
     preview: row.preview === 1,
     autoComplete: row.auto_complete === 1,
     completionStatus: row.completion_status,
+    scheduledTaskId: row.scheduled_task_id,
     version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -371,6 +372,7 @@ export class PanelDatabase {
         preview INTEGER NOT NULL DEFAULT 1 CHECK (preview IN (0, 1)),
         auto_complete INTEGER NOT NULL DEFAULT 0 CHECK (auto_complete IN (0, 1)),
         completion_status TEXT,
+        scheduled_task_id TEXT,
         version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -634,6 +636,11 @@ export class PanelDatabase {
         WHERE relation_type = 'parent';
     `);
 
+    const jiraProviderColumns = this.database.prepare("PRAGMA table_info(jira_providers)").all();
+    if (!jiraProviderColumns.some((column) => column.name === "scheduled_task_id")) {
+      this.database.exec("ALTER TABLE jira_providers ADD COLUMN scheduled_task_id TEXT");
+    }
+
     const commentColumns = this.database.prepare("PRAGMA table_info(comments)").all();
     if (!commentColumns.some((column) => column.name === "thread_id")) {
       this.database.exec("ALTER TABLE comments ADD COLUMN thread_id TEXT");
@@ -865,7 +872,8 @@ export class PanelDatabase {
     const result = this.database.prepare(`
       UPDATE jira_providers
       SET alias = ?, config_path = ?, jql = ?, enabled = ?, preview = ?,
-          auto_complete = ?, completion_status = ?, version = version + 1, updated_at = ?
+          auto_complete = ?, completion_status = ?, scheduled_task_id = ?,
+          version = version + 1, updated_at = ?
       WHERE provider_key = ? AND version = ?
     `).run(
       next.alias,
@@ -875,6 +883,7 @@ export class PanelDatabase {
       next.preview ? 1 : 0,
       next.autoComplete ? 1 : 0,
       next.completionStatus,
+      next.scheduledTaskId,
       timestamp,
       key,
       version,

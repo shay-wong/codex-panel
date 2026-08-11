@@ -4,6 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Added one isolated Codex Scheduled Task per enabled Jira provider, with a daily 09:00 Asia/Shanghai read-only synchronization plan, native missed-run catch-up, unlimited non-overlapping manual runs, explicit drift or missing-task restoration, and a clear Panel.app-only management state in normal browsers.
 - Added local Jira provider settings that discover local Jira CLI configs before falling back to manual entry, with immutable provider keys, independent config references and JQL, preview defaults, and opt-in completion policies; when JQL changes while preview is disabled, users choose whether to re-enable it, while registration stores no Jira credentials and does not run synchronization by itself.
 - Added an issue-detail project picker that keeps the issue open after a successful move, preserves its linked conversation, and surfaces existing relation, conversation, or development-context move blockers without mutating the issue.
 - Merged upstream `0.2.0` board capabilities, including dashboard, list, Gantt, archive, scheduling dates, cross-project moves with conversation continuity, complete activity history, cloud migrations, and AI process recovery, while retaining the native Swift Codex Panel manager instead of the upstream Tauri app and updater.

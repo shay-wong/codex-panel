@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
   createJiraProvider,
@@ -7,7 +7,12 @@ import {
   listJiraProviders,
   updateJiraProvider,
 } from "../api";
-import type { JiraConfigSuggestion, JiraProvider, JiraProviderDraft } from "../types";
+import type {
+  JiraAutomationOperation,
+  JiraConfigSuggestion,
+  JiraProvider,
+  JiraProviderDraft,
+} from "../types";
 import { LinearIcon } from "./LinearIcon";
 
 const DEFAULT_JQL = "assignee = currentUser() AND resolution IS EMPTY";
@@ -25,8 +30,19 @@ const EMPTY_DRAFT: JiraProviderDraft = {
 
 interface JiraProviderSettingsProps {
   open: boolean;
+  automationAvailable: boolean;
+  onAutomationRequest: (
+    provider: JiraProvider,
+    operation: JiraAutomationOperation,
+  ) => Promise<{
+    item?: { id: string; status: "ACTIVE" | "PAUSED" };
+    state?: "normal" | "drifted" | "missing";
+    run?: "started" | "already-running" | "disabled" | "drifted";
+  }>;
   onClose: () => void;
 }
+
+type JiraAutomationResponse = Awaited<ReturnType<JiraProviderSettingsProps["onAutomationRequest"]>>;
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError || error instanceof Error) return error.message;
@@ -99,7 +115,12 @@ function ToggleRow({
   );
 }
 
-export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProps) {
+export function JiraProviderSettings({
+  open,
+  automationAvailable,
+  onAutomationRequest,
+  onClose,
+}: JiraProviderSettingsProps) {
   const [providers, setProviders] = useState<JiraProvider[]>([]);
   const [configSuggestions, setConfigSuggestions] = useState<JiraConfigSuggestion[]>([]);
   const [discoveryComplete, setDiscoveryComplete] = useState(false);
@@ -107,7 +128,13 @@ export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProp
   const [draft, setDraft] = useState<JiraProviderDraft>(EMPTY_DRAFT);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [automationPending, setAutomationPending] = useState(false);
+  const [automationState, setAutomationState] = useState<"normal" | "drifted" | "missing" | null>(null);
+  const [automationStatus, setAutomationStatus] = useState<"ACTIVE" | "PAUSED" | null>(null);
+  const [automationNotice, setAutomationNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const selectedKeyRef = useRef<string | null>(null);
+  const automationRequestSequence = useRef(0);
   const selected = providers.find((provider) => provider.key === selectedKey) ?? null;
 
   useEffect(() => {
@@ -116,52 +143,157 @@ export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProp
     setLoading(true);
     setDiscoveryComplete(false);
     setError(null);
-    void Promise.all([
-      listJiraProviders(controller.signal),
-      discoverJiraConfigs(controller.signal).catch((discoveryError) => {
-        if ((discoveryError as Error).name === "AbortError") throw discoveryError;
-        return [];
-      }),
-    ]).then(
-      ([items, suggestions]) => {
+    void (async () => {
+      try {
+        const [loadedItems, suggestions] = await Promise.all([
+          listJiraProviders(controller.signal),
+          discoverJiraConfigs(controller.signal).catch((discoveryError) => {
+            if ((discoveryError as Error).name === "AbortError") throw discoveryError;
+            return [];
+          }),
+        ]);
+        const items = [...loadedItems];
+        let automationLoadError: string | null = null;
+        if (automationAvailable) {
+          for (let index = 0; index < items.length; index += 1) {
+            const provider = items[index];
+            if (!provider.enabled || provider.scheduledTaskId) continue;
+            try {
+              const response = await onAutomationRequest(provider, "ensure-active");
+              if (response.item) {
+                items[index] = await updateJiraProvider(provider, {
+                  scheduledTaskId: response.item.id,
+                });
+              }
+            } catch (automationError) {
+              automationLoadError ??= errorMessage(automationError);
+            }
+          }
+        }
+        if (controller.signal.aborted) return;
         setProviders(items);
         setConfigSuggestions(suggestions);
         setDiscoveryComplete(true);
         const first = items[0] ?? null;
         const suggestion = firstUnconfiguredSuggestion(suggestions, items);
+        selectedKeyRef.current = first?.key ?? null;
         setSelectedKey(first?.key ?? null);
         setDraft(first
           ? draftFromProvider(first)
           : suggestion ? draftFromSuggestion(suggestion, items) : EMPTY_DRAFT);
+        setError(automationLoadError);
         setLoading(false);
-      },
-      (loadError) => {
+        if (first) void inspectAutomation(first);
+      } catch (loadError) {
         if ((loadError as Error).name === "AbortError") return;
         setError(errorMessage(loadError));
         setDiscoveryComplete(true);
         setLoading(false);
-      },
-    );
+      }
+    })();
     return () => controller.abort();
-  }, [open]);
+  }, [automationAvailable, onAutomationRequest, open]);
 
   if (!open) return null;
 
   function selectProvider(provider: JiraProvider) {
+    selectedKeyRef.current = provider.key;
     setSelectedKey(provider.key);
     setDraft(draftFromProvider(provider));
     setError(null);
+    setAutomationNotice(null);
+    void inspectAutomation(provider);
   }
 
   function createNew() {
     const suggestion = firstUnconfiguredSuggestion(configSuggestions, providers);
+    automationRequestSequence.current += 1;
+    selectedKeyRef.current = null;
     setSelectedKey(null);
     setDraft(suggestion ? draftFromSuggestion(suggestion, providers) : EMPTY_DRAFT);
     setError(null);
+    setAutomationState(null);
+    setAutomationStatus(null);
+    setAutomationNotice(null);
+    setAutomationPending(false);
+  }
+
+  function replaceProvider(provider: JiraProvider) {
+    setProviders((current) => (
+      current.some((item) => item.key === provider.key)
+        ? current.map((item) => item.key === provider.key ? provider : item)
+        : [...current, provider]
+    ));
+    if (selectedKeyRef.current === provider.key) setDraft(draftFromProvider(provider));
+  }
+
+  function storeProvider(provider: JiraProvider) {
+    selectedKeyRef.current = provider.key;
+    setSelectedKey(provider.key);
+    replaceProvider(provider);
+  }
+
+  async function persistAutomation(
+    provider: JiraProvider,
+    response: JiraAutomationResponse,
+  ): Promise<JiraProvider> {
+    if (!response.item || response.item.id === provider.scheduledTaskId) return provider;
+    const saved = await updateJiraProvider(provider, { scheduledTaskId: response.item.id });
+    replaceProvider(saved);
+    return saved;
+  }
+
+  async function requestAutomation(
+    provider: JiraProvider,
+    operation: JiraAutomationOperation,
+    persistTaskId = true,
+  ): Promise<JiraAutomationResponse | null> {
+    const requestSequence = ++automationRequestSequence.current;
+    const isCurrent = () => (
+      automationRequestSequence.current === requestSequence
+      && selectedKeyRef.current === provider.key
+    );
+    if (!automationAvailable) {
+      if (isCurrent()) {
+        setAutomationState(null);
+        setAutomationStatus(null);
+        setAutomationNotice("Scheduled Task 只能在 Codex Panel.app 中管理");
+      }
+      return null;
+    }
+    if (isCurrent()) {
+      setAutomationPending(true);
+      setAutomationNotice(null);
+      if (operation !== "list") setError(null);
+    }
+    try {
+      const response = await onAutomationRequest(provider, operation);
+      if (persistTaskId && isCurrent()) await persistAutomation(provider, response);
+      if (isCurrent()) {
+        if (response.state !== undefined) setAutomationState(response.state);
+        if (response.item) setAutomationStatus(response.item.status);
+        if (response.run === "started") setAutomationNotice("已开始同步");
+        if (response.run === "already-running") setAutomationNotice("该 provider 已有同步正在运行");
+        if (response.run === "disabled") setAutomationNotice("请先启用 provider");
+        if (response.run === "drifted") setAutomationNotice("任务已被外部修改，请先恢复标准任务");
+      }
+      return response;
+    } catch (automationError) {
+      if (isCurrent()) setError(errorMessage(automationError));
+      return null;
+    } finally {
+      if (isCurrent()) setAutomationPending(false);
+    }
+  }
+
+  async function inspectAutomation(provider: JiraProvider) {
+    setAutomationState(null);
+    setAutomationStatus(null);
+    await requestAutomation(provider, "list");
   }
 
   async function saveProvider() {
-    if (saving) return;
+    if (saving || automationPending) return;
     setSaving(true);
     setError(null);
     try {
@@ -185,13 +317,19 @@ export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProp
       const saved = selected
         ? await updateJiraProvider(selected, changes)
         : await createJiraProvider(normalized);
-      setProviders((current) => (
-        current.some((provider) => provider.key === saved.key)
-          ? current.map((provider) => provider.key === saved.key ? saved : provider)
-          : [...current, saved]
-      ));
-      setSelectedKey(saved.key);
-      setDraft(draftFromProvider(saved));
+      storeProvider(saved);
+      const scheduleChanged = selected ? (
+        saved.alias !== selected.alias
+        || saved.configPath !== selected.configPath
+        || saved.jql !== selected.jql
+        || saved.enabled !== selected.enabled
+      ) : false;
+      const operation = !saved.enabled
+        ? "pause"
+        : scheduleChanged && automationState === "normal"
+          ? "restore"
+          : "ensure-active";
+      await requestAutomation(saved, operation);
     } catch (saveError) {
       setError(errorMessage(saveError));
     } finally {
@@ -200,17 +338,28 @@ export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProp
   }
 
   async function removeProvider() {
-    if (!selected || saving) return;
+    if (!selected || saving || automationPending) return;
     if (!window.confirm(`删除 Jira provider“${selected.alias}”？`)) return;
     setSaving(true);
     setError(null);
     try {
+      if (automationAvailable) {
+        const response = await requestAutomation(selected, "pause", false);
+        if (!response) return;
+      } else if (selected.scheduledTaskId) {
+        throw new Error("请在 Codex Panel.app 中删除，以便先停用 Scheduled Task");
+      }
       await deleteJiraProvider(selected);
       const remaining = providers.filter((provider) => provider.key !== selected.key);
       const next = remaining[0] ?? null;
+      selectedKeyRef.current = next?.key ?? null;
       setProviders(remaining);
       setSelectedKey(next?.key ?? null);
       setDraft(next ? draftFromProvider(next) : EMPTY_DRAFT);
+      setAutomationState(null);
+      setAutomationStatus(null);
+      setAutomationNotice(null);
+      if (next) void inspectAutomation(next);
     } catch (deleteError) {
       setError(errorMessage(deleteError));
     } finally {
@@ -228,6 +377,15 @@ export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProp
   const detectedConfig = configSuggestions.some((suggestion) => (
     suggestion.configPath === draft.configPath
   ));
+  const automationLabel = !automationAvailable
+    ? "仅限 Panel.app"
+    : automationState === "drifted"
+      ? "已被外部修改"
+      : automationState === "missing"
+        ? "未找到"
+        : automationState === "normal"
+          ? automationStatus === "ACTIVE" ? "正常运行" : "已暂停"
+          : "正在检查";
 
   return (
     <div
@@ -371,6 +529,45 @@ export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProp
                   }))}
                 />
               </label>
+              {selected && (
+                <section className="jira-scheduled-task jira-provider-wide-field">
+                  <div className="jira-scheduled-task-heading">
+                    <span>Scheduled Task</span>
+                    <strong data-state={automationState ?? "unknown"}>{automationLabel}</strong>
+                  </div>
+                  <small>每天 09:00 Asia/Shanghai 运行，支持手动立即同步。</small>
+                  {automationNotice && (
+                    <p className="jira-provider-notice" role="status">{automationNotice}</p>
+                  )}
+                  <div className="jira-scheduled-task-actions">
+                    {(automationState === "drifted" || (
+                      automationState === "missing" && selected.enabled
+                    )) && (
+                      <button
+                        className="button secondary"
+                        type="button"
+                        disabled={automationPending || !automationAvailable}
+                        onClick={() => void requestAutomation(selected, "restore")}
+                      >
+                        恢复标准任务
+                      </button>
+                    )}
+                    <button
+                      className="button secondary"
+                      type="button"
+                      disabled={
+                        automationPending
+                        || !automationAvailable
+                        || !selected.enabled
+                        || automationState !== "normal"
+                      }
+                      onClick={() => void requestAutomation(selected, "run-now")}
+                    >
+                      {automationPending ? "处理中…" : "立即同步"}
+                    </button>
+                  </div>
+                </section>
+              )}
             </div>
 
             {error && <p className="jira-provider-error" role="alert">{error}</p>}
@@ -381,7 +578,7 @@ export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProp
                   className="jira-provider-delete"
                   type="button"
                   aria-label={`删除 ${selected.alias}`}
-                  disabled={saving}
+                  disabled={saving || automationPending}
                   onClick={() => void removeProvider()}
                 >
                   <LinearIcon name="trash" />
@@ -392,7 +589,11 @@ export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProp
                 <button className="button secondary" type="button" disabled={saving} onClick={onClose}>
                   取消
                 </button>
-                <button className="button primary" type="submit" disabled={!canSave || saving}>
+                <button
+                  className="button primary"
+                  type="submit"
+                  disabled={!canSave || saving || automationPending}
+                >
                   {saving ? "保存中…" : "保存"}
                 </button>
               </div>

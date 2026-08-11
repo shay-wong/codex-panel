@@ -68,7 +68,15 @@ After `npm ci`, run `npm run codex:install` to copy the repository's `manage-pan
 
 The Jira settings dialog registers multiple local Jira CLI providers. When creating a provider, the local companion first discovers `JIRA_CONFIG_FILE` and YAML files in the standard Jira CLI config directories, then suggests a provider key, alias, and absolute config path without exposing credentials; the fields remain editable when nothing is found. Each provider has an immutable lowercase key, editable alias, absolute Jira CLI config path, JQL, enabled and preview switches, and an optional automatic-completion policy. New providers default to `assignee = currentUser() AND resolution IS EMPTY`, preview enabled, and automatic completion disabled. When JQL changes while preview is disabled, Panel asks whether to re-enable preview or keep it disabled. Automatic completion cannot be enabled without a target Jira status.
 
-Panel stores the path to each Jira CLI configuration, not Jira credentials. Provider registration does not query Jira or synchronize issues by itself; the later Jira Scheduled Task workflow consumes these settings.
+Panel stores the path to each Jira CLI configuration, not Jira credentials. The provider API does not query Jira; after a successful settings save, the managed Codex Panel.app separately reconciles the provider's Scheduled Task.
+
+## Jira synchronization Scheduled Tasks
+
+Each enabled Jira provider has one projectless Codex Scheduled Task named from its immutable provider key. The task runs daily at 09:00 Asia/Shanghai, and Codex performs its normal single catch-up when the device becomes available after a missed run. “Run now” can be used repeatedly, but Panel rejects another run while the same provider already has one in progress. Disabling a provider pauses its task without deleting provider history.
+
+The generated task uses only that provider's Jira CLI config path and JQL. It reads the complete matching Jira result set, current Panel projects and issues, and only explicitly linked requirement evidence available through authenticated read-only tools. It emits a versioned JSON plan with provider and run identity, snapshots, evidence, proposals, ambiguities, and failures. The task does not create, modify, move, archive, or delete Panel issues and does not write back to Jira. Runs with no proposals, ambiguities, or failures archive their own Codex task; runs needing attention remain visible with a short summary.
+
+Panel compares the native task with its canonical template and shows whether it is normal, externally modified, or missing. Ordinary provider saves do not overwrite a drifted or deleted managed task. “Restore standard task” is the explicit repair action. Scheduled Task inspection, restoration, and manual runs are available only from the launcher-managed Panel inside Codex; a normal browser can still edit provider settings and explains that task management requires Codex Panel.app.
 
 ## Move an issue from its detail view
 

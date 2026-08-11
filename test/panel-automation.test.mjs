@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  buildJiraAutomationName,
+  buildJiraAutomationPrompt,
+  buildJiraAutomationSpec,
   buildPanelAutomationName,
   buildPanelAutomationPrompt,
   buildPanelAutomationSpec,
   panelAutomationPolicyOperation,
   parsePanelAutomationHostRequest,
+  reconcileJiraAutomation,
   reconcilePanelAutomation,
 } from "../shared/panel-automation.mjs";
 import {
@@ -31,6 +35,221 @@ const baseRequest = {
   model: "gpt-5.5",
   reasoningEffort: "high",
 };
+
+const jiraRequest = {
+  id: "host-request-2",
+  action: "automation",
+  requestId: "iframe-request-2",
+  template: "jira-sync",
+  operation: "ensure-active",
+  providerKey: "jira-a",
+  providerAlias: "Jira A",
+  configPath: "/Users/example/.config/.jira/a.yml",
+  jql: "assignee = currentUser() AND resolution IS EMPTY",
+  skillPath: "/Users/example/panel/skills/manage-panel/SKILL.md",
+  enabled: true,
+};
+
+test("the automation host request accepts only the fixed Jira sync template", () => {
+  assert.deepEqual(parsePanelAutomationHostRequest(jiraRequest), jiraRequest);
+  assert.equal(
+    parsePanelAutomationHostRequest({ ...jiraRequest, prompt: "arbitrary" }),
+    null,
+  );
+  assert.equal(
+    parsePanelAutomationHostRequest({ ...jiraRequest, operation: "delete" }),
+    null,
+  );
+  assert.equal(
+    parsePanelAutomationHostRequest({ ...jiraRequest, configPath: "relative.yml" }),
+    null,
+  );
+  assert.equal(
+    parsePanelAutomationHostRequest({ ...jiraRequest, providerKey: "Jira A" }),
+    null,
+  );
+});
+
+test("the Jira sync template is projectless, daily, read-only, and emits a versioned plan", () => {
+  assert.equal(buildJiraAutomationName(jiraRequest), "Panel Jira 同步 · jira-a");
+  const prompt = buildJiraAutomationPrompt(jiraRequest);
+  assert.match(prompt, /模板版本：1/);
+  assert.match(prompt, /jira issue list/);
+  assert.match(prompt, /--config '\/Users\/example\/\.config\/\.jira\/a\.yml'/);
+  assert.match(prompt, /--jql 'assignee = currentUser\(\) AND resolution IS EMPTY'/);
+  assert.match(prompt, /--order-by updated/);
+  assert.match(prompt, /--paginate 0:100/);
+  assert.match(prompt, /panelctl\.mjs.*project list.*--json/);
+  assert.match(prompt, /panelctl\.mjs.*issue list.*--archived all.*--json/);
+  assert.match(prompt, /schemaVersion/);
+  for (const field of ["provider", "run", "snapshots", "evidence", "proposals", "ambiguities", "failures"]) {
+    assert.match(prompt, new RegExp(field));
+  }
+  assert.match(prompt, /不得创建、修改、移动、归档或删除 Panel issue/);
+  assert.match(prompt, /不得回写 Jira/);
+  assert.match(prompt, /proposals、ambiguities 和 failures 都为空.*归档当前 Codex 任务/);
+
+  assert.deepEqual(buildJiraAutomationSpec(jiraRequest), {
+    kind: "cron",
+    name: "Panel Jira 同步 · jira-a",
+    prompt,
+    executionEnvironment: "local",
+    localEnvironmentConfigPath: null,
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
+    rrule: "DTSTART;TZID=Asia/Shanghai:19700101T090000\nRRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+  });
+});
+
+test("ordinary Jira reconciliation reports drift without overwriting external edits", async () => {
+  const canonical = buildJiraAutomationSpec(jiraRequest);
+  const drifted = {
+    id: "jira-automation-1",
+    status: "ACTIVE",
+    ...canonical,
+    name: "My custom Jira sync",
+    target: { type: "projectless" },
+    cwds: [],
+  };
+  const calls = [];
+  const result = await reconcileJiraAutomation(
+    { ...jiraRequest, automationId: drifted.id },
+    async (method, params) => {
+      calls.push({ method, params });
+      return { items: [drifted] };
+    },
+  );
+
+  assert.deepEqual(calls, [{ method: "list-automations", params: {} }]);
+  assert.equal(result.state, "drifted");
+  assert.equal(result.item.id, drifted.id);
+});
+
+test("Jira reconciliation restores canonical drift only when explicitly requested", async () => {
+  const canonical = buildJiraAutomationSpec(jiraRequest);
+  const drifted = {
+    id: "jira-automation-1",
+    status: "ACTIVE",
+    ...canonical,
+    prompt: "custom prompt",
+    target: { type: "projectless" },
+    cwds: [],
+  };
+  const calls = [];
+  const result = await reconcileJiraAutomation(
+    { ...jiraRequest, operation: "restore", automationId: drifted.id },
+    async (method, params) => {
+      calls.push({ method, params });
+      if (method === "list-automations") return { items: [drifted] };
+      return { item: { ...params, target: { type: "projectless" }, cwds: [] } };
+    },
+  );
+
+  assert.deepEqual(calls, [
+    { method: "list-automations", params: {} },
+    {
+      method: "automation-update",
+      params: { ...canonical, id: drifted.id, status: "ACTIVE" },
+    },
+  ]);
+  assert.equal(result.state, "normal");
+});
+
+test("a missing managed Jira task is recreated only by explicit restore", async () => {
+  const calls = [];
+  const rpc = async (method, params) => {
+    calls.push({ method, params });
+    if (method === "list-automations") return { items: [] };
+    return { item: { id: "jira-automation-2", status: "ACTIVE", ...params } };
+  };
+
+  const missing = await reconcileJiraAutomation(
+    { ...jiraRequest, automationId: "deleted-automation" },
+    rpc,
+  );
+  assert.equal(missing.state, "missing");
+  assert.deepEqual(calls, [{ method: "list-automations", params: {} }]);
+
+  calls.length = 0;
+  const restored = await reconcileJiraAutomation(
+    { ...jiraRequest, operation: "restore", automationId: "deleted-automation" },
+    rpc,
+  );
+  assert.equal(restored.state, "normal");
+  assert.equal(restored.item.id, "jira-automation-2");
+  assert.deepEqual(calls, [
+    { method: "list-automations", params: {} },
+    { method: "automation-create", params: buildJiraAutomationSpec(jiraRequest) },
+  ]);
+});
+
+test("Jira run-now rejects an overlapping provider run", async () => {
+  const existing = {
+    id: "jira-automation-1",
+    status: "ACTIVE",
+    ...buildJiraAutomationSpec(jiraRequest),
+    target: { type: "projectless" },
+    cwds: [],
+  };
+  const calls = [];
+  const result = await reconcileJiraAutomation(
+    { ...jiraRequest, operation: "run-now", automationId: existing.id },
+    async (method, params) => {
+      calls.push({ method, params });
+      if (method === "list-automations") return { items: [existing] };
+      if (method === "inbox-items") {
+        return { items: [{ automationId: existing.id, status: "IN_PROGRESS" }] };
+      }
+      assert.fail(`unexpected method ${method}`);
+    },
+  );
+
+  assert.deepEqual(calls, [
+    { method: "list-automations", params: {} },
+    { method: "inbox-items", params: { limit: 200 } },
+  ]);
+  assert.equal(result.run, "already-running");
+});
+
+test("Jira run-now refuses drift and malformed native lists", async () => {
+  const canonical = buildJiraAutomationSpec(jiraRequest);
+  const drifted = {
+    id: "jira-automation-1",
+    status: "ACTIVE",
+    ...canonical,
+    prompt: "custom prompt that may write",
+    target: { type: "projectless" },
+  };
+  const calls = [];
+  const result = await reconcileJiraAutomation(
+    { ...jiraRequest, operation: "run-now", automationId: drifted.id },
+    async (method, params) => {
+      calls.push({ method, params });
+      return { items: [drifted] };
+    },
+  );
+  assert.equal(result.run, "drifted");
+  assert.deepEqual(calls, [{ method: "list-automations", params: {} }]);
+
+  await assert.rejects(
+    reconcileJiraAutomation(jiraRequest, async () => ({})),
+    /自动化列表格式无效/,
+  );
+  await assert.rejects(
+    reconcileJiraAutomation(
+      { ...jiraRequest, operation: "run-now", automationId: "jira-automation-2" },
+      async (method) => method === "list-automations"
+        ? { items: [{
+          id: "jira-automation-2",
+          status: "ACTIVE",
+          ...canonical,
+          target: { type: "projectless" },
+        }] }
+        : {},
+    ),
+    /运行列表格式无效/,
+  );
+});
 
 test("the automation model catalog matches Codex and normalizes unsupported efforts", () => {
   assert.deepEqual(AUTOMATION_MODELS, [

@@ -102,6 +102,8 @@ import {
   type DevelopmentScan,
   type HostContext,
   type IssueRelationType,
+  type JiraAutomationOperation,
+  type JiraProvider,
   type Project,
   type Task,
   type PanelMetadata,
@@ -207,11 +209,18 @@ interface AutomationHostItem {
   rrule: string;
 }
 
+interface JiraAutomationHostItem {
+  id: string;
+  status: ProjectAutomationStatus;
+}
+
 interface AutomationHostResponse {
   requestId: string;
   ok: boolean;
-  item?: AutomationHostItem;
+  item?: AutomationHostItem | JiraAutomationHostItem;
   items?: AutomationHostItem[];
+  state?: "normal" | "drifted" | "missing";
+  run?: "started" | "already-running" | "disabled" | "drifted";
   quota?: AutomationQuotaStatus;
   policy?: {
     automationId?: string;
@@ -498,6 +507,12 @@ function isAutomationHostItem(value: unknown): value is AutomationHostItem {
     && typeof item.rrule === "string"
     && intervalMinutesFromRrule(item.rrule) !== null
   );
+}
+
+function isJiraAutomationHostItem(value: unknown): value is JiraAutomationHostItem {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Partial<JiraAutomationHostItem>;
+  return typeof item.id === "string" && (item.status === "ACTIVE" || item.status === "PAUSED");
 }
 
 function isLocalPanelOrigin(origin: string): boolean {
@@ -977,6 +992,22 @@ export function App() {
     });
   }, []);
 
+  const sendHostAutomationRequest = useCallback((payload: Record<string, unknown>) => {
+    const requestId = window.crypto.randomUUID();
+    const response = new Promise<AutomationHostResponse>((resolve, reject) => {
+      const timeoutId = window.setTimeout(() => {
+        pendingAutomationRequestsRef.current.delete(requestId);
+        reject(new Error("Codex 自动化没有响应，请稍后重试"));
+      }, 10_000);
+      pendingAutomationRequestsRef.current.set(requestId, { resolve, reject, timeoutId });
+    });
+    postEmbeddedHostMessage({
+      type: "panel:automation-request",
+      payload: { requestId, ...payload },
+    });
+    return response;
+  }, []);
+
   const sendAutomationRequest = useCallback((
     operation: "ensure-active" | "pause" | "list" | "apply-policy",
     options: Pick<
@@ -994,39 +1025,55 @@ export function App() {
         automationProjectContext.unavailableReason ?? "无法读取项目自动化信息",
       ));
     }
-    const requestId = window.crypto.randomUUID();
-    const response = new Promise<AutomationHostResponse>((resolve, reject) => {
-      const timeoutId = window.setTimeout(() => {
-        pendingAutomationRequestsRef.current.delete(requestId);
-        reject(new Error("Codex 自动化没有响应，请稍后重试"));
-      }, 10_000);
-      pendingAutomationRequestsRef.current.set(requestId, { resolve, reject, timeoutId });
+    return sendHostAutomationRequest({
+      operation,
+      panelProjectId: selectedProjectId,
+      codexProjectId: automationProjectContext.codexProjectId,
+      projectName: selectedProject.name,
+      workspacePath: automationProjectContext.workspacePath,
+      skillPath: managePanelSkillPath,
+      ...(automationId ? { automationId } : {}),
+      enabledByUser: options.enabledByUser,
+      quotaAware: options.quotaAware,
+      intervalMinutes: options.intervalMinutes,
+      model: options.model,
+      reasoningEffort: options.reasoningEffort,
     });
-    postEmbeddedHostMessage({
-      type: "panel:automation-request",
-      payload: {
-        requestId,
-        operation,
-        panelProjectId: selectedProjectId,
-        codexProjectId: automationProjectContext.codexProjectId,
-        projectName: selectedProject.name,
-        workspacePath: automationProjectContext.workspacePath,
-        skillPath: managePanelSkillPath,
-        ...(automationId ? { automationId } : {}),
-        enabledByUser: options.enabledByUser,
-        quotaAware: options.quotaAware,
-        intervalMinutes: options.intervalMinutes,
-        model: options.model,
-        reasoningEffort: options.reasoningEffort,
-      },
-    });
-    return response;
   }, [
     automationProjectContext,
     managePanelSkillPath,
     selectedProject,
     selectedProjectId,
+    sendHostAutomationRequest,
   ]);
+
+  const jiraAutomationAvailable = embedded
+    && window.parent !== window
+    && host === "codex"
+    && Boolean(managePanelSkillPath);
+  const sendJiraAutomationRequest = useCallback((
+    provider: JiraProvider,
+    operation: JiraAutomationOperation,
+  ) => {
+    if (!jiraAutomationAvailable || !managePanelSkillPath) {
+      return Promise.reject(new Error("Scheduled Task 只能在 Codex Panel.app 中管理"));
+    }
+    return sendHostAutomationRequest({
+      template: "jira-sync",
+      operation,
+      providerKey: provider.key,
+      providerAlias: provider.alias,
+      configPath: provider.configPath,
+      jql: provider.jql,
+      skillPath: managePanelSkillPath,
+      ...(provider.scheduledTaskId ? { automationId: provider.scheduledTaskId } : {}),
+      enabled: provider.enabled,
+    }).then((response) => ({
+      item: isJiraAutomationHostItem(response.item) ? response.item : undefined,
+      state: response.state,
+      run: response.run,
+    }));
+  }, [jiraAutomationAvailable, managePanelSkillPath, sendHostAutomationRequest]);
 
   const reconcileProjectAutomation = useCallback(async () => {
     if (automationProjectContext.unavailableReason) {
@@ -3199,6 +3246,8 @@ export function App() {
 
       <JiraProviderSettings
         open={jiraProviderSettingsOpen}
+        automationAvailable={jiraAutomationAvailable}
+        onAutomationRequest={sendJiraAutomationRequest}
         onClose={() => setJiraProviderSettingsOpen(false)}
       />
 

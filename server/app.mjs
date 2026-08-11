@@ -557,7 +557,7 @@ function parseJiraProviderPatch(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
     "version", "alias", "configPath", "jql", "enabled", "preview",
-    "autoComplete", "completionStatus",
+    "autoComplete", "completionStatus", "scheduledTaskId",
   ]));
   const version = parseVersion(body.version);
   const changes = {};
@@ -578,6 +578,13 @@ function parseJiraProviderPatch(body) {
       body.completionStatus,
       "completionStatus",
       { nullable: true, maxLength: 120 },
+    );
+  }
+  if (body.scheduledTaskId !== undefined) {
+    changes.scheduledTaskId = stringField(
+      body.scheduledTaskId,
+      "scheduledTaskId",
+      { nullable: true, maxLength: 256 },
     );
   }
   if (Object.keys(changes).length === 0) {

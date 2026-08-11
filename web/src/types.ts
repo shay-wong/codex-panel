@@ -192,10 +192,18 @@ export interface JiraProvider {
   preview: boolean;
   autoComplete: boolean;
   completionStatus: string | null;
+  scheduledTaskId: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
 }
+
+export type JiraAutomationOperation =
+  | "ensure-active"
+  | "pause"
+  | "list"
+  | "restore"
+  | "run-now";
 
 export interface JiraProviderDraft {
   key: string;

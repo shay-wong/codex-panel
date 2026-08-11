@@ -906,6 +906,7 @@
   function buildAutomationHostPayload(payload) {
     return {
       requestId: payload.requestId,
+      template: payload.template,
       operation: payload.operation,
       panelProjectId: payload.panelProjectId,
       codexProjectId: payload.codexProjectId,
@@ -918,6 +919,11 @@
       intervalMinutes: payload.intervalMinutes,
       model: payload.model,
       reasoningEffort: payload.reasoningEffort,
+      providerKey: payload.providerKey,
+      providerAlias: payload.providerAlias,
+      configPath: payload.configPath,
+      jql: payload.jql,
+      enabled: payload.enabled,
     };
   }
 
@@ -947,6 +953,8 @@
               items: response.items,
               quota: response.quota,
               policy: response.policy,
+              state: response.state,
+              run: response.run,
             },
       });
     } catch (error) {

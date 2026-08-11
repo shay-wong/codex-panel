@@ -146,13 +146,25 @@
 
 - 生命周期：`长期保留`
 - 原始目的：为后续由 Jira CLI 和 Scheduled Task 驱动的导入与回写提供多实例、非凭据型配置入口，同时保持 Jira 凭据由 CLI 自己管理。
-- 行为不变量：每个 provider 使用不可变的 lowercase key 标识 Jira 实例，alias 可独立修改；配置只保存 Jira CLI 配置文件的绝对路径、JQL、启用、预览、自动完成和目标状态，不保存凭据。新增 provider 时，本地 companion 必须优先发现 `JIRA_CONFIG_FILE`、`XDG_CONFIG_HOME/.jira` 和 `~/.config/.jira` 下的 YAML 配置，仅用配置路径和 server 主机名生成建议值，未发现时保留手动填写。默认 JQL 为 `assignee = currentUser() AND resolution IS EMPTY`，新 provider 默认启用预览并关闭自动完成；JQL 实际变化且预览关闭时，界面必须让用户选择重新开启或保持关闭，服务端不得强制开启；自动完成必须先有目标状态。禁用只改变后续同步资格并保留 provider 配置。注册本身不得调用 Jira 或创建同步任务。
+- 行为不变量：每个 provider 使用不可变的 lowercase key 标识 Jira 实例，alias 可独立修改；配置只保存 Jira CLI 配置文件的绝对路径、JQL、启用、预览、自动完成和目标状态，不保存凭据。新增 provider 时，本地 companion 必须优先发现 `JIRA_CONFIG_FILE`、`XDG_CONFIG_HOME/.jira` 和 `~/.config/.jira` 下的 YAML 配置，仅用配置路径和 server 主机名生成建议值，未发现时保留手动填写。默认 JQL 为 `assignee = currentUser() AND resolution IS EMPTY`，新 provider 默认启用预览并关闭自动完成；JQL 实际变化且预览关闭时，界面必须让用户选择重新开启或保持关闭，服务端不得强制开启；自动完成必须先有目标状态。禁用只改变后续同步资格并保留 provider 配置。provider API 本身不得调用 Jira；受管 Panel.app 在设置保存成功后独立管理对应 Scheduled Task。
 - 代码和测试路径：`server/app.mjs`、`server/database.mjs`、`web/src/api.ts`、`web/src/types.ts`、`web/src/components/JiraProviderSettings.tsx` 和 `web/src/styles.css`。本次按仓库直接路径确认规则未新增自动化测试。
 - 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
 - 来源：当前 Jira 集成能力；提交后可用 `git log -S'jira_providers' -- server/database.mjs web/src/components/JiraProviderSettings.tsx` 定位。
-- 合并指引：上游调整设置页、本地 companion 或数据库初始化时，保留“本地配置优先发现且只返回非凭据建议、多实例 key 身份、alias 与身份分离、凭据只由 Jira CLI 管理、JQL 变化时由用户选择预览状态、自动完成显式目标状态、本地配置不经 Cloud API”这些不变量；不得让 provider 注册隐式执行同步。
+- 合并指引：上游调整设置页、本地 companion 或数据库初始化时，保留“本地配置优先发现且只返回非凭据建议、多实例 key 身份、alias 与身份分离、凭据只由 Jira CLI 管理、JQL 变化时由用户选择预览状态、自动完成显式目标状态、本地配置不经 Cloud API”这些不变量；不得让 provider API 隐式查询 Jira。
 - 移除条件：Fork 停止 Jira CLI 集成，或上游提供等价的多实例、本地凭据边界和预览/回写策略后同步移除。
 - 针对性验证：运行 `npm run typecheck` 和 `npm run build:web`；确认本机存在 Jira CLI 配置时新增 provider 自动填充建议值、无候选时允许手动填写；创建两个不同 key 的 provider，关闭预览并修改 JQL 后分别选择重新开启与保持关闭，确认保存结果遵循选择；重启服务后确认配置仍存在，并确认未配置目标状态时无法开启自动完成。
+
+### Jira 同步 Scheduled Task
+
+- 生命周期：`长期保留`
+- 原始目的：复用 Codex 原生 Scheduled Task 和 Agent 能力，为每个 Jira provider 定时生成隔离、可审查的同步计划，不在 Panel 中维护第二套调度器，也不让计划任务直接修改 Panel 或 Jira。
+- 行为不变量：每个启用的 provider 由不可变 key 对应一个 projectless 原生任务，名称稳定为 `Panel Jira 同步 · <providerKey>`，默认每天 09:00 Asia/Shanghai 运行并复用 Codex 的离线单次补跑。任务固定使用 provider 的 Jira CLI 配置路径和 JQL，完整分页读取 Jira、Panel 项目和全部 Issue，只在已有认证只读能力时读取明确链接的需求证据，并输出带模板版本以及 `schemaVersion`、`provider`、`run`、`snapshots`、`evidence`、`proposals`、`ambiguities`、`failures` 的 JSON 计划；不得写 Panel、回写 Jira 或猜测项目。无变化时归档本次 Codex 运行，有变化、歧义或失败时保留并报告。手动运行不限次数，但同一 provider 已有 `IN_PROGRESS` 运行或本地请求尚未结束时必须拒绝重叠。Panel 必须显示正常、漂移或缺失状态；普通保存不得覆盖被外部编辑或删除的受管任务，只有显式“恢复标准任务”可以恢复。禁用 provider 暂停已有任务；原生任务管理只允许启动器受管 Panel iframe 调用，普通浏览器仅显示需要 Panel.app 的提示。
+- 代码和测试路径：`shared/panel-automation.mjs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-runtime.mjs`、`inject/codex-panel.user.js`、`server/app.mjs`、`server/database.mjs`、`web/src/App.tsx`、`web/src/api.ts`、`web/src/types.ts`、`web/src/components/JiraProviderSettings.tsx`、`web/src/styles.css` 和 `test/panel-automation.test.mjs`。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：当前 Jira Scheduled Task 能力；提交后可用 `git log -S'buildJiraAutomationSpec' -- shared/panel-automation.mjs web/src/components/JiraProviderSettings.tsx` 定位。
+- 合并指引：上游调整自动化 RPC、受管 iframe 权限、provider 设置或数据库时，保留“每 provider 一个原生 projectless 任务、固定只读计划模板、Panel 配置驱动但漂移只显式恢复、普通浏览器无原生权限、禁用暂停、同 provider 不重叠”这些不变量；不得引入自定义调度进程、允许 iframe 传任意 prompt，或把同步计划执行和 Jira 回写塞进计划任务。
+- 移除条件：Fork 停止 Jira 同步，或上游提供等价的多 provider 只读计划任务、受管权限、漂移恢复与手动运行行为后同步移除。
+- 针对性验证：运行 `node --test test/panel-automation.test.mjs`、`npm run typecheck` 和 `npm run build:web`；在 Codex Panel.app 保存启用的 provider，确认原生 Scheduled Tasks 出现独立的每日任务，连续点击立即同步时同 provider 不会重叠；在原生页编辑或删除任务后重新打开设置，确认显示漂移或缺失且普通保存不覆盖，只有“恢复标准任务”修复。再从普通浏览器打开设置，确认 provider 仍可编辑但原生任务操作禁用并显示 Panel.app 提示。
 
 ### Issue 详情页项目切换
 

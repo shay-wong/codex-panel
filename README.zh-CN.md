@@ -4,7 +4,7 @@
 
 一个本地优先的 Issue 看板，可在浏览器中运行，也可以通过独立 CDP 启动器或注入脚本嵌入 Codex。React UI 与随附 Codex Skill 使用的 `panelctl` CLI 共用同一套 HTTP API。
 
-面板支持概览、列表、甘特图和归档 Issue 工作流。Issue 可以设置开始与截止日期，也可以从详情页移动到其他项目并保留关联对话。Jira 设置会优先发现本地 Jira CLI 配置，找不到时再手动填写，并支持为多个 provider 分别配置 alias、配置路径、JQL、预览与完成策略；预览关闭时修改 JQL，Panel 会询问是否重新开启。provider 注册本身不会同步任务，后续 Jira 工作流负责实际同步。
+面板支持概览、列表、甘特图和归档 Issue 工作流。Issue 可以设置开始与截止日期，也可以从详情页移动到其他项目并保留关联对话。Jira 设置会优先发现本地 Jira CLI 配置，找不到时再手动填写，并支持为多个 provider 分别配置 alias、配置路径、JQL、预览与完成策略；预览关闭时修改 JQL，Panel 会询问是否重新开启。在 Codex Panel.app 中，每个启用的 provider 都有隔离的每日 Scheduled Task，只读取 Jira 和 Panel 并产出可审查的同步计划，不会直接应用。
 
 ## 环境要求
 
