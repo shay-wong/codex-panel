@@ -1725,6 +1725,7 @@ export function App() {
   function selectBoardView(view: BoardView) {
     closeContextMenu();
     setGanttViewMenuOpen(false);
+    if (detailTaskIdentifier) closeTaskDetail();
     setBoardView(view);
     if (selectedProjectId) {
       panelStorage.setItem(`${PROJECT_VIEW_KEY_PREFIX}${selectedProjectId}`, view);
@@ -2453,7 +2454,7 @@ export function App() {
           </div>
         </header>
 
-        {selectedProjectId && !detailTask && <div className="board-toolbar">
+        {selectedProjectId && <div className="board-toolbar">
           <div className="view-tabs" aria-label="看板视图">
             <button
               className={`view-tab${boardView === "dashboard" ? " active" : ""}`}
@@ -2498,7 +2499,7 @@ export function App() {
               </button>
             )}
           </div>
-          {(boardView === "issues" || boardView === "list" || boardView === "gantt") && <div className="toolbar-tools">
+          {!detailTask && (boardView === "issues" || boardView === "list" || boardView === "gantt") && <div className="toolbar-tools">
             <div className={`search-field${search ? " has-value" : ""}`} title="搜索议题 (/)" >
               <PanelIcon className="search-icon" name="search" />
               <input

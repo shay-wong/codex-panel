@@ -99,6 +99,19 @@ test("the project header keeps detail navigation separate from the project switc
   assert.doesNotMatch(appSource, /detailTask\?\.identifier \?\? "议题"/);
 });
 
+test("issue details keep the view switcher available and switching exits the detail", () => {
+  assert.match(appSource, /\{selectedProjectId && <div className="board-toolbar">/);
+  assert.doesNotMatch(appSource, /selectedProjectId && !detailTask/);
+  assert.match(
+    appSource,
+    /function selectBoardView\(view: BoardView\) \{[\s\S]*?if \(detailTaskIdentifier\) closeTaskDetail\(\);[\s\S]*?setBoardView\(view\)/,
+  );
+  assert.match(
+    appSource,
+    /\{!detailTask && \(boardView === "issues" \|\| boardView === "list" \|\| boardView === "gantt"\) && <div className="toolbar-tools">/,
+  );
+});
+
 test("the collapsed Codex sidebar can be expanded immediately left of the project switcher", () => {
   assert.match(
     appSource,
