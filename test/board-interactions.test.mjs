@@ -72,6 +72,15 @@ test("native select options remain readable in dark theme", () => {
   assert.match(styles, /:root\[data-theme="dark"\] select option:checked \{[\s\S]*?background-color: var\(--surface-active\)/);
 });
 
+test("the issue board uses theme tokens for its primary surfaces", () => {
+  assert.match(styles, /\.issue-board-layout \{[\s\S]*?background: var\(--surface\)/);
+  assert.match(styles, /\.column-list \{[\s\S]*?background: var\(--column-header\)/);
+  assert.match(
+    styles,
+    /\.view-tab\.active,[\s\S]*?\.view-tab\.active:hover \{[\s\S]*?border-color: var\(--border\);[\s\S]*?background: var\(--surface\);[\s\S]*?color: var\(--text-primary\)/,
+  );
+});
+
 test("each status column remains a drop target for the full board height", () => {
   assert.match(styles, /\.board \{[\s\S]*?align-items: stretch;[\s\S]*?height: 100%/);
   assert.match(styles, /\.board-column \{[\s\S]*?display: flex;[\s\S]*?flex-direction: column;[\s\S]*?height: 100%/);
