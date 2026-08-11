@@ -49,6 +49,7 @@ test("the selected project exposes the current board surfaces", () => {
   assert.match(appSource, /<div className="board-toolbar">/);
   assert.match(appSource, /<DashboardView/);
   assert.match(appSource, /<IssueListView/);
+  assert.match(appSource, /<IssueListView[\s\S]*?layout=\{listLayout\}/);
   assert.match(appSource, /<GanttView/);
   assert.match(appSource, /<BoardColumn/);
   assert.match(styles, /\.workspace-header \{[\s\S]*?border-bottom: var\(--border-hairline\) solid var\(--border\)/);

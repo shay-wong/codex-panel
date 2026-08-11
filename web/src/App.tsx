@@ -120,6 +120,9 @@ import { createRevisionPoller, getRevisionPollingInterval } from "./revisionPoll
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
 type BoardView = "dashboard" | "issues" | "list" | "gantt" | "workflow";
+type ListLayout = "horizontal" | "vertical";
+type ListCollapseMode = "always-expanded" | "remember" | "always-collapsed";
+type ListCollapseModes = Record<TaskStatus, ListCollapseMode>;
 type GanttZoom = "day" | "week" | "month";
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
 const GANTT_ZOOM_OPTIONS: GanttZoom[] = ["day", "week", "month"];
@@ -235,6 +238,9 @@ const DEFAULT_USER_ACTOR: ActorIdentity = {
 const GLOBAL_PROJECT_ID = "local";
 const RECENT_PROJECT_IDS_KEY = "panel.recentProjectIds.v1";
 const PROJECT_VIEW_KEY_PREFIX = "panel.project-view.v1.";
+const PROJECT_LIST_LAYOUT_KEY_PREFIX = "panel.project-list-layout.v1.";
+const PROJECT_LIST_COLLAPSE_MODES_KEY_PREFIX = "panel.project-list-collapse-modes.v2.";
+const PROJECT_LIST_COLLAPSED_STATUSES_KEY_PREFIX = "panel.project-list-collapsed-statuses.v1.";
 const DEVICE_WORKSPACE_PATHS_KEY = "panel.deviceWorkspacePaths.v1";
 const PROJECT_AUTOMATIONS_KEY = "panel.projectAutomations.v1";
 const ISSUE_READ_KEY_PREFIX = "panel.issue-read.v1";
@@ -264,6 +270,73 @@ function readProjectBoardView(projectId: string): BoardView {
   return view === "dashboard" || view === "list" || view === "gantt" || view === "issues"
     ? view
     : "issues";
+}
+
+function readProjectListLayout(projectId: string): ListLayout {
+  return panelStorage.getItem(`${PROJECT_LIST_LAYOUT_KEY_PREFIX}${projectId}`) === "vertical"
+    ? "vertical"
+    : "horizontal";
+}
+
+function defaultListCollapseModes(): ListCollapseModes {
+  return Object.fromEntries(
+    TASK_STATUSES.map((status) => [status, "remember"]),
+  ) as ListCollapseModes;
+}
+
+function isListCollapseMode(value: unknown): value is ListCollapseMode {
+  return value === "always-expanded" || value === "remember" || value === "always-collapsed";
+}
+
+function readProjectListCollapseModes(projectId: string): ListCollapseModes {
+  const modes = defaultListCollapseModes();
+  try {
+    const value = JSON.parse(
+      panelStorage.getItem(`${PROJECT_LIST_COLLAPSE_MODES_KEY_PREFIX}${projectId}`) ?? "{}",
+    );
+    if (!value || typeof value !== "object" || Array.isArray(value)) return modes;
+    for (const status of TASK_STATUSES) {
+      if (isListCollapseMode(value[status])) modes[status] = value[status];
+    }
+  } catch {}
+  return modes;
+}
+
+function writeProjectListCollapseModes(projectId: string, modes: ListCollapseModes) {
+  panelStorage.setItem(
+    `${PROJECT_LIST_COLLAPSE_MODES_KEY_PREFIX}${projectId}`,
+    JSON.stringify(modes),
+  );
+}
+
+function readProjectListCollapsedStatuses(projectId: string): TaskStatus[] {
+  try {
+    const value = JSON.parse(
+      panelStorage.getItem(`${PROJECT_LIST_COLLAPSED_STATUSES_KEY_PREFIX}${projectId}`) ?? "[]",
+    );
+    if (!Array.isArray(value)) return [];
+    return TASK_STATUSES.filter((status) => value.includes(status));
+  } catch {
+    return [];
+  }
+}
+
+function writeProjectListCollapsedStatuses(projectId: string, statuses: ReadonlySet<TaskStatus>) {
+  panelStorage.setItem(
+    `${PROJECT_LIST_COLLAPSED_STATUSES_KEY_PREFIX}${projectId}`,
+    JSON.stringify(TASK_STATUSES.filter((status) => statuses.has(status))),
+  );
+}
+
+function initialProjectListCollapsedStatuses(
+  projectId: string,
+  modes: ListCollapseModes,
+): Set<TaskStatus> {
+  const rememberedStatuses = new Set(readProjectListCollapsedStatuses(projectId));
+  return new Set(TASK_STATUSES.filter((status) => (
+    modes[status] === "always-collapsed"
+    || (modes[status] === "remember" && rememberedStatuses.has(status))
+  )));
 }
 
 function readRecentProjectIds(): string[] {
@@ -627,6 +700,13 @@ export function App() {
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState(readTaskFilters);
   const [boardView, setBoardView] = useState<BoardView>(() => readProjectBoardView(initialProjectId));
+  const [listLayout, setListLayout] = useState<ListLayout>(() => readProjectListLayout(initialProjectId));
+  const [listCollapseModes, setListCollapseModes] = useState<ListCollapseModes>(
+    () => readProjectListCollapseModes(initialProjectId),
+  );
+  const [listCollapsedStatuses, setListCollapsedStatuses] = useState<Set<TaskStatus>>(
+    () => initialProjectListCollapsedStatuses(initialProjectId, listCollapseModes),
+  );
   const [dashboardSummaryAnimatedProjectId, setDashboardSummaryAnimatedProjectId] = useState<string | null>(null);
   const [ganttZoom, setGanttZoom] = useState<GanttZoom>("week");
   const [ganttHideCompleted, setGanttHideCompleted] = useState(false);
@@ -678,7 +758,11 @@ export function App() {
   const undoInFlightRef = useRef(false);
   const dragRegionRef = useRef<HTMLDivElement>(null);
   const issueListRef = useRef<HTMLDivElement>(null);
-  const pendingIssueListScrollRef = useRef<{ projectId: string; scrollTop: number } | null>(null);
+  const pendingIssueListScrollRef = useRef<{
+    projectId: string;
+    scrollLeft: number;
+    scrollTop: number;
+  } | null>(null);
   const selectedProjectIdRef = useRef(selectedProjectId);
   selectedProjectIdRef.current = selectedProjectId;
 
@@ -1084,6 +1168,7 @@ export function App() {
     if (issueListRef.current) {
       pendingIssueListScrollRef.current = {
         projectId: selectedProjectId,
+        scrollLeft: issueListRef.current.scrollLeft,
         scrollTop: issueListRef.current.scrollTop,
       };
     }
@@ -1118,6 +1203,7 @@ export function App() {
       return;
     }
     if (!issueListRef.current) return;
+    issueListRef.current.scrollLeft = pendingScroll.scrollLeft;
     issueListRef.current.scrollTop = pendingScroll.scrollTop;
     pendingIssueListScrollRef.current = null;
   }, [boardView, detailTaskIdentifier, selectedProjectId]);
@@ -1130,12 +1216,17 @@ export function App() {
       if (routeIssueIdentifier && issueListRef.current) {
         pendingIssueListScrollRef.current = {
           projectId: selectedProjectId,
+          scrollLeft: issueListRef.current.scrollLeft,
           scrollTop: issueListRef.current.scrollTop,
         };
       }
       setDetailTaskIdentifier(routeIssueIdentifier);
       if (routeProjectId === selectedProjectId) return;
       setBoardView(readProjectBoardView(routeProjectId));
+      setListLayout(readProjectListLayout(routeProjectId));
+      const collapseModes = readProjectListCollapseModes(routeProjectId);
+      setListCollapseModes(collapseModes);
+      setListCollapsedStatuses(initialProjectListCollapsedStatuses(routeProjectId, collapseModes));
       setSelectedProjectId(routeProjectId);
     }
 
@@ -1151,7 +1242,12 @@ export function App() {
   }, [embedded, theme]);
 
   useEffect(() => {
-    if (selectedProjectId) setBoardView(readProjectBoardView(selectedProjectId));
+    if (!selectedProjectId) return;
+    setBoardView(readProjectBoardView(selectedProjectId));
+    setListLayout(readProjectListLayout(selectedProjectId));
+    const collapseModes = readProjectListCollapseModes(selectedProjectId);
+    setListCollapseModes(collapseModes);
+    setListCollapsedStatuses(initialProjectListCollapsedStatuses(selectedProjectId, collapseModes));
   }, [selectedProjectId]);
 
   useEffect(() => {
@@ -1726,10 +1822,50 @@ export function App() {
     closeContextMenu();
     setGanttViewMenuOpen(false);
     if (detailTaskIdentifier) closeTaskDetail();
+    if (view === "list" && boardView !== "list" && selectedProjectId) {
+      const collapseModes = readProjectListCollapseModes(selectedProjectId);
+      setListCollapseModes(collapseModes);
+      setListCollapsedStatuses(initialProjectListCollapsedStatuses(selectedProjectId, collapseModes));
+    }
     setBoardView(view);
     if (selectedProjectId) {
       panelStorage.setItem(`${PROJECT_VIEW_KEY_PREFIX}${selectedProjectId}`, view);
     }
+  }
+
+  function selectListLayout(layout: ListLayout) {
+    setListLayout(layout);
+    if (selectedProjectId) {
+      panelStorage.setItem(`${PROJECT_LIST_LAYOUT_KEY_PREFIX}${selectedProjectId}`, layout);
+    }
+  }
+
+  function selectListCollapseMode(status: TaskStatus, mode: ListCollapseMode) {
+    if (!selectedProjectId) return;
+    setListCollapseModes((current) => {
+      const next = { ...current, [status]: mode };
+      writeProjectListCollapseModes(selectedProjectId, next);
+      return next;
+    });
+    setListCollapsedStatuses((current) => {
+      const next = new Set(current);
+      if (mode === "always-expanded") next.delete(status);
+      else if (mode === "always-collapsed") next.add(status);
+      else writeProjectListCollapsedStatuses(selectedProjectId, next);
+      return next;
+    });
+  }
+
+  function toggleListStatus(status: TaskStatus) {
+    setListCollapsedStatuses((current) => {
+      const next = new Set(current);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      if (listCollapseModes[status] === "remember" && selectedProjectId) {
+        writeProjectListCollapsedStatuses(selectedProjectId, next);
+      }
+      return next;
+    });
   }
 
   async function saveEditor(
@@ -2166,6 +2302,10 @@ export function App() {
     setProjectMenuOpen(false);
     setDetailTaskIdentifier(null);
     setBoardView(readProjectBoardView(projectId));
+    setListLayout(readProjectListLayout(projectId));
+    const collapseModes = readProjectListCollapseModes(projectId);
+    setListCollapseModes(collapseModes);
+    setListCollapsedStatuses(initialProjectListCollapsedStatuses(projectId, collapseModes));
     rememberProjectOpen(projectId);
     setSelectedProjectId(projectId);
     setSearch("");
@@ -2291,6 +2431,37 @@ export function App() {
   const appShellStyle = embedded
     ? { "--codex-titlebar-left-inset": `${hostContext?.titlebarLeftInset ?? 0}px` } as CSSProperties
     : undefined;
+
+  function renderBoardColumn(status: TaskStatus) {
+    return (
+      <BoardColumn
+        key={status}
+        status={status}
+        tasks={tasksByStatus[status]}
+        presentations={taskPresentations}
+        now={processingNow}
+        emptyMessage={hasActiveTaskFilters ? "当前筛选下无匹配议题" : "暂无议题"}
+        isDropTarget={dropTarget === status}
+        draggedTaskId={draggedTaskId}
+        draggedTaskHeight={draggedTaskHeight}
+        movingTaskId={movingTaskId}
+        settlingTaskId={settlingTaskId}
+        contextMenuTaskId={contextMenu?.taskId ?? null}
+        availableLabels={availableLabels}
+        currentUser={currentUser}
+        onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
+        onEdit={openTaskDetail}
+        onUpdate={updateTaskProperties}
+        onComplete={(task) => void moveTask(task, "done")}
+        onContextMenu={(task, position) => setContextMenu({ taskId: task.id, ...position })}
+        onDragStart={startTaskDrag}
+        onDragEnd={endTaskDrag}
+        onDragEnter={setDropTarget}
+        onDrop={finishTaskDrop}
+        onOpenConversation={openTaskConversation}
+      />
+    );
+  }
 
   return (
     <div className={`app-shell${embedded ? " embedded" : ""}`} style={appShellStyle}>
@@ -2500,6 +2671,32 @@ export function App() {
             )}
           </div>
           {!detailTask && (boardView === "issues" || boardView === "list" || boardView === "gantt") && <div className="toolbar-tools">
+            {boardView === "list" && (
+              <div className="list-view-options">
+                <div className="list-layout-switch" role="group" aria-label="列表布局">
+                  <button
+                    type="button"
+                    className={`list-layout-option${listLayout === "horizontal" ? " is-active" : ""}`}
+                    aria-label="横向列表"
+                    aria-pressed={listLayout === "horizontal"}
+                    title="横向列表"
+                    onClick={() => selectListLayout("horizontal")}
+                  >
+                    <LinearIcon name="layoutColumns" />
+                  </button>
+                  <button
+                    type="button"
+                    className={`list-layout-option${listLayout === "vertical" ? " is-active" : ""}`}
+                    aria-label="纵向列表"
+                    aria-pressed={listLayout === "vertical"}
+                    title="纵向列表"
+                    onClick={() => selectListLayout("vertical")}
+                  >
+                    <LinearIcon name="layoutRows" />
+                  </button>
+                </div>
+              </div>
+            )}
             <div className={`search-field${search ? " has-value" : ""}`} title="搜索议题 (/)" >
               <PanelIcon className="search-icon" name="search" />
               <input
@@ -2633,13 +2830,26 @@ export function App() {
         ) : boardView === "list" ? (
           <IssueListView
             scrollRef={issueListRef}
+            layout={listLayout}
+            collapseModes={listCollapseModes}
+            collapsedStatuses={listCollapsedStatuses}
             tasks={filteredTasks}
             presentations={taskPresentations}
             currentUser={currentUser}
             hasActiveFilters={hasActiveTaskFilters}
+            dropTarget={dropTarget}
+            draggedTaskId={draggedTaskId}
+            movingTaskId={movingTaskId}
+            settlingTaskId={settlingTaskId}
             onOpenTask={openTaskDetail}
             onOpenConversation={openTaskConversation}
             onUpdate={updateTaskProperties}
+            onCollapseModeChange={selectListCollapseMode}
+            onToggleStatus={toggleListStatus}
+            onDragStart={startTaskDrag}
+            onDragEnd={endTaskDrag}
+            onDragEnter={setDropTarget}
+            onDrop={finishTaskDrop}
           />
         ) : boardView === "gantt" ? (
           <Suspense fallback={<div className="workflow-board-loading">正在打开甘特图…</div>}>
@@ -2692,34 +2902,7 @@ export function App() {
               <>
                 <div className="board-scroll" aria-label="Issue board">
                   <div className="board">
-                    {mainStatuses.map((status) => (
-                      <BoardColumn
-                        key={status}
-                        status={status}
-                        tasks={tasksByStatus[status]}
-                        presentations={taskPresentations}
-                        now={processingNow}
-                        emptyMessage={hasActiveTaskFilters ? "当前筛选下无匹配议题" : "暂无议题"}
-                        isDropTarget={dropTarget === status}
-                        draggedTaskId={draggedTaskId}
-                        draggedTaskHeight={draggedTaskHeight}
-                        movingTaskId={movingTaskId}
-                        settlingTaskId={settlingTaskId}
-                        contextMenuTaskId={contextMenu?.taskId ?? null}
-                        availableLabels={availableLabels}
-                        currentUser={currentUser}
-                        onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
-                        onEdit={openTaskDetail}
-                        onUpdate={updateTaskProperties}
-                        onComplete={(task) => void moveTask(task, "done")}
-                        onContextMenu={(task, position) => setContextMenu({ taskId: task.id, ...position })}
-                        onDragStart={startTaskDrag}
-                        onDragEnd={endTaskDrag}
-                        onDragEnter={setDropTarget}
-                        onDrop={finishTaskDrop}
-                        onOpenConversation={openTaskConversation}
-                      />
-                    ))}
+                    {mainStatuses.map(renderBoardColumn)}
                   </div>
                 </div>
                 {otherTasksMounted && (

@@ -39,6 +39,14 @@ test("dragging previews the insertion rank before committing it", () => {
   assert.match(styles, /\.task-card\.is-settling \{[\s\S]*?task-card-settle 200ms/);
 });
 
+test("horizontal and vertical issue lists expose consistent drag feedback", () => {
+  assert.match(styles, /\.issue-list-view\.layout-horizontal \.issue-list-groups \{[\s\S]*?grid-auto-flow: column/);
+  assert.match(styles, /\.issue-list-row \{[\s\S]*?cursor: grab/);
+  assert.match(styles, /\.issue-list-drag-handle \{[\s\S]*?color: var\(--text-quaternary\)/);
+  assert.match(styles, /\.issue-list-group\.is-drop-target \.issue-list-group-header \{[\s\S]*?var\(--accent-soft\)/);
+  assert.match(styles, /\.issue-list-rows\.is-drop-at-end::after,[\s\S]*?\.issue-list-row\.is-drop-before::before \{[\s\S]*?background: var\(--accent\)/);
+});
+
 test("text selection is reserved for editable fields", () => {
   assert.match(styles, /body \{[^}]*user-select: none/);
   assert.match(styles, /input,[\s\S]*?textarea,[\s\S]*?\[contenteditable="true"\][\s\S]*?user-select: text/);

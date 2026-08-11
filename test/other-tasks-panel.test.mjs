@@ -28,7 +28,8 @@ test("the issue workspace projects the seven statuses into adaptive main and sec
   assert.deepEqual(statusList("SECONDARY_STATUSES"), ["backlog", "done", "canceled"]);
   assert.match(statusSource, /satisfies readonly TaskStatus\[\]/);
   assert.match(appSource, /const mainStatuses = hasBlockedTasks[\s\S]*?MAIN_STATUSES\.filter\(\(status\) => status !== "blocked"\)/);
-  assert.match(appSource, /mainStatuses\.map\(\(status\) => \([\s\S]*?<BoardColumn/);
+  assert.match(appSource, /function renderBoardColumn\(status: TaskStatus\)[\s\S]*?<BoardColumn/);
+  assert.match(appSource, /mainStatuses\.map\(renderBoardColumn\)/);
   assert.match(appSource, /mainStatuses\.map\(\(status\) => \([\s\S]*?className="loading-column"/);
   assert.match(boardColumnSource, /todo: \{ label: "等待认领", tone: "todo" \}/);
   assert.match(boardColumnSource, /in_progress: \{ label: "处理中", tone: "progress" \}/);
@@ -84,8 +85,9 @@ test("panel cards reuse TaskCard and the existing ranked board drop path", () =>
   assert.match(panelSource, /onDragStart=\{onDragStart\}/);
   assert.match(panelSource, /onDragEnd=\{onDragEnd\}/);
   assert.match(panelSource, /onOpenConversation=\{onOpenConversation\}/);
-  assert.equal(appSource.match(/onDragStart=\{startTaskDrag\}/g)?.length, 2);
-  assert.equal(appSource.match(/onDragEnd=\{endTaskDrag\}/g)?.length, 2);
+  assert.match(appSource, /function renderBoardColumn[\s\S]*?onDragStart=\{startTaskDrag\}[\s\S]*?onDragEnd=\{endTaskDrag\}/);
+  assert.match(appSource, /<IssueListView[\s\S]*?onDragStart=\{startTaskDrag\}[\s\S]*?onDragEnd=\{endTaskDrag\}/);
+  assert.match(appSource, /<OtherTasksPanel[\s\S]*?onDragStart=\{startTaskDrag\}[\s\S]*?onDragEnd=\{endTaskDrag\}/);
   assert.match(boardColumnSource, /findDropBefore\(event\.currentTarget, event\.clientY\)/);
   assert.match(boardColumnSource, /onDrop\(status, taskId, findDropBefore/);
   assert.match(panelSource, /findDropBefore\(event\.currentTarget, event\.clientY\)/);

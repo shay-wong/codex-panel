@@ -5,6 +5,7 @@ import { test } from "node:test";
 const appSource = await readFile(new URL("../web/src/App.tsx", import.meta.url), "utf8");
 const apiSource = await readFile(new URL("../web/src/api.ts", import.meta.url), "utf8");
 const typesSource = await readFile(new URL("../web/src/types.ts", import.meta.url), "utf8");
+const issueListSource = await readFile(new URL("../web/src/components/IssueListView.tsx", import.meta.url), "utf8");
 const workflowSource = await readFile(new URL("../web/src/components/WorkflowBoard.tsx", import.meta.url), "utf8");
 const workflowNodeSource = await readFile(new URL("../web/src/components/WorkflowNode.tsx", import.meta.url), "utf8");
 const inspectorSource = await readFile(new URL("../web/src/components/WorkflowInspector.tsx", import.meta.url), "utf8");
@@ -33,6 +34,90 @@ test("the panel defaults to issues and exposes the current project views", () =>
   assert.match(appSource, /SHOW_WORKFLOW_BOARD_ENTRY && \([\s\S]*?>\s*节点模式\s*<\/button>/);
   assert.match(appSource, /function changeProject[\s\S]*?setBoardView\(readProjectBoardView\(projectId\)\)/);
   assert.doesNotMatch(appSource, /<span>活跃<\/span>|<span>积压事项<\/span>|所有议题|add-view/);
+});
+
+test("the list view defaults to a horizontal list and keeps a per-project layout switch", () => {
+  assert.match(appSource, /type ListLayout = "horizontal" \| "vertical"/);
+  assert.match(appSource, /const PROJECT_LIST_LAYOUT_KEY_PREFIX = "panel\.project-list-layout\.v1\."/);
+  assert.match(
+    appSource,
+    /function readProjectListLayout\(projectId: string\): ListLayout \{[\s\S]*?=== "vertical"[\s\S]*?\? "vertical"[\s\S]*?: "horizontal"/,
+  );
+  assert.match(appSource, /useState<ListLayout>\(\(\) => readProjectListLayout\(initialProjectId\)\)/);
+  assert.match(appSource, /setListLayout\(readProjectListLayout\(selectedProjectId\)\)/);
+  assert.match(appSource, /function changeProject[\s\S]*?setListLayout\(readProjectListLayout\(projectId\)\)/);
+  assert.match(appSource, /function syncRouteFromLocation[\s\S]*?setListLayout\(readProjectListLayout\(routeProjectId\)\)/);
+  assert.match(
+    appSource,
+    /function selectListLayout\(layout: ListLayout\)[\s\S]*?panelStorage\.setItem\(`\$\{PROJECT_LIST_LAYOUT_KEY_PREFIX\}\$\{selectedProjectId\}`, layout\)/,
+  );
+  assert.match(appSource, /className="list-layout-switch" role="group" aria-label="列表布局"/);
+  assert.match(appSource, /aria-label="横向列表"[\s\S]*?aria-pressed=\{listLayout === "horizontal"\}/);
+  assert.match(appSource, /aria-label="纵向列表"[\s\S]*?aria-pressed=\{listLayout === "vertical"\}/);
+});
+
+test("each list status group owns an initial-state policy while remaining manually toggleable", () => {
+  assert.match(appSource, /type ListCollapseMode = "always-expanded" \| "remember" \| "always-collapsed"/);
+  assert.match(appSource, /type ListCollapseModes = Record<TaskStatus, ListCollapseMode>/);
+  assert.match(appSource, /const PROJECT_LIST_COLLAPSE_MODES_KEY_PREFIX = "panel\.project-list-collapse-modes\.v2\."/);
+  assert.match(appSource, /const PROJECT_LIST_COLLAPSED_STATUSES_KEY_PREFIX = "panel\.project-list-collapsed-statuses\.v1\."/);
+  assert.match(
+    appSource,
+    /function readProjectListCollapseModes\(projectId: string\): ListCollapseModes/,
+  );
+  assert.match(appSource, /TASK_STATUSES\.map\(\(status\) => \[status, "remember"\]\)/);
+  assert.match(appSource, /function initialProjectListCollapsedStatuses\([\s\S]*?modes: ListCollapseModes/);
+  assert.match(appSource, /modes\[status\] === "always-collapsed"/);
+  assert.match(appSource, /modes\[status\] === "remember"/);
+  assert.match(appSource, /useState<ListCollapseModes>\([\s\S]*?readProjectListCollapseModes\(initialProjectId\)/);
+  assert.match(appSource, /useState<Set<TaskStatus>>\([\s\S]*?initialProjectListCollapsedStatuses\(initialProjectId, listCollapseModes\)/);
+  assert.match(appSource, /function selectListCollapseMode\(status: TaskStatus, mode: ListCollapseMode\)/);
+  assert.match(appSource, /\[status\]: mode/);
+  assert.match(appSource, /function toggleListStatus\(status: TaskStatus\)/);
+  assert.doesNotMatch(appSource, /if \(listCollapseModes\[status\] !== "remember"\) return/);
+  assert.match(appSource, /if \(listCollapseModes\[status\] === "remember" && selectedProjectId\) \{[\s\S]*?writeProjectListCollapsedStatuses\(selectedProjectId, next\)/);
+  assert.match(appSource, /<IssueListView[\s\S]*?collapseModes=\{listCollapseModes\}[\s\S]*?onCollapseModeChange=\{selectListCollapseMode\}/);
+  assert.doesNotMatch(appSource, /className="list-collapse-menu-trigger"/);
+  assert.match(issueListSource, /collapseModes: Readonly<Record<TaskStatus, ListCollapseMode>>/);
+  assert.match(issueListSource, /collapsedStatuses: ReadonlySet<TaskStatus>/);
+  assert.match(issueListSource, /onCollapseModeChange: \(status: TaskStatus, mode: ListCollapseMode\) => void/);
+  assert.match(issueListSource, /onToggleStatus: \(status: TaskStatus\) => void/);
+  assert.match(issueListSource, /collapseMenuStatus === status/);
+  assert.match(issueListSource, /aria-label=\{`\$\{STATUS_DETAILS\[status\]\.label\}折叠方式`\}/);
+  assert.match(issueListSource, /\["always-expanded", "总是展开"\]/);
+  assert.match(issueListSource, /\["remember", "记住上次状态"\]/);
+  assert.match(issueListSource, /\["always-collapsed", "始终折叠"\]/);
+  assert.doesNotMatch(issueListSource, /disabled=\{collapseModes\[status\] !== "remember"\}/);
+  assert.doesNotMatch(issueListSource, /"默认展开"/);
+  assert.doesNotMatch(issueListSource, /COLLAPSED_BY_DEFAULT/);
+});
+
+test("returning to the list reapplies each status group's startup policy", () => {
+  assert.match(
+    appSource,
+    /function selectBoardView\(view: BoardView\)[\s\S]*?if \(view === "list" && boardView !== "list" && selectedProjectId\) \{[\s\S]*?readProjectListCollapseModes\(selectedProjectId\)[\s\S]*?initialProjectListCollapsedStatuses\(selectedProjectId, collapseModes\)/,
+  );
+});
+
+test("horizontal and vertical list layouts reuse the same issue rows instead of board cards", () => {
+  assert.doesNotMatch(appSource, /boardView === "list" && listLayout === "horizontal"[\s\S]*?<BoardColumn/);
+  assert.match(appSource, /boardView === "list" \? \([\s\S]*?<IssueListView[\s\S]*?layout=\{listLayout\}/);
+  assert.match(issueListSource, /className=\{`issue-list-view layout-\$\{layout\}`\}/);
+  assert.match(issueListSource, /className="issue-list-groups"/);
+});
+
+test("both list layouts support status moves and insertion-order dragging", () => {
+  assert.match(issueListSource, /onDragStart: \(task: Task, height: number\) => void/);
+  assert.match(issueListSource, /onDragEnd: \(\) => void/);
+  assert.match(issueListSource, /onDragEnter: \(status: TaskStatus\) => void/);
+  assert.match(issueListSource, /onDrop: \(status: TaskStatus, taskId: string, beforeTaskId: string \| null\) => void/);
+  assert.match(issueListSource, /draggable=\{!isMoving\}/);
+  assert.match(issueListSource, /event\.dataTransfer\.setData\("application\/x-panel-task", task\.id\)/);
+  assert.match(issueListSource, /function findDropBefore/);
+  assert.match(issueListSource, /className=\{`issue-list-group status-\$\{status\}\$\{isDropTarget \? " is-drop-target" : ""\}`\}/);
+  assert.match(issueListSource, /onDragOver=\{\(event\) =>/);
+  assert.match(issueListSource, /onDrop=\{\(event\) => handleDrop\(event, status\)\}/);
+  assert.match(appSource, /<IssueListView[\s\S]*?onDragStart=\{startTaskDrag\}[\s\S]*?onDrop=\{finishTaskDrop\}/);
 });
 
 test("secondary views lazy-load while issue controls remain isolated", () => {
