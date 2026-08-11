@@ -107,6 +107,8 @@ interface TaskDetailProps {
     relatedTaskId: string,
   ) => Promise<RelationMutationResult>;
   onOpenThread: (threadId: string) => void;
+  aiChatThreads: AiChatThread[];
+  onOpenAiChatThread: (threadId: string) => void;
   onOpenInThread: (task: Task) => void;
   onCopy: (text: string, announcement: string) => void;
   openingThread: boolean;
@@ -345,6 +347,8 @@ export function TaskDetail({
   onAddRelation,
   onRemoveRelation,
   onOpenThread,
+  aiChatThreads,
+  onOpenAiChatThread,
   onOpenInThread,
   onCopy,
   openingThread,
@@ -747,6 +751,10 @@ export function TaskDetail({
   const visibleTaskAttachments = attachments.filter(
     (attachment) => !markdownIncludesAttachment(description, attachment),
   );
+  const linkedAiChatThreads = aiChatThreads.filter((thread) => (
+    thread.origin.projectId === currentTask.projectId
+    && thread.origin.issueId === currentTask.id
+  ));
   const activityTimeline = [
     ...taskActivities.flatMap((activity) => activity.changes.map((change, index) => ({
       kind: "change" as const,
@@ -760,6 +768,12 @@ export function TaskDetail({
       id: comment.id,
       createdAt: comment.createdAt,
       comment,
+    })),
+    ...linkedAiChatThreads.map((thread) => ({
+      kind: "ai-conversation" as const,
+      id: thread.id,
+      createdAt: thread.updatedAt,
+      thread,
     })),
   ].sort((left, right) => (
     left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
@@ -965,6 +979,15 @@ export function TaskDetail({
                 {commentsLoading ? (
                   <div className="comments-loading" aria-label="正在加载活动" aria-busy="true"><i /><i /></div>
                 ) : activityTimeline.map((item) => {
+                  if (item.kind === "ai-conversation") {
+                    return (
+                      <AiConversationActivity
+                        key={`ai-conversation-${item.id}`}
+                        thread={item.thread}
+                        onOpen={onOpenAiChatThread}
+                      />
+                    );
+                  }
                   if (item.kind === "change") {
                     const { activity, change } = item;
                     return (

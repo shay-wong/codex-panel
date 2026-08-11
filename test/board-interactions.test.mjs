@@ -164,6 +164,19 @@ test("issues expose processing conversations without manual binding", () => {
   assert.match(contextMenuSource, /onOpenInThread/);
 });
 
+test("issue activity includes its linked embedded AI conversations", () => {
+  assert.match(appSource, /<TaskDetail[\s\S]*?aiChatThreads=\{aiThreads\}/);
+  assert.match(detailSource, /aiChatThreads: AiChatThread\[\]/);
+  assert.match(detailSource, /const linkedAiChatThreads = aiChatThreads\.filter/);
+  assert.match(detailSource, /\.\.\.linkedAiChatThreads\.map\(\(thread\) => \(\{/);
+  assert.match(detailSource, /kind: "ai-conversation" as const/);
+  assert.match(
+    detailSource,
+    /if \(item\.kind === "ai-conversation"\)[\s\S]*?<AiConversationActivity[\s\S]*?thread=\{item\.thread\}[\s\S]*?onOpen=\{onOpenAiChatThread\}/,
+  );
+  assert.match(styles, /\.activity-conversation-link \{[\s\S]*?background: var\(--surface\)/);
+});
+
 test("issue editing leaves workflow configuration on the project workflow board", () => {
   assert.match(typesSource, /export interface Task \{[\s\S]*?workflowId: string \| null/);
   const taskDraftSource = typesSource.slice(

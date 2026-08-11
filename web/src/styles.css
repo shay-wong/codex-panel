@@ -3483,6 +3483,99 @@ kbd {
   white-space: pre-wrap;
 }
 
+.activity-ai-conversation {
+  align-items: flex-start;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.activity-conversation-icon {
+  margin-top: 6px;
+  color: var(--accent);
+}
+
+.activity-conversation-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 12px;
+  align-items: center;
+  min-width: 0;
+  width: 100%;
+  min-height: 48px;
+  gap: 10px;
+  padding: 7px 10px 7px 12px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: var(--card-shadow);
+  text-align: left;
+  transition: border-color 100ms ease, background 100ms ease, box-shadow 100ms ease;
+}
+
+.activity-conversation-link:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.activity-conversation-link:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.activity-conversation-link > svg {
+  width: 12px;
+  height: 12px;
+  color: var(--text-quaternary);
+}
+
+.activity-conversation-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.activity-conversation-copy > strong,
+.activity-conversation-copy > small > span:not(.activity-conversation-state) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-conversation-copy > strong {
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.activity-conversation-copy > small {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.activity-conversation-copy time {
+  flex: 0 0 auto;
+}
+
+.activity-conversation-state {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--text-quaternary);
+}
+
+.activity-conversation-state.is-running {
+  background: var(--success);
+}
+
+.activity-conversation-state.is-failed {
+  background: var(--danger);
+}
+
 .comment-entry {
   position: relative;
   display: block;

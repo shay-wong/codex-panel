@@ -2086,12 +2086,16 @@ export function App() {
     window.location.assign(`codex://threads/${encodeURIComponent(threadId.trim())}`);
   }
 
+  function openAiChatThread(threadId: string) {
+    setAiOpenThreadRequest((current) => ({
+      threadId,
+      requestId: (current?.requestId ?? 0) + 1,
+    }));
+  }
+
   function openTaskConversation(conversation: TaskConversationItem) {
     if (conversation.kind === "local-ai" && conversation.aiThreadId) {
-      setAiOpenThreadRequest((current) => ({
-        threadId: conversation.aiThreadId!,
-        requestId: (current?.requestId ?? 0) + 1,
-      }));
+      openAiChatThread(conversation.aiThreadId);
       return;
     }
     if (conversation.nativeThreadId) openThread(conversation.nativeThreadId);
@@ -2605,6 +2609,8 @@ export function App() {
               mutateTaskRelation("remove", current, type, relatedTaskId)
             )}
             onOpenThread={openThread}
+            aiChatThreads={aiThreads}
+            onOpenAiChatThread={openAiChatThread}
             onOpenInThread={openTaskInThread}
             onCopy={(text, message) => void copyText(text, message)}
             openingThread={openingThreadTaskId === detailTask.id}
