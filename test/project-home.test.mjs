@@ -76,9 +76,9 @@ test("the issue composer includes Linear-style labels and scheduling", () => {
   assert.match(editorSource, /developmentScan\.contexts/);
 });
 
-test("the current project is shown only in navigation, not in issue creation or detail properties", () => {
+test("the current project is shown in navigation and issue detail, not issue creation", () => {
   assert.doesNotMatch(editorSource, /property-project|dialog-project-icon|project\?\.name/);
-  assert.doesNotMatch(detailSource, /detail-property-label">项目|project-property-icon|project\.name/);
+  assert.match(detailSource, /value=\{currentTask\.projectId\}[\s\S]*?options=\{projects\.map/);
   assert.doesNotMatch(styles, /\.property-project|\.dialog-project-icon|\.project-property-icon/);
   assert.match(appSource, /createTaskRequest\(selectedProjectId, draft\)/);
   assert.match(appSource, /className="header-project-switcher"/);

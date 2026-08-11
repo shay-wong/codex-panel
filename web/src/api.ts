@@ -11,6 +11,8 @@ import type {
   DevelopmentScan,
   HostContext,
   IssueRelationType,
+  JiraProvider,
+  JiraProviderDraft,
   Project,
   ProjectSummary,
   Task,
@@ -18,6 +20,7 @@ import type {
   PanelMetadata,
   TaskDraft,
   TaskStatus,
+  TaskUpdate,
   WorkflowCapabilities,
   WorkflowWorkspaceRecord,
 } from "./types";
@@ -94,6 +97,40 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
   const data = await request<{ projects: Project[] }>("/api/projects", { signal });
   return data.projects;
+}
+
+export async function listJiraProviders(signal?: AbortSignal): Promise<JiraProvider[]> {
+  const data = await request<{ providers: JiraProvider[] }>("/api/local/jira-providers", { signal });
+  return data.providers;
+}
+
+export async function createJiraProvider(input: JiraProviderDraft): Promise<JiraProvider> {
+  const data = await request<{ provider: JiraProvider }>("/api/local/jira-providers", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return data.provider;
+}
+
+export async function updateJiraProvider(
+  provider: JiraProvider,
+  changes: Partial<Omit<JiraProviderDraft, "key">>,
+): Promise<JiraProvider> {
+  const data = await request<{ provider: JiraProvider }>(
+    `/api/local/jira-providers/${encodeURIComponent(provider.key)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ version: provider.version, ...changes }),
+    },
+  );
+  return data.provider;
+}
+
+export async function deleteJiraProvider(provider: JiraProvider): Promise<void> {
+  await request(`/api/local/jira-providers/${encodeURIComponent(provider.key)}`, {
+    method: "DELETE",
+    body: JSON.stringify({ version: provider.version }),
+  });
 }
 
 export async function getProjectSummary(
@@ -371,7 +408,7 @@ export async function createTask(projectId: string, draft: TaskDraft, threadId?:
   return data.task;
 }
 
-export async function updateTask(task: Task, draft: TaskDraft, threadId?: string): Promise<Task> {
+export async function updateTask(task: Task, draft: TaskUpdate, threadId?: string): Promise<Task> {
   const data = await request<{ task: Task }>(`/api/tasks/${encodeURIComponent(task.id)}`, {
     method: "PATCH",
     body: JSON.stringify({ version: task.version, ...draft, ...(threadId ? { threadId } : {}) }),

@@ -27,13 +27,14 @@ import type {
   DevelopmentContext,
   DevelopmentScan,
   IssueRelationType,
+  Project,
   Recurrence,
   Task,
   TaskChangeActivity,
-  TaskDraft,
   TaskPriority,
   TaskRelationSummary,
   TaskStatus,
+  TaskUpdate,
 } from "../types";
 import {
   CODEX_AGENT_ACTOR,
@@ -88,13 +89,14 @@ const AI_CHAT_STATUS_LABELS: Record<AiChatThread["status"], string> = {
 interface TaskDetailProps {
   task: Task;
   tasks: Task[];
+  projects: Project[];
   currentUser: ActorIdentity;
   availableLabels: string[];
   developmentScan: DevelopmentScan;
   developmentScanLoading: boolean;
   commentsRevision: number;
   attachmentsRevision: number;
-  onUpdate: (task: Task, changes: Partial<TaskDraft>) => Promise<Task>;
+  onUpdate: (task: Task, changes: Partial<TaskUpdate>) => Promise<Task>;
   onOpenTask: (task: TaskRelationSummary) => void;
   onAddRelation: (
     task: Task,
@@ -336,6 +338,7 @@ function AiConversationActivity({
 export function TaskDetail({
   task,
   tasks,
+  projects,
   currentUser,
   availableLabels,
   developmentScan,
@@ -362,7 +365,7 @@ export function TaskDetail({
   );
   const [editingDescription, setEditingDescription] = useState(false);
   const [propertyMenu, setPropertyMenu] = useState<
-    "status" | "priority" | "assignee" | "labels" | "recurrence" | null
+    "project" | "status" | "priority" | "assignee" | "labels" | "recurrence" | null
   >(null);
   const [savingProperty, setSavingProperty] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -494,7 +497,7 @@ export function TaskDetail({
     };
   }, [activeMenuId]);
 
-  async function saveTask(changes: Partial<TaskDraft>, property: string) {
+  async function saveTask(changes: Partial<TaskUpdate>, property: string) {
     setSavingProperty(property);
     onError(null);
     try {
@@ -1266,6 +1269,24 @@ export function TaskDetail({
               </button>
             </div>
             <h2>属性</h2>
+            <div className="detail-property-row">
+              <span className="detail-property-label">项目</span>
+              <TaskPropertyPicker
+                value={currentTask.projectId}
+                options={projects.map((project) => ({
+                  value: project.id,
+                  label: project.name,
+                  icon: <LinearIcon name="project" />,
+                }))}
+                open={propertyMenu === "project"}
+                disabled={savingProperty === "projectId" || projects.length < 2}
+                className="detail-property-picker"
+                triggerClassName="detail-property-trigger"
+                ariaLabel="项目"
+                onOpenChange={(open) => setPropertyMenu(open ? "project" : null)}
+                onChange={(projectId) => void saveTask({ projectId }, "projectId")}
+              />
+            </div>
             <div className="detail-property-row">
               <span className="detail-property-label">状态</span>
               <TaskPropertyPicker

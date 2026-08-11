@@ -4,6 +4,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Added local Jira provider settings with immutable provider keys, independent Jira CLI config references and JQL, preview defaults, and opt-in completion policies; registration stores no Jira credentials and does not run synchronization by itself.
+- Added an issue-detail project picker that keeps the issue open after a successful move, preserves its linked conversation, and surfaces existing relation, conversation, or development-context move blockers without mutating the issue.
 - Merged upstream `0.2.0` board capabilities, including dashboard, list, Gantt, archive, scheduling dates, cross-project moves with conversation continuity, complete activity history, cloud migrations, and AI process recovery, while retaining the native Swift Codex Panel manager instead of the upstream Tauri app and updater.
 - Standardized the fork on `Panel` naming across the product, `$manage-panel` Skill, `panelctl` CLI, environment variables, integration protocol, local data, and undeployed Cloudflare resources, with migrations for existing local state and managed links.
 - Added a native `~/Applications/Codex Panel.app` manager with service, Codex/CDP, and embedded-integration status; start, restart, stop, Panel, browser, log, and data controls; optional launch at login; and independent automatic connect and Panel-open settings.

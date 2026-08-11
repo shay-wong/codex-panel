@@ -254,6 +254,22 @@ function projectFromRow(row) {
   };
 }
 
+function jiraProviderFromRow(row) {
+  return {
+    key: row.provider_key,
+    alias: row.alias,
+    configPath: row.config_path,
+    jql: row.jql,
+    enabled: row.enabled === 1,
+    preview: row.preview === 1,
+    autoComplete: row.auto_complete === 1,
+    completionStatus: row.completion_status,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function projectSummaryFromRow(row) {
   return {
     projectId: row.project_id,
@@ -342,6 +358,20 @@ export class PanelDatabase {
         name TEXT NOT NULL,
         workspace_path TEXT,
         next_task_number INTEGER NOT NULL DEFAULT 1 CHECK (next_task_number > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS jira_providers (
+        provider_key TEXT PRIMARY KEY,
+        alias TEXT NOT NULL,
+        config_path TEXT NOT NULL,
+        jql TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        preview INTEGER NOT NULL DEFAULT 1 CHECK (preview IN (0, 1)),
+        auto_complete INTEGER NOT NULL DEFAULT 0 CHECK (auto_complete IN (0, 1)),
+        completion_status TEXT,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -765,6 +795,116 @@ export class PanelDatabase {
         projects.updated_at
       ORDER BY projects.created_at, projects.id
     `).all().map(projectFromRow);
+  }
+
+  listJiraProviders() {
+    return this.database.prepare(`
+      SELECT * FROM jira_providers
+      ORDER BY created_at, provider_key
+    `).all().map(jiraProviderFromRow);
+  }
+
+  getJiraProvider(key) {
+    const row = this.database.prepare(`
+      SELECT * FROM jira_providers WHERE provider_key = ?
+    `).get(key);
+    return row ? jiraProviderFromRow(row) : null;
+  }
+
+  createJiraProvider(input) {
+    const timestamp = now();
+    try {
+      this.database.prepare(`
+        INSERT INTO jira_providers (
+          provider_key, alias, config_path, jql, enabled, preview,
+          auto_complete, completion_status, version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      `).run(
+        input.key,
+        input.alias,
+        input.configPath,
+        input.jql,
+        input.enabled ? 1 : 0,
+        input.preview ? 1 : 0,
+        input.autoComplete ? 1 : 0,
+        input.completionStatus,
+        timestamp,
+        timestamp,
+      );
+    } catch (error) {
+      if (String(error.message).includes("UNIQUE constraint failed")) {
+        throw new ApiError(409, "JIRA_PROVIDER_EXISTS", `Jira provider '${input.key}' already exists`);
+      }
+      throw error;
+    }
+    return this.getJiraProvider(input.key);
+  }
+
+  updateJiraProvider(key, version, changes) {
+    const current = this.getJiraProvider(key);
+    if (!current) {
+      throw new ApiError(404, "JIRA_PROVIDER_NOT_FOUND", `Jira provider '${key}' does not exist`);
+    }
+    if (current.version !== version) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Jira provider was changed by another client", {
+        expectedVersion: version,
+        actualVersion: current.version,
+      });
+    }
+
+    const next = { ...current, ...changes };
+    if (Object.hasOwn(changes, "jql") && changes.jql !== current.jql) next.preview = true;
+    if (next.autoComplete && !next.completionStatus) {
+      throw new ApiError(
+        400,
+        "JIRA_COMPLETION_STATUS_REQUIRED",
+        "A completion status is required before automatic Jira completion can be enabled",
+      );
+    }
+
+    const timestamp = now();
+    const result = this.database.prepare(`
+      UPDATE jira_providers
+      SET alias = ?, config_path = ?, jql = ?, enabled = ?, preview = ?,
+          auto_complete = ?, completion_status = ?, version = version + 1, updated_at = ?
+      WHERE provider_key = ? AND version = ?
+    `).run(
+      next.alias,
+      next.configPath,
+      next.jql,
+      next.enabled ? 1 : 0,
+      next.preview ? 1 : 0,
+      next.autoComplete ? 1 : 0,
+      next.completionStatus,
+      timestamp,
+      key,
+      version,
+    );
+    if (result.changes !== 1) {
+      const latest = this.getJiraProvider(key);
+      throw new ApiError(409, "VERSION_CONFLICT", "Jira provider was changed by another client", {
+        expectedVersion: version,
+        actualVersion: latest?.version,
+      });
+    }
+    return this.getJiraProvider(key);
+  }
+
+  deleteJiraProvider(key, version) {
+    const current = this.getJiraProvider(key);
+    if (!current) {
+      throw new ApiError(404, "JIRA_PROVIDER_NOT_FOUND", `Jira provider '${key}' does not exist`);
+    }
+    if (current.version !== version) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Jira provider was changed by another client", {
+        expectedVersion: version,
+        actualVersion: current.version,
+      });
+    }
+    this.database.prepare(`
+      DELETE FROM jira_providers WHERE provider_key = ? AND version = ?
+    `).run(key, version);
+    return current;
   }
 
   createProject(input) {
@@ -1369,6 +1509,13 @@ export class PanelDatabase {
     }
     const projectChanged = Boolean(targetProject && targetProject.id !== current.projectId);
     if (projectChanged) {
+      if (current.developmentContext) {
+        throw new ApiError(
+          409,
+          "DEVELOPMENT_CONTEXT_PROJECT_MOVE_BLOCKED",
+          "Clear the issue development context before moving it to another project",
+        );
+      }
       const relation = this.database.prepare(`
         SELECT 1
         FROM task_relations

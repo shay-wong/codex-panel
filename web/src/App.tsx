@@ -55,6 +55,7 @@ import { BoardColumn, STATUS_DETAILS } from "./components/BoardColumn";
 import { AiChat, type AiChatOpenThreadRequest } from "./components/AiChat";
 import { DashboardView } from "./components/DashboardView";
 import { IssueListView } from "./components/IssueListView";
+import { JiraProviderSettings } from "./components/JiraProviderSettings";
 import { OtherTasksPanel } from "./components/OtherTasksPanel";
 import {
   resolveInlineMediaMarkdown,
@@ -106,6 +107,7 @@ import {
   type PanelMetadata,
   type TaskDraft,
   type TaskStatus,
+  type TaskUpdate,
   type WorkflowOption,
 } from "./types";
 import {
@@ -745,6 +747,7 @@ export function App() {
   const [pendingProjectDelete, setPendingProjectDelete] = useState<ProjectChoice | null>(null);
   const [projectDeleteIssueCount, setProjectDeleteIssueCount] = useState<number | null>(null);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
+  const [jiraProviderSettingsOpen, setJiraProviderSettingsOpen] = useState(false);
   const [deviceWorkspacePaths, setDeviceWorkspacePaths] = useState(readDeviceWorkspacePaths);
   const [projectAutomations, setProjectAutomations] = useState(readProjectAutomations);
   const [automationPending, setAutomationPending] = useState(false);
@@ -2050,9 +2053,11 @@ export function App() {
     void moveTask(task, destination, beforeTaskId, true);
   }
 
-  async function updateTaskProperties(task: Task, changes: Partial<TaskDraft>): Promise<Task> {
+  async function updateTaskProperties(task: Task, changes: Partial<TaskUpdate>): Promise<Task> {
     const previous = task;
     const { assigneeTarget, ...taskChanges } = changes;
+    const projectChanged = typeof changes.projectId === "string"
+      && changes.projectId !== task.projectId;
     const optimisticAssignee = assigneeTarget
       ? actorForAssigneeTarget(assigneeTarget, currentUser)
       : task.assignee;
@@ -2061,14 +2066,38 @@ export function App() {
       ? [...task.participants, optimisticAssignee]
       : task.participants;
     setActionError(null);
-    setTasks((current) => current.map((candidate) =>
-      candidate.id === task.id
-        ? { ...candidate, ...taskChanges, assignee: optimisticAssignee, participants: optimisticParticipants }
-        : candidate,
-    ));
+    if (!projectChanged) {
+      setTasks((current) => current.map((candidate) =>
+        candidate.id === task.id
+          ? { ...candidate, ...taskChanges, assignee: optimisticAssignee, participants: optimisticParticipants }
+          : candidate,
+      ));
+    }
 
     try {
       const updated = await updateTaskRequest(task, { ...taskToDraft(task), ...changes });
+      if (projectChanged) {
+        setTasks([updated]);
+        setSelectedProjectId(updated.projectId);
+        setBoardView(readProjectBoardView(updated.projectId));
+        setListLayout(readProjectListLayout(updated.projectId));
+        const collapseModes = readProjectListCollapseModes(updated.projectId);
+        setListCollapseModes(collapseModes);
+        setListCollapsedStatuses(initialProjectListCollapsedStatuses(updated.projectId, collapseModes));
+        setDetailTaskIdentifier(updated.identifier);
+        setSearch("");
+        setFilters(EMPTY_TASK_FILTERS);
+        rememberProjectOpen(updated.projectId);
+        undoStackRef.current = [];
+        setUndoNotice(null);
+        window.history.replaceState(
+          window.history.state,
+          "",
+          buildIssueUrl(window.location.href, updated.projectId, updated.identifier),
+        );
+        void refreshProjectList();
+        return updated;
+      }
       setTasks((current) => sortTasks(current.map((candidate) =>
         candidate.id === updated.id ? updated : candidate,
       )));
@@ -2601,6 +2630,15 @@ export function App() {
           <div ref={dragRegionRef} className="workspace-drag-region" aria-hidden="true" />
 
           <div className="header-actions">
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Jira 设置"
+              title="Jira 设置"
+              onClick={() => setJiraProviderSettingsOpen(true)}
+            >
+              <LinearIcon name="displayOptions" />
+            </button>
             {selectedProjectId && (
               <ProjectAutomationMenu
                 automation={selectedProjectAutomation}
@@ -2792,6 +2830,7 @@ export function App() {
             key={detailTask.id}
             task={detailTask}
             tasks={tasks}
+            projects={projects}
             currentUser={currentUser}
             availableLabels={availableLabels}
             developmentScan={developmentScan}
@@ -3157,6 +3196,11 @@ export function App() {
           onArchive={(task) => void archiveTask(task)}
         />
       )}
+
+      <JiraProviderSettings
+        open={jiraProviderSettingsOpen}
+        onClose={() => setJiraProviderSettingsOpen(false)}
+      />
 
       <AiChat
         available={localAiChatAvailable}

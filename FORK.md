@@ -142,6 +142,30 @@
 - 移除条件：上游提供等价的主题化属性选择控件及明暗主题、键盘和响应式行为后同步移除。
 - 针对性验证：运行 `npm run typecheck` 和 `npm run build`；在暗色 Issue 详情中打开状态菜单，确认浮层颜色、图标和间距与 Panel 一致，再按 `Escape` 确认只关闭菜单；以 600px 宽视口确认菜单不溢出。
 
+### 本地 Jira provider 注册
+
+- 生命周期：`长期保留`
+- 原始目的：为后续由 Jira CLI 和 Scheduled Task 驱动的导入与回写提供多实例、非凭据型配置入口，同时保持 Jira 凭据由 CLI 自己管理。
+- 行为不变量：每个 provider 使用不可变的 lowercase key 标识 Jira 实例，alias 可独立修改；配置只保存 Jira CLI 配置文件的绝对路径、JQL、启用、预览、自动完成和目标状态，不保存凭据。默认 JQL 为 `assignee = currentUser() AND resolution IS EMPTY`，新 provider 默认启用预览并关闭自动完成；JQL 变化必须重新启用预览，自动完成必须先有目标状态。禁用只改变后续同步资格并保留 provider 配置。注册本身不得调用 Jira 或创建同步任务。
+- 代码和测试路径：`server/app.mjs`、`server/database.mjs`、`web/src/api.ts`、`web/src/types.ts`、`web/src/components/JiraProviderSettings.tsx` 和 `web/src/styles.css`。本次按仓库直接路径确认规则未新增自动化测试。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：当前 Jira 集成能力；提交后可用 `git log -S'jira_providers' -- server/database.mjs web/src/components/JiraProviderSettings.tsx` 定位。
+- 合并指引：上游调整设置页、本地 companion 或数据库初始化时，保留“多实例 key 身份、alias 与身份分离、凭据只由 Jira CLI 管理、JQL 变化重开预览、自动完成显式目标状态、本地配置不经 Cloud API”这些不变量；不得让 provider 注册隐式执行同步。
+- 移除条件：Fork 停止 Jira CLI 集成，或上游提供等价的多实例、本地凭据边界和预览/回写策略后同步移除。
+- 针对性验证：运行 `npm run typecheck` 和 `npm run build:web`；通过 Jira 设置创建两个不同 key 的 provider，修改 alias 和 JQL 后确认 key 不变、预览重新开启，重启服务后确认配置仍存在，并确认未配置目标状态时无法开启自动完成。
+
+### Issue 详情页项目切换
+
+- 生命周期：`等待上游吸收`
+- 原始目的：让导入到“全局”的待分配 Issue 以及普通 Issue 可以直接在详情页移动到正确项目，无需切换到 CLI。
+- 行为不变量：详情属性栏必须显示当前项目并复用现有项目移动 API；成功后打开目标项目并保持同一 Issue 详情和原生关联对话。有关联、绑定源项目的本地 AI 对话或 branch/worktree 开发上下文时，移动必须在写入前拒绝并显示可执行错误；状态、描述、标签、日期和其他属性不得改变。
+- 代码和测试路径：`web/src/App.tsx`、`web/src/components/TaskDetail.tsx`、`web/src/components/TaskPropertyPicker.tsx`、`server/database.mjs` 和 `test/task-project-move.test.mjs`。本次按仓库直接路径确认规则未新增 UI 自动化测试。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：当前项目重分配能力；提交后可用 `git log -S'propertyMenu === "project"' -- web/src/components/TaskDetail.tsx` 定位。
+- 合并指引：上游调整详情属性栏或项目导航时，继续复用服务器项目移动完整性规则，保留“成功后目标项目继续打开同一 Issue、对话不变、开发上下文先清理”的完整路径，不得只改变前端当前项目标签。
+- 移除条件：上游提供等价的详情页项目切换、错误展示和上下文保持行为后同步移除。
+- 针对性验证：运行 `node --test test/task-project-move.test.mjs`、`npm run typecheck` 和 `npm run build:web`；在详情页移动无阻塞 Issue，确认 URL、顶部项目和属性栏都指向目标项目且对话入口仍存在；再对带开发上下文的 Issue 操作，确认错误要求先清理上下文且项目未变。
+
 ## 上游合并检查清单
 
 1. 每次实际完成上游合并后，根据 Git 祖先关系重新确定精确基线，不得用持续移动的上游分支头替代。

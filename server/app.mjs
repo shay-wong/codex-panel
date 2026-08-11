@@ -49,6 +49,8 @@ const INLINE_ATTACHMENT_TYPES = new Set([
   "text/plain",
 ]);
 const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+const JIRA_PROVIDER_KEY_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
+const DEFAULT_JIRA_JQL = "assignee = currentUser() AND resolution IS EMPTY";
 const TRUSTED_EMBED_ORIGINS = new Set(["app://-"]);
 const CODEX_AGENT_ACTOR = {
   type: "agent",
@@ -285,6 +287,14 @@ function pathField(value, name) {
   return normalized;
 }
 
+function booleanField(value, name, fallback) {
+  const normalized = value ?? fallback;
+  if (typeof normalized !== "boolean") {
+    throw new ApiError(400, "INVALID_FIELD", `'${name}' must be a boolean`);
+  }
+  return normalized;
+}
+
 function parseDueDate(value, name = "dueDate") {
   const date = stringField(value, name, { nullable: true, maxLength: 10 });
   if (date !== null && date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -490,6 +500,90 @@ function parseProjectCreate(body) {
     throw new ApiError(400, "INVALID_FIELD", "'workspacePath' cannot contain null bytes");
   }
   return { id, name, workspacePath };
+}
+
+function parseJiraProviderKey(value) {
+  const key = stringField(value, "key", { required: true, maxLength: 64 });
+  if (!JIRA_PROVIDER_KEY_PATTERN.test(key)) {
+    throw new ApiError(
+      400,
+      "INVALID_FIELD",
+      "'key' must be lowercase and contain only letters, numbers, dots, underscores, or hyphens",
+    );
+  }
+  return key;
+}
+
+function parseJiraConfigPath(value) {
+  const configPath = pathField(value, "configPath");
+  if (!configPath || !path.isAbsolute(configPath)) {
+    throw new ApiError(400, "INVALID_FIELD", "'configPath' must be an absolute path");
+  }
+  return configPath;
+}
+
+function parseJiraProviderCreate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set([
+    "key", "alias", "configPath", "jql", "enabled", "preview",
+    "autoComplete", "completionStatus",
+  ]));
+  const autoComplete = booleanField(body.autoComplete, "autoComplete", false);
+  const completionStatus = stringField(
+    body.completionStatus ?? null,
+    "completionStatus",
+    { nullable: true, maxLength: 120 },
+  );
+  if (autoComplete && !completionStatus) {
+    throw new ApiError(
+      400,
+      "JIRA_COMPLETION_STATUS_REQUIRED",
+      "A completion status is required before automatic Jira completion can be enabled",
+    );
+  }
+  return {
+    key: parseJiraProviderKey(body.key),
+    alias: stringField(body.alias, "alias", { required: true, maxLength: 120 }),
+    configPath: parseJiraConfigPath(body.configPath),
+    jql: stringField(body.jql ?? DEFAULT_JIRA_JQL, "jql", { required: true, maxLength: 10_000 }),
+    enabled: booleanField(body.enabled, "enabled", true),
+    preview: booleanField(body.preview, "preview", true),
+    autoComplete,
+    completionStatus,
+  };
+}
+
+function parseJiraProviderPatch(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set([
+    "version", "alias", "configPath", "jql", "enabled", "preview",
+    "autoComplete", "completionStatus",
+  ]));
+  const version = parseVersion(body.version);
+  const changes = {};
+  if (body.alias !== undefined) {
+    changes.alias = stringField(body.alias, "alias", { required: true, maxLength: 120 });
+  }
+  if (body.configPath !== undefined) changes.configPath = parseJiraConfigPath(body.configPath);
+  if (body.jql !== undefined) {
+    changes.jql = stringField(body.jql, "jql", { required: true, maxLength: 10_000 });
+  }
+  if (body.enabled !== undefined) changes.enabled = booleanField(body.enabled, "enabled");
+  if (body.preview !== undefined) changes.preview = booleanField(body.preview, "preview");
+  if (body.autoComplete !== undefined) {
+    changes.autoComplete = booleanField(body.autoComplete, "autoComplete");
+  }
+  if (body.completionStatus !== undefined) {
+    changes.completionStatus = stringField(
+      body.completionStatus,
+      "completionStatus",
+      { nullable: true, maxLength: 120 },
+    );
+  }
+  if (Object.keys(changes).length === 0) {
+    throw new ApiError(400, "INVALID_BODY", "PATCH requires at least one Jira provider field");
+  }
+  return { version, changes };
 }
 
 function parseThreadId(value) {
@@ -2036,6 +2130,42 @@ export function createPanelServer(options = {}) {
             codexProcessEnvironment,
           ),
         );
+      }
+
+      if (pathname === "/api/local/jira-providers") {
+        assertNoQuery(url.searchParams, "/api/local/jira-providers");
+        if (request.method === "GET") {
+          return sendJson(response, 200, { providers: database.listJiraProviders() });
+        }
+        if (request.method === "POST") {
+          const provider = database.createJiraProvider(
+            parseJiraProviderCreate(await readJson(request)),
+          );
+          return sendJson(response, 201, { provider });
+        }
+        return methodNotAllowed(response, ["GET", "POST"]);
+      }
+
+      const jiraProviderRoute = pathname.match(/^\/api\/local\/jira-providers\/([^/]+)$/);
+      if (jiraProviderRoute) {
+        assertNoQuery(url.searchParams, "/api/local/jira-providers/:key");
+        const key = parseJiraProviderKey(
+          decodeRouteSegment(jiraProviderRoute[1], "Jira provider key"),
+        );
+        if (request.method === "PATCH") {
+          const { version, changes } = parseJiraProviderPatch(await readJson(request));
+          return sendJson(response, 200, {
+            provider: database.updateJiraProvider(key, version, changes),
+          });
+        }
+        if (request.method === "DELETE") {
+          const body = await readJson(request);
+          assertPlainObject(body);
+          assertAllowedKeys(body, new Set(["version"]));
+          database.deleteJiraProvider(key, parseVersion(body.version));
+          return sendEmpty(response, 204);
+        }
+        return methodNotAllowed(response, ["PATCH", "DELETE"]);
       }
 
       let currentCloudConfig = null;

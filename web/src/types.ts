@@ -183,6 +183,31 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface JiraProvider {
+  key: string;
+  alias: string;
+  configPath: string;
+  jql: string;
+  enabled: boolean;
+  preview: boolean;
+  autoComplete: boolean;
+  completionStatus: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface JiraProviderDraft {
+  key: string;
+  alias: string;
+  configPath: string;
+  jql: string;
+  enabled: boolean;
+  preview: boolean;
+  autoComplete: boolean;
+  completionStatus: string | null;
+}
+
 export interface ProjectSummary {
   projectId: string;
   summary: string | null;
@@ -321,6 +346,8 @@ export interface TaskDraft {
   dueDate: string | null;
   recurrence: Recurrence | null;
 }
+
+export type TaskUpdate = TaskDraft & { projectId?: string };
 
 export interface TaskEvent {
   type: string;

@@ -4535,6 +4535,278 @@ kbd {
   margin-top: 22px;
 }
 
+.jira-provider-backdrop {
+  z-index: 95;
+}
+
+.jira-provider-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(760px, 100%);
+  max-height: min(720px, calc(100vh - 40px));
+  overflow: hidden;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: var(--dialog-shadow);
+}
+
+.jira-provider-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 0 14px 0 18px;
+  border-bottom: var(--border-hairline) solid var(--border);
+}
+
+.jira-provider-dialog > header h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 590;
+}
+
+.jira-provider-layout {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  min-height: 0;
+}
+
+.jira-provider-layout > aside {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+  border-right: var(--border-hairline) solid var(--border);
+  background: var(--surface-muted);
+}
+
+.jira-provider-layout > aside > button {
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-height: 52px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.jira-provider-layout > aside > button:hover,
+.jira-provider-layout > aside > button.is-selected {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.jira-provider-layout > aside > button strong,
+.jira-provider-layout > aside > button small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jira-provider-layout > aside > button strong {
+  padding-right: 48px;
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.jira-provider-layout > aside > button small {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.jira-provider-layout > aside > .jira-provider-add {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  gap: 7px;
+  margin-bottom: 6px;
+  border: var(--border-hairline) solid var(--border);
+  background: var(--surface);
+}
+
+.jira-provider-add svg,
+.jira-provider-delete svg {
+  width: 14px;
+  height: 14px;
+}
+
+.jira-provider-layout > aside > p {
+  margin: 10px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.jira-provider-state {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.jira-provider-state.is-enabled {
+  color: var(--success);
+}
+
+.jira-provider-layout > form {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 18px;
+}
+
+.jira-provider-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 14px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.jira-provider-fields label {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.jira-provider-fields input,
+.jira-provider-fields textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 9px;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 6px;
+  outline: 0;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  letter-spacing: 0;
+}
+
+.jira-provider-fields input {
+  height: 32px;
+}
+
+.jira-provider-fields textarea {
+  min-height: 70px;
+  resize: vertical;
+}
+
+.jira-provider-fields input:focus,
+.jira-provider-fields textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.jira-provider-fields input:disabled,
+.jira-provider-fields textarea:disabled {
+  color: var(--text-tertiary);
+  background: var(--surface-muted);
+}
+
+.jira-provider-wide-field {
+  grid-column: 1 / -1;
+}
+
+.jira-provider-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.jira-provider-error {
+  margin: 10px 0 0;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.jira-provider-layout > form > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 16px;
+}
+
+.jira-provider-layout > form > footer > div {
+  display: flex;
+  gap: 7px;
+}
+
+.jira-provider-delete {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--danger);
+}
+
+.jira-provider-delete:hover {
+  background: var(--danger-soft);
+}
+
+@media (max-width: 620px) {
+  .jira-provider-backdrop {
+    padding: 8px;
+  }
+
+  .jira-provider-dialog {
+    max-height: calc(100vh - 16px);
+  }
+
+  .jira-provider-layout {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  .jira-provider-layout > aside {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: var(--border-hairline) solid var(--border);
+  }
+
+  .jira-provider-layout > aside > button {
+    flex: 0 0 150px;
+  }
+
+  .jira-provider-layout > aside > .jira-provider-add {
+    flex-basis: 132px;
+    margin-bottom: 0;
+  }
+
+  .jira-provider-layout > form {
+    min-height: 430px;
+    padding: 14px;
+  }
+
+  .jira-provider-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .jira-provider-wide-field {
+    grid-column: 1;
+  }
+}
+
 .button.danger {
   background: var(--danger);
   color: white;
