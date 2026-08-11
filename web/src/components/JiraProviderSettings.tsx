@@ -3,10 +3,11 @@ import {
   ApiError,
   createJiraProvider,
   deleteJiraProvider,
+  discoverJiraConfigs,
   listJiraProviders,
   updateJiraProvider,
 } from "../api";
-import type { JiraProvider, JiraProviderDraft } from "../types";
+import type { JiraConfigSuggestion, JiraProvider, JiraProviderDraft } from "../types";
 import { LinearIcon } from "./LinearIcon";
 
 const DEFAULT_JQL = "assignee = currentUser() AND resolution IS EMPTY";
@@ -45,6 +46,30 @@ function draftFromProvider(provider: JiraProvider): JiraProviderDraft {
   };
 }
 
+function draftFromSuggestion(
+  suggestion: JiraConfigSuggestion,
+  providers: JiraProvider[],
+): JiraProviderDraft {
+  const providerKeys = new Set(providers.map((provider) => provider.key));
+  let key = suggestion.key;
+  for (let suffix = 2; providerKeys.has(key); suffix += 1) key = `${suggestion.key}-${suffix}`;
+  return {
+    ...EMPTY_DRAFT,
+    key,
+    alias: suggestion.alias,
+    configPath: suggestion.configPath,
+  };
+}
+
+function firstUnconfiguredSuggestion(
+  suggestions: JiraConfigSuggestion[],
+  providers: JiraProvider[],
+): JiraConfigSuggestion | null {
+  return suggestions.find((suggestion) => (
+    !providers.some((provider) => provider.configPath === suggestion.configPath)
+  )) ?? null;
+}
+
 function ToggleRow({
   label,
   value,
@@ -76,6 +101,8 @@ function ToggleRow({
 
 export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProps) {
   const [providers, setProviders] = useState<JiraProvider[]>([]);
+  const [configSuggestions, setConfigSuggestions] = useState<JiraConfigSuggestion[]>([]);
+  const [discoveryComplete, setDiscoveryComplete] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [draft, setDraft] = useState<JiraProviderDraft>(EMPTY_DRAFT);
   const [loading, setLoading] = useState(false);
@@ -87,18 +114,31 @@ export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProp
     if (!open) return;
     const controller = new AbortController();
     setLoading(true);
+    setDiscoveryComplete(false);
     setError(null);
-    void listJiraProviders(controller.signal).then(
-      (items) => {
+    void Promise.all([
+      listJiraProviders(controller.signal),
+      discoverJiraConfigs(controller.signal).catch((discoveryError) => {
+        if ((discoveryError as Error).name === "AbortError") throw discoveryError;
+        return [];
+      }),
+    ]).then(
+      ([items, suggestions]) => {
         setProviders(items);
+        setConfigSuggestions(suggestions);
+        setDiscoveryComplete(true);
         const first = items[0] ?? null;
+        const suggestion = firstUnconfiguredSuggestion(suggestions, items);
         setSelectedKey(first?.key ?? null);
-        setDraft(first ? draftFromProvider(first) : EMPTY_DRAFT);
+        setDraft(first
+          ? draftFromProvider(first)
+          : suggestion ? draftFromSuggestion(suggestion, items) : EMPTY_DRAFT);
         setLoading(false);
       },
       (loadError) => {
         if ((loadError as Error).name === "AbortError") return;
         setError(errorMessage(loadError));
+        setDiscoveryComplete(true);
         setLoading(false);
       },
     );
@@ -114,8 +154,9 @@ export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProp
   }
 
   function createNew() {
+    const suggestion = firstUnconfiguredSuggestion(configSuggestions, providers);
     setSelectedKey(null);
-    setDraft(EMPTY_DRAFT);
+    setDraft(suggestion ? draftFromSuggestion(suggestion, providers) : EMPTY_DRAFT);
     setError(null);
   }
 
@@ -124,7 +165,7 @@ export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProp
     setSaving(true);
     setError(null);
     try {
-      const normalized: JiraProviderDraft = {
+      let normalized: JiraProviderDraft = {
         ...draft,
         key: draft.key.trim(),
         alias: draft.alias.trim(),
@@ -132,6 +173,14 @@ export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProp
         jql: draft.jql.trim(),
         completionStatus: draft.completionStatus?.trim() || null,
       };
+      if (selected && normalized.jql !== selected.jql && !normalized.preview) {
+        normalized = {
+          ...normalized,
+          preview: window.confirm(
+            "JQL 已修改。是否重新开启预览同步？\n\n选择“取消”将保持关闭并继续保存。",
+          ),
+        };
+      }
       const { key: _key, ...changes } = normalized;
       const saved = selected
         ? await updateJiraProvider(selected, changes)
@@ -176,6 +225,9 @@ export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProp
     && draft.jql.trim()
     && (!draft.autoComplete || draft.completionStatus?.trim()),
   );
+  const detectedConfig = configSuggestions.some((suggestion) => (
+    suggestion.configPath === draft.configPath
+  ));
 
   return (
     <div
@@ -269,6 +321,13 @@ export function JiraProviderSettings({ open, onClose }: JiraProviderSettingsProp
                   placeholder="/Users/name/.config/.jira/.config.yml"
                   onChange={(event) => setDraft((current) => ({ ...current, configPath: event.target.value }))}
                 />
+                {!selected && discoveryComplete && (
+                  <small className="jira-provider-discovery">
+                    {detectedConfig
+                      ? "已自动读取本地 Jira CLI 配置"
+                      : "未发现未配置的本地 Jira CLI 配置，请手动填写"}
+                  </small>
+                )}
               </label>
               <label className="jira-provider-wide-field">
                 <span>JQL</span>

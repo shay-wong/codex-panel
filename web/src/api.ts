@@ -11,6 +11,7 @@ import type {
   DevelopmentScan,
   HostContext,
   IssueRelationType,
+  JiraConfigSuggestion,
   JiraProvider,
   JiraProviderDraft,
   Project,
@@ -102,6 +103,11 @@ export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
 export async function listJiraProviders(signal?: AbortSignal): Promise<JiraProvider[]> {
   const data = await request<{ providers: JiraProvider[] }>("/api/local/jira-providers", { signal });
   return data.providers;
+}
+
+export async function discoverJiraConfigs(signal?: AbortSignal): Promise<JiraConfigSuggestion[]> {
+  const data = await request<{ configs: JiraConfigSuggestion[] }>("/api/local/jira-configs", { signal });
+  return data.configs;
 }
 
 export async function createJiraProvider(input: JiraProviderDraft): Promise<JiraProvider> {

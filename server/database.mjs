@@ -853,7 +853,6 @@ export class PanelDatabase {
     }
 
     const next = { ...current, ...changes };
-    if (Object.hasOwn(changes, "jql") && changes.jql !== current.jql) next.preview = true;
     if (next.autoComplete && !next.completionStatus) {
       throw new ApiError(
         400,

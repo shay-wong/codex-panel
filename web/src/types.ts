@@ -208,6 +208,12 @@ export interface JiraProviderDraft {
   completionStatus: string | null;
 }
 
+export interface JiraConfigSuggestion {
+  key: string;
+  alias: string;
+  configPath: string;
+}
+
 export interface ProjectSummary {
   projectId: string;
   summary: string | null;

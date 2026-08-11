@@ -586,6 +586,85 @@ function parseJiraProviderPatch(body) {
   return { version, changes };
 }
 
+function jiraConfigIdentity(configPath, hostname) {
+  const labels = hostname?.split(".").filter(Boolean) ?? [];
+  const hostnameLabel = labels[0] === "jira" ? labels[1] : labels[0];
+  const filenameLabel = path.basename(configPath).replace(/^\.?config|\.ya?ml$/gi, "");
+  const label = hostnameLabel || filenameLabel || "jira";
+  const slug = label
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "")
+    .slice(0, 58) || "jira";
+  return {
+    key: slug === "jira" ? "jira" : `jira-${slug}`,
+    alias: slug === "jira" ? "Jira" : `Jira ${label.charAt(0).toUpperCase()}${label.slice(1)}`,
+  };
+}
+
+async function readJiraServerHostname(configPath, size) {
+  if (size > 1024 * 1024) return null;
+  try {
+    const source = await readFile(configPath, "utf8");
+    const match = source.match(/^server:\s*(.+?)\s*$/m);
+    if (!match) return null;
+    let value = match[1].trim();
+    if (value.startsWith('"') && value.endsWith('"')) value = JSON.parse(value);
+    else if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1);
+    else value = value.replace(/\s+#.*$/, "");
+    const server = new URL(value);
+    return server.protocol === "http:" || server.protocol === "https:"
+      ? server.hostname.toLowerCase()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function discoverJiraConfigs(processEnv) {
+  const configDirectories = new Set([
+    path.join(os.homedir(), ".config", ".jira"),
+  ]);
+  if (processEnv.XDG_CONFIG_HOME) {
+    configDirectories.add(path.join(path.resolve(processEnv.XDG_CONFIG_HOME), ".jira"));
+  }
+
+  const candidates = [];
+  const addCandidate = (candidate) => {
+    if (!candidate) return;
+    const absolutePath = path.resolve(candidate);
+    if (!candidates.includes(absolutePath)) candidates.push(absolutePath);
+  };
+  addCandidate(processEnv.JIRA_CONFIG_FILE);
+  for (const directory of configDirectories) addCandidate(path.join(directory, ".config.yml"));
+  for (const directory of configDirectories) {
+    try {
+      const entries = await readdir(directory, { withFileTypes: true });
+      for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+        if ((entry.isFile() || entry.isSymbolicLink()) && /\.ya?ml$/i.test(entry.name)) {
+          addCandidate(path.join(directory, entry.name));
+        }
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+
+  const configs = [];
+  for (const configPath of candidates) {
+    try {
+      const configStat = await stat(configPath);
+      if (!configStat.isFile()) continue;
+      const hostname = await readJiraServerHostname(configPath, configStat.size);
+      configs.push({ configPath, ...jiraConfigIdentity(configPath, hostname) });
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  return configs;
+}
+
 function parseThreadId(value) {
   if (value === undefined) return undefined;
   return stringField(value, "threadId", { required: true, maxLength: 256 });
@@ -2144,6 +2223,16 @@ export function createPanelServer(options = {}) {
           return sendJson(response, 201, { provider });
         }
         return methodNotAllowed(response, ["GET", "POST"]);
+      }
+
+      if (pathname === "/api/local/jira-configs") {
+        assertNoQuery(url.searchParams, "/api/local/jira-configs");
+        if (request.method === "GET") {
+          return sendJson(response, 200, {
+            configs: await discoverJiraConfigs(codexProcessEnvironment),
+          });
+        }
+        return methodNotAllowed(response, ["GET"]);
       }
 
       const jiraProviderRoute = pathname.match(/^\/api\/local\/jira-providers\/([^/]+)$/);

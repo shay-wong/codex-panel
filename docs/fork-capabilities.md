@@ -66,7 +66,7 @@ After `npm ci`, run `npm run codex:install` to copy the repository's `manage-pan
 
 ## Local Jira provider settings
 
-The Jira settings dialog registers multiple local Jira CLI providers. Each provider has an immutable lowercase key, editable alias, absolute Jira CLI config path, JQL, enabled and preview switches, and an optional automatic-completion policy. New providers default to `assignee = currentUser() AND resolution IS EMPTY`, preview enabled, and automatic completion disabled. Changing JQL re-enables preview, and automatic completion cannot be enabled without a target Jira status.
+The Jira settings dialog registers multiple local Jira CLI providers. When creating a provider, the local companion first discovers `JIRA_CONFIG_FILE` and YAML files in the standard Jira CLI config directories, then suggests a provider key, alias, and absolute config path without exposing credentials; the fields remain editable when nothing is found. Each provider has an immutable lowercase key, editable alias, absolute Jira CLI config path, JQL, enabled and preview switches, and an optional automatic-completion policy. New providers default to `assignee = currentUser() AND resolution IS EMPTY`, preview enabled, and automatic completion disabled. When JQL changes while preview is disabled, Panel asks whether to re-enable preview or keep it disabled. Automatic completion cannot be enabled without a target Jira status.
 
 Panel stores the path to each Jira CLI configuration, not Jira credentials. Provider registration does not query Jira or synchronize issues by itself; the later Jira Scheduled Task workflow consumes these settings.
 

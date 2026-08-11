@@ -4718,6 +4718,11 @@ kbd {
   grid-column: 1 / -1;
 }
 
+.jira-provider-discovery {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
 .jira-provider-toggle-row {
   display: flex;
   align-items: center;

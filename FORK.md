@@ -146,13 +146,13 @@
 
 - 生命周期：`长期保留`
 - 原始目的：为后续由 Jira CLI 和 Scheduled Task 驱动的导入与回写提供多实例、非凭据型配置入口，同时保持 Jira 凭据由 CLI 自己管理。
-- 行为不变量：每个 provider 使用不可变的 lowercase key 标识 Jira 实例，alias 可独立修改；配置只保存 Jira CLI 配置文件的绝对路径、JQL、启用、预览、自动完成和目标状态，不保存凭据。默认 JQL 为 `assignee = currentUser() AND resolution IS EMPTY`，新 provider 默认启用预览并关闭自动完成；JQL 变化必须重新启用预览，自动完成必须先有目标状态。禁用只改变后续同步资格并保留 provider 配置。注册本身不得调用 Jira 或创建同步任务。
+- 行为不变量：每个 provider 使用不可变的 lowercase key 标识 Jira 实例，alias 可独立修改；配置只保存 Jira CLI 配置文件的绝对路径、JQL、启用、预览、自动完成和目标状态，不保存凭据。新增 provider 时，本地 companion 必须优先发现 `JIRA_CONFIG_FILE`、`XDG_CONFIG_HOME/.jira` 和 `~/.config/.jira` 下的 YAML 配置，仅用配置路径和 server 主机名生成建议值，未发现时保留手动填写。默认 JQL 为 `assignee = currentUser() AND resolution IS EMPTY`，新 provider 默认启用预览并关闭自动完成；JQL 实际变化且预览关闭时，界面必须让用户选择重新开启或保持关闭，服务端不得强制开启；自动完成必须先有目标状态。禁用只改变后续同步资格并保留 provider 配置。注册本身不得调用 Jira 或创建同步任务。
 - 代码和测试路径：`server/app.mjs`、`server/database.mjs`、`web/src/api.ts`、`web/src/types.ts`、`web/src/components/JiraProviderSettings.tsx` 和 `web/src/styles.css`。本次按仓库直接路径确认规则未新增自动化测试。
 - 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
 - 来源：当前 Jira 集成能力；提交后可用 `git log -S'jira_providers' -- server/database.mjs web/src/components/JiraProviderSettings.tsx` 定位。
-- 合并指引：上游调整设置页、本地 companion 或数据库初始化时，保留“多实例 key 身份、alias 与身份分离、凭据只由 Jira CLI 管理、JQL 变化重开预览、自动完成显式目标状态、本地配置不经 Cloud API”这些不变量；不得让 provider 注册隐式执行同步。
+- 合并指引：上游调整设置页、本地 companion 或数据库初始化时，保留“本地配置优先发现且只返回非凭据建议、多实例 key 身份、alias 与身份分离、凭据只由 Jira CLI 管理、JQL 变化时由用户选择预览状态、自动完成显式目标状态、本地配置不经 Cloud API”这些不变量；不得让 provider 注册隐式执行同步。
 - 移除条件：Fork 停止 Jira CLI 集成，或上游提供等价的多实例、本地凭据边界和预览/回写策略后同步移除。
-- 针对性验证：运行 `npm run typecheck` 和 `npm run build:web`；通过 Jira 设置创建两个不同 key 的 provider，修改 alias 和 JQL 后确认 key 不变、预览重新开启，重启服务后确认配置仍存在，并确认未配置目标状态时无法开启自动完成。
+- 针对性验证：运行 `npm run typecheck` 和 `npm run build:web`；确认本机存在 Jira CLI 配置时新增 provider 自动填充建议值、无候选时允许手动填写；创建两个不同 key 的 provider，关闭预览并修改 JQL 后分别选择重新开启与保持关闭，确认保存结果遵循选择；重启服务后确认配置仍存在，并确认未配置目标状态时无法开启自动完成。
 
 ### Issue 详情页项目切换
 
