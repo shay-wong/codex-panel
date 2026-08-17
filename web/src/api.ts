@@ -8,12 +8,11 @@ import type {
   AiChatThreadSnapshot,
   Attachment,
   Comment,
+  CodexThreadBinding,
   DevelopmentScan,
   HostContext,
   IssueRelationType,
-  JiraConfigSuggestion,
-  JiraProvider,
-  JiraProviderDraft,
+  JiraConnection,
   Project,
   ProjectSummary,
   Task,
@@ -100,43 +99,48 @@ export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
   return data.projects;
 }
 
-export async function listJiraProviders(signal?: AbortSignal): Promise<JiraProvider[]> {
-  const data = await request<{ providers: JiraProvider[] }>("/api/local/jira-providers", { signal });
-  return data.providers;
+export async function getJiraConnection(signal?: AbortSignal): Promise<JiraConnection> {
+  try {
+    const data = await request<{ connection: JiraConnection }>("/api/local/jira-connection", { signal });
+    return data.connection;
+  } catch (error) {
+    if (
+      error instanceof ApiError
+      && (error.code === "LOCAL_COMPANION_REQUIRED" || error.status === 404)
+    ) {
+      return {
+        configured: false,
+        baseUrl: null,
+        username: null,
+        displayName: null,
+        projects: [],
+        projectId: "jira-my-tasks",
+        lastSyncedAt: null,
+        insecureHttp: false,
+      };
+    }
+    throw error;
+  }
 }
 
-export async function discoverJiraConfigs(signal?: AbortSignal): Promise<JiraConfigSuggestion[]> {
-  const data = await request<{ configs: JiraConfigSuggestion[] }>("/api/local/jira-configs", { signal });
-  return data.configs;
-}
-
-export async function createJiraProvider(input: JiraProviderDraft): Promise<JiraProvider> {
-  const data = await request<{ provider: JiraProvider }>("/api/local/jira-providers", {
-    method: "POST",
+export async function configureJiraConnection(input: {
+  baseUrl: string;
+  username: string;
+  password: string;
+  projects: string[];
+}): Promise<JiraConnection> {
+  const data = await request<{ connection: JiraConnection }>("/api/local/jira-connection", {
+    method: "PUT",
     body: JSON.stringify(input),
   });
-  return data.provider;
+  return data.connection;
 }
 
-export async function updateJiraProvider(
-  provider: JiraProvider,
-  changes: Partial<Omit<JiraProviderDraft, "key">> & { scheduledTaskId?: string | null },
-): Promise<JiraProvider> {
-  const data = await request<{ provider: JiraProvider }>(
-    `/api/local/jira-providers/${encodeURIComponent(provider.key)}`,
-    {
-      method: "PATCH",
-      body: JSON.stringify({ version: provider.version, ...changes }),
-    },
-  );
-  return data.provider;
-}
-
-export async function deleteJiraProvider(provider: JiraProvider): Promise<void> {
-  await request(`/api/local/jira-providers/${encodeURIComponent(provider.key)}`, {
-    method: "DELETE",
-    body: JSON.stringify({ version: provider.version }),
+export async function syncJiraConnection(): Promise<JiraConnection> {
+  const data = await request<{ connection: JiraConnection }>("/api/local/jira-connection/sync", {
+    method: "POST",
   });
+  return data.connection;
 }
 
 export async function getProjectSummary(
@@ -164,10 +168,33 @@ export async function getPanelRevision(
 export async function getHostRuntime(signal?: AbortSignal): Promise<HostContext | null> {
   const data = await request<{
     runtime: (Pick<HostContext, "threadId" | "threadRunning" | "threadTodoProgress"> & {
+      codexProjectId: string | null;
+      codexProjectKind: "local" | "remote" | null;
+      codexHostId: string | null;
+      workspacePath: string | null;
       updatedAt: number;
     }) | null;
   }>("/api/local/host-runtime", { signal });
-  return data.runtime;
+  if (!data.runtime) return null;
+  const { codexProjectId, codexProjectKind, codexHostId, workspacePath } = data.runtime;
+  return {
+    threadId: data.runtime.threadId,
+    threadRunning: data.runtime.threadRunning,
+    threadTodoProgress: data.runtime.threadTodoProgress,
+    ...(codexProjectId && codexProjectKind && codexHostId && workspacePath
+      ? {
+          projectId: codexProjectId,
+          workspacePath,
+          projects: [{
+            id: codexProjectId,
+            name: codexProjectId,
+            projectKind: codexProjectKind,
+            workspacePath,
+            hostId: codexHostId,
+          }],
+        }
+      : {}),
+  };
 }
 
 export async function getCodexThreadProgress(
@@ -188,12 +215,17 @@ export async function getCodexThreadProgress(
 
 export async function publishHostRuntime(context: HostContext): Promise<void> {
   if (!context.threadId || context.threadRunning === undefined) return;
+  const project = context.projects?.find((candidate) => candidate.id === context.projectId);
   await request("/api/local/host-runtime", {
     method: "PUT",
     body: JSON.stringify({
       threadId: context.threadId,
       threadRunning: context.threadRunning,
       threadTodoProgress: context.threadTodoProgress ?? null,
+      codexProjectId: project?.id ?? null,
+      codexProjectKind: project?.projectKind ?? null,
+      codexHostId: project?.hostId ?? null,
+      workspacePath: project?.workspacePath ?? null,
     }),
   });
 }
@@ -364,6 +396,28 @@ export async function createProject(input: {
   return data.project;
 }
 
+export async function createProjectLabel(projectId: string, label: string): Promise<Project> {
+  const data = await request<{ project: Project }>(
+    `/api/projects/${encodeURIComponent(projectId)}/labels`,
+    {
+      method: "POST",
+      body: JSON.stringify({ label }),
+    },
+  );
+  return data.project;
+}
+
+export async function deleteProjectLabel(projectId: string, label: string): Promise<Project> {
+  const data = await request<{ project: Project }>(
+    `/api/projects/${encodeURIComponent(projectId)}/labels`,
+    {
+      method: "DELETE",
+      body: JSON.stringify({ label }),
+    },
+  );
+  return data.project;
+}
+
 export async function deleteProject(projectId: string): Promise<void> {
   await request(`/api/projects/${encodeURIComponent(projectId)}`, {
     method: "DELETE",
@@ -402,6 +456,14 @@ export function listTasks(projectId: string, signal?: AbortSignal): Promise<Task
   return listTasksByArchive(projectId, "false", signal);
 }
 
+export async function getTask(taskId: string, signal?: AbortSignal): Promise<Task> {
+  const data = await request<{ task: Task }>(
+    `/api/tasks/${encodeURIComponent(taskId)}`,
+    { signal },
+  );
+  return data.task;
+}
+
 export function listArchivedTasks(projectId: string, signal?: AbortSignal): Promise<Task[]> {
   return listTasksByArchive(projectId, "true", signal);
 }
@@ -425,14 +487,21 @@ export async function updateTask(task: Task, draft: TaskUpdate, threadId?: strin
 export async function moveTask(
   task: Task,
   status: TaskStatus,
-  sortOrder: number,
+  sortOrder?: number,
+  threadBinding?: CodexThreadBinding | null,
   threadId?: string,
 ): Promise<Task> {
   const data = await request<{ task: Task }>(
     `/api/tasks/${encodeURIComponent(task.id)}/move`,
     {
       method: "POST",
-      body: JSON.stringify({ version: task.version, status, sortOrder, ...(threadId ? { threadId } : {}) }),
+      body: JSON.stringify({
+        version: task.version,
+        status,
+        ...(sortOrder === undefined ? {} : { sortOrder }),
+        ...(threadBinding === undefined ? {} : { threadBinding }),
+        ...(threadId ? { threadId } : {}),
+      }),
     },
   );
   return data.task;
@@ -516,12 +585,21 @@ export async function listTaskActivities(
   return data.activities;
 }
 
-export async function createComment(taskId: string, body: string, threadId?: string): Promise<Comment> {
+export async function createComment(
+  taskId: string,
+  body: string,
+  threadId?: string,
+  threadBinding?: CodexThreadBinding | null,
+): Promise<Comment> {
   const data = await request<{ comment: Comment }>(
     `/api/tasks/${encodeURIComponent(taskId)}/comments`,
     {
       method: "POST",
-      body: JSON.stringify({ body, ...(threadId ? { threadId } : {}) }),
+      body: JSON.stringify({
+        body,
+        ...(threadId ? { threadId } : {}),
+        ...(threadBinding === undefined ? {} : { threadBinding }),
+      }),
     },
   );
   return data.comment;
@@ -553,7 +631,11 @@ export async function listAttachments(taskId: string, signal?: AbortSignal): Pro
   return data.attachments;
 }
 
-export async function uploadAttachment(taskId: string, file: File): Promise<Attachment> {
+export async function uploadAttachment(
+  taskId: string,
+  file: File,
+  kind: Attachment["kind"],
+): Promise<Attachment> {
   const data = await request<{ attachment: Attachment }>(
     `/api/tasks/${encodeURIComponent(taskId)}/attachments`,
     {
@@ -561,6 +643,7 @@ export async function uploadAttachment(taskId: string, file: File): Promise<Atta
       headers: {
         "Content-Type": file.type || "application/octet-stream",
         "X-Panel-Filename": encodeURIComponent(file.name),
+        "X-Panel-Attachment-Kind": kind,
       },
       body: file,
     },
@@ -568,7 +651,11 @@ export async function uploadAttachment(taskId: string, file: File): Promise<Atta
   return data.attachment;
 }
 
-export async function uploadCommentAttachment(commentId: string, file: File): Promise<Attachment> {
+export async function uploadCommentAttachment(
+  commentId: string,
+  file: File,
+  kind: Attachment["kind"],
+): Promise<Attachment> {
   const data = await request<{ attachment: Attachment }>(
     `/api/comments/${encodeURIComponent(commentId)}/attachments`,
     {
@@ -576,6 +663,7 @@ export async function uploadCommentAttachment(commentId: string, file: File): Pr
       headers: {
         "Content-Type": file.type || "application/octet-stream",
         "X-Panel-Filename": encodeURIComponent(file.name),
+        "X-Panel-Attachment-Kind": kind,
       },
       body: file,
     },

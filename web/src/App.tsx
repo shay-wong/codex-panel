@@ -22,12 +22,16 @@ import {
   ApiError,
   addTaskRelation,
   archiveTask as archiveTaskRequest,
+  configureJiraConnection,
+  createProjectLabel as createProjectLabelRequest,
   createProject as createProjectRequest,
   createTask as createTaskRequest,
   deleteArchivedTask as deleteArchivedTaskRequest,
+  deleteProjectLabel as deleteProjectLabelRequest,
   deleteProject as deleteProjectRequest,
   getCodexThreadProgress,
   getHostRuntime,
+  getJiraConnection,
   getPanelRevision,
   getWorkflowWorkspace,
   getPanelMetadata,
@@ -43,6 +47,7 @@ import {
   resolvePanelUrl,
   restoreTask as restoreTaskRequest,
   setCurrentUserActor,
+  syncJiraConnection,
   uploadAttachment,
   updateTask as updateTaskRequest,
 } from "./api";
@@ -52,10 +57,11 @@ import {
   assigneeTargetForActor,
 } from "./actors";
 import { BoardColumn, STATUS_DETAILS } from "./components/BoardColumn";
-import { AiChat, type AiChatOpenThreadRequest } from "./components/AiChat";
+import type { AiChatOpenThreadRequest } from "./components/AiChat";
+import { BoardCardDisplayMenu } from "./components/BoardCardDisplayMenu";
 import { DashboardView } from "./components/DashboardView";
 import { IssueListView } from "./components/IssueListView";
-import { JiraProviderSettings } from "./components/JiraProviderSettings";
+import { JiraConnectionDialog } from "./components/JiraConnectionDialog";
 import { OtherTasksPanel } from "./components/OtherTasksPanel";
 import {
   resolveInlineMediaMarkdown,
@@ -75,6 +81,7 @@ import {
   setEmbeddedFrameChallenge,
 } from "./embeddedHost.mjs";
 import { buildIssueUrl, readIssueIdentifier } from "./issueRoute";
+import { useTaskboardI18n } from "./i18n";
 import {
   MAIN_STATUSES,
   type OtherTaskTab,
@@ -99,12 +106,11 @@ import {
   type ActorIdentity,
   type AiChatThread,
   type Comment,
+  type CodexProjectIdentity,
   type DevelopmentScan,
   type HostContext,
   type IssueRelationType,
-  type JiraAutomationOperation,
-  type JiraAutomationState,
-  type JiraProvider,
+  type JiraConnection,
   type Project,
   type Task,
   type PanelMetadata,
@@ -129,11 +135,15 @@ type ListLayout = "horizontal" | "vertical";
 type ListCollapseMode = "always-expanded" | "remember" | "always-collapsed";
 type ListCollapseModes = Record<TaskStatus, ListCollapseMode>;
 type GanttZoom = "day" | "week" | "month";
+type BoardCardDisplay = { cover: boolean; body: boolean };
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
 const GANTT_ZOOM_OPTIONS: GanttZoom[] = ["day", "week", "month"];
 const AI_CHAT_HANDOFF_COMMENT_MARKER = "<!-- codex-panel:ai-chat-handoff:v1 -->";
 const NATIVE_HANDOFF_CONTEXT_LIMIT = 12_000;
 
+const AiChat = lazy(() => import("./components/AiChat").then((module) => ({
+  default: module.AiChat,
+})));
 const WorkflowBoard = lazy(() => import("./components/WorkflowBoard").then((module) => ({
   default: module.WorkflowBoard,
 })));
@@ -158,6 +168,7 @@ interface ProjectChoice {
   issueCount: number;
   inCodex: boolean;
   persisted: boolean;
+  codexIdentity: CodexProjectIdentity | null;
 }
 
 interface ProjectContextMenuState {
@@ -210,18 +221,11 @@ interface AutomationHostItem {
   rrule: string;
 }
 
-interface JiraAutomationHostItem {
-  id: string;
-  status: ProjectAutomationStatus;
-}
-
 interface AutomationHostResponse {
   requestId: string;
   ok: boolean;
-  item?: AutomationHostItem | JiraAutomationHostItem;
+  item?: AutomationHostItem;
   items?: AutomationHostItem[];
-  state?: JiraAutomationState;
-  run?: "started" | "already-running" | "disabled" | "drifted";
   quota?: AutomationQuotaStatus;
   policy?: {
     automationId?: string;
@@ -254,7 +258,9 @@ const PROJECT_LIST_LAYOUT_KEY_PREFIX = "panel.project-list-layout.v1.";
 const PROJECT_LIST_COLLAPSE_MODES_KEY_PREFIX = "panel.project-list-collapse-modes.v2.";
 const PROJECT_LIST_COLLAPSED_STATUSES_KEY_PREFIX = "panel.project-list-collapsed-statuses.v1.";
 const DEVICE_WORKSPACE_PATHS_KEY = "panel.deviceWorkspacePaths.v1";
+const PROJECT_CODEX_IDENTITIES_KEY = "panel.projectCodexIdentities.v1";
 const PROJECT_AUTOMATIONS_KEY = "panel.projectAutomations.v1";
+const BOARD_CARD_DISPLAY_KEY = "panel.board-card-display.v1";
 const ISSUE_READ_KEY_PREFIX = "panel.issue-read.v1";
 const FIRST_USE_COMPLETE_KEY = "panel.first-use-complete.v1";
 const DEFAULT_AUTOMATION_OPTIONS = {
@@ -282,6 +288,18 @@ function readProjectBoardView(projectId: string): BoardView {
   return view === "dashboard" || view === "list" || view === "gantt" || view === "issues"
     ? view
     : "issues";
+}
+
+function readBoardCardDisplay(): BoardCardDisplay {
+  try {
+    const value = JSON.parse(panelStorage.getItem(BOARD_CARD_DISPLAY_KEY) ?? "{}");
+    return {
+      cover: value.cover !== false,
+      body: value.body === true,
+    };
+  } catch {
+    return { cover: true, body: false };
+  }
 }
 
 function readProjectListLayout(projectId: string): ListLayout {
@@ -403,6 +421,25 @@ function readDeviceWorkspacePaths(): Record<string, string> {
   }
 }
 
+function readProjectCodexIdentities(): Record<string, CodexProjectIdentity> {
+  try {
+    const value = JSON.parse(panelStorage.getItem(PROJECT_CODEX_IDENTITIES_KEY) ?? "{}");
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, CodexProjectIdentity] => {
+      const identity = entry[1] as Partial<CodexProjectIdentity> | null;
+      return Boolean(
+        identity
+        && typeof identity.codexProjectId === "string"
+        && (identity.codexProjectKind === "local" || identity.codexProjectKind === "remote")
+        && typeof identity.codexHostId === "string"
+        && typeof identity.workspacePath === "string",
+      );
+    }));
+  } catch {
+    return {};
+  }
+}
+
 function readProjectAutomations(): ProjectAutomations {
   try {
     const value = JSON.parse(panelStorage.getItem(PROJECT_AUTOMATIONS_KEY) ?? "{}");
@@ -508,12 +545,6 @@ function isAutomationHostItem(value: unknown): value is AutomationHostItem {
     && typeof item.rrule === "string"
     && intervalMinutesFromRrule(item.rrule) !== null
   );
-}
-
-function isJiraAutomationHostItem(value: unknown): value is JiraAutomationHostItem {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const item = value as Partial<JiraAutomationHostItem>;
-  return typeof item.id === "string" && (item.status === "ACTIVE" || item.status === "PAUSED");
 }
 
 function isLocalPanelOrigin(origin: string): boolean {
@@ -682,6 +713,7 @@ function LocalRealtimeSync({
 
 export function App() {
   const query = useMemo(() => new URL(document.baseURI).searchParams, []);
+  const { language, text } = useTaskboardI18n();
   const host = query.get("host");
   const embedded = host === "codex" || host === "workbuddy";
   const undoShortcut = navigator.userAgent.includes("Macintosh") ? "⌘Z" : "Ctrl+Z";
@@ -718,6 +750,7 @@ export function App() {
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState(readTaskFilters);
   const [boardView, setBoardView] = useState<BoardView>(() => readProjectBoardView(initialProjectId));
+  const [boardCardDisplay, setBoardCardDisplay] = useState<BoardCardDisplay>(readBoardCardDisplay);
   const [listLayout, setListLayout] = useState<ListLayout>(() => readProjectListLayout(initialProjectId));
   const [listCollapseModes, setListCollapseModes] = useState<ListCollapseModes>(
     () => readProjectListCollapseModes(initialProjectId),
@@ -760,11 +793,16 @@ export function App() {
   const [projectContextMenu, setProjectContextMenu] = useState<ProjectContextMenuState | null>(null);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
+  const [jiraDialogOpen, setJiraDialogOpen] = useState(false);
+  const [jiraConnection, setJiraConnection] = useState<JiraConnection | null>(null);
+  const [jiraSaving, setJiraSaving] = useState(false);
+  const [jiraSyncing, setJiraSyncing] = useState(false);
+  const [jiraError, setJiraError] = useState<string | null>(null);
   const [pendingProjectDelete, setPendingProjectDelete] = useState<ProjectChoice | null>(null);
   const [projectDeleteIssueCount, setProjectDeleteIssueCount] = useState<number | null>(null);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
-  const [jiraProviderSettingsOpen, setJiraProviderSettingsOpen] = useState(false);
   const [deviceWorkspacePaths, setDeviceWorkspacePaths] = useState(readDeviceWorkspacePaths);
+  const [projectCodexIdentities, setProjectCodexIdentities] = useState(readProjectCodexIdentities);
   const [projectAutomations, setProjectAutomations] = useState(readProjectAutomations);
   const [automationPending, setAutomationPending] = useState(false);
   const [automationError, setAutomationError] = useState<string | null>(null);
@@ -824,6 +862,7 @@ export function App() {
   }, []);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+  const isJiraProject = selectedProject?.source === "jira";
   useLayoutEffect(() => {
     if (selectedProject) rememberProjectOpen(selectedProject.id);
   }, [rememberProjectOpen, selectedProject]);
@@ -871,8 +910,9 @@ export function App() {
     managePanelSkillPath,
     selectedProject,
   ]);
+  const referenceTasks = useMemo(() => [...tasks, ...archivedTasks], [archivedTasks, tasks]);
   const detailTask = detailTaskIdentifier
-    ? tasks.find((task) => task.identifier === detailTaskIdentifier) ?? null
+    ? referenceTasks.find((task) => task.identifier === detailTaskIdentifier) ?? null
     : null;
   const detailTaskId = detailTask?.id ?? null;
   const contextMenuTask = contextMenu
@@ -881,9 +921,10 @@ export function App() {
   const availableLabels = useMemo(
     () => [...new Set([
       ...DEFAULT_LABELS.map((label) => label.name),
+      ...(selectedProject?.labels ?? []),
       ...tasks.flatMap((task) => task.labels),
     ])],
-    [tasks],
+    [selectedProject?.labels, tasks],
   );
   const projectChoices = useMemo<ProjectChoice[]>(() => {
     const persistedById = new Map(projects.map((project) => [project.id, project]));
@@ -894,20 +935,31 @@ export function App() {
       seen.add(project.id);
       choices.push({
         id: project.id,
-        name: persistedById.get(project.id)?.name ?? project.name,
+        name: project.id === GLOBAL_PROJECT_ID
+          ? text("全局", "Global")
+          : persistedById.get(project.id)?.name ?? project.name,
         issueCount: persistedById.get(project.id)?.issueCount ?? 0,
         inCodex: true,
         persisted: persistedById.has(project.id),
+        codexIdentity: project.workspacePath && project.projectKind && project.hostId
+          ? {
+              codexProjectId: project.id,
+              codexProjectKind: project.projectKind,
+              codexHostId: project.hostId,
+              workspacePath: project.workspacePath,
+            }
+          : null,
       });
     }
     for (const project of projects) {
       if (seen.has(project.id)) continue;
       choices.push({
         id: project.id,
-        name: project.name,
+        name: project.id === GLOBAL_PROJECT_ID ? text("全局", "Global") : project.name,
         issueCount: project.issueCount,
         inCodex: false,
         persisted: true,
+        codexIdentity: projectCodexIdentities[project.id] ?? null,
       });
     }
     const recentOrder = new Map(recentProjectIds.map((projectId, index) => [projectId, index]));
@@ -915,7 +967,7 @@ export function App() {
       (recentOrder.get(left.id) ?? recentProjectIds.length)
       - (recentOrder.get(right.id) ?? recentProjectIds.length)
     ));
-  }, [hostContext?.projects, projects, recentProjectIds]);
+  }, [hostContext?.projects, projectCodexIdentities, projects, recentProjectIds, text]);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const issueReadStorageKey = selectedProjectId
     ? `${ISSUE_READ_KEY_PREFIX}:${panelMetadata?.mode ?? "local"}:${selectedProjectId}`
@@ -1047,34 +1099,6 @@ export function App() {
     selectedProjectId,
     sendHostAutomationRequest,
   ]);
-
-  const jiraAutomationAvailable = embedded
-    && window.parent !== window
-    && host === "codex"
-    && Boolean(managePanelSkillPath);
-  const sendJiraAutomationRequest = useCallback((
-    provider: JiraProvider,
-    operation: JiraAutomationOperation,
-  ) => {
-    if (!jiraAutomationAvailable || !managePanelSkillPath) {
-      return Promise.reject(new Error("Scheduled Task 只能在 Codex 内嵌 Panel 的 Jira 设置中管理"));
-    }
-    return sendHostAutomationRequest({
-      template: "jira-sync",
-      operation,
-      providerKey: provider.key,
-      providerAlias: provider.alias,
-      configPath: provider.configPath,
-      jql: provider.jql,
-      skillPath: managePanelSkillPath,
-      ...(provider.scheduledTaskId ? { automationId: provider.scheduledTaskId } : {}),
-      enabled: provider.enabled,
-    }).then((response) => ({
-      item: isJiraAutomationHostItem(response.item) ? response.item : undefined,
-      state: response.state,
-      run: response.run,
-    }));
-  }, [jiraAutomationAvailable, managePanelSkillPath, sendHostAutomationRequest]);
 
   const reconcileProjectAutomation = useCallback(async () => {
     if (automationProjectContext.unavailableReason) {
@@ -1500,10 +1524,11 @@ export function App() {
   const loadProjectList = useCallback(async (signal?: AbortSignal) => {
     setLoadError(null);
     try {
-      const [nextProjects, metadata, workspaces] = await Promise.all([
+      const [nextProjects, metadata, workspaces, nextJiraConnection] = await Promise.all([
         listProjects(signal),
         getPanelMetadata(signal),
         listDeviceWorkspaces(signal),
+        getJiraConnection(signal),
       ]);
       setPanelMetadata((current) => (
         current
@@ -1525,6 +1550,7 @@ export function App() {
         return next;
       });
       setProjects(nextProjects);
+      setJiraConnection(nextJiraConnection);
       setSelectedProjectId((current) => {
         const fromQuery = new URLSearchParams(window.location.search).get("project");
         if (fromQuery && nextProjects.some((project) => project.id === fromQuery)) return fromQuery;
@@ -1567,6 +1593,13 @@ export function App() {
       if (requestId !== tasksRequestRef.current) return;
       setTasks(sortTasks(nextTasks));
       setArchivedTasks(sortTasks(nextArchivedTasks));
+      setProjects((current) => current.map((project) => {
+        if (project.id !== projectId || project.source !== "jira") return project;
+        const labels = [...new Set(nextTasks.flatMap((task) => task.labels))];
+        return JSON.stringify(labels) === JSON.stringify(project.labels)
+          ? project
+          : { ...project, labels };
+      }));
       setHasLoadedTasks(true);
     } catch (error) {
       if ((error as Error).name !== "AbortError" && requestId === tasksRequestRef.current) {
@@ -1589,6 +1622,14 @@ export function App() {
     void refreshTasks(selectedProjectId, { signal: controller.signal });
     return () => controller.abort();
   }, [refreshTasks, selectedProjectId]);
+
+  useEffect(() => {
+    if (!isJiraProject || !selectedProjectId) return;
+    const timer = window.setInterval(() => {
+      void refreshTasks(selectedProjectId, { quiet: true });
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [isJiraProject, refreshTasks, selectedProjectId]);
 
   const refreshWorkflowOptions = useCallback(async (projectId: string, signal?: AbortSignal) => {
     const record = await getWorkflowWorkspace<unknown>(projectId, signal);
@@ -1751,6 +1792,7 @@ export function App() {
         && !event.metaKey
         && !event.ctrlKey
         && selectedProjectId
+        && !isJiraProject
         && boardView !== "workflow"
       ) {
         event.preventDefault();
@@ -1772,17 +1814,17 @@ export function App() {
 
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [boardView, contextMenu, detailTaskId, editor, projectMenuOpen, selectedProjectId]);
+  }, [boardView, contextMenu, detailTaskId, editor, isJiraProject, projectMenuOpen, selectedProjectId]);
 
   const filteredTasks = useMemo(() => {
     return tasks.filter(
-      (task) => matchesTaskSearch(task, search) && matchesTaskFilters(task, filters),
+      (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
     );
-  }, [filters, search, tasks]);
+  }, [filters, language, search, tasks]);
 
   const filteredArchivedTasks = useMemo(() => archivedTasks.filter(
-    (task) => matchesTaskSearch(task, search) && matchesTaskFilters(task, filters),
-  ), [archivedTasks, filters, search]);
+    (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
+  ), [archivedTasks, filters, language, search]);
 
   const activeFilterCount = taskFilterCount(filters);
   const hasActiveTaskFilters = Boolean(search.trim()) || activeFilterCount > 0;
@@ -1884,6 +1926,11 @@ export function App() {
     }
   }
 
+  function updateBoardCardDisplay(value: BoardCardDisplay) {
+    setBoardCardDisplay(value);
+    panelStorage.setItem(BOARD_CARD_DISPLAY_KEY, JSON.stringify(value));
+  }
+
   function selectListLayout(layout: ListLayout) {
     setListLayout(layout);
     if (selectedProjectId) {
@@ -1940,24 +1987,34 @@ export function App() {
       }
       let uploadedAttachments = 0;
       let failedAttachments = 0;
+      let postCreateWriteFailed = false;
       if (creating && (attachments.length > 0 || inlineImages.length > 0)) {
-        const [results, inlineAttachments] = await Promise.all([
+        const [results, inlineResults] = await Promise.all([
           Promise.allSettled(
-            attachments.map((file) => uploadAttachment(saved.id, file)),
+            attachments.map((file) => uploadAttachment(saved.id, file, "attachment")),
           ),
-          Promise.all(
-            inlineImages.map((image) => uploadAttachment(saved.id, image.file)),
+          Promise.allSettled(
+            inlineImages.map((image) => uploadAttachment(saved.id, image.file, "inline")),
           ),
         ]);
         uploadedAttachments = results.filter((result) => result.status === "fulfilled").length;
         failedAttachments = results.length - uploadedAttachments;
-        if (inlineImages.length > 0) {
-          const description = resolveInlineMediaMarkdown(
-            draft.description,
-            inlineImages,
-            inlineAttachments,
-          );
-          saved = await updateTaskRequest(saved, { ...draft, description });
+        const inlineAttachments = inlineResults.flatMap((result) => (
+          result.status === "fulfilled" ? [result.value] : []
+        ));
+        if (inlineAttachments.length !== inlineImages.length) {
+          postCreateWriteFailed = true;
+        } else if (inlineImages.length > 0) {
+          try {
+            const description = resolveInlineMediaMarkdown(
+              draft.description,
+              inlineImages,
+              inlineAttachments,
+            );
+            saved = await updateTaskRequest(saved, { ...draft, description });
+          } catch {
+            postCreateWriteFailed = true;
+          }
         }
       }
       setTasks((current) => sortTasks([
@@ -1966,11 +2023,21 @@ export function App() {
       ]));
       if (creating) setNewTaskDraft(null);
       setEditor(null);
-      if (failedAttachments > 0) {
-        setActionError(`${saved.identifier} 已创建，但有 ${failedAttachments} 个附件上传失败，可在详情页重试。`);
+      const failedWrites = [
+        ...(postCreateWriteFailed ? [{ zh: "正文或图片", en: "description or images" }] : []),
+        ...(failedAttachments > 0 ? [{
+          zh: `${failedAttachments} 个附件`,
+          en: `${failedAttachments} attachment${failedAttachments === 1 ? "" : "s"}`,
+        }] : []),
+      ];
+      if (failedWrites.length > 0) {
+        setActionError(text(
+          `${saved.identifier} 已创建，但以下内容写入失败：${failedWrites.map((failure) => failure.zh).join("、")}。`,
+          `${saved.identifier} was created, but these follow-up writes failed: ${failedWrites.map((failure) => failure.en).join(", ")}.`,
+        ));
       }
       if (creating) {
-        const totalUploaded = uploadedAttachments + inlineImages.length;
+        const totalUploaded = uploadedAttachments + (postCreateWriteFailed ? 0 : inlineImages.length);
         const message = `${saved.identifier} 已创建${totalUploaded > 0 ? `，已上传 ${totalUploaded} 个附件` : ""}。`;
         pushUndo(message, async () => {
           const candidate = tasksRef.current.find((task) => task.id === saved.id);
@@ -2165,6 +2232,33 @@ export function App() {
         ? "该议题已在其他位置更新，看板已重新同步。"
         : errorMessage(error));
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
+      throw error;
+    }
+  }
+
+  async function persistProjectLabel(label: string) {
+    setActionError(null);
+    try {
+      const project = await createProjectLabelRequest(selectedProjectId, label);
+      setProjects((current) => current.map((candidate) => (
+        candidate.id === project.id ? project : candidate
+      )));
+    } catch (error) {
+      setActionError(errorMessage(error));
+      throw error;
+    }
+  }
+
+  async function removeProjectLabel(label: string) {
+    setActionError(null);
+    try {
+      const project = await deleteProjectLabelRequest(selectedProjectId, label);
+      setProjects((current) => current.map((candidate) => (
+        candidate.id === project.id ? project : candidate
+      )));
+      await refreshTasks(selectedProjectId, { quiet: true });
+    } catch (error) {
+      setActionError(errorMessage(error));
       throw error;
     }
   }
@@ -2416,11 +2510,69 @@ export function App() {
           if (!project) throw error;
         }
       }
+      if (choice.codexIdentity) {
+        setProjectCodexIdentities((current) => {
+          const next = { ...current, [project!.id]: choice.codexIdentity! };
+          panelStorage.setItem(PROJECT_CODEX_IDENTITIES_KEY, JSON.stringify(next));
+          return next;
+        });
+        rememberDeviceWorkspacePath(project.id, choice.codexIdentity.workspacePath);
+      }
       changeProject(project.id);
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
       setOpeningProjectId(null);
+    }
+  }
+
+  function openJiraDialog() {
+    setProjectMenuOpen(false);
+    setProjectContextMenu(null);
+    setJiraError(null);
+    setJiraDialogOpen(true);
+  }
+
+  async function saveJiraConnection(input: {
+    baseUrl: string;
+    username: string;
+    password: string;
+    projects: string[];
+  }) {
+    if (jiraSaving) return;
+    setJiraSaving(true);
+    setJiraError(null);
+    try {
+      const connection = await configureJiraConnection(input);
+      setJiraConnection(connection);
+      setProjects(await listProjects());
+      setJiraDialogOpen(false);
+      changeProject(connection.projectId);
+      await refreshTasks(connection.projectId);
+      setAnnouncement(`已同步 ${connection.displayName ?? connection.username} 的 Jira 任务`);
+    } catch (error) {
+      setJiraError(errorMessage(error));
+    } finally {
+      setJiraSaving(false);
+    }
+  }
+
+  async function syncJiraNow() {
+    if (jiraSyncing || !selectedProjectId) return;
+    setJiraSyncing(true);
+    setActionError(null);
+    try {
+      const connection = await syncJiraConnection();
+      setJiraConnection(connection);
+      await Promise.all([
+        refreshTasks(selectedProjectId, { quiet: true }),
+        refreshProjectList(),
+      ]);
+      setAnnouncement("Jira 任务已同步");
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setJiraSyncing(false);
     }
   }
 
@@ -2487,6 +2639,12 @@ export function App() {
         panelStorage.setItem(RECENT_PROJECT_IDS_KEY, JSON.stringify(next));
         return next;
       });
+      setProjectCodexIdentities((current) => {
+        const next = { ...current };
+        delete next[project.id];
+        panelStorage.setItem(PROJECT_CODEX_IDENTITIES_KEY, JSON.stringify(next));
+        return next;
+      });
       setPendingProjectDelete(null);
       setProjectDeleteIssueCount(null);
       if (selectedProjectId === project.id) changeProject(GLOBAL_PROJECT_ID);
@@ -2504,7 +2662,9 @@ export function App() {
     }
   }
 
-  const headerProjectName = selectedProject?.name ?? "任务面板";
+  const headerProjectName = selectedProject?.id === GLOBAL_PROJECT_ID
+    ? text("全局", "Global")
+    : selectedProject?.name ?? text("任务面板", "Taskboard");
   const appShellStyle = embedded
     ? { "--codex-titlebar-left-inset": `${hostContext?.titlebarLeftInset ?? 0}px` } as CSSProperties
     : undefined;
@@ -2526,6 +2686,10 @@ export function App() {
         contextMenuTaskId={contextMenu?.taskId ?? null}
         availableLabels={availableLabels}
         currentUser={currentUser}
+        showCover={boardCardDisplay.cover}
+        showBody={boardCardDisplay.body}
+        createEnabled={!isJiraProject}
+        onCreateLabel={persistProjectLabel}
         onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
         onEdit={openTaskDetail}
         onUpdate={updateTaskProperties}
@@ -2599,8 +2763,8 @@ export function App() {
                 <button
                   className="detail-back-button"
                   type="button"
-                  aria-label="返回议题看板"
-                  title="返回议题看板 (Esc)"
+                  aria-label={text("返回议题看板", "Back to issue board")}
+                  title={text("返回议题看板 (Esc)", "Back to issue board (Esc)")}
                   onClick={closeTaskDetail}
                 >
                   <LinearIcon name="chevronLeft" />
@@ -2621,7 +2785,7 @@ export function App() {
                 <button
                   className="header-project-button"
                   type="button"
-                  aria-label="切换项目"
+                  aria-label={text("切换项目", "Switch project")}
                   aria-haspopup="menu"
                   aria-expanded={projectMenuOpen}
                   onClick={() => {
@@ -2633,8 +2797,8 @@ export function App() {
                   <PanelIcon className="project-switcher-chevron" name="dropdown" />
                 </button>
                 {projectMenuOpen && (
-                  <div className="header-project-menu" role="menu" aria-label="项目">
-                    <span>切换项目</span>
+                  <div className="header-project-menu" role="menu" aria-label={text("项目", "Projects")}>
+                    <span>{text("切换项目", "Switch project")}</span>
                     {projectChoices.map((project) => (
                       <button
                         type="button"
@@ -2664,10 +2828,23 @@ export function App() {
                       type="button"
                       role="menuitem"
                       disabled={openingProjectId !== null}
+                      onClick={openJiraDialog}
+                    >
+                      <LinearIcon className="project-avatar" name="link" />
+                      <span>
+                        {jiraConnection?.configured
+                          ? text("Jira 设置", "Jira settings")
+                          : text("连接 Jira", "Connect Jira")}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={openingProjectId !== null}
                       onClick={openCreateProjectDialog}
                     >
                       <PanelIcon className="project-avatar" name="create" />
-                      <span>创建项目</span>
+                      <span>{text("创建项目", "Create project")}</span>
                     </button>
                   </div>
                 )}
@@ -2678,15 +2855,6 @@ export function App() {
           <div ref={dragRegionRef} className="workspace-drag-region" aria-hidden="true" />
 
           <div className="header-actions">
-            <button
-              className="icon-button"
-              type="button"
-              aria-label="Jira 设置"
-              title="Jira 设置"
-              onClick={() => setJiraProviderSettingsOpen(true)}
-            >
-              <LinearIcon name="displayOptions" />
-            </button>
             {selectedProjectId && (
               <ProjectAutomationMenu
                 automation={selectedProjectAutomation}
@@ -2697,7 +2865,19 @@ export function App() {
                 onChange={(options) => void saveProjectAutomation(options)}
               />
             )}
-            {selectedProjectId && boardView !== "workflow" && (
+            {isJiraProject && (
+              <button
+                className="icon-button"
+                type="button"
+                disabled={jiraSyncing}
+                onClick={() => void syncJiraNow()}
+                aria-label="同步 Jira"
+                title="同步 Jira"
+              >
+                <LinearIcon name="recurrence" />
+              </button>
+            )}
+            {selectedProjectId && !isJiraProject && boardView !== "workflow" && (
               <button
                 className="icon-button header-create-button"
                 type="button"
@@ -2712,14 +2892,14 @@ export function App() {
         </header>
 
         {selectedProjectId && <div className="board-toolbar">
-          <div className="view-tabs" aria-label="看板视图">
+          <div className="view-tabs" aria-label={text("看板视图", "Board views")}>
             <button
               className={`view-tab${boardView === "dashboard" ? " active" : ""}`}
               type="button"
               aria-pressed={boardView === "dashboard"}
               onClick={() => selectBoardView("dashboard")}
             >
-              Dashboard
+              {text("仪表盘", "Dashboard")}
             </button>
             <button
               className={`view-tab${boardView === "issues" ? " active" : ""}`}
@@ -2727,7 +2907,7 @@ export function App() {
               aria-pressed={boardView === "issues"}
               onClick={() => selectBoardView("issues")}
             >
-              议题看板
+              {text("议题看板", "Issue board")}
             </button>
             <button
               className={`view-tab${boardView === "list" ? " active" : ""}`}
@@ -2735,7 +2915,7 @@ export function App() {
               aria-pressed={boardView === "list"}
               onClick={() => selectBoardView("list")}
             >
-              列表视图
+              {text("列表视图", "List")}
             </button>
             <button
               className={`view-tab${boardView === "gantt" ? " active" : ""}`}
@@ -2743,7 +2923,7 @@ export function App() {
               aria-pressed={boardView === "gantt"}
               onClick={() => selectBoardView("gantt")}
             >
-              甘特图
+              {text("甘特图", "Gantt")}
             </button>
             {SHOW_WORKFLOW_BOARD_ENTRY && (
               <button
@@ -2752,7 +2932,7 @@ export function App() {
                 aria-pressed={boardView === "workflow"}
                 onClick={() => selectBoardView("workflow")}
               >
-                节点模式
+                {text("节点模式", "Workflow")}
               </button>
             )}
           </div>
@@ -2841,6 +3021,13 @@ export function App() {
               onChange={setFilters}
             />
             {boardView === "issues" && (
+              <BoardCardDisplayMenu
+                cover={boardCardDisplay.cover}
+                body={boardCardDisplay.body}
+                onChange={updateBoardCardDisplay}
+              />
+            )}
+            {boardView === "issues" && (
               <button
                 className={`other-tasks-trigger${otherTasksOpen ? " is-open" : ""}`}
                 type="button"
@@ -2878,6 +3065,7 @@ export function App() {
             key={detailTask.id}
             task={detailTask}
             tasks={tasks}
+            referenceTasks={referenceTasks}
             projects={projects}
             currentUser={currentUser}
             availableLabels={availableLabels}
@@ -2885,6 +3073,8 @@ export function App() {
             developmentScanLoading={developmentScanLoading}
             commentsRevision={commentsRevision}
             attachmentsRevision={attachmentsRevision}
+            onCreateLabel={persistProjectLabel}
+            onDeleteLabel={removeProjectLabel}
             onUpdate={(current, changes) => updateTaskProperties(current, changes)}
             onOpenTask={openTaskDetail}
             onAddRelation={(current, type, relatedTaskId) => (
@@ -3009,10 +3199,15 @@ export function App() {
                     contextMenuTaskId={contextMenu?.taskId ?? null}
                     availableLabels={availableLabels}
                     currentUser={currentUser}
+                    showCover={boardCardDisplay.cover}
+                    showBody={boardCardDisplay.body}
+                    onCreateLabel={persistProjectLabel}
                     restoringTaskId={restoringTaskId}
                     deletingTaskId={deletingArchivedTaskId}
                     onTabChange={setOtherTasksTab}
-                    onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
+                    onCreate={isJiraProject
+                      ? undefined
+                      : (initialStatus) => setEditor({ task: null, status: initialStatus })}
                     onRestore={(task) => void restoreArchivedTask(task)}
                     onDelete={setPendingArchivedTaskDelete}
                     onEdit={openTaskDetail}
@@ -3208,12 +3403,15 @@ export function App() {
         <TaskEditor
           key={editor.task?.id ?? `new-${editor.status}`}
           task={editor.task}
+          tasks={tasks.filter((task) => task.projectId === selectedProjectId)}
+          referenceTasks={referenceTasks.filter((task) => task.projectId === selectedProjectId)}
           initialStatus={editor.status}
           initialDraft={editor.task ? null : newTaskDraft}
           labels={availableLabels}
           currentUser={currentUser}
           developmentScan={developmentScan}
           developmentScanLoading={developmentScanLoading}
+          onCreateLabel={persistProjectLabel}
           onCancel={(draft) => {
             if (!editor.task) setNewTaskDraft(draft);
             setEditor(null);
@@ -3245,20 +3443,29 @@ export function App() {
         />
       )}
 
-      <JiraProviderSettings
-        open={jiraProviderSettingsOpen}
-        automationAvailable={jiraAutomationAvailable}
-        onAutomationRequest={sendJiraAutomationRequest}
-        onClose={() => setJiraProviderSettingsOpen(false)}
-      />
+      {jiraDialogOpen && (
+        <JiraConnectionDialog
+          connection={jiraConnection}
+          saving={jiraSaving}
+          error={jiraError}
+          onClose={() => {
+            if (!jiraSaving) setJiraDialogOpen(false);
+          }}
+          onSave={saveJiraConnection}
+        />
+      )}
 
-      <AiChat
-        available={localAiChatAvailable}
-        projectId={selectedProjectId || null}
-        issueId={detailTaskId}
-        onThreadsChange={setAiThreads}
-        openThreadRequest={aiOpenThreadRequest}
-      />
+      {localAiChatAvailable && (
+        <Suspense fallback={null}>
+          <AiChat
+            available
+            projectId={selectedProjectId || null}
+            issueId={detailTaskId}
+            onThreadsChange={setAiThreads}
+            openThreadRequest={aiOpenThreadRequest}
+          />
+        </Suspense>
+      )}
 
       <div className="sr-only" role="status" aria-live="polite">{announcement}</div>
       {undoNotice && (

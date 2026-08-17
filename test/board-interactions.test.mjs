@@ -55,7 +55,7 @@ test("text selection is reserved for editable fields", () => {
 test("main issue cards stay compact while sidebar cards show ownership and creation time", () => {
   assert.doesNotMatch(cardSource, /projectName|project-chip/);
   assert.match(cardSource, /variant === "sidebar" && \([\s\S]*?className="sidebar-card-creator"/);
-  assert.match(cardSource, /<AssigneeControl[\s\S]*?<span>\{createdDate\(task\.createdAt\)\}<\/span>/);
+  assert.match(cardSource, /<AssigneeControl[\s\S]*?<span>\{createdDate\(task\.createdAt, locale, text\)\}<\/span>/);
   assert.doesNotMatch(styles, /\.card-footer|\.created-at|\.project-chip/);
   assert.match(styles, /\.task-card \{[\s\S]*?min-height: 80px;[\s\S]*?gap: 6px;[\s\S]*?padding: 7px 8px/);
   assert.match(detailSource, /currentTask\.createdAt/);
@@ -216,7 +216,7 @@ test("comments stage, upload, render and delete their own attachments", () => {
   assert.match(apiSource, /export async function uploadCommentAttachment/);
   assert.match(apiSource, /\/api\/comments\/\$\{encodeURIComponent\(commentId\)\}\/attachments/);
   assert.match(detailSource, /pendingCommentFiles/);
-  assert.match(detailSource, /uploadCommentAttachment\(comment\.id, file\)/);
+  assert.match(detailSource, /uploadCommentAttachment\(comment\.id, file, "attachment"\)/);
   assert.match(
     detailSource,
     /comment\.attachments[\s\S]*?\.filter\(\(attachment\) => !markdownIncludesAttachment\(comment\.body, attachment\)\)[\s\S]*?\.map\(\(attachment\) =>/,
@@ -233,8 +233,8 @@ test("issue creation and detail share one searchable, creatable label picker", (
   assert.doesNotMatch(detailSource, /标签，以逗号分隔|function saveLabels|labels\.split/);
   assert.match(labelPickerSource, /availableLabels\.filter/);
   assert.match(labelPickerSource, /selectedLabels\.includes\(label\)/);
-  assert.match(labelPickerSource, /创建 “\{normalizedSearch\}”/);
-  assert.match(labelPickerSource, /labelPresentation\(normalizedSearch\)\.color/);
+  assert.match(labelPickerSource, /text\(`创建 “\$\{normalizedSearch\}”`, `Create “\$\{normalizedSearch\}”`\)/);
+  assert.match(labelPickerSource, /labelPresentation\(normalizedSearch, language\)\.color/);
   assert.match(labelPickerSource, /aria-multiselectable="true"/);
   assert.match(styles, /\.detail-label-picker \.label-popover/);
 });

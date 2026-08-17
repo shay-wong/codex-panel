@@ -4,7 +4,7 @@
 
 A local-first issue board that runs in a browser and can be embedded in Codex through the standalone CDP launcher or its injection script. The same HTTP API powers the React UI and the `panelctl` CLI used by the bundled Codex Skill.
 
-The board includes dashboard, list, Gantt, and archived-issue workflows. Issues can carry start and due dates and can be moved from their detail view while retaining their linked conversation. Jira settings discover local Jira CLI configs before falling back to manual provider entry, and support separate aliases, config paths, JQL, preview, and completion policies; when JQL changes while preview is disabled, Panel asks whether to re-enable it. In the launcher-managed Panel embedded inside Codex, Panel maintains one clearly marked daily Scheduled Task for each enabled provider without restricting user-created tasks; it reads Jira and Panel and produces a reviewable synchronization plan without applying it.
+The board includes dashboard, list, Gantt, and archived-issue workflows. Issues can carry start and due dates and can be moved from their detail view while retaining their linked conversation. A local Jira connection can sync issues assigned to the signed-in Jira user into a dedicated Jira project. Opening that project refreshes it at most once per minute, and users can also sync manually. Changes to a synced issue's title, description, priority, labels, due date, or status are written directly back to Jira. The connection uses Basic Auth, stores its credentials in the local Panel data directory, and is unavailable in Cloud mode; use HTTPS unless the Jira server is on a trusted private network.
 
 ## Requirements
 
@@ -166,10 +166,14 @@ Each device keeps its own project checkout mapping and continues to use a local 
 
 See [Cloud collaboration](docs/cloud-collaboration.md) for owner deployment, existing GitHub installation setup, password rotation, local path mapping, and the one-time local-data migration flow.
 
+## Task Markdown
+
+Issue descriptions and comments support GFM, including tables and task lists. Fenced `mermaid` blocks render as read-only diagrams after loading; their source remains visible if rendering fails. Markdown HTML comments are hidden, and raw HTML is disabled.
+
 ## Verify
 
 ```bash
 npm run check
 ```
 
-This runs TypeScript checking, a production frontend build, and the server/CLI/injection test suite.
+This runs TypeScript checking, a production frontend build, the component tests, and the server/CLI/injection test suite.

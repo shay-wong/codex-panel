@@ -57,7 +57,7 @@ export function StatusIcon({ status }: { status: TaskStatus }) {
   return <PanelIcon name={STATUS_ICONS[status]} />;
 }
 
-function ColumnStatusIcon({ status }: { status: TaskStatus }) {
+export function ColumnStatusIcon({ status }: { status: TaskStatus }) {
   return <PanelIcon name={COLUMN_STATUS_ICONS[status]} />;
 }
 
@@ -75,6 +75,10 @@ interface BoardColumnProps {
   contextMenuTaskId: string | null;
   availableLabels: string[];
   currentUser: ActorIdentity;
+  showCover: boolean;
+  showBody: boolean;
+  createEnabled: boolean;
+  onCreateLabel: (label: string) => Promise<void>;
   onCreate: (status: TaskStatus) => void;
   onEdit: (task: Task) => void;
   onUpdate: (task: Task, changes: Partial<TaskDraft>) => Promise<Task>;
@@ -101,6 +105,10 @@ export function BoardColumn({
   contextMenuTaskId,
   availableLabels,
   currentUser,
+  showCover,
+  showBody,
+  createEnabled,
+  onCreateLabel,
   onCreate,
   onEdit,
   onUpdate,
@@ -180,17 +188,19 @@ export function BoardColumn({
           </span>
           <h2 id={`column-${status}`}>{details.label}</h2>
         </div>
-        <div className="column-actions">
-          <button
-            type="button"
-            className="icon-button add-task-button"
-            onClick={() => onCreate(status)}
-            aria-label={`在${details.label}中新建议题`}
-            title={`添加到${details.label}`}
-          >
-            <PanelIcon name={COLUMN_ADD_ICONS[status] ?? "columnAdd"} />
-          </button>
-        </div>
+        {createEnabled && (
+          <div className="column-actions">
+            <button
+              type="button"
+              className="icon-button add-task-button"
+              onClick={() => onCreate(status)}
+              aria-label={`在${details.label}中新建议题`}
+              title={`添加到${details.label}`}
+            >
+              <PanelIcon name={COLUMN_ADD_ICONS[status] ?? "columnAdd"} />
+            </button>
+          </div>
+        )}
       </header>
 
       <div className="column-list">
@@ -209,6 +219,9 @@ export function BoardColumn({
               isContextMenuOpen={contextMenuTaskId === task.id}
               availableLabels={availableLabels}
               currentUser={currentUser}
+              showCover={showCover}
+              showBody={showBody}
+              onCreateLabel={onCreateLabel}
               onEdit={onEdit}
               onUpdate={onUpdate}
               onComplete={onComplete}

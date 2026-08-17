@@ -31,7 +31,7 @@ function parseHostRequest(payload, parseAutomationRequest) {
   if (request.action === "open-external" && typeof request.url === "string") {
     try {
       const url = new URL(request.url);
-      if (url.protocol === "https:" && url.href.length <= 2_048) {
+      if ((url.protocol === "http:" || url.protocol === "https:") && url.href.length <= 2_048) {
         return { id, request: { ...request, url: url.href }, error: null };
       }
     } catch {}

@@ -66,6 +66,7 @@ test("local project moves reject related issues without mutating the task", asyn
       "related",
       related.id,
       undefined,
+      undefined,
       actor,
     ).task;
 
@@ -74,6 +75,7 @@ test("local project moves reject related issues without mutating the task", asyn
         linked.id,
         linked.version,
         { projectId: "move-related-target" },
+        undefined,
         undefined,
         actor,
       ),
@@ -116,6 +118,7 @@ test("local project moves reject issue-linked AI chats and preserve their origin
         task.version,
         { projectId: "move-chat-target" },
         undefined,
+        undefined,
         actor,
       ),
       (error) => error?.status === 409 && error?.code === "AI_CHAT_PROJECT_MOVE_BLOCKED",
@@ -150,6 +153,7 @@ test("local combined project and status updates use the target status ordering",
       task.id,
       task.version,
       { projectId: "move-sort-target", status: "done" },
+      undefined,
       undefined,
       actor,
     );

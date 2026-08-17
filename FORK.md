@@ -24,25 +24,25 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`0ddec1f2ccc2effa420882ef7a2d84e5d22258dd`
-- 精确已合并上游基线：`0ddec1f2ccc2effa420882ef7a2d84e5d22258dd`
-- 比较范围：`0ddec1f2ccc2effa420882ef7a2d84e5d22258dd..HEAD`
+- 本次合并的上游父提交：`57f1f8c9b24598bc3d3ef1d8a40554fc3c5d1f47`
+- 精确已合并上游基线：`57f1f8c9b24598bc3d3ef1d8a40554fc3c5d1f47`
+- 比较范围：`57f1f8c9b24598bc3d3ef1d8a40554fc3c5d1f47..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
-本次上游合并吸收了 `0.2.0` 的 Dashboard、列表、甘特图、日期、项目移动、完整活动流、云端迁移、AI 进程回收、私有 CDP pipe 与不透明 iframe 加固，并继续吸收 `0.2.1` 的 Dashboard 运行会话对齐、归档删除原子性、自动认领生命周期、搜索清除、Gantt 响应与清理、暗黑图标等修复。上游的 Tauri App、updater、发布工作流和 `taskctl` 打包链与 Fork 已有 Swift 管理器冲突，未纳入 Fork 产品入口；其中有价值的有限恢复、运行状态和更新发现能力已按 Swift 管理器现有生命周期重新实现。私有 CDP pipe 仍保留在 Node 启动器中，但没有用于 Swift 管理器，因为它无法在管理器退出而 ChatGPT 继续运行后重新接管。
+本次上游合并将基线更新到 `1.0.8`，吸收单连接 Jira REST 同步与直接回写、GFM 与 Mermaid 渲染、标签和 thread identity、附件类型、Issue 引用编辑以及进程树和启动器稳定性修复。Fork 原有的 Jira CLI、多 provider 与 Scheduled Task 方案已由上游 Jira 模型替代，不再属于活跃 Fork 能力。上游的 Tauri App、updater、发布工作流和 `taskctl` 打包链与 Fork 已有 Swift 管理器冲突，仍未纳入 Fork 产品入口；私有 CDP pipe 继续只保留在 Node 启动器中，因为它无法在管理器退出而 ChatGPT 继续运行后重新接管。
 
 ## Fork 发布版本策略
 
 - 权威上游版本来源：精确合并基线中的 `package.json`
 - 当前 Fork 版本来源：`package.json` 和 `package-lock.json` 的根包条目
-- 精确基线的上游版本：`0.2.1`
+- 精确基线的上游版本：`1.0.8`
 - 当前 Fork 版本：`0.1.0`
 - 匹配的 Fork 标签或 GitHub Release：无
 
 每个 Fork 发布版本都必须使用 `<upstream-version>-fork.<N>`。上游版本变化时从 `fork.1` 开始；同一上游版本的后续 Fork 发布递增 `N`。已准备但尚未发布的版本号在未被占用时可以保留。
 
-当前不带后缀的 `0.1.0` 不是有效的 Fork 发布版本，并且落后于已合并上游的 `0.2.1`。下一个规范化 Fork 发布版本是 `0.2.1-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
+当前不带后缀的 `0.1.0` 不是有效的 Fork 发布版本，并且落后于已合并上游的 `1.0.8`。下一个规范化 Fork 发布版本是 `1.0.8-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
 
 ## 活跃 Fork 能力
 
@@ -130,42 +130,6 @@
 - 移除条件：上游提供等价或更严格的显式来源授权模型，并覆盖宿主上下文与每项原生消息能力后同步移除。
 - 针对性验证：运行 `node --test test/inject.test.mjs`；分别使用默认受管来源和不同来源的 `window.__CODEX_PANEL_URL__`，确认前者可以接收宿主上下文并操作原生能力，后者只能收到主题和拖拽区域消息。
 
-### 主题化 Issue 属性菜单
-
-- 生命周期：`等待上游吸收`
-- 原始目的：替换 Chromium 原生下拉层，修复暗黑模式下菜单变白且视觉与 Codex / Panel 不一致的问题。
-- 行为不变量：状态、优先级、负责人、工作流、开发上下文和重复周期使用同一套 Panel 菜单；菜单必须使用现有主题变量，保留选中图标、键盘导航、点击外部关闭和上下自适应定位，并在桌面与窄屏视口内完整显示。`Escape` 只关闭当前菜单，不关闭 Issue 详情。
-- 代码和测试路径：`web/src/components/TaskPropertyPicker.tsx`、`web/src/components/TaskDetail.tsx` 和 `web/src/styles.css`。本次按仓库直接路径确认规则未新增自动化测试。
-- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
-- 来源：本次 Fork 修复；可用 `git log -S'TaskPropertyPicker' -- web/src/components/TaskDetail.tsx web/src/components/TaskPropertyPicker.tsx` 定位。
-- 合并指引：上游调整 Issue 侧栏属性控件时，不得退回依赖浏览器原生 `<select>` 弹层；继续复用主题变量和紧凑属性行布局，并验证暗色、窄屏和 `Escape` 行为。
-- 移除条件：上游提供等价的主题化属性选择控件及明暗主题、键盘和响应式行为后同步移除。
-- 针对性验证：运行 `npm run typecheck` 和 `npm run build`；在暗色 Issue 详情中打开状态菜单，确认浮层颜色、图标和间距与 Panel 一致，再按 `Escape` 确认只关闭菜单；以 600px 宽视口确认菜单不溢出。
-
-### 本地 Jira provider 注册
-
-- 生命周期：`长期保留`
-- 原始目的：为后续由 Jira CLI 和 Scheduled Task 驱动的导入与回写提供多实例、非凭据型配置入口，同时保持 Jira 凭据由 CLI 自己管理。
-- 行为不变量：每个 provider 使用不可变的 lowercase key 标识 Jira 实例，alias 可独立修改；配置只保存 Jira CLI 配置文件的绝对路径、JQL、启用、预览、自动完成和目标状态，不保存凭据。新增 provider 时，本地 companion 必须优先发现 `JIRA_CONFIG_FILE`、`XDG_CONFIG_HOME/.jira` 和 `~/.config/.jira` 下的 YAML 配置，仅用配置路径和 server 主机名生成建议值，未发现时保留手动填写。默认 JQL 为 `assignee = currentUser() AND resolution IS EMPTY`，新 provider 默认启用预览并关闭自动完成；JQL 实际变化且预览关闭时，界面必须让用户选择重新开启或保持关闭，服务端不得强制开启；自动完成必须先有目标状态。禁用只改变后续同步资格并保留 provider 配置。provider API 本身不得调用 Jira；Codex 中由 Panel.app 启动器管理的内嵌 Panel 在设置保存成功后独立管理对应 Scheduled Task。
-- 代码和测试路径：`server/app.mjs`、`server/database.mjs`、`web/src/api.ts`、`web/src/types.ts`、`web/src/components/JiraProviderSettings.tsx` 和 `web/src/styles.css`。本次按仓库直接路径确认规则未新增自动化测试。
-- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
-- 来源：当前 Jira 集成能力；提交后可用 `git log -S'jira_providers' -- server/database.mjs web/src/components/JiraProviderSettings.tsx` 定位。
-- 合并指引：上游调整设置页、本地 companion 或数据库初始化时，保留“本地配置优先发现且只返回非凭据建议、多实例 key 身份、alias 与身份分离、凭据只由 Jira CLI 管理、JQL 变化时由用户选择预览状态、自动完成显式目标状态、本地配置不经 Cloud API”这些不变量；不得让 provider API 隐式查询 Jira。
-- 移除条件：Fork 停止 Jira CLI 集成，或上游提供等价的多实例、本地凭据边界和预览/回写策略后同步移除。
-- 针对性验证：运行 `npm run typecheck` 和 `npm run build:web`；确认本机存在 Jira CLI 配置时新增 provider 自动填充建议值、无候选时允许手动填写；创建两个不同 key 的 provider，关闭预览并修改 JQL 后分别选择重新开启与保持关闭，确认保存结果遵循选择；重启服务后确认配置仍存在，并确认未配置目标状态时无法开启自动完成。
-
-### Jira 同步 Scheduled Task
-
-- 生命周期：`长期保留`
-- 原始目的：复用 Codex 原生 Scheduled Task 和 Agent 能力，为每个 Jira provider 定时生成隔离、可审查的同步计划，不在 Panel 中维护第二套调度器，也不让计划任务直接修改 Panel 或 Jira。
-- 行为不变量：Panel 为每个启用的 provider 最多管理一个可明确确认归属的 projectless 原生任务，但不得限制或接管用户自行创建的 Scheduled Task；展示名称稳定为 `Panel Jira 同步 · <providerKey>`，名称相同本身不证明归属。默认每天 09:00 Asia/Shanghai 运行并复用 Codex 的离线单次补跑。任务固定使用 provider 的 Jira CLI 配置路径和 JQL；alias、配置路径和 JQL 必须作为编码后的 CLI 数据传入，不得把原始可编辑内容插入 Agent 指令，Jira Issue 与需求文档内容也只能作为外部数据，不得成为指令。任务完整分页读取 Jira、Panel 项目和全部 Issue，只在已有认证只读能力时读取明确链接的需求证据，并输出带模板版本以及 `schemaVersion`、`provider`、`run`、`snapshots`、`evidence`、`proposals`、`ambiguities`、`failures` 的 JSON 计划；不得写 Panel、回写 Jira 或猜测项目。无变化时归档本次 Codex 运行，有变化、歧义或失败时保留并报告。手动运行不限次数，但同一 provider 的完整原生运行列表已有 `IN_PROGRESS` 运行或本地请求尚未结束时必须拒绝重叠。Panel 必须显示正常、漂移、缺失或冲突状态；既有 provider 的配置或启用状态变化只保存 Panel 配置并读取任务状态，不得改写原生任务，只有显式“恢复标准任务”可以应用新配置、暂停或重新启用任务。已绑定 ID 只有在对应任务带精确 provider marker 时才继续管理；旧版已绑定任务仅允许由原 ID、稳定名称和完整旧版生成行共同兼容识别。ID 失效或指向其他任务时，只能重新绑定完整列表中唯一带精确 marker 的任务；同名无 marker 任务必须忽略，多个精确 marker 必须显示冲突并停止创建、更新、运行和删除。新建任务必须重新列举并确认 marker 与标准定义后才能继续暂停或标记正常；未确认时保留返回 ID 并显示漂移，不得基于该 ID 继续写入。停用 provider 的任务缺失时，恢复必须重新创建并立即暂停；若暂停调用失败，必须返回并持久化新任务 ID、显示漂移状态，允许用户重试恢复，不得留下失去管理入口的 ACTIVE 任务。删除 provider 前必须确认唯一归属任务已暂停或确实缺失；普通浏览器无法执行该确认，因此不得删除 provider。原生任务管理只允许启动器受管 Panel iframe 调用，普通浏览器必须指引用户前往 Codex 内嵌 Panel 的 Jira 设置，而不是独立管理器窗口。
-- 代码和测试路径：`shared/panel-automation.mjs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-runtime.mjs`、`inject/codex-panel.user.js`、`server/app.mjs`、`server/database.mjs`、`web/src/App.tsx`、`web/src/api.ts`、`web/src/types.ts`、`web/src/components/JiraProviderSettings.tsx`、`web/src/styles.css` 和 `test/panel-automation.test.mjs`。
-- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
-- 来源：当前 Jira Scheduled Task 能力；提交后可用 `git log -S'buildJiraAutomationSpec' -- shared/panel-automation.mjs web/src/components/JiraProviderSettings.tsx` 定位。
-- 合并指引：上游调整自动化 RPC、受管 iframe 权限、provider 设置或数据库时，保留“Panel 每 provider 最多管理一个唯一 marker 归属的原生 projectless 任务但不限制用户任务、同名不代表归属、多个 marker 冲突即停止、可编辑 provider 数据与外部内容不进入 Agent 指令、固定只读计划模板、Panel 配置驱动但漂移只显式恢复、创建和写入前确认 provider 归属、普通浏览器无原生权限、禁用后显式恢复暂停且失败不失联、同 provider 不重叠”这些不变量；不得引入自定义调度进程、允许 iframe 传任意 prompt，或把同步计划执行和 Jira 回写塞进计划任务。
-- 移除条件：Fork 停止 Jira 同步，或上游提供等价的多 provider 只读计划任务、受管权限、漂移恢复与手动运行行为后同步移除。
-- 针对性验证：运行 `node --test test/panel-automation.test.mjs test/inject.test.mjs`、`npm run typecheck` 和 `npm run build:web`；在 Codex 内嵌 Panel 的 Jira 设置中保存启用的 provider，确认原生 Scheduled Tasks 出现 Panel 管理的独立每日任务，连续点击立即同步时同 provider 不会重叠；修改 JQL 或启用状态后保存，确认只显示漂移且不改写原生任务，只有“恢复标准任务”应用新配置或状态。确认同名无 marker 的用户任务不被接管、过期 ID 可重新绑定唯一精确 marker、provider key 前缀不会误匹配、多个 marker 显示冲突且不写入、创建结果未重新确认前不会继续暂停。删除原生任务后确认显示缺失；删除 provider 前确认唯一归属任务已暂停或缺失。再从普通浏览器打开设置，确认 provider 仍可编辑、原生任务操作禁用，并明确指向 Codex 内嵌 Panel 的 Jira 设置。
-
 ### Issue 详情页项目切换
 
 - 生命周期：`等待上游吸收`
@@ -195,4 +159,5 @@
 - 仅存在于上游的轻量标签 `pre-cloud-collaboration-2026-07-24` 不是 Fork 发布版本。
 - 不含有意 Fork 解决结果的纯上游合并、生成产物噪声、被忽略的本地状态，以及最终效果已被回退的行为都不属于 Fork 能力。
 - 尚未合并的上游独有工作属于待合并输入，不属于 Fork 能力。
-- 上游 `0.2.0` 的 `src-tauri/`、macOS updater/release 脚本、`release-macos.yml`、`rust-toolchain.toml` 和 `taskctl` 打包验证属于被替代的重复产品链；Fork 只维护 `macos/CodexPanelLauncher` Swift 管理器及对应 CI。
+- 截至上游 `1.0.8`，`src-tauri/`、updater、macOS/Windows 发布脚本与工作流、`PRIVACY.md`、`rust-toolchain.toml` 和 `taskctl` 打包验证仍属于被替代的重复产品链；Fork 只维护 `macos/CodexPanelLauncher` Swift 管理器及对应 CI。
+- 上游 `1.0.8` 的单连接 Jira REST 同步、直接回写及主题化 Issue 属性菜单已经等价吸收，不再作为 Fork 能力维护。

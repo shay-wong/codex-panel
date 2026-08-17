@@ -2,15 +2,19 @@ import type {
   AiChatRun,
   AiChatThread,
   AiChatTodoProgress,
+  CodexThreadBinding,
   Task,
 } from "./types";
 
 export interface TaskConversationItem {
   key: string;
+  projectId: string;
   kind: "native" | "local-ai";
   title: string;
   source: "task" | "comment" | "local-ai";
   nativeThreadId: string | null;
+  threadBinding: CodexThreadBinding | null;
+  legacyLocalThreadId: string | null;
   aiThreadId: string | null;
   updatedAt: string;
   currentRun: AiChatRun | null;
@@ -49,10 +53,19 @@ export function taskConversations(task: Task, aiThreads: AiChatThread[]) {
     const current = items.get(key);
     const next: TaskConversationItem = {
       key,
+      projectId: task.projectId,
       kind: "native",
       title: ref.title || task.title,
       source: ref.source,
       nativeThreadId: ref.threadId,
+      threadBinding: ref.legacyLocal ? null : {
+        threadId: ref.threadId,
+        codexProjectId: ref.codexProjectId,
+        codexProjectKind: ref.codexProjectKind,
+        codexHostId: ref.codexHostId,
+        workspacePath: ref.workspacePath,
+      },
+      legacyLocalThreadId: ref.legacyLocal ? ref.threadId : null,
       aiThreadId: null,
       updatedAt: ref.updatedAt,
       currentRun: null,
@@ -73,10 +86,13 @@ export function taskConversations(task: Task, aiThreads: AiChatThread[]) {
     ].reduce(newerTimestamp);
     const candidate: TaskConversationItem = {
       key,
+      projectId: task.projectId,
       kind: "local-ai",
       title: thread.title || thread.origin.issueIdentifier || task.title,
       source: "local-ai",
       nativeThreadId: current?.nativeThreadId ?? thread.codexThreadId,
+      threadBinding: current?.threadBinding ?? null,
+      legacyLocalThreadId: current?.legacyLocalThreadId ?? null,
       aiThreadId: thread.id,
       updatedAt: current?.kind === "native"
         ? newerTimestamp(current.updatedAt, threadActivityUpdatedAt)

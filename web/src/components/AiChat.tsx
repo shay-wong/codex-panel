@@ -15,6 +15,7 @@ import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { panelStorage } from "../storage";
+import { useTaskboardI18n } from "../i18n";
 import {
   createAiChatThread,
   deleteAiChatThread,
@@ -967,6 +968,7 @@ export function AiChat({
   onThreadsChange,
   openThreadRequest,
 }: AiChatProps) {
+  const { text } = useTaskboardI18n();
   const [panelOpen, setPanelOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [menu, setMenu] = useState<MenuName>(null);
@@ -1664,7 +1666,10 @@ export function AiChat({
   }
 
   async function deleteThread(thread: AiChatThread) {
-    if (!window.confirm(`删除本地对话“${thread.title}”？`)) return;
+    if (!window.confirm(text(
+      `删除本地对话“${thread.title}”？`,
+      `Delete local chat “${thread.title}”?`,
+    ))) return;
     setDeletingThreadId(thread.id);
     try {
       await deleteAiChatThread(thread.id);
@@ -2370,8 +2375,8 @@ export function AiChat({
                   <button
                     className="ai-chat-history-delete"
                     type="button"
-                    aria-label={`删除对话 ${thread.title}`}
-                    title="删除本地记录"
+                    aria-label={text(`删除对话 ${thread.title}`, `Delete chat ${thread.title}`)}
+                    title={text("删除本地记录", "Delete local record")}
                     disabled={thread.status === "running" || deletingThreadId === thread.id}
                     onClick={() => void deleteThread(thread)}
                   >
@@ -2733,8 +2738,8 @@ export function AiChat({
                 <button
                   className="ai-chat-send-button is-stop"
                   type="button"
-                  aria-label="停止生成"
-                  title="停止"
+                  aria-label={text("停止生成", "Stop generating")}
+                  title={text("停止", "Stop")}
                   onClick={() => void stopRun(currentRun)}
                 >
                   <span className="ai-chat-stop-mark" aria-hidden="true" />
@@ -2743,8 +2748,8 @@ export function AiChat({
                 <button
                   className="ai-chat-send-button"
                   type="button"
-                  aria-label="发送消息"
-                  title="发送"
+                  aria-label={text("发送消息", "Send message")}
+                  title={text("发送", "Send")}
                   disabled={
                     primaryAction === "disabled"
                     || loading

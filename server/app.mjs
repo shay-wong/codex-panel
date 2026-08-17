@@ -11,6 +11,7 @@ import { promisify } from "node:util";
 
 import {
   DEFAULT_PROJECT_ID,
+  JIRA_PROJECT_ID,
   TASK_STATUSES,
   isTaskPriority,
   isTaskStatus,
@@ -18,6 +19,7 @@ import {
 import { resolvePanelDataDirectory } from "../shared/panel-paths.mjs";
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
 import { withoutPanelLauncherEnvironment } from "../shared/codex-environment.mjs";
+import { executableCommand } from "../shared/executable-command.mjs";
 import { normalizeWorkflowSnapshot } from "../shared/workflow-control-flow.mjs";
 import { AiChatService } from "./ai-chat.mjs";
 import { resolveAiWorkspace, resolveMappedAiWorkspace } from "./ai-chat-catalog.mjs";
@@ -28,6 +30,8 @@ import {
   isLocalCompanionRoute,
 } from "./cloud-proxy.mjs";
 import { ApiError, PanelDatabase } from "./database.mjs";
+import { createJiraConfigStore } from "./jira-config.mjs";
+import { createJiraIntegration } from "./jira-integration.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -49,8 +53,6 @@ const INLINE_ATTACHMENT_TYPES = new Set([
   "text/plain",
 ]);
 const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
-const JIRA_PROVIDER_KEY_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
-const DEFAULT_JIRA_JQL = "assignee = currentUser() AND resolution IS EMPTY";
 const TRUSTED_EMBED_ORIGINS = new Set(["app://-"]);
 const CODEX_AGENT_ACTOR = {
   type: "agent",
@@ -287,14 +289,6 @@ function pathField(value, name) {
   return normalized;
 }
 
-function booleanField(value, name, fallback) {
-  const normalized = value ?? fallback;
-  if (typeof normalized !== "boolean") {
-    throw new ApiError(400, "INVALID_FIELD", `'${name}' must be a boolean`);
-  }
-  return normalized;
-}
-
 function parseDueDate(value, name = "dueDate") {
   const date = stringField(value, name, { nullable: true, maxLength: 10 });
   if (date !== null && date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -502,179 +496,65 @@ function parseProjectCreate(body) {
   return { id, name, workspacePath };
 }
 
-function parseJiraProviderKey(value) {
-  const key = stringField(value, "key", { required: true, maxLength: 64 });
-  if (!JIRA_PROVIDER_KEY_PATTERN.test(key)) {
-    throw new ApiError(
-      400,
-      "INVALID_FIELD",
-      "'key' must be lowercase and contain only letters, numbers, dots, underscores, or hyphens",
-    );
-  }
-  return key;
-}
-
-function parseJiraConfigPath(value) {
-  const configPath = pathField(value, "configPath");
-  if (!configPath || !path.isAbsolute(configPath)) {
-    throw new ApiError(400, "INVALID_FIELD", "'configPath' must be an absolute path");
-  }
-  return configPath;
-}
-
-function parseJiraProviderCreate(body) {
+function parseProjectLabel(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set([
-    "key", "alias", "configPath", "jql", "enabled", "preview",
-    "autoComplete", "completionStatus",
-  ]));
-  const autoComplete = booleanField(body.autoComplete, "autoComplete", false);
-  const completionStatus = stringField(
-    body.completionStatus ?? null,
-    "completionStatus",
-    { nullable: true, maxLength: 120 },
-  );
-  if (autoComplete && !completionStatus) {
-    throw new ApiError(
-      400,
-      "JIRA_COMPLETION_STATUS_REQUIRED",
-      "A completion status is required before automatic Jira completion can be enabled",
-    );
-  }
-  return {
-    key: parseJiraProviderKey(body.key),
-    alias: stringField(body.alias, "alias", { required: true, maxLength: 120 }),
-    configPath: parseJiraConfigPath(body.configPath),
-    jql: stringField(body.jql ?? DEFAULT_JIRA_JQL, "jql", { required: true, maxLength: 10_000 }),
-    enabled: booleanField(body.enabled, "enabled", true),
-    preview: booleanField(body.preview, "preview", true),
-    autoComplete,
-    completionStatus,
-  };
-}
-
-function parseJiraProviderPatch(body) {
-  assertPlainObject(body);
-  assertAllowedKeys(body, new Set([
-    "version", "alias", "configPath", "jql", "enabled", "preview",
-    "autoComplete", "completionStatus", "scheduledTaskId",
-  ]));
-  const version = parseVersion(body.version);
-  const changes = {};
-  if (body.alias !== undefined) {
-    changes.alias = stringField(body.alias, "alias", { required: true, maxLength: 120 });
-  }
-  if (body.configPath !== undefined) changes.configPath = parseJiraConfigPath(body.configPath);
-  if (body.jql !== undefined) {
-    changes.jql = stringField(body.jql, "jql", { required: true, maxLength: 10_000 });
-  }
-  if (body.enabled !== undefined) changes.enabled = booleanField(body.enabled, "enabled");
-  if (body.preview !== undefined) changes.preview = booleanField(body.preview, "preview");
-  if (body.autoComplete !== undefined) {
-    changes.autoComplete = booleanField(body.autoComplete, "autoComplete");
-  }
-  if (body.completionStatus !== undefined) {
-    changes.completionStatus = stringField(
-      body.completionStatus,
-      "completionStatus",
-      { nullable: true, maxLength: 120 },
-    );
-  }
-  if (body.scheduledTaskId !== undefined) {
-    changes.scheduledTaskId = stringField(
-      body.scheduledTaskId,
-      "scheduledTaskId",
-      { nullable: true, maxLength: 256 },
-    );
-  }
-  if (Object.keys(changes).length === 0) {
-    throw new ApiError(400, "INVALID_BODY", "PATCH requires at least one Jira provider field");
-  }
-  return { version, changes };
-}
-
-function jiraConfigIdentity(configPath, hostname) {
-  const labels = hostname?.split(".").filter(Boolean) ?? [];
-  const hostnameLabel = labels[0] === "jira" ? labels[1] : labels[0];
-  const filenameLabel = path.basename(configPath).replace(/^\.?config|\.ya?ml$/gi, "");
-  const label = hostnameLabel || filenameLabel || "jira";
-  const slug = label
-    .normalize("NFKD")
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "")
-    .slice(0, 58) || "jira";
-  return {
-    key: slug === "jira" ? "jira" : `jira-${slug}`,
-    alias: slug === "jira" ? "Jira" : `Jira ${label.charAt(0).toUpperCase()}${label.slice(1)}`,
-  };
-}
-
-async function readJiraServerHostname(configPath, size) {
-  if (size > 1024 * 1024) return null;
-  try {
-    const source = await readFile(configPath, "utf8");
-    const match = source.match(/^server:\s*(.+?)\s*$/m);
-    if (!match) return null;
-    let value = match[1].trim();
-    if (value.startsWith('"') && value.endsWith('"')) value = JSON.parse(value);
-    else if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1);
-    else value = value.replace(/\s+#.*$/, "");
-    const server = new URL(value);
-    return server.protocol === "http:" || server.protocol === "https:"
-      ? server.hostname.toLowerCase()
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-async function discoverJiraConfigs(processEnv) {
-  const configDirectories = new Set([
-    path.join(os.homedir(), ".config", ".jira"),
-  ]);
-  if (processEnv.XDG_CONFIG_HOME) {
-    configDirectories.add(path.join(path.resolve(processEnv.XDG_CONFIG_HOME), ".jira"));
-  }
-
-  const candidates = [];
-  const addCandidate = (candidate) => {
-    if (!candidate) return;
-    const absolutePath = path.resolve(candidate);
-    if (!candidates.includes(absolutePath)) candidates.push(absolutePath);
-  };
-  addCandidate(processEnv.JIRA_CONFIG_FILE);
-  for (const directory of configDirectories) addCandidate(path.join(directory, ".config.yml"));
-  for (const directory of configDirectories) {
-    try {
-      const entries = await readdir(directory, { withFileTypes: true });
-      for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-        if ((entry.isFile() || entry.isSymbolicLink()) && /\.ya?ml$/i.test(entry.name)) {
-          addCandidate(path.join(directory, entry.name));
-        }
-      }
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-  }
-
-  const configs = [];
-  for (const configPath of candidates) {
-    try {
-      const configStat = await stat(configPath);
-      if (!configStat.isFile()) continue;
-      const hostname = await readJiraServerHostname(configPath, configStat.size);
-      configs.push({ configPath, ...jiraConfigIdentity(configPath, hostname) });
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-  }
-  return configs;
+  assertAllowedKeys(body, new Set(["label"]));
+  return stringField(body.label, "label", { required: true, maxLength: 64 });
 }
 
 function parseThreadId(value) {
   if (value === undefined) return undefined;
   return stringField(value, "threadId", { required: true, maxLength: 256 });
+}
+
+function parseThreadBinding(value) {
+  if (value === undefined || value === null) return value;
+  assertPlainObject(value);
+  assertAllowedKeys(value, new Set([
+    "threadId",
+    "codexProjectId",
+    "codexProjectKind",
+    "codexHostId",
+    "workspacePath",
+  ]));
+  const threadId = stringField(value.threadId, "threadBinding.threadId", {
+    required: true,
+    maxLength: 256,
+  });
+  const identityFields = [
+    value.codexProjectId,
+    value.codexProjectKind,
+    value.codexHostId,
+    value.workspacePath,
+  ];
+  if (identityFields.every((field) => field === undefined)) return { threadId };
+  if (identityFields.some((field) => field === undefined)) {
+    throw new ApiError(400, "INVALID_FIELD", "Thread identity must include project, kind, host, and workspace");
+  }
+  const codexProjectId = stringField(value.codexProjectId, "threadBinding.codexProjectId", {
+    required: true,
+    maxLength: 256,
+  });
+  const codexProjectKind = value.codexProjectKind;
+  const codexHostId = stringField(value.codexHostId, "threadBinding.codexHostId", {
+    required: true,
+    maxLength: 256,
+  });
+  const workspacePath = stringField(value.workspacePath, "threadBinding.workspacePath", {
+    required: true,
+    maxLength: 4096,
+  });
+  if (codexProjectKind !== "local" && codexProjectKind !== "remote") {
+    throw new ApiError(400, "INVALID_FIELD", "threadBinding.codexProjectKind must be local or remote");
+  }
+  if (
+    (codexProjectKind === "local" && codexHostId !== "local")
+    || (codexProjectKind === "remote" && codexHostId === "local")
+    || workspacePath.includes("\0")
+  ) {
+    throw new ApiError(400, "INVALID_FIELD", "Thread project identity is invalid");
+  }
+  return { threadId, codexProjectId, codexProjectKind, codexHostId, workspacePath };
 }
 
 function requestHeader(request, name) {
@@ -760,7 +640,7 @@ function parseWorkflowId(value) {
 function parseTaskCreate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
-    "projectId", "title", "description", "status", "priority", "labels", "sortOrder", "threadId",
+    "projectId", "title", "description", "status", "priority", "labels", "sortOrder", "threadId", "threadBinding",
     "assigneeTarget", "workflowId", "developmentContext", "startDate", "dueDate", "recurrence",
   ]));
   const projectId = validateProjectId(body.projectId ?? DEFAULT_PROJECT_ID);
@@ -773,6 +653,7 @@ function parseTaskCreate(body) {
     labels: body.labels === undefined ? [] : parseLabels(body.labels),
     sortOrder: body.sortOrder === undefined ? undefined : parseSortOrder(body.sortOrder),
     threadId: parseThreadId(body.threadId),
+    threadBinding: parseThreadBinding(body.threadBinding),
     assigneeTarget: parseAssigneeTarget(body.assigneeTarget),
     workflowId: parseWorkflowId(body.workflowId ?? null),
     developmentContext: parseDevelopmentContext(body.developmentContext ?? null),
@@ -789,11 +670,12 @@ function parseTaskCreate(body) {
 function parseTaskPatch(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
-    "version", "projectId", "title", "description", "status", "priority", "labels", "threadId",
+    "version", "projectId", "title", "description", "status", "priority", "labels", "threadId", "threadBinding",
     "assigneeTarget", "workflowId", "developmentContext", "startDate", "dueDate", "recurrence",
   ]));
   const version = parseVersion(body.version);
   const threadId = parseThreadId(body.threadId);
+  const threadBinding = parseThreadBinding(body.threadBinding);
   const assigneeTarget = parseAssigneeTarget(body.assigneeTarget);
   const changes = {};
   if (body.projectId !== undefined) changes.projectId = validateProjectId(body.projectId);
@@ -813,24 +695,29 @@ function parseTaskPatch(body) {
   if (Object.keys(changes).length === 0 && assigneeTarget === undefined) {
     throw new ApiError(400, "INVALID_BODY", "PATCH requires at least one task field");
   }
-  return { version, changes, threadId, assigneeTarget };
+  return { version, changes, threadId, threadBinding, assigneeTarget };
 }
 
 function parseMove(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "status", "sortOrder", "threadId"]));
+  assertAllowedKeys(body, new Set(["version", "status", "sortOrder", "threadId", "threadBinding"]));
   return {
     version: parseVersion(body.version),
     status: parseStatus(body.status),
     sortOrder: body.sortOrder === undefined ? undefined : parseSortOrder(body.sortOrder),
     threadId: parseThreadId(body.threadId),
+    threadBinding: parseThreadBinding(body.threadBinding),
   };
 }
 
 function parseArchive(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "threadId"]));
-  return { version: parseVersion(body.version), threadId: parseThreadId(body.threadId) };
+  assertAllowedKeys(body, new Set(["version", "threadId", "threadBinding"]));
+  return {
+    version: parseVersion(body.version),
+    threadId: parseThreadId(body.threadId),
+    threadBinding: parseThreadBinding(body.threadBinding),
+  };
 }
 
 function parseIssueRelationType(value) {
@@ -846,16 +733,17 @@ function parseIssueRelationType(value) {
 
 function parseCommentCreate(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["body", "threadId"]));
+  assertAllowedKeys(body, new Set(["body", "threadId", "threadBinding"]));
   return {
     body: stringField(body.body ?? "", "body", { maxLength: 100_000 }),
     threadId: parseThreadId(body.threadId),
+    threadBinding: parseThreadBinding(body.threadBinding),
   };
 }
 
 function parseCommentPatch(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "body", "threadId"]));
+  assertAllowedKeys(body, new Set(["version", "body", "threadId", "threadBinding"]));
   if (body.body === undefined) {
     throw new ApiError(400, "INVALID_FIELD", "'body' is required");
   }
@@ -863,6 +751,7 @@ function parseCommentPatch(body) {
     version: parseVersion(body.version),
     body: stringField(body.body, "body", { maxLength: 100_000 }),
     threadId: parseThreadId(body.threadId),
+    threadBinding: parseThreadBinding(body.threadBinding),
   };
 }
 
@@ -895,7 +784,16 @@ function parseAttachmentHeaders(request) {
   if (contentType.length === 0 || contentType.length > 200 || !/^[!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+$/.test(contentType)) {
     throw new ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "Attachment Content-Type is invalid");
   }
-  return { filename, contentType };
+  const kind = request.headers["x-panel-attachment-kind"]
+    ?? request.headers["x-taskboard-attachment-kind"];
+  if (kind !== "inline" && kind !== "attachment") {
+    throw new ApiError(
+      400,
+      "INVALID_ATTACHMENT_KIND",
+      "X-Panel-Attachment-Kind must be inline or attachment",
+    );
+  }
+  return { filename, contentType, kind };
 }
 
 async function readBody(request, limit, tooLargeMessage) {
@@ -1330,7 +1228,8 @@ async function scanDevelopmentContexts(workspacePath, processEnv = process.env) 
 
 async function discoverSkills(codexExecutable, workspacePath, processEnv) {
   const entries = await new Promise((resolve, reject) => {
-    const child = spawn(codexExecutable, ["app-server", "--stdio"], {
+    const command = executableCommand(codexExecutable, ["app-server", "--stdio"]);
+    const child = spawn(command.executable, command.args, {
       cwd: workspacePath,
       env: processEnv,
       stdio: ["pipe", "pipe", "ignore"],
@@ -1444,7 +1343,8 @@ async function discoverSkills(codexExecutable, workspacePath, processEnv) {
 }
 
 async function discoverMcpServers(codexExecutable, processEnv) {
-  const result = await execFileAsync(codexExecutable, ["mcp", "list", "--json"], {
+  const command = executableCommand(codexExecutable, ["mcp", "list", "--json"]);
+  const result = await execFileAsync(command.executable, command.args, {
     env: processEnv,
     timeout: 8_000,
     maxBuffer: 2 * 1024 * 1024,
@@ -1501,6 +1401,7 @@ export function resolveServerOptions(options = {}) {
     databasePath: options.databasePath ?? path.join(dataDirectory, "panel.sqlite"),
     attachmentsDirectory: options.attachmentsDirectory ?? path.join(dataDirectory, "attachments"),
     cloudConfigPath: options.cloudConfigPath ?? path.join(dataDirectory, "cloud-companion.json"),
+    jiraConfigPath: options.jiraConfigPath ?? path.join(dataDirectory, "jira-connection.json"),
     clientStoragePath: options.clientStoragePath ?? path.join(dataDirectory, "client-storage.json"),
     staticDirectory: options.staticDirectory ?? path.join(PROJECT_ROOT, "dist", "web"),
     skillPath: options.skillPath ?? path.join(PROJECT_ROOT, "skills", "manage-panel", "SKILL.md"),
@@ -1585,9 +1486,41 @@ export function createPanelServer(options = {}) {
   const cloudConfig = options.cloudConfigStore ?? createCloudConfigStore({
     configPath: resolved.cloudConfigPath,
   });
+  const jiraConfig = options.jiraConfigStore ?? createJiraConfigStore({
+    configPath: resolved.jiraConfigPath,
+  });
+  const jira = createJiraIntegration({
+    configStore: jiraConfig,
+    database,
+    fetch: options.jiraFetch ?? globalThis.fetch,
+  });
+  let hostRuntime = null;
+  function currentHostThreadBinding(threadId) {
+    if (
+      !hostRuntime
+      || hostRuntime.threadId !== threadId
+      || !hostRuntime.codexProjectId
+      || !hostRuntime.codexProjectKind
+      || !hostRuntime.codexHostId
+      || !hostRuntime.workspacePath
+    ) return undefined;
+    return {
+      threadId,
+      codexProjectId: hostRuntime.codexProjectId,
+      codexProjectKind: hostRuntime.codexProjectKind,
+      codexHostId: hostRuntime.codexHostId,
+      workspacePath: hostRuntime.workspacePath,
+    };
+  }
+  function resolveInputThreadBinding(input) {
+    if (input.threadBinding !== undefined) return input;
+    const threadBinding = currentHostThreadBinding(input.threadId);
+    return threadBinding ? { ...input, threadBinding } : input;
+  }
   const cloudProxy = createCloudProxy({
     configStore: cloudConfig,
     fetch: options.remoteFetch ?? globalThis.fetch,
+    resolveThreadBinding: currentHostThreadBinding,
     resolveDevelopmentContext: async (projectId, context) => {
       if (!context.branch) return null;
       const config = await cloudConfig.read();
@@ -1721,7 +1654,6 @@ export function createPanelServer(options = {}) {
   const codexSessionSearches = new Map();
   const codexSessionStateCache = new Map();
   const codexSessionsDirectory = path.join(path.dirname(resolved.codexStatePath), "sessions");
-  let hostRuntime = null;
 
   async function findCodexSession(threadId) {
     const cached = codexSessionSearches.get(threadId);
@@ -1967,7 +1899,15 @@ export function createPanelServer(options = {}) {
         if (request.method === "PUT") {
           const body = await readJson(request);
           assertPlainObject(body);
-          assertAllowedKeys(body, new Set(["threadId", "threadRunning", "threadTodoProgress"]));
+          assertAllowedKeys(body, new Set([
+            "threadId",
+            "threadRunning",
+            "threadTodoProgress",
+            "codexProjectId",
+            "codexProjectKind",
+            "codexHostId",
+            "workspacePath",
+          ]));
           const threadId = stringField(body.threadId, "threadId", { required: true, maxLength: 256 });
           if (typeof body.threadRunning !== "boolean") {
             throw new ApiError(400, "INVALID_FIELD", "'threadRunning' must be a boolean");
@@ -1986,6 +1926,21 @@ export function createPanelServer(options = {}) {
             threadId,
             threadRunning: body.threadRunning,
             threadTodoProgress,
+            codexProjectId: stringField(body.codexProjectId ?? null, "codexProjectId", {
+              nullable: true,
+              maxLength: 256,
+            }),
+            codexProjectKind: body.codexProjectKind === "local" || body.codexProjectKind === "remote"
+              ? body.codexProjectKind
+              : null,
+            codexHostId: stringField(body.codexHostId ?? null, "codexHostId", {
+              nullable: true,
+              maxLength: 256,
+            }),
+            workspacePath: stringField(body.workspacePath ?? null, "workspacePath", {
+              nullable: true,
+              maxLength: 4096,
+            }),
             updatedAt: Date.now(),
           };
           return sendJson(response, 200, { runtime: hostRuntime });
@@ -2033,6 +1988,62 @@ export function createPanelServer(options = {}) {
           return sendJson(response, 200, { mode: "local", authenticated: false });
         }
         return methodNotAllowed(response, ["GET", "PUT", "DELETE"]);
+      }
+
+      if (pathname === "/api/local/jira-connection") {
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Jira 连接接口不接受查询参数");
+        }
+        if (request.method === "GET") {
+          return sendJson(response, 200, { connection: await jira.status() });
+        }
+        if (request.method === "PUT") {
+          const activeCloudConfig = await cloudConfig.read();
+          if (activeCloudConfig.remoteUrl) {
+            throw new ApiError(
+              409,
+              "JIRA_LOCAL_MODE_REQUIRED",
+              "Jira 连接当前仅支持本地数据模式，请先退出云端协作模式",
+            );
+          }
+          const body = await readJson(request);
+          assertPlainObject(body);
+          assertAllowedKeys(body, new Set(["baseUrl", "username", "password", "projects"]));
+          const baseUrl = stringField(body.baseUrl, "baseUrl", { required: true, maxLength: 2048 });
+          const username = stringField(body.username ?? "", "username", { maxLength: 254 });
+          const password = body.password ?? "";
+          if (typeof password !== "string") {
+            throw new ApiError(400, "INVALID_FIELD", "'password' must be a string");
+          }
+          if (password.length > 4096) {
+            throw new ApiError(400, "INVALID_FIELD", "'password' cannot exceed 4096 characters");
+          }
+          try {
+            const connection = await jira.configure({
+              baseUrl,
+              username,
+              password,
+              projects: body.projects,
+            });
+            events.emit("project.labels.updated", { project: database.getProject(JIRA_PROJECT_ID) });
+            return sendJson(response, 200, { connection });
+          } catch (error) {
+            if (error instanceof ApiError) throw error;
+            throw new ApiError(400, error.code ?? "INVALID_JIRA_CONFIG", error.message);
+          }
+        }
+        return methodNotAllowed(response, ["GET", "PUT"]);
+      }
+
+      if (pathname === "/api/local/jira-connection/sync") {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Jira 同步接口不接受查询参数");
+        }
+        await assertEmptyRequestBody(request, "POST /api/local/jira-connection/sync");
+        const connection = await jira.sync({ force: true });
+        events.emit("project.labels.updated", { project: database.getProject(JIRA_PROJECT_ID) });
+        return sendJson(response, 200, { connection });
       }
 
       const projectMappingRoute = pathname.match(/^\/api\/local\/project-mappings\/([^/]+)$/);
@@ -2218,52 +2229,6 @@ export function createPanelServer(options = {}) {
         );
       }
 
-      if (pathname === "/api/local/jira-providers") {
-        assertNoQuery(url.searchParams, "/api/local/jira-providers");
-        if (request.method === "GET") {
-          return sendJson(response, 200, { providers: database.listJiraProviders() });
-        }
-        if (request.method === "POST") {
-          const provider = database.createJiraProvider(
-            parseJiraProviderCreate(await readJson(request)),
-          );
-          return sendJson(response, 201, { provider });
-        }
-        return methodNotAllowed(response, ["GET", "POST"]);
-      }
-
-      if (pathname === "/api/local/jira-configs") {
-        assertNoQuery(url.searchParams, "/api/local/jira-configs");
-        if (request.method === "GET") {
-          return sendJson(response, 200, {
-            configs: await discoverJiraConfigs(codexProcessEnvironment),
-          });
-        }
-        return methodNotAllowed(response, ["GET"]);
-      }
-
-      const jiraProviderRoute = pathname.match(/^\/api\/local\/jira-providers\/([^/]+)$/);
-      if (jiraProviderRoute) {
-        assertNoQuery(url.searchParams, "/api/local/jira-providers/:key");
-        const key = parseJiraProviderKey(
-          decodeRouteSegment(jiraProviderRoute[1], "Jira provider key"),
-        );
-        if (request.method === "PATCH") {
-          const { version, changes } = parseJiraProviderPatch(await readJson(request));
-          return sendJson(response, 200, {
-            provider: database.updateJiraProvider(key, version, changes),
-          });
-        }
-        if (request.method === "DELETE") {
-          const body = await readJson(request);
-          assertPlainObject(body);
-          assertAllowedKeys(body, new Set(["version"]));
-          database.deleteJiraProvider(key, parseVersion(body.version));
-          return sendEmpty(response, 204);
-        }
-        return methodNotAllowed(response, ["PATCH", "DELETE"]);
-      }
-
       let currentCloudConfig = null;
       if (pathname.startsWith("/api/")) {
         currentCloudConfig = await cloudConfig.read();
@@ -2316,6 +2281,36 @@ export function createPanelServer(options = {}) {
           return sendEmpty(response, 204);
         }
         return methodNotAllowed(response, ["DELETE"]);
+      }
+
+      const projectLabelsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/labels$/);
+      if (projectLabelsRoute) {
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Project label routes do not accept query parameters");
+        }
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectLabelsRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        if (request.method !== "POST" && request.method !== "DELETE") {
+          return methodNotAllowed(response, ["POST", "DELETE"]);
+        }
+        if (request.method === "DELETE" && projectId === JIRA_PROJECT_ID) {
+          throw new ApiError(
+            409,
+            "JIRA_LABEL_CATALOG_DELETE_UNAVAILABLE",
+            "Jira 标签目录由同步管理，不能在 Panel 中删除",
+          );
+        }
+        const label = parseProjectLabel(await readJson(request));
+        const project = request.method === "POST"
+          ? database.addProjectLabel(projectId, label)
+          : database.deleteProjectLabel(projectId, label);
+        events.emit("project.labels.updated", { project });
+        return sendJson(response, 200, { project });
       }
 
       const workflowWorkspaceRoute = pathname.match(/^\/api\/projects\/([^/]+)\/workflow-workspace$/);
@@ -2402,11 +2397,21 @@ export function createPanelServer(options = {}) {
 
       if (pathname === "/api/tasks") {
         if (request.method === "GET") {
-          return sendJson(response, 200, { tasks: database.listTasks(parseTaskFilters(url.searchParams)) });
+          const filters = parseTaskFilters(url.searchParams);
+          if (filters.projectId === JIRA_PROJECT_ID) await jira.sync();
+          return sendJson(response, 200, { tasks: database.listTasks(filters) });
         }
         if (request.method === "POST") {
           const actor = actorFromRequest(request);
-          const { assigneeTarget, ...input } = parseTaskCreate(await readJson(request));
+          const { assigneeTarget, ...parsedInput } = parseTaskCreate(await readJson(request));
+          const input = resolveInputThreadBinding(parsedInput);
+          if (input.projectId === JIRA_PROJECT_ID) {
+            throw new ApiError(
+              409,
+              "JIRA_CREATE_UNAVAILABLE",
+              "请在 Jira 中新建议题，Panel 当前只同步已分配给你的任务",
+            );
+          }
           const task = database.createTask({
             ...input,
             actor,
@@ -2454,26 +2459,32 @@ export function createPanelServer(options = {}) {
         }
         const relationType = parseIssueRelationType(type);
         if (request.method === "POST") {
-          const { version, threadId } = parseArchive(await readJson(request));
+          const { version, threadId, threadBinding } = resolveInputThreadBinding(
+            parseArchive(await readJson(request)),
+          );
           const result = database.addTaskRelation(
             taskId,
             version,
             relationType,
             relatedTaskId,
             threadId,
+            threadBinding,
             actorFromRequest(request),
           );
           events.emit("task.relation.updated", result);
           return sendJson(response, 200, result);
         }
         if (request.method === "DELETE") {
-          const { version, threadId } = parseArchive(await readJson(request));
+          const { version, threadId, threadBinding } = resolveInputThreadBinding(
+            parseArchive(await readJson(request)),
+          );
           const result = database.removeTaskRelation(
             taskId,
             version,
             relationType,
             relatedTaskId,
             threadId,
+            threadBinding,
             actorFromRequest(request),
           );
           events.emit("task.relation.updated", result);
@@ -2521,7 +2532,7 @@ export function createPanelServer(options = {}) {
         }
         if (request.method === "POST") {
           const comment = database.createComment(taskId, {
-            ...parseCommentCreate(await readJson(request)),
+            ...resolveInputThreadBinding(parseCommentCreate(await readJson(request))),
             actor: actorFromRequest(request),
           });
           const task = database.getTask(taskId);
@@ -2546,8 +2557,14 @@ export function createPanelServer(options = {}) {
           throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Comment routes do not accept query parameters");
         }
         if (request.method === "PATCH") {
-          const patch = parseCommentPatch(await readJson(request));
-          const comment = database.updateComment(id, patch.version, patch.body, patch.threadId);
+          const patch = resolveInputThreadBinding(parseCommentPatch(await readJson(request)));
+          const comment = database.updateComment(
+            id,
+            patch.version,
+            patch.body,
+            patch.threadId,
+            patch.threadBinding,
+          );
           const task = database.getTask(comment.taskId);
           events.emit("comment.updated", { comment, task });
           return sendJson(response, 200, { comment });
@@ -2734,15 +2751,76 @@ export function createPanelServer(options = {}) {
         }
         if (!action && request.method === "PATCH") {
           const actor = actorFromRequest(request);
-          const { version, changes, threadId, assigneeTarget } = parseTaskPatch(await readJson(request));
+          const {
+            version,
+            changes,
+            threadId,
+            threadBinding,
+            assigneeTarget,
+          } = resolveInputThreadBinding(parseTaskPatch(await readJson(request)));
+          const current = database.getTask(id);
+          if (!current) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
+          let jiraChanged = false;
+          if (current.source !== "jira" && changes.projectId === JIRA_PROJECT_ID) {
+            throw new ApiError(
+              409,
+              "JIRA_PROJECT_MOVE_UNAVAILABLE",
+              "本地任务不能移入 Jira 同步项目",
+            );
+          }
+          if (current.source === "jira") {
+            if (current.version !== version) {
+              throw new ApiError(409, "VERSION_CONFLICT", "Task changed since it was last read", {
+                expectedVersion: version,
+                actualVersion: current.version,
+              });
+            }
+            if (current.archivedAt !== null) {
+              throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot be updated");
+            }
+            if (Object.hasOwn(changes, "projectId")) {
+              throw new ApiError(409, "JIRA_PROJECT_MOVE_UNAVAILABLE", "Jira 任务不能移到本地项目");
+            }
+            if (assigneeTarget !== undefined) {
+              throw new ApiError(409, "JIRA_ASSIGNEE_UNAVAILABLE", "请在 Jira 中修改经办人");
+            }
+            const dueDate = Object.hasOwn(changes, "dueDate") ? changes.dueDate : current.dueDate;
+            const recurrence = Object.hasOwn(changes, "recurrence")
+              ? changes.recurrence
+              : current.recurrence;
+            if (recurrence && !dueDate) {
+              throw new ApiError(400, "INVALID_FIELD", "A recurring issue requires a due date");
+            }
+            jiraChanged = await jira.updateTask(current, changes);
+          }
           if (assigneeTarget !== undefined) {
             changes.assignee = resolveAssignee(assigneeTarget, actor);
           }
-          const task = database.updateTask(id, version, changes, threadId, actor);
+          let task;
+          try {
+            task = database.updateTask(id, version, changes, threadId, threadBinding, actor);
+          } catch (error) {
+            if (jiraChanged) {
+              try {
+                await jira.reconcile();
+              } catch {
+                throw new ApiError(
+                  502,
+                  "JIRA_RECONCILE_FAILED",
+                  "Jira 已更新，但 Panel 重新同步失败，请手动同步",
+                );
+              }
+            }
+            throw error;
+          }
           events.emit("task.updated", { task });
           return sendJson(response, 200, { task });
         }
         if (!action && request.method === "DELETE") {
+          const current = database.getTask(id);
+          if (current?.source === "jira") {
+            throw new ApiError(409, "JIRA_DELETE_UNAVAILABLE", "Jira 任务不能从 Panel 永久删除");
+          }
           const { version } = parseArchive(await readJson(request));
           const deleted = database.deleteArchivedTask(id, version);
           for (const attachmentId of deleted.attachmentIds) {
@@ -2756,27 +2834,66 @@ export function createPanelServer(options = {}) {
           return sendEmpty(response, 204);
         }
         if (action === "move" && request.method === "POST") {
-          const move = parseMove(await readJson(request));
+          const move = resolveInputThreadBinding(parseMove(await readJson(request)));
+          const current = database.getTask(id);
+          if (!current) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
+          if (current.source === "jira") {
+            if (current.version !== move.version) {
+              throw new ApiError(409, "VERSION_CONFLICT", "Task changed since it was last read", {
+                expectedVersion: move.version,
+                actualVersion: current.version,
+              });
+            }
+            if (current.archivedAt !== null) {
+              throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot be moved");
+            }
+            await jira.moveTask(current, move.status);
+          }
           const task = database.moveTask(
             id,
             move.version,
             move.status,
             move.sortOrder,
             move.threadId,
+            move.threadBinding,
             actorFromRequest(request),
           );
           events.emit("task.moved", { task });
           return sendJson(response, 200, { task });
         }
         if (action === "archive" && request.method === "POST") {
-          const { version, threadId } = parseArchive(await readJson(request));
-          const task = database.archiveTask(id, version, threadId, actorFromRequest(request));
+          const current = database.getTask(id);
+          if (current?.source === "jira") {
+            throw new ApiError(409, "JIRA_ARCHIVE_UNAVAILABLE", "Jira 任务由同步范围自动管理，不能手动归档");
+          }
+          const { version, threadId, threadBinding } = resolveInputThreadBinding(
+            parseArchive(await readJson(request)),
+          );
+          const task = database.archiveTask(
+            id,
+            version,
+            threadId,
+            threadBinding,
+            actorFromRequest(request),
+          );
           events.emit("task.archived", { task });
           return sendJson(response, 200, { task });
         }
         if (action === "restore" && request.method === "POST") {
-          const { version, threadId } = parseArchive(await readJson(request));
-          const task = database.restoreTask(id, version, threadId, actorFromRequest(request));
+          const current = database.getTask(id);
+          if (current?.source === "jira") {
+            throw new ApiError(409, "JIRA_RESTORE_UNAVAILABLE", "Jira 任务由同步范围自动管理，不能手动恢复");
+          }
+          const { version, threadId, threadBinding } = resolveInputThreadBinding(
+            parseArchive(await readJson(request)),
+          );
+          const task = database.restoreTask(
+            id,
+            version,
+            threadId,
+            threadBinding,
+            actorFromRequest(request),
+          );
           events.emit("task.restored", { task });
           return sendJson(response, 200, { task });
         }

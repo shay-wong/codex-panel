@@ -189,7 +189,11 @@ test("non-local AI turns reject a workspace that became unavailable", async () =
   const fixture = await createServerFixture();
   try {
     const workspaceLink = path.join(fixture.directory, "project-workspace");
-    await symlink(path.resolve(import.meta.dirname, ".."), workspaceLink, "dir");
+    await symlink(
+      path.resolve(import.meta.dirname, ".."),
+      workspaceLink,
+      process.platform === "win32" ? "junction" : "dir",
+    );
     const project = await request(fixture.baseUrl, "/api/projects", {
       method: "POST",
       body: {

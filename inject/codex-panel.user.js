@@ -904,20 +904,6 @@
   }
 
   function buildAutomationHostPayload(payload) {
-    if (payload.template === "jira-sync") {
-      return {
-        requestId: payload.requestId,
-        template: payload.template,
-        operation: payload.operation,
-        providerKey: payload.providerKey,
-        providerAlias: payload.providerAlias,
-        configPath: payload.configPath,
-        jql: payload.jql,
-        skillPath: payload.skillPath,
-        ...(payload.automationId === undefined ? {} : { automationId: payload.automationId }),
-        enabled: payload.enabled,
-      };
-    }
     return {
       requestId: payload.requestId,
       operation: payload.operation,

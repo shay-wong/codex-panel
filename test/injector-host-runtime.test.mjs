@@ -20,6 +20,8 @@ const currentAutomationRequest = {
   operation: "ensure-active",
   panelProjectId: "local",
   codexProjectId: "codex-project",
+  codexProjectKind: "local",
+  codexHostId: "local",
   projectName: "Local",
   workspacePath: "/tmp/project",
   skillPath: "/tmp/manage-panel/SKILL.md",
@@ -72,6 +74,14 @@ test("frame loading and external links require bounded authenticated values", as
   }, handlers);
   await handleHostBindingPayload({
     payload: JSON.stringify({
+      id: "external-request-http",
+      action: "open-external",
+      url: "http://10.0.203.86:30842/projects",
+    }),
+    executionContextId: 12,
+  }, handlers);
+  await handleHostBindingPayload({
+    payload: JSON.stringify({
       id: "external-request-1",
       action: "open-external",
       url: "https://example.com/review",
@@ -82,13 +92,15 @@ test("frame loading and external links require bounded authenticated values", as
     payload: JSON.stringify({
       id: "external-request-2",
       action: "open-external",
-      url: "http://example.com/not-allowed",
+      url: "javascript:alert(1)",
     }),
     executionContextId: 12,
   }, handlers);
 
   assert.deepEqual(calls, [
     ["load", "30c3d0c4-aa0f-4169-93c0-bb3da20bc654"],
+    ["response", true],
+    ["open", "http://10.0.203.86:30842/projects"],
     ["response", true],
     ["open", "https://example.com/review"],
     ["response", true],
@@ -176,41 +188,6 @@ test("a stale automation parser receives an immediate host error instead of timi
   }]);
 });
 
-test("the host accepts a maximum escaped Jira request above the old envelope", async () => {
-  const request = {
-    id: "h".repeat(80),
-    action: "automation",
-    requestId: "r".repeat(100),
-    template: "jira-sync",
-    operation: "list",
-    providerKey: `a${"b".repeat(62)}c`,
-    providerAlias: "\\\"".repeat(60),
-    configPath: `/${"\\\"".repeat(1_023)}x`,
-    jql: "\\\"".repeat(5_000),
-    skillPath: `/${"\\\"".repeat(1_023)}x`,
-    automationId: "\\\"".repeat(128),
-    enabled: true,
-  };
-  const payload = JSON.stringify(request);
-  const calls = [];
-
-  assert.ok(payload.length > 16_384);
-  assert.ok(payload.length < 32_768);
-  const result = await handleHostBindingPayload(
-    { payload, executionContextId: 12 },
-    {
-      parseAutomationRequest: parsePanelAutomationHostRequest,
-      runAutomation: async (parsed) => {
-        calls.push(parsed);
-        return { state: "normal" };
-      },
-      sendResponse: async (_executionContextId, response) => calls.push(response),
-    },
-  );
-
-  assert.deepEqual(result, { responded: true, accepted: true });
-  assert.deepEqual(calls, [request, { id: request.id, ok: true, state: "normal" }]);
-});
 
 test("attach replaces an old runtime with the current source and restores an open page", async () => {
   const calls = [];

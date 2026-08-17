@@ -3,6 +3,7 @@ const LEGACY_STORAGE_KEYS = [
   ["taskboard.lastProjectId", "panel.lastProjectId"],
   ["taskboard.favoriteProjectIds", "panel.favoriteProjectIds"],
   ["taskboard.deviceWorkspacePaths.v1", "panel.deviceWorkspacePaths.v1"],
+  ["taskboard.projectCodexIdentities.v1", "panel.projectCodexIdentities.v1"],
   ["taskboard.showEmptyColumns.v1", "panel.showEmptyColumns.v1"],
   ["taskboard.columnVisibility.v1", "panel.columnVisibility.v1"],
   ["taskboard.projectAutomations.v1", "panel.projectAutomations.v1"],

@@ -174,52 +174,26 @@ export interface WorkflowWorkspaceRecord<T = unknown> {
   updatedAt: string | null;
 }
 
+export interface CodexProjectIdentity {
+  codexProjectId: string;
+  codexProjectKind: "local" | "remote";
+  codexHostId: string;
+  workspacePath: string;
+}
+
+export interface CodexThreadBinding extends CodexProjectIdentity {
+  threadId: string;
+}
+
 export interface Project {
   id: string;
   name: string;
   workspacePath: string | null;
+  source: "local" | "jira";
+  labels: string[];
   issueCount: number;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface JiraProvider {
-  key: string;
-  alias: string;
-  configPath: string;
-  jql: string;
-  enabled: boolean;
-  preview: boolean;
-  autoComplete: boolean;
-  completionStatus: string | null;
-  scheduledTaskId: string | null;
-  version: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type JiraAutomationOperation =
-  | "ensure-active"
-  | "list"
-  | "restore"
-  | "run-now";
-export type JiraAutomationState = "normal" | "drifted" | "missing" | "conflict";
-
-export interface JiraProviderDraft {
-  key: string;
-  alias: string;
-  configPath: string;
-  jql: string;
-  enabled: boolean;
-  preview: boolean;
-  autoComplete: boolean;
-  completionStatus: string | null;
-}
-
-export interface JiraConfigSuggestion {
-  key: string;
-  alias: string;
-  configPath: string;
 }
 
 export interface ProjectSummary {
@@ -233,6 +207,7 @@ export interface ProjectSummary {
 export interface TaskRelationSummary {
   id: string;
   identifier: string;
+  externalKey?: string | null;
   projectId: string;
   title: string;
   status: TaskStatus;
@@ -249,13 +224,17 @@ export interface TaskRelations {
   related: TaskRelationSummary[];
 }
 
-export interface TaskConversationRef {
-  threadId: string;
+interface TaskConversationRefBase {
   source: "task" | "comment";
   sourceId: string;
   title: string;
   updatedAt: string;
 }
+
+export type TaskConversationRef = TaskConversationRefBase & (
+  | (CodexThreadBinding & { legacyLocal?: false })
+  | { threadId: string; legacyLocal: true }
+);
 
 export interface Task {
   id: string;
@@ -268,6 +247,8 @@ export interface Task {
   labels: string[];
   sortOrder: number;
   threadId: string | null;
+  threadBinding: CodexThreadBinding | null;
+  legacyLocalThreadId: string | null;
   conversationRefs: TaskConversationRef[];
   participants: ActorIdentity[];
   previewImage: Attachment | null;
@@ -283,11 +264,26 @@ export interface Task {
   startDate: string | null;
   dueDate: string | null;
   recurrence: Recurrence | null;
+  source: "local" | "jira";
+  externalOrigin?: string | null;
+  externalKey?: string | null;
+  externalUrl: string | null;
   archivedAt: string | null;
   relations: TaskRelations;
   version: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface JiraConnection {
+  configured: boolean;
+  baseUrl: string | null;
+  username: string | null;
+  displayName: string | null;
+  projects: string[];
+  projectId: string;
+  lastSyncedAt: string | null;
+  insecureHttp: boolean;
 }
 
 export interface Comment {
@@ -299,6 +295,8 @@ export interface Comment {
   authorName: string;
   authorAvatarUrl: string | null;
   threadId: string | null;
+  threadBinding: CodexThreadBinding | null;
+  legacyLocalThreadId: string | null;
   attachments: Attachment[];
   version: number;
   createdAt: string;
@@ -326,6 +324,7 @@ export interface Attachment {
   id: string;
   taskId: string;
   commentId: string | null;
+  kind: "inline" | "attachment";
   filename: string;
   contentType: string;
   size: number;
@@ -334,11 +333,18 @@ export interface Attachment {
 
 export interface HostContext {
   user?: ActorIdentity;
+  language?: string;
   workspacePath?: string;
   threadId?: string;
   theme?: "light" | "dark";
   projectId?: string;
-  projects?: Array<{ id: string; name: string }>;
+  projects?: Array<{
+    id: string;
+    name: string;
+    projectKind?: "local" | "remote";
+    workspacePath?: string;
+    hostId?: string;
+  }>;
   titlebarLeftInset?: number;
   sidebarCollapsed?: boolean;
   threadRunning?: boolean;

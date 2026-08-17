@@ -295,26 +295,6 @@ test("complete App automation payloads cross the injected forwarder into the cur
     );
   }
 
-  const jiraPayload = {
-    requestId: "r".repeat(100),
-    template: "jira-sync",
-    operation: "list",
-    providerKey: `a${"b".repeat(62)}c`,
-    providerAlias: "\\\"".repeat(60),
-    configPath: `/${"\\\"".repeat(1_023)}x`,
-    jql: "\\\"".repeat(5_000),
-    skillPath: `/${"\\\"".repeat(1_023)}x`,
-    automationId: "\\\"".repeat(128),
-    enabled: true,
-  };
-  const forwarded = {
-    id: "h".repeat(80),
-    action: "automation",
-    ...buildAutomationHostPayload(jiraPayload),
-  };
-  assert.deepEqual(parsePanelAutomationHostRequest(forwarded), forwarded);
-  assert.ok(JSON.stringify(forwarded).length > 16_384);
-  assert.ok(JSON.stringify(forwarded).length < 32_768);
 });
 
 test("stored automation policies are reconciled before returning automation state", () => {

@@ -378,6 +378,7 @@ export class AiChatService {
       let startedThreadId = null;
       let terminalOutcome = null;
       let terminalError = "";
+      let pendingError = "";
       let handoffSummary = "";
       const { child, completion } = spawnCodexTurn({
         executable: this.codexExecutable,
@@ -416,9 +417,11 @@ export class AiChatService {
           }
           if (raw.type === "turn.completed" && terminalOutcome === null) {
             terminalOutcome = "completed";
-          } else if (raw.type === "turn.failed" || raw.type === "error") {
+          } else if (raw.type === "turn.failed") {
             terminalOutcome = "failed";
             terminalError ||= normalized.content;
+          } else if (raw.type === "error") {
+            pendingError ||= normalized.content;
           }
           this.#emit(threadId, { type: "ai.event", event });
         },
@@ -435,6 +438,7 @@ export class AiChatService {
           startedThreadId: () => startedThreadId,
           terminalOutcome: () => terminalOutcome,
           terminalError: () => terminalError,
+          pendingError: () => pendingError,
           handoff,
           handoffIssue,
           handoffSummary: () => handoffSummary,
@@ -447,6 +451,7 @@ export class AiChatService {
           startedThreadId: () => startedThreadId,
           terminalOutcome: () => terminalOutcome,
           terminalError: () => terminalError,
+          pendingError: () => pendingError,
           handoff,
           handoffIssue,
           handoffSummary: () => handoffSummary,
@@ -621,6 +626,7 @@ export class AiChatService {
     startedThreadId,
     terminalOutcome,
     terminalError,
+    pendingError,
     handoff,
     handoffIssue,
     handoffSummary,
@@ -643,7 +649,7 @@ export class AiChatService {
         : `Codex exited with code ${result.exitCode}`;
     } else if (terminalOutcome() !== "completed") {
       status = "failed";
-      publicError = "Codex exited without reporting turn completion";
+      publicError = pendingError() || "Codex exited without reporting turn completion";
     } else if (!resumingThreadId && !startedThreadId()) {
       status = "failed";
       publicError = "Codex did not provide a thread id";

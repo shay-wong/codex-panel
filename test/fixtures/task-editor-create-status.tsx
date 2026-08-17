@@ -22,6 +22,11 @@ const oldTodoDraft: NewTaskEditorDraft = {
   dueDate: "",
   recurrence: null,
   attachments: [],
+  relations: {
+    parentId: null,
+    relatedIds: [],
+    subIssueIds: [],
+  },
 };
 
 function publishResult(draft: TaskDraft) {
@@ -31,12 +36,14 @@ function publishResult(draft: TaskDraft) {
 createRoot(document.getElementById("root")!).render(
   <TaskEditor
     task={null}
+    tasks={[]}
     initialStatus="in_progress"
     initialDraft={oldTodoDraft}
     labels={["回归证据"]}
     currentUser={currentUser}
     developmentScan={{ workspacePath: null, contexts: [] }}
     developmentScanLoading={false}
+    onCreateLabel={async () => {}}
     onCancel={() => {}}
     onSave={async (draft) => publishResult(draft)}
   />,
@@ -45,7 +52,7 @@ createRoot(document.getElementById("root")!).render(
 requestAnimationFrame(() => {
   requestAnimationFrame(() => {
     const createButton = [...document.querySelectorAll("button")]
-      .find((button) => button.textContent === "创建议题");
+      .find((button) => button.textContent === "Create issue");
     if (!(createButton instanceof HTMLButtonElement)) {
       document.documentElement.dataset.error = "create button not found";
       return;

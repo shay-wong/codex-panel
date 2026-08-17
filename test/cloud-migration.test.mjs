@@ -32,7 +32,13 @@ const fixtures = [];
 const timestamp = "2026-07-24T12:00:00.000Z";
 const execFile = promisify(execFileCallback);
 const projectRoot = path.resolve(import.meta.dirname, "..");
-const wranglerExecutable = path.join(projectRoot, "node_modules", ".bin", "wrangler");
+const wranglerExecutable = path.join(
+  projectRoot,
+  "node_modules",
+  "wrangler",
+  "bin",
+  "wrangler.js",
+);
 const wranglerConfig = path.join(projectRoot, "wrangler.jsonc");
 
 afterEach(async () => {
@@ -128,6 +134,7 @@ async function createMigrationFixture({
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       comment_id TEXT REFERENCES comments(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
       filename TEXT NOT NULL,
       content_type TEXT NOT NULL,
       size INTEGER NOT NULL,
@@ -305,6 +312,7 @@ async function createMigrationFixture({
         'attachment-a',
         'task-a1',
         NULL,
+        'attachment',
         'alpha.txt',
         'text/plain',
         23,
@@ -314,6 +322,7 @@ async function createMigrationFixture({
         'attachment-a-comment',
         'task-a1',
         'comment-a',
+        'attachment',
         'alpha-comment.txt',
         'text/plain',
         25,
@@ -323,6 +332,7 @@ async function createMigrationFixture({
         'attachment-b',
         'task-b1',
         NULL,
+        'attachment',
         'beta.txt',
         'text/plain',
         16,
@@ -936,16 +946,18 @@ test("versioned bundle round-trips through private manifest, data, and attachmen
 
   await writeCloudMigrationBundle(bundle, outputDirectory);
 
-  assert.equal((await stat(outputDirectory)).mode & 0o777, 0o700);
-  assert.equal((await stat(path.join(outputDirectory, "data"))).mode & 0o777, 0o700);
-  assert.equal(
-    (await stat(path.join(outputDirectory, "attachments"))).mode & 0o777,
-    0o700,
-  );
-  assert.equal(
-    (await stat(path.join(outputDirectory, "manifest.json"))).mode & 0o777,
-    0o600,
-  );
+  if (process.platform !== "win32") {
+    assert.equal((await stat(outputDirectory)).mode & 0o777, 0o700);
+    assert.equal((await stat(path.join(outputDirectory, "data"))).mode & 0o777, 0o700);
+    assert.equal(
+      (await stat(path.join(outputDirectory, "attachments"))).mode & 0o777,
+      0o700,
+    );
+    assert.equal(
+      (await stat(path.join(outputDirectory, "manifest.json"))).mode & 0o777,
+      0o600,
+    );
+  }
 
   const restored = await readCloudMigrationBundle(outputDirectory);
   assert.deepEqual(restored.counts, bundle.counts);
@@ -1024,16 +1036,17 @@ test("Wrangler adapter requires remote opt-in and keeps transfer files private",
     remote: true,
     environment: { PANEL_MIGRATION_REMOTE: "1" },
     runCommand: async (_executable, args) => {
-      calls.push(args);
-      const fileIndex = args.indexOf("--file");
+      const commandArgs = args[0] === wranglerExecutable ? args.slice(1) : args;
+      calls.push(commandArgs);
+      const fileIndex = commandArgs.indexOf("--file");
       if (fileIndex !== -1) {
-        const filename = args[fileIndex + 1];
+        const filename = commandArgs[fileIndex + 1];
         transferFiles.push(filename);
-        if (args[0] === "r2" && args[2] === "get") {
+        if (commandArgs[0] === "r2" && commandArgs[2] === "get") {
           await writeFile(filename, downloadedBody);
         }
       }
-      if (args.includes("--json")) return { stdout: '[{"results":[]}]' };
+      if (commandArgs.includes("--json")) return { stdout: '[{"results":[]}]' };
       return { stdout: "" };
     },
   });
@@ -1066,8 +1079,10 @@ test("Wrangler adapter requires remote opt-in and keeps transfer files private",
       assert.ok(!args.includes("--persist-to"));
     }
     for (const filename of transferFiles) {
-      assert.equal((await stat(filename)).mode & 0o777, 0o600);
-      assert.equal((await stat(path.dirname(filename))).mode & 0o777, 0o700);
+      if (process.platform !== "win32") {
+        assert.equal((await stat(filename)).mode & 0o777, 0o600);
+        assert.equal((await stat(path.dirname(filename))).mode & 0o777, 0o700);
+      }
     }
   } finally {
     await adapters.cleanup();
@@ -1123,7 +1138,7 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
   const adapterPath = path.join(projectRoot, "scripts", "wrangler-cloud-adapter.mjs");
 
   async function applyMigrations(persistTo) {
-    await execFile(wranglerExecutable, [
+    await execFile(process.execPath, [wranglerExecutable,
       "d1",
       "migrations",
       "apply",

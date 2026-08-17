@@ -1131,7 +1131,7 @@ test("project and task CRUD flow", async () => {
   });
   assert.equal(createResult.response.status, 201);
   const created = createResult.body.task;
-  assert.equal(created.identifier, "WEBSITE-1");
+  assert.equal(created.identifier, "WEB-1");
   assert.equal(created.version, 1);
   assert.equal(created.sortOrder, 1000);
   assert.equal(created.archivedAt, null);
@@ -1728,6 +1728,7 @@ test("issue attachments can be uploaded, listed, opened, downloaded, and deleted
     headers: {
       "content-type": "text/plain; charset=utf-8",
       "x-panel-filename": encodeURIComponent("设计说明.txt"),
+      "x-panel-attachment-kind": "attachment",
     },
     body: contents,
   });
@@ -1759,6 +1760,7 @@ test("issue attachments can be uploaded, listed, opened, downloaded, and deleted
     headers: {
       "content-type": "text/html",
       "x-panel-filename": encodeURIComponent("page.html"),
+      "x-panel-attachment-kind": "attachment",
     },
     body: "<script>document.body.textContent = 'unsafe'</script>",
   });
@@ -1795,6 +1797,7 @@ test("permanent task deletion requires archiving and removes attachment files", 
     headers: {
       "content-type": "text/plain",
       "x-taskboard-filename": "evidence.txt",
+      "x-taskboard-attachment-kind": "attachment",
     },
     body: "attachment",
   });
@@ -1812,6 +1815,7 @@ test("permanent task deletion requires archiving and removes attachment files", 
       headers: {
         "content-type": "text/plain",
         "x-taskboard-filename": "comment-evidence.txt",
+        "x-taskboard-attachment-kind": "attachment",
       },
       body: "comment attachment",
     },
@@ -1880,6 +1884,7 @@ test("comments support attachments and deleting a comment removes its files", as
     headers: {
       "content-type": "text/plain",
       "x-panel-filename": encodeURIComponent("comment.txt"),
+      "x-panel-attachment-kind": "attachment",
     },
     body: contents,
   });
@@ -1922,6 +1927,7 @@ test("attachment uploads reject unsafe filenames", async () => {
     headers: {
       "content-type": "text/plain",
       "x-panel-filename": encodeURIComponent("../outside.txt"),
+      "x-panel-attachment-kind": "attachment",
     },
     body: "unsafe",
   });

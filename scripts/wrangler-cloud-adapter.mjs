@@ -16,10 +16,11 @@ import {
   CLOUD_PROJECT_COUNTS_SQL,
   createCloudD1ImportSql,
 } from "./migrate-to-cloud.mjs";
+import { executableCommand } from "../shared/executable-command.mjs";
 
 const execFile = promisify(execFileCallback);
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const defaultWrangler = path.join(projectRoot, "node_modules", ".bin", "wrangler");
+const defaultWrangler = path.join(projectRoot, "node_modules", "wrangler", "bin", "wrangler.js");
 
 function parseD1Results(stdout) {
   const parsed = JSON.parse(stdout);
@@ -73,11 +74,16 @@ export function createWranglerCloudAdapters({
   let sequence = 0;
 
   function run(args) {
-    const result = commandQueue.then(() => runCommand(wranglerExecutable, args, {
-      cwd: projectRoot,
-      encoding: "utf8",
-      maxBuffer: 16 * 1024 * 1024,
-    }));
+    const command = executableCommand(wranglerExecutable, args);
+    const result = commandQueue.then(() => runCommand(
+      command.executable,
+      command.args,
+      {
+        cwd: projectRoot,
+        encoding: "utf8",
+        maxBuffer: 16 * 1024 * 1024,
+      },
+    ));
     commandQueue = result.catch(() => {});
     return result;
   }

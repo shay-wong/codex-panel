@@ -15,6 +15,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
+import { DEFAULT_LABEL_NAMES } from "../shared/domain.mjs";
+
 const SCHEMA_VERSION = 1;
 const WRANGLER_D1_STATEMENT_MAX_BYTES = 90_000;
 const TABLE_ORDER = [
@@ -79,6 +81,23 @@ function sanitizeWorkflowRow(row) {
     ...row,
     workspace: JSON.stringify(sanitizeWorkflowValue(workspace)),
   };
+}
+
+function projectRowsWithLabels(tables) {
+  const labelsByProject = new Map(tables.projects.map((project) => [
+    project.id,
+    project.labels == null ? [...DEFAULT_LABEL_NAMES] : JSON.parse(project.labels),
+  ]));
+  for (const task of tables.tasks) {
+    const labels = labelsByProject.get(task.project_id);
+    for (const label of JSON.parse(task.labels)) {
+      if (!labels.includes(label)) labels.push(label);
+    }
+  }
+  return tables.projects.map((project) => ({
+    ...project,
+    labels: JSON.stringify(labelsByProject.get(project.id)),
+  }));
 }
 
 function buildProjectCounts(tables) {
@@ -234,6 +253,24 @@ async function readSnapshot(databasePath) {
   }
 }
 
+function fillMissingAttachmentKinds(tables) {
+  const taskDescriptions = new Map(
+    tables.tasks.map((task) => [task.id, task.description]),
+  );
+  const commentBodies = new Map(
+    tables.comments.map((comment) => [comment.id, comment.body]),
+  );
+  tables.attachments = tables.attachments.map((attachment) => {
+    if (attachment.kind != null) return attachment;
+    const body = attachment.comment_id == null
+      ? taskDescriptions.get(attachment.task_id)
+      : commentBodies.get(attachment.comment_id);
+    const inline = attachment.content_type.toLowerCase().startsWith("image/")
+      && body.includes(`api/attachments/${attachment.id}/content`);
+    return { ...attachment, kind: inline ? "inline" : "attachment" };
+  });
+}
+
 function assertCountsMatch(expected, actual) {
   const expectedProjects = Object.keys(expected).sort();
   const actualProjects = Object.keys(actual ?? {}).sort();
@@ -324,7 +361,8 @@ export async function createCloudMigrationBundle({
   attachmentsDirectory,
 }) {
   const tables = await readSnapshot(databasePath);
-  tables.projects = tables.projects.map((project) => ({
+  fillMissingAttachmentKinds(tables);
+  tables.projects = projectRowsWithLabels(tables).map((project) => ({
     ...project,
     workspace_path: null,
   }));
@@ -346,21 +384,26 @@ export async function createCloudMigrationBundle({
 }
 
 const CLOUD_COLUMNS = {
-  projects: ["id", "name", "workspace_path", "next_task_number", "created_at", "updated_at"],
+  projects: [
+    "id", "name", "workspace_path", "labels", "next_task_number", "created_at", "updated_at",
+  ],
   tasks: [
     "id", "identifier", "project_id", "title", "description", "status", "priority", "labels",
-    "sort_order", "thread_id", "creator_type", "creator_id", "creator_name",
+    "sort_order", "thread_id", "thread_codex_project_id", "thread_codex_project_kind",
+    "thread_codex_host_id", "thread_workspace_path", "creator_type", "creator_id", "creator_name",
     "creator_avatar_url", "assignee_type", "assignee_id", "assignee_name",
     "assignee_avatar_url", "workflow_id", "development_context_type", "development_branch",
     "due_date", "recurrence_interval", "recurrence_unit", "archived_at", "version",
     "created_at", "updated_at",
   ],
   comments: [
-    "id", "task_id", "body", "thread_id", "author_type", "author_id", "author_name",
+    "id", "task_id", "body", "thread_id", "thread_codex_project_id",
+    "thread_codex_project_kind", "thread_codex_host_id", "thread_workspace_path",
+    "author_type", "author_id", "author_name",
     "author_avatar_url", "version", "created_at", "updated_at",
   ],
   task_relations: ["relation_type", "source_task_id", "target_task_id", "created_at"],
-  attachments: ["id", "task_id", "comment_id", "filename", "content_type", "size", "created_at"],
+  attachments: ["id", "task_id", "comment_id", "kind", "filename", "content_type", "size", "created_at"],
   workflow_workspaces: ["project_id", "workspace", "version", "updated_at"],
 };
 
@@ -377,8 +420,9 @@ function cloudTaskRow(task) {
   };
 }
 
-function cloudRows(table, rows) {
-  return table === "tasks" ? rows.map(cloudTaskRow) : rows;
+function cloudRows(table, tables) {
+  if (table === "projects") return projectRowsWithLabels(tables);
+  return table === "tasks" ? tables.tasks.map(cloudTaskRow) : tables[table];
 }
 
 function insertTableSql(table) {
@@ -392,7 +436,7 @@ function insertTableSql(table) {
 export function createCloudD1ImportPlan(tables) {
   return TABLE_ORDER.map((table) => {
     const columns = CLOUD_COLUMNS[table];
-    const values = cloudRows(table, tables[table]).map((row) => (
+    const values = cloudRows(table, tables).map((row) => (
       Object.fromEntries(columns.map((column) => [column, row[column] ?? null]))
     ));
     return { table, sql: insertTableSql(table), json: JSON.stringify(values) };
@@ -674,6 +718,7 @@ export async function readCloudMigrationBundle(inputDirectory) {
     }
     tables[table] = rows;
   }
+  fillMissingAttachmentKinds(tables);
 
   const attachments = [];
   for (const entry of manifest.attachments ?? []) {

@@ -4,7 +4,7 @@
 
 一个本地优先的 Issue 看板，可在浏览器中运行，也可以通过独立 CDP 启动器或注入脚本嵌入 Codex。React UI 与随附 Codex Skill 使用的 `panelctl` CLI 共用同一套 HTTP API。
 
-面板支持概览、列表、甘特图和归档 Issue 工作流。Issue 可以设置开始与截止日期，也可以从详情页移动到其他项目并保留关联对话。Jira 设置会优先发现本地 Jira CLI 配置，找不到时再手动填写，并支持为多个 provider 分别配置 alias、配置路径、JQL、预览与完成策略；预览关闭时修改 JQL，Panel 会询问是否重新开启。在 Codex 内由 Panel.app 启动器管理的内嵌 Panel 中，Panel 为每个启用的 provider 管理一个带明确 marker 的每日 Scheduled Task，但不限制用户自行创建任务；该任务只读取 Jira 和 Panel 并产出可审查的同步计划，不会直接应用。
+面板支持概览、列表、甘特图和归档 Issue 工作流。Issue 可以设置开始与截止日期，也可以从详情页移动到其他项目并保留关联对话。本地 Jira 连接会把分配给当前 Jira 登录用户的任务同步到固定 Jira 项目；打开该项目时最多每分钟刷新一次，也可以手动同步。修改已同步任务的标题、描述、优先级、标签、截止日期或状态时，Panel 会直接回写 Jira。连接使用 Basic Auth，凭据保存在 Panel 本地数据目录中，云端模式不可用；除非 Jira 位于受信任的内网，否则应使用 HTTPS。
 
 ## 环境要求
 
@@ -166,10 +166,14 @@ npm run codex:inject -- --port 9229 --open
 
 有关所有者部署、现有 GitHub 安装配置、密码轮换、本地路径映射和一次性本地数据迁移流程，请参阅英文版 [Cloud collaboration](docs/cloud-collaboration.md) 指南。
 
+## Issue Markdown
+
+Issue 描述和评论支持 GFM，包括表格和任务列表。带 `mermaid` 标记的围栏代码块会在加载后渲染为只读图表；渲染失败时保留源码。Markdown HTML 注释不会显示，原始 HTML 默认禁用。
+
 ## 验证
 
 ```bash
 npm run check
 ```
 
-该命令会运行 TypeScript 检查、生产前端构建，以及服务器、CLI 和注入脚本测试套件。
+该命令会运行 TypeScript 检查、生产前端构建、组件测试，以及服务器、CLI 和注入脚本测试套件。

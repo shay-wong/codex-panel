@@ -260,6 +260,73 @@ test("PATCH moves an issue to an existing project and records the change", async
   assert.equal(stale.body.error.code, "VERSION_CONFLICT");
 });
 
+test("remote thread identity survives controller moves and clears after create failure", async () => {
+  await createProject("remote-binding");
+  const legacy = await createTask("remote-binding", "Legacy local binding", alice, {
+    threadId: "legacy-local-thread",
+  });
+  assert.equal(legacy.body.task.threadBinding, null);
+  assert.equal(legacy.body.task.legacyLocalThreadId, "legacy-local-thread");
+  assert.equal(legacy.body.task.conversationRefs[0].legacyLocal, true);
+  const binding = {
+    threadId: "remote-thread-a",
+    codexProjectId: "remote-project-a",
+    codexProjectKind: "remote",
+    codexHostId: "ssh-a",
+    workspacePath: "/same/remote/path",
+  };
+  const created = await createTask("remote-binding", "Remote binding", alice, {
+    status: "todo",
+    threadId: binding.threadId,
+    threadBinding: binding,
+  });
+  assert.equal(created.response.status, 201, JSON.stringify(created.body));
+  assert.deepEqual(created.body.task.threadBinding, binding);
+
+  const comment = await cloud.request(`/api/tasks/${created.body.task.id}/comments`, {
+    method: "POST",
+    actorName: bob,
+    headers: { "x-taskboard-client": "taskctl" },
+    json: { body: "Controller note", threadId: "controller-thread" },
+  });
+  assert.equal(comment.body.comment.threadBinding, null);
+  assert.equal(comment.body.comment.legacyLocalThreadId, "controller-thread");
+
+  const blocked = await cloud.request(`/api/tasks/${created.body.task.id}/move`, {
+    method: "POST",
+    actorName: bob,
+    headers: { "x-taskboard-client": "taskctl" },
+    json: {
+      version: created.body.task.version,
+      status: "blocked",
+      threadId: "controller-thread",
+      threadBinding: binding,
+    },
+  });
+  assert.equal(blocked.response.status, 200, JSON.stringify(blocked.body));
+  assert.deepEqual(blocked.body.task.threadBinding, binding);
+  assert.deepEqual(blocked.body.task.conversationRefs.map((ref) => ref.threadId), [
+    binding.threadId,
+    "controller-thread",
+  ]);
+
+  const todo = await cloud.request(`/api/tasks/${created.body.task.id}/move`, {
+    method: "POST",
+    actorName: bob,
+    headers: { "x-taskboard-client": "taskctl" },
+    json: {
+      version: blocked.body.task.version,
+      status: "todo",
+      threadId: "controller-thread",
+      threadBinding: null,
+    },
+  });
+  assert.equal(todo.response.status, 200, JSON.stringify(todo.body));
+  assert.equal(todo.body.task.threadId, null);
+  assert.equal(todo.body.task.threadBinding, null);
+  assert.deepEqual(todo.body.task.conversationRefs.map((ref) => ref.threadId), ["controller-thread"]);
+});
+
 test("PATCH rejects moving an issue that still has relations", async () => {
   await createProject("move-related-cloud-source");
   await createProject("move-related-cloud-target");
@@ -382,7 +449,7 @@ test("a failed task insert rolls back its reserved project identifier", async ()
 
   const succeeded = await createTask("atomic-counter", "First real issue");
   assert.equal(succeeded.response.status, 201);
-  assert.equal(succeeded.body.task.identifier, "ATOMICCOUNTE-1");
+  assert.equal(succeeded.body.task.identifier, "ATO-1");
 });
 
 test("archived tasks are excluded from project issue counts", async () => {
@@ -416,6 +483,7 @@ test("R2 attachment upload, download, delete, and D1 failure compensation form o
     headers: {
       "content-type": "text/plain",
       "x-panel-filename": encodeURIComponent("evidence.txt"),
+      "x-panel-attachment-kind": "attachment",
     },
     body: "attachment body",
   });
@@ -444,6 +512,7 @@ test("R2 attachment upload, download, delete, and D1 failure compensation form o
     headers: {
       "content-type": "text/plain",
       "x-panel-filename": encodeURIComponent("fail.txt"),
+      "x-panel-attachment-kind": "attachment",
     },
     body: "must be compensated",
   });
@@ -462,6 +531,7 @@ test("permanent task deletion requires archiving and cleans D1 and R2", async ()
     headers: {
       "content-type": "text/plain",
       "x-taskboard-filename": "evidence.txt",
+      "x-taskboard-attachment-kind": "attachment",
     },
     body: "attachment",
   });
@@ -480,6 +550,7 @@ test("permanent task deletion requires archiving and cleans D1 and R2", async ()
       headers: {
         "content-type": "text/plain",
         "x-taskboard-filename": "comment-evidence.txt",
+        "x-taskboard-attachment-kind": "attachment",
       },
       body: "comment attachment",
     },
@@ -774,6 +845,7 @@ test("workflow conflicts and comment attachment cleanup preserve shared-state bo
       headers: {
         "content-type": "text/plain",
         "x-panel-filename": encodeURIComponent("comment.txt"),
+        "x-panel-attachment-kind": "attachment",
       },
       body: "comment attachment",
     },

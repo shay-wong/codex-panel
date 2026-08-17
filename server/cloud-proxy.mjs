@@ -46,7 +46,10 @@ function removeGitWorktreePaths(value) {
   }
 }
 
-async function prepareRequest(request, { assertTaskProjectMoveAllowed } = {}) {
+async function prepareRequest(request, {
+  assertTaskProjectMoveAllowed,
+  resolveThreadBinding,
+} = {}) {
   const url = new URL(request.url);
   let projectWorkspace = null;
   let body = request.body;
@@ -61,8 +64,10 @@ async function prepareRequest(request, { assertTaskProjectMoveAllowed } = {}) {
   );
   const isWorkflowMutation = request.method === "PUT"
     && /^\/api\/projects\/[^/]+\/workflow-workspace$/.test(url.pathname);
+  const isConversationMutation = request.method !== "GET"
+    && (/^\/api\/tasks(?:\/|$)/.test(url.pathname) || /^\/api\/comments\//.test(url.pathname));
 
-  if (isJson && (isProjectCreate || isTaskMutation || isWorkflowMutation)) {
+  if (isJson && (isProjectCreate || isTaskMutation || isWorkflowMutation || isConversationMutation)) {
     let payload;
     try {
       payload = await request.clone().json();
@@ -108,6 +113,15 @@ async function prepareRequest(request, { assertTaskProjectMoveAllowed } = {}) {
           ? {}
           : { branch: payload.developmentContext.branch }),
       };
+    }
+    if (
+      isConversationMutation
+      && typeof payload.threadId === "string"
+      && !Object.hasOwn(payload, "threadBinding")
+      && typeof resolveThreadBinding === "function"
+    ) {
+      const threadBinding = resolveThreadBinding(payload.threadId);
+      if (threadBinding) payload.threadBinding = threadBinding;
     }
     if (isWorkflowMutation) removeGitWorktreePaths(payload.workspace);
     body = JSON.stringify(payload);
@@ -202,6 +216,7 @@ export function createCloudProxy({
   fetch: fetchImplementation = globalThis.fetch,
   resolveDevelopmentContext,
   assertTaskProjectMoveAllowed,
+  resolveThreadBinding,
 }) {
   const readConfig = getConfig ?? (() => configStore.read());
   const setProjectWorkspace = configStore?.setProjectWorkspace?.bind(configStore);
@@ -248,6 +263,7 @@ export function createCloudProxy({
 
       const prepared = await prepareRequest(request, {
         assertTaskProjectMoveAllowed,
+        resolveThreadBinding,
       });
       if (prepared.projectWorkspace && !setProjectWorkspace) {
         throw new CloudProxyError(

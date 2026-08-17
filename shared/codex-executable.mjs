@@ -11,16 +11,35 @@ function executableFile(candidate) {
   }
 }
 
-function executableOnPath(env) {
+function executableOnPath(env, platform) {
   for (const directory of (env.PATH || "").split(path.delimiter)) {
     if (!directory) continue;
-    const candidate = executableFile(path.join(directory, "codex"));
-    if (candidate) return candidate;
+    if (platform === "win32") {
+      const nativeExecutable = executableFile(path.join(directory, "codex.exe"));
+      if (nativeExecutable) return nativeExecutable;
+
+      const npmEntry = executableFile(path.join(
+        directory,
+        "node_modules",
+        "@openai",
+        "codex",
+        "bin",
+        "codex.js",
+      ));
+      if (npmEntry) return npmEntry;
+      continue;
+    }
+
+    const executable = executableFile(path.join(directory, "codex"));
+    if (executable) return executable;
   }
   return null;
 }
 
-export function codexExecutableInApp(appPath) {
+export function codexExecutableInApp(appPath, platform = process.platform) {
+  if (platform === "win32") {
+    return path.win32.join(path.win32.dirname(appPath), "resources", "codex.exe");
+  }
   return path.join(appPath, "Contents", "Resources", "codex");
 }
 
@@ -34,11 +53,11 @@ export function resolveCodexExecutable({
   if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
 
   if (appPath) {
-    const bundled = executableFile(codexExecutableInApp(appPath));
+    const bundled = executableFile(codexExecutableInApp(appPath, platform));
     if (bundled) return bundled;
   }
 
-  const installedCli = executableOnPath(env);
+  const installedCli = executableOnPath(env, platform);
   if (installedCli) return installedCli;
 
   if (platform === "darwin") {
@@ -46,6 +65,7 @@ export function resolveCodexExecutable({
       for (const applicationName of ["ChatGPT.app", "Codex.app"]) {
         const bundled = executableFile(codexExecutableInApp(
           path.join(applicationDirectory, applicationName),
+          platform,
         ));
         if (bundled) return bundled;
       }

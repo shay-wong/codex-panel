@@ -6,6 +6,7 @@ import {
   type TaskStatus,
 } from "./types";
 import { labelDisplayName } from "./labels";
+import type { TaskboardLanguage } from "./i18n";
 
 export type TaskLinkFilter = "all" | "linked" | "unlinked";
 export type TaskFilterKey = "statuses" | "priorities" | "labels" | "link" | "content";
@@ -79,15 +80,16 @@ export function taskFilterCount(filters: TaskFilters): number {
     + Number(Boolean(filters.content.trim()));
 }
 
-export function matchesTaskSearch(task: Task, search: string): boolean {
+export function matchesTaskSearch(task: Task, search: string, language: TaskboardLanguage): boolean {
   const needle = search.trim().toLowerCase();
   if (!needle) return true;
   return [
     task.identifier,
+    task.externalKey,
     task.title,
     task.description,
     ...task.labels,
-    ...task.labels.map(labelDisplayName),
+    ...task.labels.map((label) => labelDisplayName(label, language)),
   ]
     .join(" ")
     .toLowerCase()
