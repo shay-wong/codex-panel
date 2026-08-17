@@ -128,6 +128,7 @@ function safeConfig(config, lastSyncedAt = null) {
     ? {
       configured: true,
       baseUrl: config.baseUrl,
+      authMethod: config.username ? "basic" : "bearer",
       username: null,
       displayName: config.displayName,
       projects: config.projects,
@@ -138,6 +139,7 @@ function safeConfig(config, lastSyncedAt = null) {
     : {
       configured: false,
       baseUrl: null,
+      authMethod: "basic",
       username: null,
       displayName: null,
       projects: [],
@@ -163,7 +165,9 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
         signal: controller.signal,
         headers: {
           accept: "application/json",
-          authorization: `Basic ${Buffer.from(`${config.username}:${config.password}`, "utf8").toString("base64")}`,
+          authorization: config.username
+            ? `Basic ${Buffer.from(`${config.username}:${config.password}`, "utf8").toString("base64")}`
+            : `Bearer ${config.password}`,
           ...(init.body ? { "content-type": "application/json" } : {}),
           ...init.headers,
         },
@@ -182,7 +186,7 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       throw new ApiError(
         401,
         "JIRA_AUTH_FAILED",
-        "Jira 登录失败，请检查用户名、密码、Basic Auth 或 CAPTCHA 状态",
+        "Jira 登录失败，请检查用户名、密码、API Token、Bearer Token 或 CAPTCHA 状态",
       );
     }
     if (response.status >= 300 && response.status < 400) {
@@ -347,7 +351,12 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
     },
     async configure(input) {
       const current = await configStore.read();
-      const username = input.username || current?.username;
+      const currentAuthMethod = current?.username ? "basic" : "bearer";
+      const authMethod = input.authMethod ?? (current ? currentAuthMethod : "basic");
+      const username = authMethod === "bearer" ? "" : (input.username || current?.username);
+      if (authMethod === "basic" && !username?.trim()) {
+        throw new ApiError(400, "JIRA_USERNAME_REQUIRED", "Basic Auth 必须填写 Jira 用户名或邮箱");
+      }
       const password = input.password || current?.password;
       const candidate = configStore.validate({ ...input, username, password });
       if (current?.version === 1 && candidate.baseUrl !== current.baseUrl) {
@@ -363,12 +372,13 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
           !current
           || candidate.baseUrl !== current.baseUrl
           || candidate.username !== current.username
+          || authMethod !== currentAuthMethod
         )
       ) {
         throw new ApiError(
           400,
           "JIRA_PASSWORD_REQUIRED",
-          "修改 Jira 地址或用户名时必须重新输入密码",
+          "修改 Jira 地址、用户名或认证方式时必须重新输入密码或 Token",
         );
       }
       const { config, issues } = await validateConnection(candidate);

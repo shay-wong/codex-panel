@@ -142,6 +142,18 @@
 - 移除条件：上游提供等价的详情页项目切换、错误展示和上下文保持行为后同步移除。
 - 针对性验证：运行 `node --test test/task-project-move.test.mjs`、`npm run typecheck` 和 `npm run build:web`；在详情页移动无阻塞 Issue，确认 URL、顶部项目和属性栏都指向目标项目且对话入口仍存在；再对带开发上下文的 Issue 操作，确认错误要求先清理上下文且项目未变。
 
+### Jira Bearer Token 认证
+
+- 生命周期：`等待上游吸收`
+- 原始目的：支持不使用 Jira 用户名和密码、只提供 Personal Access Token 的 Jira Data Center 或 Server 连接，同时保留 Jira Cloud 邮箱与 API Token 等 Basic Auth 用法。
+- 行为不变量：Basic Auth 必须有非空用户名或邮箱，并且只发送 `Authorization: Basic ...`；Bearer Auth 不发送用户名，并且只发送 `Authorization: Bearer ...`。切换认证方式时必须重新输入密码或 Token；凭据不得通过配置状态或错误信息返回前端，配置文件继续保持 `0600` 权限。
+- 代码和测试路径：`server/app.mjs`、`server/jira-config.mjs`、`server/jira-integration.mjs`、`web/src/App.tsx`、`web/src/api.ts`、`web/src/components/JiraConnectionDialog.tsx`、`web/src/styles.css` 和 `web/src/types.ts`。本次按仓库直接路径确认规则未新增持久化测试。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：当前 Jira 认证扩展；提交后可用 `git log -S'JIRA_USERNAME_REQUIRED' -- server/jira-integration.mjs` 定位。
+- 合并指引：上游调整 Jira 配置或请求封装时，保留显式认证方式、Basic 非空用户名校验、Bearer 不发送用户名、认证方式切换重输凭据及响应不泄漏凭据的边界，不能根据空白用户名静默切换认证方式。
+- 移除条件：上游提供等价的 Bearer PAT 支持、认证切换和凭据边界后同步移除。
+- 针对性验证：使用定向请求 harness 确认空白 Basic 用户名在网络请求前返回 `JIRA_USERNAME_REQUIRED`，合法 Basic 和 Bearer 分别只发送对应认证头；运行 `npm run typecheck`、`npm run build:web` 和 `git diff --check`，并在安装态设置界面确认两种认证方式可以切换且切换后要求重新输入凭据。
+
 ## 上游合并检查清单
 
 1. 每次实际完成上游合并后，根据 Git 祖先关系重新确定精确基线，不得用持续移动的上游分支头替代。

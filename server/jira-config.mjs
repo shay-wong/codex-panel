@@ -44,13 +44,12 @@ export function normalizeJiraUrl(value) {
 function validateCredentials(username, password) {
   if (
     typeof username !== "string"
-    || !username.trim()
     || username.length > 254
     || username.includes(":")
   ) {
     throw new JiraConfigError(
       "INVALID_JIRA_USERNAME",
-      "Jira 用户名不能为空、不能包含冒号，且不能超过 254 个字符",
+      "Jira 用户名不能包含冒号且不能超过 254 个字符",
     );
   }
   if (typeof password !== "string" || !password || password.length > 4096) {

@@ -2535,6 +2535,7 @@ export function App() {
 
   async function saveJiraConnection(input: {
     baseUrl: string;
+    authMethod: "basic" | "bearer";
     username: string;
     password: string;
     projects: string[];

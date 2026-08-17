@@ -4,6 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Added Bearer token authentication for Jira Data Center and Server personal access tokens while retaining Basic authentication for account passwords and Jira Cloud email/API-token connections.
 - Replaced the fork-specific Jira CLI, provider, and Scheduled Task workflow with upstream's local Jira REST connection: assigned issues sync into a dedicated Jira project, refresh on project access or manual request, and write title, description, priority, label, due-date, and status changes directly back to Jira.
 - Added an issue-detail project picker that keeps the issue open after a successful move, preserves its linked conversation, and surfaces existing relation, conversation, or development-context move blockers without mutating the issue.
 - Merged upstream `1.0.8`, including the Jira REST integration, GFM and Mermaid rendering, labels, thread identity, attachment kinds, issue references, and launcher stability fixes, while retaining the native Swift Codex Panel manager instead of the upstream Tauri app and updater.

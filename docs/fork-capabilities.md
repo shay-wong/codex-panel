@@ -69,3 +69,9 @@ After `npm ci`, run `npm run codex:install` to copy the repository's `manage-pan
 The issue detail sidebar shows the current Panel project and lets the user move the issue to another project, including from Global to a repository-backed project. After a successful move, Panel opens the target project with the same issue detail and linked native conversation intact.
 
 Panel rejects the move before mutation when the issue has relations, an issue-linked local AI conversation tied to the source project, or a branch/worktree development context. The displayed error identifies what must be removed or cleared before retrying. Status, description, labels, scheduling fields, and other issue properties remain unchanged.
+
+## Jira Bearer token authentication
+
+Jira connection settings provide two explicit authentication modes. Account / API token uses Basic Auth for an account password or a Jira Cloud email and API token. Bearer token uses a Jira Data Center or Server personal access token without sending a username. Basic Auth requires a username or email, and switching modes requires entering the credential again.
+
+Credentials remain in the local Panel data directory with the existing local file protections and are never returned to the browser. Jira integration remains unavailable in Cloud mode. Use HTTPS unless the Jira server is on a trusted private network because HTTP exposes either authentication mode to network observers.

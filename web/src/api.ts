@@ -111,6 +111,7 @@ export async function getJiraConnection(signal?: AbortSignal): Promise<JiraConne
       return {
         configured: false,
         baseUrl: null,
+        authMethod: "basic",
         username: null,
         displayName: null,
         projects: [],
@@ -125,6 +126,7 @@ export async function getJiraConnection(signal?: AbortSignal): Promise<JiraConne
 
 export async function configureJiraConnection(input: {
   baseUrl: string;
+  authMethod: "basic" | "bearer";
   username: string;
   password: string;
   projects: string[];

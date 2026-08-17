@@ -10,6 +10,7 @@ interface JiraConnectionDialogProps {
   onClose: () => void;
   onSave: (input: {
     baseUrl: string;
+    authMethod: "basic" | "bearer";
     username: string;
     password: string;
     projects: string[];
@@ -25,12 +26,16 @@ export function JiraConnectionDialog({
 }: JiraConnectionDialogProps) {
   const { text } = useTaskboardI18n();
   const [baseUrl, setBaseUrl] = useState(connection?.baseUrl ?? "http://");
+  const [authMethod, setAuthMethod] = useState<"basic" | "bearer">(
+    connection?.authMethod ?? "basic",
+  );
   const [username, setUsername] = useState(connection?.username ?? "");
   const [password, setPassword] = useState("");
   const [projectsText, setProjectsText] = useState(connection?.projects.join(", ") ?? "");
 
   useEffect(() => {
     setBaseUrl(connection?.baseUrl ?? "http://");
+    setAuthMethod(connection?.authMethod ?? "basic");
     setUsername(connection?.username ?? "");
     setPassword("");
     setProjectsText(connection?.projects.join(", ") ?? "");
@@ -40,7 +45,8 @@ export function JiraConnectionDialog({
     event.preventDefault();
     await onSave({
       baseUrl: baseUrl.trim(),
-      username: username.trim(),
+      authMethod,
+      username: authMethod === "basic" ? username.trim() : "",
       password,
       projects: projectsText
         .split(/[,，\n]+/)
@@ -84,11 +90,34 @@ export function JiraConnectionDialog({
         {/^http:\/\//i.test(baseUrl.trim()) && (
           <p className="jira-http-warning">
             {text(
-              "HTTP 会在内网中以可读取形式传输账号密码。",
-              "HTTP sends the username and password in cleartext over the network.",
+              "HTTP 会在网络中以可读取形式传输认证凭据。",
+              "HTTP sends authentication credentials in cleartext over the network.",
             )}
           </p>
         )}
+        <fieldset className="jira-auth-method">
+          <legend>{text("认证方式", "Authentication")}</legend>
+          <div role="radiogroup" aria-label={text("Jira 认证方式", "Jira authentication method")}>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={authMethod === "basic"}
+              className={authMethod === "basic" ? "is-active" : undefined}
+              onClick={() => setAuthMethod("basic")}
+            >
+              {text("账号 / API Token", "Account / API token")}
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={authMethod === "bearer"}
+              className={authMethod === "bearer" ? "is-active" : undefined}
+              onClick={() => setAuthMethod("bearer")}
+            >
+              {text("Bearer Token", "Bearer token")}
+            </button>
+          </div>
+        </fieldset>
         <label>
           <span>{text("Jira 项目（名称或 Key，可多选）", "Jira projects (name or key, multiple allowed)")}</span>
           <input
@@ -98,21 +127,27 @@ export function JiraConnectionDialog({
             onChange={(event) => setProjectsText(event.target.value)}
           />
         </label>
+        {authMethod === "basic" && (
+          <label>
+            <span>{text("用户名或邮箱", "Username or email")}</span>
+            <input
+              required={!connection?.configured || connection.authMethod !== "basic"}
+              autoComplete="username"
+              maxLength={254}
+              placeholder={connection?.configured && connection.authMethod === "basic"
+                ? text("留空则保持不变", "Leave blank to keep unchanged")
+                : ""}
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+            />
+          </label>
+        )}
         <label>
-          <span>{text("用户名", "Username")}</span>
+          <span>{authMethod === "basic"
+            ? text("密码或 API Token", "Password or API token")
+            : text("Personal Access Token", "Personal access token")}</span>
           <input
-            required={!connection?.configured}
-            autoComplete="username"
-            maxLength={254}
-            placeholder={connection?.configured ? text("留空则保持不变", "Leave blank to keep unchanged") : ""}
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>{text("密码", "Password")}</span>
-          <input
-            required={!connection?.configured}
+            required={!connection?.configured || connection.authMethod !== authMethod}
             type="password"
             autoComplete="current-password"
             maxLength={4096}
@@ -135,8 +170,12 @@ export function JiraConnectionDialog({
             disabled={
               saving
               || !baseUrl.trim()
-              || (!username.trim() && !connection?.configured)
-              || (!password && !connection?.configured)
+              || (
+                authMethod === "basic"
+                && !username.trim()
+                && (!connection?.configured || connection.authMethod !== "basic")
+              )
+              || (!password && (!connection?.configured || connection.authMethod !== authMethod))
             }
           >
             {saving

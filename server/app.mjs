@@ -2008,8 +2008,12 @@ export function createPanelServer(options = {}) {
           }
           const body = await readJson(request);
           assertPlainObject(body);
-          assertAllowedKeys(body, new Set(["baseUrl", "username", "password", "projects"]));
+          assertAllowedKeys(body, new Set(["baseUrl", "authMethod", "username", "password", "projects"]));
           const baseUrl = stringField(body.baseUrl, "baseUrl", { required: true, maxLength: 2048 });
+          const authMethod = body.authMethod ?? undefined;
+          if (authMethod !== undefined && authMethod !== "basic" && authMethod !== "bearer") {
+            throw new ApiError(400, "INVALID_FIELD", "'authMethod' must be 'basic' or 'bearer'");
+          }
           const username = stringField(body.username ?? "", "username", { maxLength: 254 });
           const password = body.password ?? "";
           if (typeof password !== "string") {
@@ -2021,6 +2025,7 @@ export function createPanelServer(options = {}) {
           try {
             const connection = await jira.configure({
               baseUrl,
+              authMethod,
               username,
               password,
               projects: body.projects,

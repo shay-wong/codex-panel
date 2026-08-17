@@ -278,6 +278,7 @@ export interface Task {
 export interface JiraConnection {
   configured: boolean;
   baseUrl: string | null;
+  authMethod: "basic" | "bearer";
   username: string | null;
   displayName: string | null;
   projects: string[];
