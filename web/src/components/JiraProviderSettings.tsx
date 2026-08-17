@@ -9,6 +9,7 @@ import {
 } from "../api";
 import type {
   JiraAutomationOperation,
+  JiraAutomationState,
   JiraConfigSuggestion,
   JiraProvider,
   JiraProviderDraft,
@@ -36,7 +37,7 @@ interface JiraProviderSettingsProps {
     operation: JiraAutomationOperation,
   ) => Promise<{
     item?: { id: string; status: "ACTIVE" | "PAUSED" };
-    state?: "normal" | "drifted" | "missing";
+    state?: JiraAutomationState;
     run?: "started" | "already-running" | "disabled" | "drifted";
   }>;
   onClose: () => void;
@@ -129,7 +130,7 @@ export function JiraProviderSettings({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [automationPending, setAutomationPending] = useState(false);
-  const [automationState, setAutomationState] = useState<"normal" | "drifted" | "missing" | null>(null);
+  const [automationState, setAutomationState] = useState<JiraAutomationState | null>(null);
   const [automationStatus, setAutomationStatus] = useState<"ACTIVE" | "PAUSED" | null>(null);
   const [automationNotice, setAutomationNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -257,7 +258,7 @@ export function JiraProviderSettings({
       if (isCurrent()) {
         setAutomationState(null);
         setAutomationStatus(null);
-        setAutomationNotice("Scheduled Task 只能在 Codex Panel.app 中管理");
+        setAutomationNotice("Scheduled Task 只能在 Codex 内嵌 Panel 的 Jira 设置中管理");
       }
       return null;
     }
@@ -276,6 +277,9 @@ export function JiraProviderSettings({
         if (response.run === "already-running") setAutomationNotice("该 provider 已有同步正在运行");
         if (response.run === "disabled") setAutomationNotice("请先启用 provider");
         if (response.run === "drifted") setAutomationNotice("任务已被外部修改，请先恢复标准任务");
+        if (response.state === "conflict") {
+          setAutomationNotice("检测到多个带相同 Panel marker 的任务，请先在 Codex Scheduled Tasks 中处理冲突");
+        }
       }
       return response;
     } catch (automationError) {
@@ -318,18 +322,10 @@ export function JiraProviderSettings({
         ? await updateJiraProvider(selected, changes)
         : await createJiraProvider(normalized);
       storeProvider(saved);
-      const scheduleChanged = selected ? (
-        saved.alias !== selected.alias
-        || saved.configPath !== selected.configPath
-        || saved.jql !== selected.jql
-        || saved.enabled !== selected.enabled
-      ) : false;
-      const operation = !saved.enabled
-        ? "pause"
-        : scheduleChanged && automationState === "normal"
-          ? "restore"
-          : "ensure-active";
-      await requestAutomation(saved, operation);
+      const response = await requestAutomation(saved, !selected && saved.enabled ? "ensure-active" : "list");
+      if (selected && response?.state === "drifted") {
+        setAutomationNotice("配置已保存，Scheduled Task 未自动修改；请确认后恢复标准任务");
+      }
     } catch (saveError) {
       setError(errorMessage(saveError));
     } finally {
@@ -339,15 +335,18 @@ export function JiraProviderSettings({
 
   async function removeProvider() {
     if (!selected || saving || automationPending) return;
+    if (!automationAvailable) {
+      setError("请在 Codex 内嵌 Panel 的 Jira 设置中删除，以便先确认 Scheduled Task 已暂停或缺失");
+      return;
+    }
     if (!window.confirm(`删除 Jira provider“${selected.alias}”？`)) return;
     setSaving(true);
     setError(null);
     try {
-      if (automationAvailable) {
-        const response = await requestAutomation(selected, "pause", false);
-        if (!response) return;
-      } else if (selected.scheduledTaskId) {
-        throw new Error("请在 Codex Panel.app 中删除，以便先停用 Scheduled Task");
+      const response = await requestAutomation(selected, "list", false);
+      if (!response) return;
+      if (response.state !== "missing" && response.item?.status !== "PAUSED") {
+        throw new Error("请先停用 provider 并恢复标准任务，确认 Scheduled Task 已暂停后再删除");
       }
       await deleteJiraProvider(selected);
       const remaining = providers.filter((provider) => provider.key !== selected.key);
@@ -378,14 +377,16 @@ export function JiraProviderSettings({
     suggestion.configPath === draft.configPath
   ));
   const automationLabel = !automationAvailable
-    ? "仅限 Panel.app"
-    : automationState === "drifted"
-      ? "已被外部修改"
-      : automationState === "missing"
-        ? "未找到"
-        : automationState === "normal"
-          ? automationStatus === "ACTIVE" ? "正常运行" : "已暂停"
-          : "正在检查";
+    ? "仅限 Codex 内嵌 Panel"
+    : automationState === "conflict"
+      ? "存在冲突"
+      : automationState === "drifted"
+        ? "已被外部修改"
+        : automationState === "missing"
+          ? "未找到"
+          : automationState === "normal"
+            ? automationStatus === "ACTIVE" ? "正常运行" : "已暂停"
+            : "正在检查";
 
   return (
     <div
@@ -540,9 +541,7 @@ export function JiraProviderSettings({
                     <p className="jira-provider-notice" role="status">{automationNotice}</p>
                   )}
                   <div className="jira-scheduled-task-actions">
-                    {(automationState === "drifted" || (
-                      automationState === "missing" && selected.enabled
-                    )) && (
+                    {(automationState === "drifted" || automationState === "missing") && (
                       <button
                         className="button secondary"
                         type="button"

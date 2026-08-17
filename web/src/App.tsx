@@ -103,6 +103,7 @@ import {
   type HostContext,
   type IssueRelationType,
   type JiraAutomationOperation,
+  type JiraAutomationState,
   type JiraProvider,
   type Project,
   type Task,
@@ -219,7 +220,7 @@ interface AutomationHostResponse {
   ok: boolean;
   item?: AutomationHostItem | JiraAutomationHostItem;
   items?: AutomationHostItem[];
-  state?: "normal" | "drifted" | "missing";
+  state?: JiraAutomationState;
   run?: "started" | "already-running" | "disabled" | "drifted";
   quota?: AutomationQuotaStatus;
   policy?: {
@@ -1056,7 +1057,7 @@ export function App() {
     operation: JiraAutomationOperation,
   ) => {
     if (!jiraAutomationAvailable || !managePanelSkillPath) {
-      return Promise.reject(new Error("Scheduled Task 只能在 Codex Panel.app 中管理"));
+      return Promise.reject(new Error("Scheduled Task 只能在 Codex 内嵌 Panel 的 Jira 设置中管理"));
     }
     return sendHostAutomationRequest({
       template: "jira-sync",

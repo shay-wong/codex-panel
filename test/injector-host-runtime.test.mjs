@@ -11,6 +11,7 @@ import {
   restartResidentInjector,
   sameFrameDocumentUrl,
 } from "../scripts/codex-injector-runtime.mjs";
+import { parsePanelAutomationHostRequest } from "../shared/panel-automation.mjs";
 
 const currentAutomationRequest = {
   id: "host-request-1",
@@ -173,6 +174,42 @@ test("a stale automation parser receives an immediate host error instead of timi
     error: "自动认领配置暂时无法应用，请刷新后重试",
     diagnosticCode: "AUTOMATION_SCHEMA_MISMATCH",
   }]);
+});
+
+test("the host accepts a maximum escaped Jira request above the old envelope", async () => {
+  const request = {
+    id: "h".repeat(80),
+    action: "automation",
+    requestId: "r".repeat(100),
+    template: "jira-sync",
+    operation: "list",
+    providerKey: `a${"b".repeat(62)}c`,
+    providerAlias: "\\\"".repeat(60),
+    configPath: `/${"\\\"".repeat(1_023)}x`,
+    jql: "\\\"".repeat(5_000),
+    skillPath: `/${"\\\"".repeat(1_023)}x`,
+    automationId: "\\\"".repeat(128),
+    enabled: true,
+  };
+  const payload = JSON.stringify(request);
+  const calls = [];
+
+  assert.ok(payload.length > 16_384);
+  assert.ok(payload.length < 32_768);
+  const result = await handleHostBindingPayload(
+    { payload, executionContextId: 12 },
+    {
+      parseAutomationRequest: parsePanelAutomationHostRequest,
+      runAutomation: async (parsed) => {
+        calls.push(parsed);
+        return { state: "normal" };
+      },
+      sendResponse: async (_executionContextId, response) => calls.push(response),
+    },
+  );
+
+  assert.deepEqual(result, { responded: true, accepted: true });
+  assert.deepEqual(calls, [request, { id: request.id, ok: true, state: "normal" }]);
 });
 
 test("attach replaces an old runtime with the current source and restores an open page", async () => {

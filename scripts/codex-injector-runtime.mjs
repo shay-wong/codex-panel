@@ -1,8 +1,9 @@
 const HOST_REQUEST_ERROR = "自动认领配置暂时无法应用，请刷新后重试";
 const AUTOMATION_SCHEMA_DIAGNOSTIC = "AUTOMATION_SCHEMA_MISMATCH";
+const HOST_REQUEST_MAX_LENGTH = 32_768;
 
 function parseHostRequest(payload, parseAutomationRequest) {
-  if (typeof payload !== "string" || payload.length > 16_384) {
+  if (typeof payload !== "string" || payload.length > HOST_REQUEST_MAX_LENGTH) {
     return { id: null, request: null, error: HOST_REQUEST_ERROR };
   }
 

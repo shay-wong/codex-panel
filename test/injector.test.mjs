@@ -62,7 +62,7 @@ test("the CDP bridge exposes only the fixed Panel automation operations", () => 
   assert.match(source, /reconcilePanelAutomation/);
   assert.match(runtimeSource, /request\.action === "automation"/);
   assert.match(source, /function requestCodexAutomationViaCdp/);
-  assert.match(source, /new Set\(\[\s*"list-automations",\s*"automation-create",\s*"automation-update",\s*\]\)/);
+  assert.match(source, /new Set\(\[\s*"list-automations",\s*"automation-create",\s*"automation-update",\s*"automation-run-now",\s*"inbox-items",\s*\]\)/);
   assert.match(source, /bridge\.sendMessageFromView\(\{\s*type: "fetch",\s*requestId,/);
   assert.match(source, /method: "POST"/);
   assert.match(source, /vscode:\/\/codex\/\$\{method\}/);

@@ -200,10 +200,10 @@ export interface JiraProvider {
 
 export type JiraAutomationOperation =
   | "ensure-active"
-  | "pause"
   | "list"
   | "restore"
   | "run-now";
+export type JiraAutomationState = "normal" | "drifted" | "missing" | "conflict";
 
 export interface JiraProviderDraft {
   key: string;
