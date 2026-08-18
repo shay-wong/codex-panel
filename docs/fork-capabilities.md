@@ -6,6 +6,10 @@ This page indexes the user-visible differences maintained by `shay-wong/codex-pa
 
 The browser title and repository entry points use the `Codex Panel` name, and the repository is named `codex-panel`. The canonical Skill, CLI, environment, integration protocol, local storage, SQLite, and undeployed Cloudflare identifiers now use `manage-panel`, `panelctl`, `CODEX_PANEL_*`, and `panel`. Browser keys, environment variables, automation names, and repository-managed links are migrated or accepted as fallbacks so the rename does not discard existing state. The completed local database rename is represented only by `panel.sqlite`; the one-time legacy file migration is no longer retained.
 
+## Board-style horizontal list
+
+The list view supports horizontal and vertical layouts. Horizontal layout uses the issue board's status colors, workflow arrows, column spacing, scrollable column bodies, and card hierarchy so statuses remain easy to scan. Jira issues show their external key when available, with the title on a separate line and metadata wrapping inside the card. Vertical layout keeps the existing compact rows.
+
 ## Tauri/Rust desktop manager
 
 On macOS, the explicit `npm run codex:install` command builds a standalone runtime under `~/Library/Application Support/Codex Panel`, creates or refreshes `~/Applications/Codex Panel.app`, and removes only older launcher installations carrying a Codex Panel ownership marker. Plain `npm ci` continues to install project dependencies without writing user-level integrations. The installed product is the upstream Tauri/Rust desktop foundation under the unchanged `Codex Panel` name; the former SwiftPM launcher is no longer a product or build path.

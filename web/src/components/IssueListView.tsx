@@ -222,6 +222,7 @@ export function IssueListView({
                 <div className={`issue-list-rows${isDropTarget && dropBeforeTaskId === null ? " is-drop-at-end" : ""}`}>
                   {statusTasks.length ? statusTasks.map((task) => {
                     const assigneeTarget = assigneeTargetForActor(task.assignee, currentUser) ?? "current-user";
+                    const displayIdentifier = task.externalKey ?? task.identifier;
                     const isMoving = movingTaskId === task.id;
                     return (
                       <div
@@ -250,7 +251,7 @@ export function IssueListView({
                           <LinearIcon name="dragHandle" />
                         </span>
                         <span className="issue-list-title-cell">
-                          <small>{task.identifier}</small>
+                          <small>{displayIdentifier}</small>
                           <strong>{task.title}</strong>
                           {presentations[task.id]?.unread && <span className="task-unread-dot" aria-label="有未读更新" />}
                         </span>
@@ -267,7 +268,7 @@ export function IssueListView({
                               open={priorityMenuTaskId === task.id}
                               className="issue-list-property-picker"
                               triggerClassName={`issue-list-priority priority-${task.priority}`}
-                              ariaLabel={`${task.identifier} 优先级`}
+                              ariaLabel={`${displayIdentifier} 优先级`}
                               onOpenChange={(open) => setPriorityMenuTaskId(open ? task.id : null)}
                               onChange={(priority) => void onUpdate(task, { priority }).catch(() => {})}
                             />
@@ -290,7 +291,7 @@ export function IssueListView({
                               <span>{calendarDate(task.dueDate)}</span>
                               <input
                                 type="date"
-                                aria-label={`${task.identifier} 截止日期`}
+                                aria-label={`${displayIdentifier} 截止日期`}
                                 value={task.dueDate}
                                 onChange={(event) => void onUpdate(task, {
                                   dueDate: event.target.value || null,
@@ -306,7 +307,7 @@ export function IssueListView({
                           <label className="issue-list-assignee" title={task.assignee.name} onClick={stopRow}>
                             <ActorAvatar actor={task.assignee} />
                             <select
-                              aria-label={`${task.identifier} 负责人`}
+                              aria-label={`${displayIdentifier} 负责人`}
                               value={assigneeTarget}
                               onChange={(event) => void onUpdate(task, { assigneeTarget: event.target.value as "current-user" | "codex-agent" }).catch(() => {})}
                             >

@@ -58,6 +58,18 @@
 - 移除条件：Fork 更名或停止作为独立产品维护时同步更新或移除。
 - 针对性验证：运行 `npm run build:web`，确认 `dist/web/index.html` 包含 `<title>Codex Panel</title>`，并确认 GitHub 仓库与本地目录都使用 `codex-panel`。
 
+### 看板式横向列表
+
+- 生命周期：`等待上游吸收`
+- 原始目的：让横向列表具备与议题看板一致的分栏和卡片信息层级，并避免 Jira 内部长标识挤压标题与元信息。
+- 行为不变量：横向列表复用议题看板的状态色、流程箭头、列间距、列内滚动和卡片层级；Jira Issue 有外部 Key 时优先显示外部 Key，标题单独成行，元信息在卡片内换行。所有结构性样式必须限定在横向布局，竖向列表继续使用紧凑行。
+- 代码和测试路径：`web/src/components/IssueListView.tsx`、`web/src/styles.css` 和 `test/board-views.test.mjs`。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：`78d2000be19d1f5212bdab3a40fa85e7de78ea00` 及本次扩展；提交后可用 `git log -S'displayIdentifier' -- web/src/components/IssueListView.tsx` 定位本次变更。
+- 合并指引：上游修改列表或看板样式时，保留横向列表与议题看板的视觉语义一致性、Jira 外部 Key 优先展示和竖向紧凑布局；避免用整文件覆盖破坏任一布局。
+- 移除条件：上游横向列表提供等价的看板式分栏、Jira Key 层级和竖向布局隔离后同步移除。
+- 针对性验证：运行 `npm run typecheck` 和 `npm run build:web`；在横向与竖向列表分别确认 Jira Key、卡片层级、状态列滚动和紧凑行，并在窄视口确认页面无横向溢出。
+
 ### Tauri/Rust Codex Panel 桌面管理器
 
 - 生命周期：`长期保留`

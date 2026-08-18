@@ -9888,6 +9888,8 @@ kbd {
 }
 
 .board-column.status-todo,
+.issue-list-view.layout-horizontal .issue-list-group.status-backlog,
+.issue-list-view.layout-horizontal .issue-list-group.status-todo,
 .issue-reference-inline.issue-reference-status-backlog,
 .issue-reference-inline.issue-reference-status-todo {
   --column-status-color: #9747ff;
@@ -9895,28 +9897,33 @@ kbd {
 }
 
 .board-column.status-in_progress,
+.issue-list-view.layout-horizontal .issue-list-group.status-in_progress,
 .issue-reference-inline.issue-reference-status-in_progress {
   --column-status-color: #00a558;
   --column-status-background: rgba(0, 165, 88, .15);
 }
 
 .board-column.status-in_review,
+.issue-list-view.layout-horizontal .issue-list-group.status-in_review,
 .issue-reference-inline.issue-reference-status-in_review {
   --column-status-color: #317cff;
   --column-status-background: rgba(49, 124, 255, .1);
 }
 
 .board-column.status-blocked,
+.issue-list-view.layout-horizontal .issue-list-group.status-blocked,
 .issue-reference-inline.issue-reference-status-blocked {
   --column-status-color: #e5484d;
   --column-status-background: rgba(229, 72, 77, .1);
 }
 
+.issue-list-view.layout-horizontal .issue-list-group.status-done,
 .issue-reference-inline.issue-reference-status-done {
   --column-status-color: var(--status-done);
   --column-status-background: color-mix(in srgb, var(--status-done) 10%, transparent);
 }
 
+.issue-list-view.layout-horizontal .issue-list-group.status-canceled,
 .issue-reference-inline.issue-reference-status-canceled {
   --column-status-color: var(--status-canceled);
   --column-status-background: color-mix(in srgb, var(--status-canceled) 10%, transparent);
@@ -9930,7 +9937,8 @@ kbd {
   color: var(--column-status-color);
 }
 
-.board-column:not(:first-child) .column-header::before {
+.board-column:not(:first-child) .column-header::before,
+.issue-list-view.layout-horizontal .issue-list-group:not(:first-child) .issue-list-group-header::before {
   position: absolute;
   top: 10px;
   left: -20px;
@@ -9941,7 +9949,8 @@ kbd {
   pointer-events: none;
 }
 
-:root[data-theme="dark"] .board-column:not(:first-child) .column-header::before {
+:root[data-theme="dark"] .board-column:not(:first-child) .column-header::before,
+:root[data-theme="dark"] .issue-list-view.layout-horizontal .issue-list-group:not(:first-child) .issue-list-group-header::before {
   filter: invert(1);
   opacity: .45;
 }
@@ -11962,37 +11971,153 @@ kbd {
 
 .issue-list-view.layout-horizontal .issue-list-groups {
   grid-auto-flow: column;
-  grid-auto-columns: clamp(320px, 30vw, 420px);
-  align-items: start;
+  grid-auto-columns: clamp(300px, 30vw, 400px);
+  align-items: stretch;
   width: max-content;
   min-width: 100%;
+  height: 100%;
+  gap: 24px;
+}
+
+.issue-list-view.layout-horizontal {
+  padding: 0 18px 8px;
+}
+
+.issue-list-view.layout-horizontal .issue-list-group {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 .issue-list-view.layout-horizontal .issue-list-group-header {
   position: sticky;
   z-index: 2;
   top: 0;
+  flex: 0 0 36px;
+  height: 36px;
+  margin-bottom: 8px;
+  padding: 0 8px 0 4px;
+  border-radius: 12px;
+  background: var(--column-status-background);
+  color: var(--column-status-color);
+}
+
+.issue-list-view.layout-horizontal .issue-list-group-header:hover {
+  background: color-mix(in srgb, var(--column-status-color) 4%, var(--column-status-background));
+}
+
+.issue-list-view.layout-horizontal .issue-list-group-toggle {
+  gap: 6px;
+  padding-left: 12px;
+}
+
+.issue-list-view.layout-horizontal .issue-list-group-toggle strong,
+.issue-list-view.layout-horizontal .issue-list-status-icon,
+.issue-list-view.layout-horizontal .issue-list-collapse-menu-trigger {
+  color: inherit;
+}
+
+.issue-list-view.layout-horizontal .issue-list-group-toggle > span:last-child {
+  color: color-mix(in srgb, currentColor 62%, transparent);
+}
+
+.issue-list-view.layout-horizontal .issue-list-rows {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 0;
+  gap: 8px;
+  padding: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-radius: 18px;
+  background: var(--column-header);
+  overscroll-behavior-y: contain;
 }
 
 .issue-list-view.layout-horizontal .issue-list-row {
   grid-template-areas:
-    "title time"
-    "metadata metadata";
-  grid-template-columns: minmax(0, 1fr) auto;
-  min-height: 66px;
-  gap: 6px 12px;
-  padding: 8px 10px 8px 30px;
+    "title"
+    "metadata";
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  min-height: 80px;
+  gap: 10px;
+  padding: 16px 16px 16px 30px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--card-shadow);
 }
 
-.issue-list-view.layout-horizontal .issue-list-title-cell { grid-area: title; }
+.issue-list-view.layout-horizontal .issue-list-row:hover,
+.issue-list-view.layout-horizontal .issue-list-row:focus-visible {
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+}
+
+.issue-list-view.layout-horizontal .issue-list-row:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent), var(--card-shadow);
+}
+
+.issue-list-view.layout-horizontal .issue-list-title-cell {
+  display: grid;
+  grid-area: title;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.issue-list-view.layout-horizontal .issue-list-title-cell small {
+  grid-column: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issue-list-view.layout-horizontal .issue-list-title-cell strong {
+  display: -webkit-box;
+  grid-column: 1 / -1;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.issue-list-view.layout-horizontal .issue-list-title-cell .task-unread-dot {
+  grid-row: 1;
+  grid-column: 2;
+}
+
 .issue-list-view.layout-horizontal .issue-list-metadata {
   grid-area: metadata;
+  flex-wrap: wrap;
   justify-content: flex-start;
   justify-self: start;
   width: 100%;
   overflow: visible;
 }
-.issue-list-view.layout-horizontal .issue-list-row > time { grid-area: time; }
+
+.issue-list-view.layout-horizontal .issue-list-row > time {
+  display: none;
+}
+
+.issue-list-view.layout-horizontal .issue-list-empty {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 120px;
+  place-items: center;
+  padding: 20px;
+  text-align: center;
+}
 
 .issue-list-group {
   overflow: visible;
