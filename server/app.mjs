@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { chmod, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { isIP } from "node:net";
 import os from "node:os";
@@ -1721,6 +1722,15 @@ export function resolveServerOptions(options = {}) {
     ? path.resolve(options.dataDirectory)
     : resolvePanelDataDirectory();
   const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  const skillPath = options.skillPath
+    ?? path.join(PROJECT_ROOT, "skills", "manage-panel", "SKILL.md");
+  const installedSkillPath = path.join(
+    os.homedir(),
+    ".agents",
+    "skills",
+    "manage-panel",
+    "SKILL.md",
+  );
   const instanceToken = String(options.instanceToken
     ?? process.env.CODEX_PANEL_INSTANCE_TOKEN
     ?? process.env.CODEX_TASKBOARD_INSTANCE_TOKEN
@@ -1743,7 +1753,10 @@ export function resolveServerOptions(options = {}) {
     jiraConfigPath: options.jiraConfigPath ?? path.join(dataDirectory, "jira-connection.json"),
     clientStoragePath: options.clientStoragePath ?? path.join(dataDirectory, "client-storage.json"),
     staticDirectory: options.staticDirectory ?? path.join(PROJECT_ROOT, "dist", "web"),
-    skillPath: options.skillPath ?? path.join(PROJECT_ROOT, "skills", "manage-panel", "SKILL.md"),
+    skillPath,
+    nativeSkillPath: options.nativeSkillPath
+      ?? options.skillPath
+      ?? (existsSync(installedSkillPath) ? installedSkillPath : skillPath),
     codexExecutable: resolveCodexExecutable({ explicit: options.codexExecutable }),
     codexStatePath: options.codexStatePath
       ?? path.join(codexHome, ".codex-global-state.json"),
@@ -2420,7 +2433,7 @@ export function createPanelServer(options = {}) {
           throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/meta does not accept query parameters");
         }
         return sendJson(response, 200, {
-          managePanelSkillPath: resolved.skillPath,
+          managePanelSkillPath: resolved.nativeSkillPath,
           capabilities: { localAiChat: isLoopbackAddress(request.socket.remoteAddress) },
           ...(capabilityCloudConfig?.remoteUrl
             ? {

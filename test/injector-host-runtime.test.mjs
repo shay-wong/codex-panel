@@ -147,6 +147,14 @@ test("composer prefill requires bounded Panel Skill metadata", async () => {
     executionContextId: 12,
   }, handlers);
   await handleHostBindingPayload({
+    payload: JSON.stringify({ ...valid, id: "prefill-request-long", instruction: "x".repeat(12_500) }),
+    executionContextId: 12,
+  }, handlers);
+  await handleHostBindingPayload({
+    payload: JSON.stringify({ ...valid, id: "prefill-request-oversized", instruction: "x".repeat(16_385) }),
+    executionContextId: 12,
+  }, handlers);
+  await handleHostBindingPayload({
     payload: JSON.stringify({ ...valid, id: "prefill-request-2", skillPath: "" }),
     executionContextId: 12,
   }, handlers);
@@ -155,10 +163,10 @@ test("composer prefill requires bounded Panel Skill metadata", async () => {
     executionContextId: 12,
   }, handlers);
 
-  assert.deepEqual(calls, ["prefill", true, false, false]);
+  assert.deepEqual(calls, ["prefill", true, "prefill", true, false, false, false]);
 });
 
-test("SSH conversation starts and attachment opens require bounded host payloads", async () => {
+test("SSH conversation confirmation, start, and attachment open require bounded host payloads", async () => {
   const calls = [];
   const handlers = {
     parseAutomationRequest: () => null,
@@ -166,6 +174,7 @@ test("SSH conversation starts and attachment opens require bounded host payloads
       calls.push(["start", request.taskId, request.codexHostId]);
       return { threadId: "thread-1" };
     },
+    confirmConversation: async (request) => calls.push(["confirm", request.threadId, request.identifier]),
     openAttachment: async (request) => calls.push(["attachment", request.filename]),
     sendResponse: async (_executionContextId, response) => calls.push(["response", response.ok]),
   };
@@ -185,7 +194,16 @@ test("SSH conversation starts and attachment opens require bounded host payloads
     attachmentId: "30c3d0c4-aa0f-4169-93c0-bb3da20bc654",
     filename: "evidence.txt",
   };
+  const confirmation = {
+    id: "remote-thread-confirmation",
+    action: "confirm-task-conversation",
+    threadId: "thread-1",
+    codexHostId: "ssh-host",
+    targetRoot: "/srv/project",
+    identifier: "REMOTE-1",
+  };
 
+  await handleHostBindingPayload({ payload: JSON.stringify(confirmation), executionContextId: 12 }, handlers);
   await handleHostBindingPayload({ payload: JSON.stringify(conversation), executionContextId: 12 }, handlers);
   await handleHostBindingPayload({ payload: JSON.stringify(attachment), executionContextId: 12 }, handlers);
   await handleHostBindingPayload({
@@ -194,6 +212,8 @@ test("SSH conversation starts and attachment opens require bounded host payloads
   }, handlers);
 
   assert.deepEqual(calls, [
+    ["confirm", "thread-1", "REMOTE-1"],
+    ["response", true],
     ["start", "task-1", "ssh-host"],
     ["response", true],
     ["attachment", "evidence.txt"],

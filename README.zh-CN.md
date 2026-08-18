@@ -135,7 +135,7 @@ npm run codex:inject -- --port 9229 --open
 
 无论当前位于会话页，还是 Plugins、Sites 等原生页面，都可以直接点击 Panel 入口打开任务面板。Panel 激活时，通过 Codex 全局命令菜单选择对话、插件、设置、站点、Pull Requests、已安排任务等原生目的地，会在鼠标点击和 Enter 选择后恢复 Codex 原生界面；切换主题等工具命令不会关闭 Panel。不会改变路由的命令目前匹配简体中文、繁体中文和英文标题，其他界面语言留待 Codex 在菜单 DOM 中提供稳定命令标识后支持。
 
-“在对话中打开”会在存在对应项目时选择原生 Codex 项目，并打开一个尚未发送的 `$manage-panel` 输入框。Panel 会先读取 Issue 的最新“AI 对话交接”评论，把 Issue 编号、标题、读取位置和交接内容预填给新任务；新任务仍会先通过 `panelctl` 重新读取最新 Issue 内容和全部评论。未发送的输入框还不是 Codex 任务，因此第一次发送创建出原生 thread 后，Panel 才会自动把该 thread ID 写回 Issue。记录的 ID 可通过 Codex 原生路由桥接点击打开。每个 Issue 可以绑定一个 Git 分支或一个 worktree；选项从所选 Codex 项目的仓库中扫描，而不是手工输入。该集成复用 Codex 现有的项目、输入框和路由标记，不会修改 React、替换 `fetch`、加载私有代码块或编辑 Codex 数据文件。
+“在对话中打开”会选择对应的原生 Codex 项目，并在本地和 SSH 项目中都打开尚未发送的输入框。本地草稿使用 `$manage-panel`，包含 Issue 编号、标题、最新“AI 对话交接”和 `panelctl` 读取位置，并在执行前刷新 Issue；SSH worker 无法调用本机 `panelctl`，所以远程草稿直接包含当前 Issue 描述、评论和开发上下文。两种草稿都跟随 Panel 界面语言、不显示内部路由标记且不会自动发送；只有第一次真实发送创建 Codex 任务后，Panel 才会写回对应的本地或 SSH thread binding，SSH Issue 也只在此时移到处理中。记录的 ID 可通过 Codex 原生路由桥接点击打开。每个 Issue 可以绑定一个 Git 分支或一个 worktree；选项从所选 Codex 项目的仓库中扫描，而不是手工输入。该集成复用 Codex 现有的项目、输入框和路由标记，不会修改 React、替换 `fetch`、加载私有代码块或编辑 Codex 数据文件。
 
 本地内嵌 AI 对话也可以通过聊天标题栏中的关联菜单绑定到 Issue。打开菜单时会直接加载对话原始项目中的活跃 Issue，即使当前看板正在查看另一个项目，也可以正常改绑或取消关联。关联后的对话会显示在 Issue 的活动时间线中，点击即可打开对应的本地聊天。发送 `/handoff` 或 `/交接` 可以让同一 Codex 线程总结当前讨论；命令后还可以追加需要重点保留的内容。加入 `--issue ISSUE-ID` 可以把交接记录到指定的活跃 Issue，而不是当前关联的 Issue，例如 `/交接 --issue PROJECT-123 重点保留验收结论`。
 

@@ -1335,18 +1335,53 @@ async function restoreQuotaPolicies(cdp) {
   }
 }
 
+function normalizeWorkspaceRoot(value) {
+  const root = String(value || "").trim();
+  if (!root) return "";
+  const windowsPath = /^[A-Za-z]:[\\/]/.test(root) || root.includes("\\");
+  const normalizedSlashes = windowsPath ? root.replace(/\\/g, "/") : root;
+  const withoutTrailingSlash = normalizedSlashes.replace(/\/+$/, "")
+    || (normalizedSlashes.startsWith("/") ? "/" : normalizedSlashes);
+  if (!windowsPath || !/^[A-Za-z]:/.test(withoutTrailingSlash)) return withoutTrailingSlash;
+  return `${withoutTrailingSlash[0].toLowerCase()}${withoutTrailingSlash.slice(1)}`;
+}
+
+async function confirmTaskConversationViaCdp(cdp, executionContextId, request) {
+  const deadline = Date.now() + 12_000;
+  while (Date.now() < deadline) {
+    try {
+      const result = await requestCodexAppServerViaCdp(
+        cdp,
+        executionContextId,
+        request.codexHostId,
+        "thread/read",
+        { threadId: request.threadId, includeTurns: true },
+        3_000,
+      );
+      const firstUserText = result?.thread?.turns
+        ?.flatMap((turn) => turn?.items ?? [])
+        .find((item) => item?.type === "userMessage")
+        ?.content?.filter((content) => content?.type === "text")
+        .map((content) => content.text)
+        .join("\n") ?? "";
+      if (
+        result?.thread?.id === request.threadId
+        && (
+          !request.targetRoot
+          || normalizeWorkspaceRoot(result.thread.cwd) === normalizeWorkspaceRoot(request.targetRoot)
+        )
+        && firstUserText.includes(request.identifier)
+      ) {
+        return { confirmed: true };
+      }
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+  throw new Error("Codex did not confirm the new issue conversation");
+}
+
 async function startTaskConversationViaCdp(cdp, executionContextId, request) {
   const { codexHostId, instruction, previousThreadId, targetRoot, title } = request;
-  const normalizeWorkspaceRoot = (value) => {
-    const root = String(value || "").trim();
-    if (!root) return "";
-    const windowsPath = /^[A-Za-z]:[\\/]/.test(root) || root.includes("\\");
-    const normalizedSlashes = windowsPath ? root.replace(/\\/g, "/") : root;
-    const withoutTrailingSlash = normalizedSlashes.replace(/\/+$/, "")
-      || (normalizedSlashes.startsWith("/") ? "/" : normalizedSlashes);
-    if (!windowsPath || !/^[A-Za-z]:/.test(withoutTrailingSlash)) return withoutTrailingSlash;
-    return `${withoutTrailingSlash[0].toLowerCase()}${withoutTrailingSlash.slice(1)}`;
-  };
   const normalizedTargetRoot = normalizeWorkspaceRoot(targetRoot);
   const deadline = Date.now() + 8_000;
   let submitted = false;
@@ -1514,11 +1549,15 @@ function getOrStartTaskConversation(cdp, executionContextId, request) {
 
 async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
   const { instruction, skillDisplayName, skillName, skillPath } = request;
-  const deadline = Date.now() + 8_000;
+  const stageDeadline = () => Date.now() + 8_000;
+  let deadline = stageDeadline();
   while (Date.now() < deadline) {
     const prepared = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
         const instruction = ${JSON.stringify(instruction)};
+        const skillName = ${JSON.stringify(skillName)};
+        const skillPath = ${JSON.stringify(skillPath)};
+        const compact = (value) => String(value || "").replace(/\\s+/g, "");
         const editor = Array.from(document.querySelectorAll(
           '[data-codex-composer="true"][contenteditable="true"]'
         )).find((candidate) => candidate.getClientRects().length > 0);
@@ -1528,7 +1567,7 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
             candidate.getAttribute("skill-mention-name") === skillName
             && candidate.getAttribute("skill-mention-path") === skillPath
           ));
-        if (mention && (editor.textContent || "").includes(instruction)) {
+        if (mention && compact(editor.textContent).includes(compact(instruction))) {
           return { ready: true, matches: true };
         }
         editor.focus();
@@ -1553,6 +1592,7 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
   }
 
   let selectedSkill = false;
+  deadline = stageDeadline();
   while (Date.now() < deadline) {
     const selection = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
@@ -1581,6 +1621,7 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
   if (!selectedSkill) throw new Error(`Timed out while selecting the ${skillDisplayName} Skill`);
 
   let mentionReady = false;
+  deadline = stageDeadline();
   while (Date.now() < deadline) {
     const mention = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
@@ -1613,12 +1654,14 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
 
   await cdp.send("Input.insertText", { text: instruction });
 
+  deadline = stageDeadline();
   while (Date.now() < deadline) {
     const verified = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
         const instruction = ${JSON.stringify(instruction)};
         const skillName = ${JSON.stringify(skillName)};
         const skillPath = ${JSON.stringify(skillPath)};
+        const compact = (value) => String(value || "").replace(/\\s+/g, "");
         const editor = Array.from(document.querySelectorAll(
           '[data-codex-composer="true"][contenteditable="true"]'
         )).find((candidate) => candidate.getClientRects().length > 0);
@@ -1627,7 +1670,7 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
             candidate.getAttribute("skill-mention-name") === skillName
             && candidate.getAttribute("skill-mention-path") === skillPath
           ));
-        return Boolean(mention && (editor.textContent || "").includes(instruction));
+        return Boolean(mention && compact(editor.textContent).includes(compact(instruction)));
       })()`,
       contextId: executionContextId,
       returnByValue: true,
@@ -1668,6 +1711,9 @@ function installPanelHostBinding(cdp, supervisor, startupToken) {
       ),
       openExternal: openExternalUrl,
       openAttachment,
+      confirmConversation: (request, executionContextId) => (
+        confirmTaskConversationViaCdp(cdp, executionContextId, request)
+      ),
       runAutomation: (request) => (
         (async () => {
           const rpc = (method, body) => requestCodexAutomationViaCdp(

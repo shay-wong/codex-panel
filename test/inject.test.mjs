@@ -10,6 +10,101 @@ const source = await readFile(sourceUrl, "utf8");
 const injectorSource = await readFile(new URL("../scripts/codex-injector.mjs", import.meta.url), "utf8");
 const webStyles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 const webApp = await readFile(new URL("../web/src/App.tsx", import.meta.url), "utf8");
+const createThreadSource = source.slice(
+  source.indexOf("async function createThreadForTask"),
+  source.indexOf("\n  function buildAutomationHostPayload"),
+);
+const openRemoteThreadSource = webApp.slice(
+  webApp.indexOf("async function openRemoteTaskInThread"),
+  webApp.indexOf("\n  async function openTaskInThread"),
+);
+const bindRemoteThreadSource = webApp.slice(
+  webApp.indexOf("async function bindPreparedRemoteThread"),
+  webApp.indexOf("\n  async function openRemoteTaskInThread"),
+);
+
+function loadLatestAiChatHandoff() {
+  const start = webApp.indexOf("function latestAiChatHandoff");
+  const end = webApp.indexOf("\nfunction issueThreadInstruction", start);
+  const functionSource = webApp.slice(start, end)
+    .replace(/comments: Comment\[\]/, "comments")
+    .replace(/text: \(chinese: string, english: string\) => string/, "text")
+    .replace(/\): string \| null/, ")");
+  return new Function(
+    "AI_CHAT_HANDOFF_COMMENT_MARKER",
+    "NATIVE_HANDOFF_CONTEXT_LIMIT",
+    `${functionSource}\nreturn latestAiChatHandoff;`,
+  )("<!-- codex-panel:ai-chat-handoff:v1 -->", 12_000);
+}
+
+function loadIssueThreadInstruction() {
+  const start = webApp.indexOf("function issueThreadInstruction");
+  const end = webApp.indexOf("\ninterface LocalRealtimeSyncProps", start);
+  const functionSource = webApp.slice(start, end)
+    .replace(/task: Task/, "task")
+    .replace(/handoff: string \| null/, "handoff")
+    .replace(/text: \(chinese: string, english: string\) => string/, "text")
+    .replace(/\): string/, ")");
+  return new Function(`${functionSource}\nreturn issueThreadInstruction;`)();
+}
+
+function loadRemoteTaskInstruction() {
+  const start = webApp.indexOf("function remoteTaskInstruction");
+  const end = webApp.indexOf("\n  function updateTaskFromRemoteThread", start);
+  const functionSource = webApp.slice(start, end)
+    .replace(/task: Task/, "task")
+    .replace(/comments: Comment\[\]/, "comments")
+    .replace(/text: \(chinese: string, english: string\) => string/, "text");
+  return new Function(`${functionSource}\nreturn remoteTaskInstruction;`)();
+}
+
+function pendingThreadAssociationHarness({ pending, threadId, projectMatches = true }) {
+  const start = source.indexOf("async function publishPendingThreadAssociation");
+  const end = source.indexOf("\n  function dispatchHostMessage", start);
+  const functionSource = source.slice(start, end);
+  return vm.runInNewContext(`(() => {
+    let pendingThreadAssociation = initialPending;
+    let lastNativeThreadId = "";
+    const messages = [];
+    const hostRequests = [];
+    ${functionSource}
+    return {
+      run: async () => {
+        await publishPendingThreadAssociation();
+        return { pendingThreadAssociation, lastNativeThreadId, messages, hostRequests };
+      },
+    };
+  })()`, {
+    initialPending: pending,
+    isTrustedPanelOrigin: () => true,
+    normalizeThreadId: (value) => String(value || "").replace(/^(?:local|cloud):/i, ""),
+    threadIdFromLocation: () => threadId,
+    findThreadRowInProject: () => projectMatches ? {} : null,
+    requestHost: async (action, payload) => {
+      pending.hostRequests?.push([action, payload]);
+      return { confirmed: true };
+    },
+    postToFrame: (message) => pending.messages?.push(message),
+    TASK_CONVERSATION_REQUEST_TIMEOUT_MS: 75_000,
+  });
+}
+
+function loadMarkPendingThreadAssociationSubmitted() {
+  const start = source.indexOf("function markPendingThreadAssociationSubmitted");
+  const end = source.indexOf("\n  async function publishPendingThreadAssociation", start);
+  const functionSource = source.slice(start, end);
+  return (pending, event) => vm.runInNewContext(`(() => {
+    let pendingThreadAssociation = pending;
+    ${functionSource}
+    markPendingThreadAssociationSubmitted(event);
+    return pendingThreadAssociation;
+  })()`, {
+    pending,
+    event,
+    normalizedLabel: (value) => String(value || "").trim().toLowerCase(),
+    SEND_LABELS: ["send", "发送", "傳送"],
+  });
+}
 
 test("injection is an idempotent IIFE guarded by its current source hash", () => {
   assert.match(source, /^\(\(\) => \{/);
@@ -332,10 +427,20 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.doesNotMatch(source, /function waitForCreatedThread/);
   assert.match(source, /type: "panel:thread-created"/);
   assert.match(webApp, /panel:thread-created/);
-  assert.match(webApp, /function issueThreadInstruction\(task: Task, handoff: string \| null\)/);
-  assert.match(webApp, /`e-panel Continue work on issue \$\{task\.identifier\}: \$\{task\.title\}`/);
-  assert.match(webApp, /use panelctl to read the latest issue content and every comment/);
+  assert.match(
+    webApp,
+    /function issueThreadInstruction\([\s\S]*text: \(chinese: string, english: string\) => string/,
+  );
+  assert.doesNotMatch(webApp, /e-panel Continue work on issue/);
+  assert.match(webApp, /处理 Panel 议题 \$\{task\.identifier\}：\$\{task\.title\}/);
+  assert.match(webApp, /Continue work on issue \$\{task\.identifier\}: \$\{task\.title\}/);
+  assert.match(webApp, /开始前，使用 panelctl 读取/);
+  assert.match(webApp, /Before acting, use panelctl to read/);
+  assert.match(webApp, /最新对话交接，供立即参考/);
   assert.match(webApp, /Latest conversation handoff for immediate context/);
+  assert.match(webApp, /\[交接内容已截断，请使用 panelctl 读取完整评论\]/);
+  assert.match(webApp, /\[Conversation handoff truncated; use panelctl to read the full comment\]/);
+  assert.match(webApp, /latestAiChatHandoff\(await listComments\(task\.id\), text\)/);
   assert.match(
     webApp,
     /const prompt = `\[\$manage-panel\]\(\$\{managePanelSkillPath\}\) \$\{instruction\}`/,
@@ -347,8 +452,156 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.match(webApp, /type: "panel:create-thread"/);
   assert.match(webApp, /type: "panel:open-thread",\s*payload: binding/);
   assert.match(source, /await waitForRemoteProject\(requestedProjectId, codexHostId, targetRoot\)/);
-  assert.match(source, /type: "panel:thread-created",\s*payload: \{ taskId, threadId: startedThreadId \}/);
+  assert.match(createThreadSource, /prefillPrompt: instruction/);
+  assert.match(createThreadSource, /await waitForPreparedComposer\(identifier, ""\)/);
+  assert.doesNotMatch(createThreadSource, /requestHostTaskConversationStart/);
+  assert.doesNotMatch(createThreadSource, /Input\.dispatchKeyEvent/);
+  assert.doesNotMatch(openRemoteThreadSource, /moveTaskRequest/);
+  assert.match(webApp, /remoteTaskInstruction\(latestTask, comments, textRef\.current\)/);
+  assert.match(webApp, /Panel claims the issue and binds the new SSH conversation only after this draft is sent/);
   assert.match(source, /type: "panel:thread-prepared", payload: \{ taskId \}/);
+  assert.match(source, /requestHost\("confirm-task-conversation"/);
+  assert.match(injectorSource, /item\?\.type === "userMessage"/);
+  assert.match(injectorSource, /firstUserText\.includes\(request\.identifier\)/);
+  assert.match(bindRemoteThreadSource, /latestTask\.projectId !== pending\.projectId/);
+  assert.match(bindRemoteThreadSource, /JSON\.stringify\(latestTask\.developmentContext\) !== pending\.developmentContext/);
+});
+
+test("an unrelated new thread cannot claim an unsent SSH issue draft", async () => {
+  const pending = {
+    taskId: "task-1",
+    identifier: "REMOTE-7",
+    existingThreadIds: new Set(["old-thread"]),
+    projectId: "ssh-project",
+    codexHostId: "ssh-host",
+    workspacePath: "/srv/project",
+    submitted: false,
+    confirming: false,
+    expiresAt: Date.now() + 10_000,
+    hostRequests: [],
+    messages: [],
+  };
+  const harness = pendingThreadAssociationHarness({
+    pending,
+    threadId: "unrelated-thread",
+  });
+
+  const result = await harness.run();
+
+  assert.equal(result.pendingThreadAssociation.taskId, "task-1");
+  assert.deepEqual(pending.hostRequests, []);
+  assert.deepEqual(pending.messages, []);
+});
+
+test("only the prepared composer submit unlocks thread association", () => {
+  const markSubmitted = loadMarkPendingThreadAssociationSubmitted();
+  const editor = { isConnected: true };
+  const pending = {
+    composer: editor,
+    submitted: false,
+    expiresAt: Date.now() + 10_000,
+  };
+
+  markSubmitted(pending, { type: "keydown", target: {}, key: "Enter", shiftKey: false, isComposing: false });
+  assert.equal(pending.submitted, false);
+  markSubmitted(pending, { type: "keydown", target: editor, key: "Enter", shiftKey: true, isComposing: false });
+  assert.equal(pending.submitted, false);
+  markSubmitted(pending, { type: "keydown", target: editor, key: "Enter", shiftKey: false, isComposing: false });
+  assert.equal(pending.submitted, true);
+});
+
+test("a submitted issue draft publishes only after project and host confirmation", async () => {
+  const pending = {
+    taskId: "task-1",
+    identifier: "REMOTE-7",
+    existingThreadIds: new Set(["old-thread"]),
+    projectId: "ssh-project",
+    codexHostId: "ssh-host",
+    workspacePath: "/srv/project",
+    submitted: true,
+    confirming: false,
+    expiresAt: Date.now() + 10_000,
+    hostRequests: [],
+    messages: [],
+  };
+  const harness = pendingThreadAssociationHarness({
+    pending,
+    threadId: "issue-thread",
+  });
+
+  const result = await harness.run();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(pending.hostRequests)), [["confirm-task-conversation", {
+    threadId: "issue-thread",
+    codexHostId: "ssh-host",
+    targetRoot: "/srv/project",
+    identifier: "REMOTE-7",
+  }]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(pending.messages)), [{
+    type: "panel:thread-created",
+    payload: { taskId: "task-1", threadId: "issue-thread" },
+  }]);
+  assert.equal(result.pendingThreadAssociation, null);
+});
+
+test("long conversation handoffs use the Panel UI language for truncation", () => {
+  const latestAiChatHandoff = loadLatestAiChatHandoff();
+  const comments = [{
+    body: `<!-- codex-panel:ai-chat-handoff:v1 -->${"x".repeat(12_001)}`,
+  }];
+
+  const chinese = latestAiChatHandoff(comments, (zh) => zh);
+  const english = latestAiChatHandoff(comments, (_zh, en) => en);
+
+  assert.match(chinese, /\[交接内容已截断，请使用 panelctl 读取完整评论\]$/);
+  assert.doesNotMatch(chinese, /Conversation handoff truncated/);
+  assert.match(english, /\[Conversation handoff truncated; use panelctl to read the full comment\]$/);
+  assert.doesNotMatch(english, /交接内容已截断/);
+});
+
+test("issue composer instructions use only the Panel UI language", () => {
+  const issueThreadInstruction = loadIssueThreadInstruction();
+  const task = { identifier: "LOCAL-42", title: "Preserve context" };
+
+  assert.equal(
+    issueThreadInstruction(task, "交接正文", (zh) => zh),
+    [
+      "处理 Panel 议题 LOCAL-42：Preserve context",
+      "开始前，使用 panelctl 读取 LOCAL-42 的最新议题内容和全部评论。将最新的“AI 对话交接”评论视为上一段 Codex 对话的交接信息；更新的议题内容或评论优先。",
+      "最新对话交接，供立即参考：\n\n交接正文",
+    ].join("\n\n"),
+  );
+  assert.equal(
+    issueThreadInstruction(task, "Handoff body", (_zh, en) => en),
+    [
+      "Continue work on issue LOCAL-42: Preserve context",
+      "Before acting, use panelctl to read the latest issue content and every comment for LOCAL-42. Treat the latest \"AI conversation handoff\" comment as the handoff from the prior Codex conversation; newer issue content or comments take precedence.",
+      "Latest conversation handoff for immediate context:\n\nHandoff body",
+    ].join("\n\n"),
+  );
+});
+
+test("SSH issue drafts remain unsent and use only the Panel UI language", () => {
+  const remoteTaskInstruction = loadRemoteTaskInstruction();
+  const task = {
+    identifier: "REMOTE-7",
+    title: "Preserve SSH context",
+    description: "Issue body",
+    developmentContext: { type: "branch", branch: "fix/remote" },
+  };
+  const comments = [{ authorName: "Shay", createdAt: "2026-08-19", body: "Latest comment" }];
+
+  const chinese = remoteTaskInstruction(task, comments, (zh) => zh);
+  const english = remoteTaskInstruction(task, comments, (_zh, en) => en);
+
+  assert.match(chinese, /^处理 Panel 议题 REMOTE-7：Preserve SSH context/);
+  assert.match(chinese, /发送这份草稿后，Panel 才会认领议题并绑定新的 SSH 对话/);
+  assert.match(chinese, /完整描述：\nIssue body/);
+  assert.doesNotMatch(chinese, /Panel claims the issue/);
+  assert.match(english, /^Continue work on Panel issue REMOTE-7: Preserve SSH context/);
+  assert.match(english, /Panel claims the issue and binds the new SSH conversation only after this draft is sent/);
+  assert.match(english, /Full description:\nIssue body/);
+  assert.doesNotMatch(english, /发送这份草稿后/);
 });
 
 test("the standalone web page opens linked Codex tasks through the app deep link", () => {

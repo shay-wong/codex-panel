@@ -25,6 +25,7 @@
   const REATTACH_DELAY_MS = 160;
   const FRAME_READY_TIMEOUT_MS = 12_000;
   const HOST_REQUEST_TIMEOUT_MS = 12_000;
+  const COMPOSER_PREFILL_REQUEST_TIMEOUT_MS = 36_000;
   const TASK_CONVERSATION_REQUEST_TIMEOUT_MS = 75_000;
   const HOST_HEARTBEAT_MAX_AGE_MS = 8_000;
   const THREAD_ASSOCIATION_TIMEOUT_MS = 10 * 60_000;
@@ -52,6 +53,7 @@
   ];
   const PROJECT_SECTION_LABELS = ["projects", "项目"];
   const TASK_SECTION_LABELS = ["tasks", "任务", "chats", "对话"];
+  const SEND_LABELS = ["send", "发送", "傳送"];
   // TODO: Prefer stable command IDs if Codex exposes them, then support every app locale.
   const NATIVE_DESTINATION_COMMAND_LABELS = [
     ...NATIVE_PAGE_LABELS,
@@ -775,7 +777,33 @@
     );
   }
 
-  function publishPendingThreadAssociation() {
+  function markPendingThreadAssociationSubmitted(event) {
+    const pending = pendingThreadAssociation;
+    if (!pending || pending.submitted || Date.now() > pending.expiresAt) return;
+    const editor = pending.composer;
+    if (!editor?.isConnected) return;
+    if (
+      event.type === "keydown"
+      && event.target === editor
+      && event.key === "Enter"
+      && !event.shiftKey
+      && !event.isComposing
+    ) {
+      pending.submitted = true;
+      return;
+    }
+    const button = event.target?.closest?.("button");
+    if (
+      event.type === "click"
+      && button
+      && editor.closest("[data-codex-composer-root]")?.contains(button)
+      && SEND_LABELS.includes(normalizedLabel(button.getAttribute("aria-label")))
+    ) {
+      pending.submitted = true;
+    }
+  }
+
+  async function publishPendingThreadAssociation() {
     if (!isTrustedPanelOrigin()) return;
     const pending = pendingThreadAssociation;
     if (!pending) return;
@@ -783,14 +811,40 @@
       pendingThreadAssociation = null;
       return;
     }
+    if (!pending.submitted || pending.confirming) return;
     const threadId = normalizeThreadId(threadIdFromLocation());
     if (!threadId || pending.existingThreadIds.has(threadId)) return;
-    pendingThreadAssociation = null;
-    lastNativeThreadId = threadId;
-    postToFrame({
-      type: "panel:thread-created",
-      payload: { taskId: pending.taskId, threadId },
-    });
+    if (
+      pending.projectId
+        ? !findThreadRowInProject(threadId, pending.projectId)
+        : !findThreadRow(threadId)
+    ) return;
+    pending.confirming = true;
+    try {
+      await requestHost("confirm-task-conversation", {
+        threadId,
+        codexHostId: pending.codexHostId || "local",
+        targetRoot: pending.workspacePath,
+        identifier: pending.identifier,
+      }, TASK_CONVERSATION_REQUEST_TIMEOUT_MS);
+      if (pendingThreadAssociation !== pending) return;
+      pendingThreadAssociation = null;
+      lastNativeThreadId = threadId;
+      postToFrame({
+        type: "panel:thread-created",
+        payload: { taskId: pending.taskId, threadId },
+      });
+    } catch (error) {
+      if (pendingThreadAssociation !== pending) return;
+      pendingThreadAssociation = null;
+      postToFrame({
+        type: "panel:thread-create-error",
+        payload: {
+          taskId: pending.taskId,
+          error: error instanceof Error ? error.message : "无法确认新建 Codex 对话",
+        },
+      });
+    }
   }
 
   function dispatchHostMessage(message) {
@@ -981,7 +1035,7 @@
             mention.getAttribute("skill-mention-name") === "manage-panel"
             && mention.getAttribute("skill-mention-path") === skillPath
           ));
-        if (containsIdentifier && skillMention) return editor;
+        if (containsIdentifier && (!skillPath || skillMention)) return editor;
       }
       await new Promise((resolve) => window.setTimeout(resolve, 80));
     }
@@ -1028,16 +1082,9 @@
         const targetRoot = typeof payload?.codexProjectWorkspacePath === "string"
           ? payload.codexProjectWorkspacePath.trim()
           : "";
-        const previousComposerRoot = Array.from(document.querySelectorAll(
-          '[data-codex-composer-root][data-composer-placement="thread"]',
-        )).find((candidate) => candidate.getClientRects().length > 0);
-        const previousThreadId = normalizeThreadId(
-          previousComposerRoot
-            ?.querySelector("[data-above-composer-conversation-id]")
-            ?.getAttribute("data-above-composer-conversation-id"),
-        );
         await waitForRemoteProject(requestedProjectId, codexHostId, targetRoot);
         closePanel(false);
+        const existingThreadIds = nativeThreadIds();
         await dispatchHostMessage({
           type: "navigate-to-route",
           path: "/",
@@ -1046,35 +1093,20 @@
             prefillPrompt: instruction,
           },
         });
-        const started = await requestHostTaskConversationStart({
+        const composer = await waitForPreparedComposer(identifier, "");
+        pendingThreadAssociation = {
           taskId,
-          previousThreadId,
+          identifier,
+          composer,
+          existingThreadIds,
+          projectId: requestedProjectId,
           codexHostId,
-          targetRoot,
-          instruction,
-          title,
-        });
-        const startedThreadId = normalizeThreadId(started.threadId);
-        if (!startedThreadId) throw new Error("Codex 未返回新对话标识");
-        const visibleThreadComposer = Array.from(document.querySelectorAll(
-          '[data-codex-composer-root][data-composer-placement="thread"]',
-        )).find((candidate) => candidate.getClientRects().length > 0);
-        const visibleThreadId = normalizeThreadId(
-          visibleThreadComposer
-            ?.querySelector("[data-above-composer-conversation-id]")
-            ?.getAttribute("data-above-composer-conversation-id"),
-        );
-        if (visibleThreadId !== startedThreadId) {
-          await dispatchHostMessage({
-            type: "navigate-to-route",
-            path: routeForThread(startedThreadId),
-          });
-        }
-        lastNativeThreadId = startedThreadId;
-        postToFrame({
-          type: "panel:thread-created",
-          payload: { taskId, threadId: startedThreadId },
-        });
+          workspacePath: targetRoot,
+          submitted: false,
+          confirming: false,
+          expiresAt: Date.now() + THREAD_ASSOCIATION_TIMEOUT_MS,
+        };
+        postToFrame({ type: "panel:thread-prepared", payload: { taskId } });
         return;
       }
 
@@ -1117,10 +1149,18 @@
         skillName,
         skillPath,
       });
-      await waitForPreparedComposer(identifier, skillPath);
+      const composer = await waitForPreparedComposer(identifier, skillPath);
+      const selectedProjectId = await selectedNativeProjectId();
       pendingThreadAssociation = {
         taskId,
+        identifier,
+        composer,
         existingThreadIds,
+        projectId: selectedProjectId,
+        codexHostId: "local",
+        workspacePath,
+        submitted: false,
+        confirming: false,
         expiresAt: Date.now() + THREAD_ASSOCIATION_TIMEOUT_MS,
       };
       postToFrame({ type: "panel:thread-prepared", payload: { taskId } });
@@ -1558,7 +1598,7 @@
       skillDisplayName,
       skillName,
       skillPath,
-    });
+    }, COMPOSER_PREFILL_REQUEST_TIMEOUT_MS);
   }
 
   function requestHostTaskConversationStart({
@@ -1811,7 +1851,7 @@
       reattachTimer = null;
       ensureEntry();
       mountActivePage();
-      publishPendingThreadAssociation();
+      void publishPendingThreadAssociation();
       postHostContext();
     }, REATTACH_DELAY_MS);
   }
@@ -1819,7 +1859,7 @@
   function refresh() {
     ensureEntry();
     mountActivePage();
-    publishPendingThreadAssociation();
+    void publishPendingThreadAssociation();
     postHostContext();
   }
 
@@ -1864,6 +1904,8 @@
     pendingThreadAssociation = null;
     document.removeEventListener("DOMContentLoaded", mount);
     document.removeEventListener("click", onDocumentClick, true);
+    document.removeEventListener("click", markPendingThreadAssociationSubmitted, true);
+    document.removeEventListener("keydown", markPendingThreadAssociationSubmitted, true);
     document.removeEventListener("cmdk-item-select", onCommandMenuSelect, true);
     window.removeEventListener("message", onFrameMessage);
     window.removeEventListener("message", onHostBridgeMessage);
@@ -1887,7 +1929,7 @@
 
   function onNativeRouteChange() {
     if (active) closePanel(false);
-    publishPendingThreadAssociation();
+    void publishPendingThreadAssociation();
   }
 
   const api = {
@@ -1916,6 +1958,8 @@
   window.addEventListener("hashchange", onNativeRouteChange);
   window.addEventListener("resize", scheduleRefresh);
   document.addEventListener("click", onDocumentClick, true);
+  document.addEventListener("click", markPendingThreadAssociationSubmitted, true);
+  document.addEventListener("keydown", markPendingThreadAssociationSubmitted, true);
   document.addEventListener("cmdk-item-select", onCommandMenuSelect, true);
   if (document.documentElement) mount();
   else document.addEventListener("DOMContentLoaded", mount, { once: true });

@@ -62,7 +62,7 @@ function parseHostRequest(payload, parseAutomationRequest) {
     request.action === "prefill-task-composer"
     && typeof request.instruction === "string"
     && request.instruction.length > 0
-    && request.instruction.length <= 1_024
+    && request.instruction.length <= 16_384
     && typeof request.skillName === "string"
     && /^[a-z0-9-]{1,100}$/i.test(request.skillName)
     && typeof request.skillDisplayName === "string"
@@ -71,6 +71,25 @@ function parseHostRequest(payload, parseAutomationRequest) {
     && typeof request.skillPath === "string"
     && request.skillPath.length > 0
     && request.skillPath.length <= 1_024
+  ) {
+    return { id, request, error: null };
+  }
+  if (
+    request.action === "confirm-task-conversation"
+    && typeof request.threadId === "string"
+    && request.threadId.length > 0
+    && request.threadId.length <= 240
+    && !/[\u0000-\u001f\u007f]/.test(request.threadId)
+    && typeof request.codexHostId === "string"
+    && request.codexHostId.length > 0
+    && request.codexHostId.length <= 240
+    && !/[\u0000-\u001f\u007f]/.test(request.codexHostId)
+    && typeof request.targetRoot === "string"
+    && request.targetRoot.length <= 4_096
+    && typeof request.identifier === "string"
+    && request.identifier.length > 0
+    && request.identifier.length <= 240
+    && !/[\u0000-\u001f\u007f]/.test(request.identifier)
   ) {
     return { id, request, error: null };
   }
@@ -135,6 +154,8 @@ export async function handleHostBindingPayload(params, handlers) {
       result = await handlers.runAutomation(parsed.request, params.executionContextId);
     } else if (parsed.request.action === "start-task-conversation") {
       result = await handlers.startConversation(parsed.request, params.executionContextId);
+    } else if (parsed.request.action === "confirm-task-conversation") {
+      result = await handlers.confirmConversation(parsed.request, params.executionContextId);
     } else {
       result = await handlers.prefill(parsed.request, params.executionContextId);
     }

@@ -37,12 +37,14 @@ test("the CDP bridge accepts local prefill, SSH conversation, and attachment act
   assert.match(source, /const hostBindingName = "__codexPanelHostV1"/);
   assert.match(runtimeSource, /request\.action === "ensure"/);
   assert.match(runtimeSource, /request\.action === "prefill-task-composer"/);
+  assert.match(runtimeSource, /request\.action === "confirm-task-conversation"/);
   assert.match(runtimeSource, /request\.action === "start-task-conversation"/);
   assert.match(runtimeSource, /request\.action === "open-attachment"/);
   assert.match(runtimeSource, /request\.action === "open-external"/);
-  assert.match(runtimeSource, /request\.instruction\.length <= 1_024/);
+  assert.match(runtimeSource, /request\.instruction\.length <= 16_384/);
   assert.match(runtimeSource, /request\.skillPath\.length <= 1_024/);
   assert.match(source, /function prefillTaskComposerViaCdp/);
+  assert.match(source, /async function confirmTaskConversationViaCdp/);
   assert.match(source, /async function startTaskConversationViaCdp/);
   assert.match(source, /function requestCodexAppServerViaCdp/);
   assert.match(source, /source: "panel_thread_create"/);
@@ -54,6 +56,8 @@ test("the CDP bridge accepts local prefill, SSH conversation, and attachment act
   assert.match(source, /button\[data-list-navigation-item="true"\]/);
   assert.match(source, /skill-mention-path/);
   assert.match(source, /cdp\.send\("Input\.insertText", \{ text: instruction \}\)/);
+  assert.match(source, /const stageDeadline = \(\) => Date\.now\(\) \+ 8_000/);
+  assert.match(source, /compact\(editor\.textContent\)\.includes\(compact\(instruction\)\)/);
   assert.match(source, /Runtime\.bindingCalled/);
   assert.match(source, /Page\.createIsolatedWorld/);
   assert.match(source, /Runtime\.addBinding", \{\s*name: hostBindingName,\s*executionContextId:/);

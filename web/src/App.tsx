@@ -217,9 +217,9 @@ interface UndoNotice {
 }
 
 interface PendingRemoteThreadClaim {
-  claimedTask: Task;
-  previousTask: Task;
   identity: CodexProjectIdentity;
+  projectId: string;
+  developmentContext: string;
 }
 
 type ProjectAutomationStatus = "ACTIVE" | "PAUSED";
@@ -639,7 +639,10 @@ function taskToDraft(task: Task): TaskDraft {
   };
 }
 
-function latestAiChatHandoff(comments: Comment[]): string | null {
+function latestAiChatHandoff(
+  comments: Comment[],
+  text: (chinese: string, english: string) => string,
+): string | null {
   const comment = [...comments].reverse().find((candidate) => (
     candidate.body.startsWith(AI_CHAT_HANDOFF_COMMENT_MARKER)
   ));
@@ -647,16 +650,35 @@ function latestAiChatHandoff(comments: Comment[]): string | null {
   const body = comment.body.slice(AI_CHAT_HANDOFF_COMMENT_MARKER.length).trim();
   return body.length <= NATIVE_HANDOFF_CONTEXT_LIMIT
     ? body
-    : `${body.slice(0, NATIVE_HANDOFF_CONTEXT_LIMIT).trimEnd()}\n\n[交接内容已截断，请使用 panelctl 读取完整评论]`;
+    : `${body.slice(0, NATIVE_HANDOFF_CONTEXT_LIMIT).trimEnd()}\n\n${text(
+      "[交接内容已截断，请使用 panelctl 读取完整评论]",
+      "[Conversation handoff truncated; use panelctl to read the full comment]",
+    )}`;
 }
 
-function issueThreadInstruction(task: Task, handoff: string | null): string {
+function issueThreadInstruction(
+  task: Task,
+  handoff: string | null,
+  text: (chinese: string, english: string) => string,
+): string {
   return [
-    `e-panel Continue work on issue ${task.identifier}: ${task.title}`,
-    `Before acting, use panelctl to read the latest issue content and every comment for ${task.identifier}. Treat the latest "AI 对话交接" comment as the handoff from the prior Codex conversation; newer issue content or comments take precedence.`,
+    text(
+      `处理 Panel 议题 ${task.identifier}：${task.title}`,
+      `Continue work on issue ${task.identifier}: ${task.title}`,
+    ),
+    text(
+      `开始前，使用 panelctl 读取 ${task.identifier} 的最新议题内容和全部评论。将最新的“AI 对话交接”评论视为上一段 Codex 对话的交接信息；更新的议题内容或评论优先。`,
+      `Before acting, use panelctl to read the latest issue content and every comment for ${task.identifier}. Treat the latest "AI conversation handoff" comment as the handoff from the prior Codex conversation; newer issue content or comments take precedence.`,
+    ),
     handoff
-      ? `Latest conversation handoff for immediate context:\n\n${handoff}`
-      : "No conversation handoff is currently recorded. Read the issue and comments directly before proceeding.",
+      ? text(
+          `最新对话交接，供立即参考：\n\n${handoff}`,
+          `Latest conversation handoff for immediate context:\n\n${handoff}`,
+        )
+      : text(
+          "当前没有记录对话交接。继续前请直接读取议题和评论。",
+          "No conversation handoff is currently recorded. Read the issue and comments directly before proceeding.",
+        ),
   ].join("\n\n");
 }
 
@@ -1701,10 +1723,7 @@ export function App() {
       }
 
       if (message.type === "panel:thread-prepared" && message.payload) {
-        const payload = message.payload as { taskId?: unknown };
-        if (typeof payload.taskId !== "string" || !pendingRemoteThreadClaimsRef.current.has(payload.taskId)) {
-          setOpeningThreadTaskId(null);
-        }
+        setOpeningThreadTaskId(null);
         return;
       }
 
@@ -1755,12 +1774,11 @@ export function App() {
           uncertain?: unknown;
         };
         if (typeof payload.taskId === "string" && pendingRemoteThreadClaimsRef.current.has(payload.taskId)) {
-          void compensateFailedRemoteThread(
-            payload.taskId,
-            payload.error,
-            payload.threadId,
-            payload.uncertain === true,
-          );
+          pendingRemoteThreadClaimsRef.current.delete(payload.taskId);
+          setOpeningThreadTaskId(null);
+          setActionError(typeof payload.error === "string"
+            ? payload.error
+            : textRef.current("无法在 Codex 中准备对话草稿。", "Could not prepare the Codex conversation draft."));
         } else {
           setOpeningThreadTaskId(null);
           setActionError(typeof payload.error === "string"
@@ -2964,18 +2982,33 @@ export function App() {
     return liveProject ? baseIdentity : null;
   }
 
-  function remoteTaskInstruction(task: Task, comments: Awaited<ReturnType<typeof listComments>>) {
+  function remoteTaskInstruction(
+    task: Task,
+    comments: Comment[],
+    text: (chinese: string, english: string) => string,
+  ) {
     const commentText = comments.length === 0
-      ? "（无评论）"
+      ? text("（无评论）", "(No comments)")
       : comments.map((comment) => (
-          `- ${comment.authorName}（${comment.createdAt}）\n${comment.body}`
+          `- ${comment.authorName} (${comment.createdAt})\n${comment.body}`
         )).join("\n\n");
     return [
-      `处理 Panel 议题 ${task.identifier}：${task.title}`,
-      `\n完整描述：\n${task.description || "（无描述）"}`,
-      `\n全部评论：\n${commentText}`,
-      `\n开发上下文：\n${JSON.stringify(task.developmentContext)}`,
-      "\n本地 Panel 控制器已负责认领、对话绑定、评论和状态写回。远程 worker 不得运行 taskctl。请只完成实现和必要验证，并返回改动、验证结果、执行结果和剩余风险。",
+      text(
+        `处理 Panel 议题 ${task.identifier}：${task.title}`,
+        `Continue work on Panel issue ${task.identifier}: ${task.title}`,
+      ),
+      text(
+        "发送这份草稿后，Panel 才会认领议题并绑定新的 SSH 对话。远程 worker 不得运行 panelctl；请使用下方快照完成实现和必要验证。",
+        "Panel claims the issue and binds the new SSH conversation only after this draft is sent. The remote worker must not run panelctl; use the snapshot below to implement and verify the issue.",
+      ),
+      text("完整描述：", "Full description:")
+        + `\n${task.description || text("（无描述）", "(No description)")}`,
+      `${text("全部评论：", "All comments:")}\n${commentText}`,
+      `${text("开发上下文：", "Development context:")}\n${JSON.stringify(task.developmentContext)}`,
+      text(
+        "请返回改动、验证结果、执行结果和剩余风险。",
+        "Return the changes, verification results, execution outcome, and remaining risks.",
+      ),
     ].join("\n");
   }
 
@@ -2997,7 +3030,9 @@ export function App() {
     if (!pending) return;
     const threadId = typeof rawThreadId === "string" ? rawThreadId.trim() : "";
     if (!threadId) {
-      await compensateFailedRemoteThread(taskId, textRef.current(
+      pendingRemoteThreadClaimsRef.current.delete(taskId);
+      setOpeningThreadTaskId(null);
+      setActionError(textRef.current(
         "Codex 没有返回新对话 ID。",
         "Codex did not return the new conversation ID.",
       ));
@@ -3005,10 +3040,24 @@ export function App() {
     }
     const binding: CodexThreadBinding = { threadId, ...pending.identity };
     try {
+      const latestTask = await getTask(taskId);
+      if (
+        latestTask.status !== "todo"
+        || latestTask.archivedAt !== null
+        || latestTask.threadId
+        || latestTask.threadBinding
+        || latestTask.projectId !== pending.projectId
+        || JSON.stringify(latestTask.developmentContext) !== pending.developmentContext
+      ) {
+        throw new Error(textRef.current(
+          "SSH 对话已创建，但议题已在其他位置认领或绑定，未覆盖该更新。",
+          "The SSH conversation was created, but the issue was claimed or bound elsewhere. That update was not overwritten.",
+        ));
+      }
       const boundTask = await moveTaskRequest(
-        pending.claimedTask,
+        latestTask,
         "in_progress",
-        pending.claimedTask.sortOrder,
+        latestTask.sortOrder,
         binding,
       );
       pendingRemoteThreadClaimsRef.current.delete(taskId);
@@ -3019,46 +3068,11 @@ export function App() {
         `${boundTask.identifier} is bound to the new SSH conversation.`,
       ));
     } catch (error) {
-      let recoveredTask: Task | null = null;
-      if (!(error instanceof ApiError && error.code === "VERSION_CONFLICT")) {
-        try {
-          const latest = await getTask(taskId);
-          const bindingWasSaved = latest.status === "in_progress"
-            && latest.projectId === pending.claimedTask.projectId
-            && latest.archivedAt === null
-            && latest.threadBinding?.threadId === binding.threadId
-            && latest.threadBinding.codexProjectId === binding.codexProjectId
-            && latest.threadBinding.codexProjectKind === binding.codexProjectKind
-            && latest.threadBinding.codexHostId === binding.codexHostId
-            && latest.threadBinding.workspacePath === binding.workspacePath;
-          if (bindingWasSaved) {
-            recoveredTask = latest;
-          } else if (
-            latest.version === pending.claimedTask.version
-            && latest.projectId === pending.claimedTask.projectId
-            && latest.status === "in_progress"
-            && latest.archivedAt === null
-            && latest.threadId === null
-            && latest.threadBinding === null
-          ) {
-            recoveredTask = await moveTaskRequest(
-              latest,
-              "blocked",
-              undefined,
-              binding,
-            );
-          }
-        } catch {}
-      }
       pendingRemoteThreadClaimsRef.current.delete(taskId);
       setOpeningThreadTaskId(null);
-      if (recoveredTask) {
-        updateTaskFromRemoteThread(recoveredTask);
-        if (recoveredTask.status === "in_progress") return;
-      }
       await addRemoteThreadFailureComment(taskId, textRef.current(
-        `已创建 SSH 对话 ${threadId}，但任务 binding 写入发生冲突或失败；未覆盖其他控制端的更新。`,
-        `SSH conversation ${threadId} was created, but saving the task binding conflicted or failed. No other controller update was overwritten.`,
+        `已创建 SSH 对话 ${threadId}，但认领或 binding 写入发生冲突或失败；未覆盖其他控制端的更新。`,
+        `SSH conversation ${threadId} was created, but claiming the issue or saving its binding conflicted or failed. No other controller update was overwritten.`,
       ));
       setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
         ? textRef.current(
@@ -3067,53 +3081,6 @@ export function App() {
         )
         : errorMessage(error));
     }
-  }
-
-  async function compensateFailedRemoteThread(
-    taskId: string,
-    rawError: unknown,
-    rawThreadId?: unknown,
-    uncertain = false,
-  ) {
-    const pending = pendingRemoteThreadClaimsRef.current.get(taskId);
-    if (!pending) return;
-    pendingRemoteThreadClaimsRef.current.delete(taskId);
-    const error = typeof rawError === "string"
-      ? rawError
-      : textRef.current("无法创建 Codex 对话。", "Could not create the Codex conversation.");
-    const threadId = typeof rawThreadId === "string" ? rawThreadId.trim() : "";
-    const binding = threadId ? { threadId, ...pending.identity } : null;
-    const status: TaskStatus = threadId || uncertain ? "blocked" : pending.previousTask.status;
-    await addRemoteThreadFailureComment(taskId, threadId
-      ? textRef.current(
-        `SSH 对话 ${threadId} 已创建，但后续确认失败：${error}`,
-        `SSH conversation ${threadId} was created, but follow-up confirmation failed: ${error}`,
-      )
-      : uncertain
-        ? textRef.current(
-          `创建 SSH 对话的结果不确定，任务已停止自动重试：${error}`,
-          `The SSH conversation result is uncertain, so automatic retry was stopped: ${error}`,
-        )
-        : textRef.current(
-          `创建 SSH 对话失败，任务已退回 ${pending.previousTask.status}：${error}`,
-          `Creating the SSH conversation failed. The task was returned to ${pending.previousTask.status}: ${error}`,
-        ));
-    try {
-      const compensated = await moveTaskRequest(
-        pending.claimedTask,
-        status,
-        pending.previousTask.sortOrder,
-        binding,
-      );
-      updateTaskFromRemoteThread(compensated);
-    } catch (moveError) {
-      if (!(moveError instanceof ApiError && moveError.code === "VERSION_CONFLICT")) {
-        setActionError(errorMessage(moveError));
-      }
-    } finally {
-      setOpeningThreadTaskId(null);
-    }
-    setActionError(error);
   }
 
   async function openRemoteTaskInThread(task: Task, baseIdentity: CodexProjectIdentity) {
@@ -3142,20 +3109,18 @@ export function App() {
             "The saved SSH remote project or host is not available.",
           ));
       }
-      const claimedTask = await moveTaskRequest(latestTask, "in_progress", undefined, null);
       pendingRemoteThreadClaimsRef.current.set(task.id, {
-        claimedTask,
-        previousTask: latestTask,
         identity,
+        projectId: latestTask.projectId,
+        developmentContext: JSON.stringify(latestTask.developmentContext),
       });
-      updateTaskFromRemoteThread(claimedTask);
       postEmbeddedHostMessage({
         type: "panel:create-thread",
         payload: {
           taskId: latestTask.id,
           identifier: latestTask.identifier,
           title: latestTask.title,
-          instruction: remoteTaskInstruction(latestTask, comments),
+          instruction: remoteTaskInstruction(latestTask, comments, textRef.current),
           codexProjectId: identity.codexProjectId,
           codexProjectKind: identity.codexProjectKind,
           codexHostId: identity.codexHostId,
@@ -3235,7 +3200,11 @@ export function App() {
 
     let instruction: string;
     try {
-      instruction = issueThreadInstruction(task, latestAiChatHandoff(await listComments(task.id)));
+      instruction = issueThreadInstruction(
+        task,
+        latestAiChatHandoff(await listComments(task.id), text),
+        text,
+      );
     } catch (error) {
       setOpeningThreadTaskId(null);
       setActionError(text(

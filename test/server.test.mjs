@@ -65,9 +65,11 @@ async function requestWithHost(baseUrl, host) {
 
 test("health and the default local project are available", async () => {
   let skillPath;
+  let nativeSkillPath;
   const baseUrl = await startServer(async (directory) => {
     skillPath = path.join(directory, "skills", "manage-panel", "SKILL.md");
-    return { skillPath };
+    nativeSkillPath = path.join(directory, ".agents", "skills", "manage-panel", "SKILL.md");
+    return { skillPath, nativeSkillPath };
   });
 
   const health = await request(baseUrl, "/health");
@@ -77,7 +79,7 @@ test("health and the default local project are available", async () => {
   const metadata = await request(baseUrl, "/api/meta");
   assert.equal(metadata.response.status, 200);
   assert.deepEqual(metadata.body, {
-    managePanelSkillPath: skillPath,
+    managePanelSkillPath: nativeSkillPath,
     capabilities: { localAiChat: true },
   });
 
