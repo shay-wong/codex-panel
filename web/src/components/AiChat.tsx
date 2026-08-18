@@ -14,7 +14,7 @@ import {
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { taskboardStorage } from "../storage";
+import { panelStorage } from "../storage";
 import { useTaskboardI18n } from "../i18n";
 import {
   createAiChatThread,
@@ -25,6 +25,7 @@ import {
   interruptAiChatRun,
   compactAiChatThread,
   listAiChatThreads,
+  listTasks,
   rebindAiChatComposerReferences,
   startAiChatComposerTurn,
   startAiChatTurn,
@@ -68,10 +69,12 @@ import type {
   ComposerSkillCandidate,
   ComposerSlashActionCandidate,
   ComposerTrigger,
+  Task,
 } from "../types";
 import { COMPOSER_CONTRACT_VERSION } from "../types";
-import { LinearIcon, type LinearIconName } from "./LinearIcon";
-import { TaskboardIcon } from "./TaskboardIcon";
+import { STATUS_DETAILS } from "./BoardColumn";
+import { LinearIcon, LinearStatusIcon, type LinearIconName } from "./LinearIcon";
+import { PanelIcon } from "./PanelIcon";
 
 export type AiChatOpenThreadRequest = {
   threadId: string;
@@ -100,7 +103,7 @@ interface AiChatProps {
   openThreadRequest?: AiChatOpenThreadRequest | null;
 }
 
-type MenuName = "model" | "model-list" | "effort-list" | "sandbox" | null;
+type MenuName = "issue" | "model" | "model-list" | "effort-list" | "sandbox" | null;
 type ComposerDraftNode =
   | ComposerDocument["nodes"][number]
   | ComposerPersistedDocument["nodes"][number];
@@ -173,8 +176,8 @@ type PanelResizeSession = {
   captureTarget: HTMLElement;
 };
 
-const LAST_THREAD_KEY = "taskboard.aiChat.lastThreadId";
-const PANEL_GEOMETRY_KEY = "taskboard.aiChat.panelGeometry";
+const LAST_THREAD_KEY = "panel.aiChat.lastThreadId";
+const PANEL_GEOMETRY_KEY = "panel.aiChat.panelGeometry";
 const PANEL_EDGE_GAP = 8;
 const PANEL_MIN_WIDTH = 420;
 const PANEL_MAX_WIDTH = 960;
@@ -185,7 +188,7 @@ const PANEL_DEFAULT_GEOMETRY: PanelGeometry = {
 };
 const SKILL_MARKER = AI_CHAT_SKILL_MARKER;
 const SKILL_LINK_PREFIX = "#ai-chat-skill-";
-const COMPOSER_FRAGMENT_MIME = "application/x-codex-taskboard-composer-fragment";
+const COMPOSER_FRAGMENT_MIME = "application/x-codex-panel-composer-fragment";
 const COMPOSER_HTML_BLOCKS = new Set([
   "ADDRESS",
   "ARTICLE",
@@ -224,7 +227,7 @@ function clampPanelGeometry(geometry: PanelGeometry): PanelGeometry {
 }
 
 function loadPanelGeometry(): PanelGeometry {
-  const stored = taskboardStorage.getItem(PANEL_GEOMETRY_KEY);
+  const stored = panelStorage.getItem(PANEL_GEOMETRY_KEY);
   if (!stored) return clampPanelGeometry(PANEL_DEFAULT_GEOMETRY);
   try {
     const geometry = JSON.parse(stored) as PanelGeometry;
@@ -1297,7 +1300,7 @@ export function AiChat({
   const [menu, setMenu] = useState<MenuName>(null);
   const [threads, setThreads] = useState<AiChatThread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
-    () => taskboardStorage.getItem(LAST_THREAD_KEY),
+    () => panelStorage.getItem(LAST_THREAD_KEY),
   );
   const [snapshot, setSnapshot] = useState<AiChatThreadSnapshot | null>(null);
   const [draftOrigin, setDraftOrigin] = useState<DraftThreadOrigin | null>(null);
@@ -1328,6 +1331,12 @@ export function AiChat({
   const [draftEffort, setDraftEffort] = useState("");
   const [draftSandbox, setDraftSandbox] = useState<AiChatSandbox>("workspace-write");
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [issueSaving, setIssueSaving] = useState(false);
+  const [issueSearch, setIssueSearch] = useState("");
+  const [issueTasks, setIssueTasks] = useState<Task[]>([]);
+  const [issueTasksProjectId, setIssueTasksProjectId] = useState<string | null>(null);
+  const [issueTasksLoading, setIssueTasksLoading] = useState(false);
+  const [issueTasksError, setIssueTasksError] = useState<AiChatError | null>(null);
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [panelGeometry, setPanelGeometry] = useState<PanelGeometry | null>(
@@ -1360,8 +1369,8 @@ export function AiChat({
 
   useEffect(() => {
     selectedThreadRef.current = selectedThreadId;
-    if (selectedThreadId) taskboardStorage.setItem(LAST_THREAD_KEY, selectedThreadId);
-    else taskboardStorage.removeItem(LAST_THREAD_KEY);
+    if (selectedThreadId) panelStorage.setItem(LAST_THREAD_KEY, selectedThreadId);
+    else panelStorage.removeItem(LAST_THREAD_KEY);
   }, [selectedThreadId]);
 
   useEffect(() => {
@@ -1380,7 +1389,7 @@ export function AiChat({
         session.captureTarget.releasePointerCapture(session.pointerId);
       }
       if (window.innerWidth > 719) {
-        taskboardStorage.setItem(
+        panelStorage.setItem(
           PANEL_GEOMETRY_KEY,
           JSON.stringify(session.geometry),
         );
@@ -1624,6 +1633,57 @@ export function AiChat({
     ?? draftOrigin?.projectId
     ?? projectId;
   const activeCatalog = catalogLoadedProjectId === catalogProjectId ? catalog : null;
+  const normalizedIssueSearch = issueSearch.trim().toLocaleLowerCase();
+  const issueOptions = useMemo(() => {
+    const originProjectId = snapshot?.thread.origin.projectId;
+    if (!originProjectId || issueTasksProjectId !== originProjectId) return [];
+    return issueTasks
+      .filter((task) => (
+        task.projectId === originProjectId
+        && task.archivedAt === null
+        && (
+          !normalizedIssueSearch
+          || task.identifier.toLocaleLowerCase().includes(normalizedIssueSearch)
+          || task.title.toLocaleLowerCase().includes(normalizedIssueSearch)
+        )
+      ))
+      .sort((left, right) => left.identifier.localeCompare(
+        right.identifier,
+        undefined,
+        { numeric: true },
+      ));
+  }, [issueTasks, issueTasksProjectId, normalizedIssueSearch, snapshot?.thread.origin.projectId]);
+
+  useEffect(() => {
+    if (menu !== "issue") setIssueSearch("");
+  }, [menu]);
+
+  useEffect(() => {
+    const originProjectId = snapshot?.thread.origin.projectId;
+    if (menu !== "issue" || !originProjectId) return;
+    const controller = new AbortController();
+    setIssueTasks([]);
+    setIssueTasksProjectId(null);
+    setIssueTasksLoading(true);
+    setIssueTasksError(null);
+    void listTasks(originProjectId, controller.signal).then(
+      (nextTasks) => {
+        if (controller.signal.aborted) return;
+        setIssueTasks(nextTasks);
+        setIssueTasksProjectId(originProjectId);
+        setIssueTasksLoading(false);
+      },
+      (nextError) => {
+        if (controller.signal.aborted) return;
+        setIssueTasks([]);
+        setIssueTasksProjectId(originProjectId);
+        setIssueTasksLoading(false);
+        setIssueTasksError(messageFor(nextError));
+      },
+    );
+    return () => controller.abort();
+  }, [menu, snapshot?.thread.origin.projectId]);
+
   useEffect(() => {
     if (!available || !catalogProjectId) {
       setCatalog(null);
@@ -2098,6 +2158,24 @@ export function AiChat({
       setError(messageFor(nextError));
     } finally {
       setDeletingThreadId(null);
+    }
+  }
+
+  async function bindThreadToIssue(nextIssueId: string | null) {
+    const previousThread = snapshot?.thread;
+    if (!previousThread || previousThread.status === "running") return;
+    const threadId = previousThread.id;
+    setMenu(null);
+    setIssueSaving(true);
+    try {
+      const thread = await updateAiChatThread(threadId, { issueId: nextIssueId });
+      setSnapshot((current) => patchAiChatSnapshot(current, threadId, thread));
+      replaceThread(thread);
+      if (selectedThreadRef.current === threadId) setError(null);
+    } catch (nextError) {
+      if (selectedThreadRef.current === threadId) setError(messageFor(nextError));
+    } finally {
+      setIssueSaving(false);
     }
   }
 
@@ -2889,6 +2967,105 @@ export function AiChat({
                 "Select a chat or start one in the current project",
               )}</span>
             </div>
+            {snapshot?.thread && (
+              <div className="ai-chat-menu-wrap ai-chat-issue-menu-wrap">
+                <button
+                  className="ai-chat-issue-trigger"
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={menu === "issue"}
+                  aria-label={snapshot.thread.origin.issueIdentifier
+                    ? text(
+                      `关联议题 ${snapshot.thread.origin.issueIdentifier}`,
+                      `Linked issue ${snapshot.thread.origin.issueIdentifier}`,
+                    )
+                    : text("关联议题", "Link issue")}
+                  title={snapshot.thread.status === "running"
+                    ? text("Codex 运行时不能更改关联议题", "The linked issue cannot be changed while Codex is running")
+                    : text("关联议题", "Link issue")}
+                  disabled={snapshot.thread.status === "running" || issueSaving}
+                  onClick={() => {
+                    setHistoryOpen(false);
+                    setMenu((current) => current === "issue" ? null : "issue");
+                  }}
+                >
+                  <LinearIcon name="link" />
+                  <span>{snapshot.thread.origin.issueIdentifier ?? text("关联议题", "Link issue")}</span>
+                  <LinearIcon name="chevronDown" />
+                </button>
+                {menu === "issue" && (
+                  <div
+                    className="ai-chat-option-menu ai-chat-issue-menu"
+                    role="menu"
+                    aria-label={text("关联议题", "Link issue")}
+                  >
+                    <label className="ai-chat-issue-search">
+                      <LinearIcon name="search" />
+                      <input
+                        autoFocus
+                        type="search"
+                        value={issueSearch}
+                        placeholder={text("搜索议题", "Search issues")}
+                        aria-label={text("搜索议题", "Search issues")}
+                        onChange={(event) => setIssueSearch(event.target.value)}
+                      />
+                    </label>
+                    <div className="ai-chat-issue-options">
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={!snapshot.thread.origin.issueId}
+                        onClick={() => void bindThreadToIssue(null)}
+                      >
+                        <span className="ai-chat-issue-option-icon" aria-hidden="true">
+                          <LinearIcon name="linkOff" />
+                        </span>
+                        <span className="ai-chat-issue-option-copy">
+                          <strong>{text("不关联议题", "No linked issue")}</strong>
+                          <small>{text("仅保留项目关联", "Keep only the project link")}</small>
+                        </span>
+                        {!snapshot.thread.origin.issueId && <LinearIcon name="check" />}
+                      </button>
+                      {issueOptions.map((task) => (
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={task.id === snapshot.thread.origin.issueId}
+                          key={task.id}
+                          onClick={() => void bindThreadToIssue(task.id)}
+                        >
+                          <span
+                            className={`ai-chat-issue-option-icon status-icon-${STATUS_DETAILS[task.status].tone}`}
+                            aria-hidden="true"
+                          >
+                            <LinearStatusIcon status={task.status} />
+                          </span>
+                          <span className="ai-chat-issue-option-copy">
+                            <strong>{task.identifier}</strong>
+                            <small>{task.title}</small>
+                          </span>
+                          {task.id === snapshot.thread.origin.issueId && <LinearIcon name="check" />}
+                        </button>
+                      ))}
+                      {issueTasksLoading && <p>{text("正在加载议题...", "Loading issues...")}</p>}
+                      {!issueTasksLoading && issueTasksError && (
+                        <p role="alert">
+                          {text("无法加载议题：", "Could not load issues: ")}
+                          {issueTasksError === AI_CHAT_UNAVAILABLE_ERROR
+                            ? text("服务暂时不可用。", "The service is temporarily unavailable.")
+                            : issueTasksError}
+                        </p>
+                      )}
+                      {!issueTasksLoading && !issueTasksError && issueOptions.length === 0 && (
+                        <p>{normalizedIssueSearch
+                          ? text("没有匹配的议题", "No matching issues")
+                          : text("此项目还没有议题", "This project has no issues")}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             <button
               type="button"
               aria-label={text("对话历史", "Chat history")}
@@ -3479,7 +3656,7 @@ export function AiChat({
           title={text("AI 对话", "AI chat")}
           onClick={() => setPanelOpen(true)}
         >
-          <TaskboardIcon name="aiLauncher" />
+          <PanelIcon name="aiLauncher" />
           {launcherState !== "idle" && <span className="ai-chat-launcher-state" aria-hidden="true" />}
         </button>
       )}

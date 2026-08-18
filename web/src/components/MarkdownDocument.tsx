@@ -500,7 +500,7 @@ export function MarkdownDocument({
               <a
                 {...props}
                 className={[className, isRenderedLink ? "issue-reference-link" : ""].filter(Boolean).join(" ") || undefined}
-                data-taskboard-inline-media-markdown={isRenderedLink || isComposerReference ? markdown : undefined}
+                data-panel-inline-media-markdown={isRenderedLink || isComposerReference ? markdown : undefined}
                 href={href}
                 target="_blank"
                 rel="noreferrer"
@@ -523,7 +523,7 @@ export function MarkdownDocument({
             return (
               <img
                 {...props}
-                data-taskboard-inline-media-markdown={selfContainedMarkdown}
+                data-panel-inline-media-markdown={selfContainedMarkdown}
               />
             );
           },

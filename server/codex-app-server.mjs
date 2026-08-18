@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
+import { withoutPanelLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { executableCommand } from "../shared/executable-command.mjs";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -18,7 +18,7 @@ export class CodexAppServerError extends Error {
 export class CodexAppServer {
   constructor({ executable, processEnv = process.env, requestTimeoutMs } = {}) {
     this.executable = executable;
-    this.processEnv = withoutTaskboardLauncherEnvironment(processEnv);
+    this.processEnv = withoutPanelLauncherEnvironment(processEnv);
     this.requestTimeoutMs = requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.child = null;
     this.starting = null;
@@ -124,9 +124,9 @@ export class CodexAppServer {
       child.once("spawn", () => {
         this.#sendRequest("initialize", {
           clientInfo: {
-            name: "codex-taskboard",
-            title: "Codex Taskboard",
-            version: "1.0.1",
+            name: "codex-panel",
+            title: "Codex Panel",
+            version: "0.1.0",
           },
           capabilities: {
             experimentalApi: true,

@@ -345,7 +345,10 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.match(webApp, /skillPath: managePanelSkillPath/);
   assert.match(webApp, /instruction,/);
   assert.match(webApp, /type: "panel:create-thread"/);
-  assert.match(webApp, /type: "panel:open-thread", payload: \{ threadId \}/);
+  assert.match(webApp, /type: "panel:open-thread",\s*payload: binding/);
+  assert.match(source, /await waitForRemoteProject\(requestedProjectId, codexHostId, targetRoot\)/);
+  assert.match(source, /type: "panel:thread-created",\s*payload: \{ taskId, threadId: startedThreadId \}/);
+  assert.match(source, /type: "panel:thread-prepared", payload: \{ taskId \}/);
 });
 
 test("the standalone web page opens linked Codex tasks through the app deep link", () => {
@@ -480,7 +483,8 @@ test("the standalone web page opens unlinked issues as prefilled empty Codex tas
 });
 
 test("host context captures all Codex projects even when the sidebar section is collapsed", () => {
-  assert.match(source, /function readCodexProjects\(\)/);
+  assert.match(source, /function readCodexProjects\(metadata = codexProjectMetadata\)/);
+  assert.match(source, /projectKind: "remote", workspacePath, hostId/);
   assert.match(source, /\[data-app-action-sidebar-project-row\]/);
   assert.match(source, /data-app-action-sidebar-project-id/);
   assert.match(source, /function findProjectsSection\(\)/);

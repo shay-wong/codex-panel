@@ -17,7 +17,7 @@ import {
   isSupportedModelEffort,
   type AutomationModel,
   type AutomationReasoningEffort,
-} from "../../shared/taskboard-automation-options.mjs";
+} from "../../shared/panel-automation-options.mjs";
 import {
   ApiError,
   addTaskRelation,
@@ -35,9 +35,9 @@ import {
   getHostRuntime,
   getJiraConnection,
   getTask,
-  getTaskboardRevision,
+  getPanelRevision,
   getWorkflowWorkspace,
-  getTaskboardMetadata,
+  getPanelMetadata,
   listArchivedTasks,
   listDevelopmentContexts,
   listDeviceWorkspaces,
@@ -46,9 +46,8 @@ import {
   listTasks,
   moveTask as moveTaskRequest,
   publishHostRuntime,
-  rebindAiChatComposerReferences,
   removeTaskRelation,
-  resolveTaskboardUrl,
+  resolvePanelUrl,
   restoreTask as restoreTaskRequest,
   setApiText,
   setCurrentUserActor,
@@ -69,14 +68,12 @@ import { IssueListView } from "./components/IssueListView";
 import { JiraConnectionDialog } from "./components/JiraConnectionDialog";
 import { OtherTasksPanel } from "./components/OtherTasksPanel";
 import {
-  createInlineMediaSegments,
-  inlineMediaComposerReferences,
   resolveInlineMediaMarkdown,
   type PendingInlineImage,
 } from "./components/InlineMediaComposer";
 import { LinearIcon } from "./components/LinearIcon";
 import { ProjectAutomationMenu } from "./components/ProjectAutomationMenu";
-import { TaskboardIcon } from "./components/TaskboardIcon";
+import { PanelIcon } from "./components/PanelIcon";
 import { TaskContextMenu } from "./components/TaskContextMenu";
 import { TaskDetail } from "./components/TaskDetail";
 import {
@@ -85,7 +82,7 @@ import {
   type NewTaskEditorDraft,
 } from "./components/TaskEditor";
 import { TaskFilterMenu } from "./components/TaskFilterMenu";
-import { taskboardStorage } from "./storage";
+import { panelStorage } from "./storage";
 import {
   installEmbeddedExternalLinkHandler,
   postEmbeddedHostMessage,
@@ -103,7 +100,6 @@ import {
   type OtherTaskTab,
 } from "./issueBoardStatuses";
 import {
-  buildPersistedTaskComposerDocument,
   normalizeCodexThreadId,
   taskCardPresentation,
   type TaskCardPresentation,
@@ -118,21 +114,22 @@ import {
   writeTaskFilters,
 } from "./taskFilters";
 import {
-  COMPOSER_CONTRACT_VERSION,
   TASK_STATUSES,
   type ActorIdentity,
   type AiChatThread,
   type CodexProjectIdentity,
   type CodexThreadBinding,
+  type Comment,
   type DevelopmentScan,
   type HostContext,
   type IssueRelationType,
   type JiraConnection,
   type Project,
   type Task,
-  type TaskboardMetadata,
+  type PanelMetadata,
   type TaskDraft,
   type TaskStatus,
+  type TaskUpdate,
   type WorkflowOption,
 } from "./types";
 import {
@@ -147,9 +144,12 @@ import { createRevisionPoller, getRevisionPollingInterval } from "./revisionPoll
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
 type BoardView = "dashboard" | "issues" | "list" | "gantt" | "workflow";
+type ListLayout = "horizontal" | "vertical";
+type ListCollapseMode = "always-expanded" | "remember" | "always-collapsed";
+type ListCollapseModes = Record<TaskStatus, ListCollapseMode>;
 type DetailSourceScroll =
   | { projectId: string; view: "issues"; status: TaskStatus; scrollTop: number }
-  | { projectId: string; view: "list"; scrollTop: number };
+  | { projectId: string; view: "list"; scrollLeft: number; scrollTop: number };
 type GanttZoom = "day" | "week" | "month";
 type BoardCardDisplay = { cover: boolean; body: boolean };
 type ActionError = string | readonly [string, string];
@@ -167,6 +167,8 @@ type TasksLoadError = {
 type LoadError = ProjectLoadError | TasksLoadError;
 const SHOW_WORKFLOW_BOARD_ENTRY = false;
 const GANTT_ZOOM_OPTIONS: GanttZoom[] = ["day", "week", "month"];
+const AI_CHAT_HANDOFF_COMMENT_MARKER = "<!-- codex-panel:ai-chat-handoff:v1 -->";
+const NATIVE_HANDOFF_CONTEXT_LIMIT = 12_000;
 
 const AiChat = lazy(() => import("./components/AiChat").then((module) => ({
   default: module.AiChat,
@@ -252,7 +254,7 @@ type ProjectAutomationOptions = Pick<
 >;
 
 interface AutomationRequestContext {
-  taskboardProjectId: string;
+  panelProjectId: string;
   codexProjectId: string;
   codexProjectKind: "local" | "remote";
   codexHostId: string;
@@ -313,14 +315,17 @@ const DEFAULT_USER_ACTOR: ActorIdentity = {
 };
 
 const GLOBAL_PROJECT_ID = "local";
-const RECENT_PROJECT_IDS_KEY = "taskboard.recentProjectIds.v1";
-const PROJECT_VIEW_KEY_PREFIX = "taskboard.project-view.v1.";
-const DEVICE_WORKSPACE_PATHS_KEY = "taskboard.deviceWorkspacePaths.v1";
-const PROJECT_CODEX_IDENTITIES_KEY = "taskboard.projectCodexIdentities.v1";
-const PROJECT_AUTOMATIONS_KEY = "taskboard.projectAutomations.v1";
-const BOARD_CARD_DISPLAY_KEY = "taskboard.board-card-display.v1";
-const ISSUE_READ_KEY_PREFIX = "taskboard.issue-read.v1";
-const FIRST_USE_COMPLETE_KEY = "taskboard.first-use-complete.v1";
+const RECENT_PROJECT_IDS_KEY = "panel.recentProjectIds.v1";
+const PROJECT_VIEW_KEY_PREFIX = "panel.project-view.v1.";
+const PROJECT_LIST_LAYOUT_KEY_PREFIX = "panel.project-list-layout.v1.";
+const PROJECT_LIST_COLLAPSE_MODES_KEY_PREFIX = "panel.project-list-collapse-modes.v2.";
+const PROJECT_LIST_COLLAPSED_STATUSES_KEY_PREFIX = "panel.project-list-collapsed-statuses.v1.";
+const DEVICE_WORKSPACE_PATHS_KEY = "panel.deviceWorkspacePaths.v1";
+const PROJECT_CODEX_IDENTITIES_KEY = "panel.projectCodexIdentities.v1";
+const PROJECT_AUTOMATIONS_KEY = "panel.projectAutomations.v1";
+const BOARD_CARD_DISPLAY_KEY = "panel.board-card-display.v1";
+const ISSUE_READ_KEY_PREFIX = "panel.issue-read.v1";
+const FIRST_USE_COMPLETE_KEY = "panel.first-use-complete.v1";
 const DEFAULT_AUTOMATION_OPTIONS = {
   enabledByUser: false,
   quotaAware: false,
@@ -331,7 +336,7 @@ const DEFAULT_AUTOMATION_OPTIONS = {
 
 function readIssueActivityKeys(storageKey: string): Record<string, string> {
   try {
-    const value = JSON.parse(taskboardStorage.getItem(storageKey) ?? "{}");
+    const value = JSON.parse(panelStorage.getItem(storageKey) ?? "{}");
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => (
       typeof entry[0] === "string" && typeof entry[1] === "string"
@@ -342,15 +347,82 @@ function readIssueActivityKeys(storageKey: string): Record<string, string> {
 }
 
 function readProjectBoardView(projectId: string): BoardView {
-  const view = taskboardStorage.getItem(`${PROJECT_VIEW_KEY_PREFIX}${projectId}`);
+  const view = panelStorage.getItem(`${PROJECT_VIEW_KEY_PREFIX}${projectId}`);
   return view === "dashboard" || view === "list" || view === "gantt" || view === "issues"
     ? view
     : "issues";
 }
 
+function readProjectListLayout(projectId: string): ListLayout {
+  return panelStorage.getItem(`${PROJECT_LIST_LAYOUT_KEY_PREFIX}${projectId}`) === "vertical"
+    ? "vertical"
+    : "horizontal";
+}
+
+function defaultListCollapseModes(): ListCollapseModes {
+  return Object.fromEntries(
+    TASK_STATUSES.map((status) => [status, "remember"]),
+  ) as ListCollapseModes;
+}
+
+function isListCollapseMode(value: unknown): value is ListCollapseMode {
+  return value === "always-expanded" || value === "remember" || value === "always-collapsed";
+}
+
+function readProjectListCollapseModes(projectId: string): ListCollapseModes {
+  const modes = defaultListCollapseModes();
+  try {
+    const value = JSON.parse(
+      panelStorage.getItem(`${PROJECT_LIST_COLLAPSE_MODES_KEY_PREFIX}${projectId}`) ?? "{}",
+    );
+    if (!value || typeof value !== "object" || Array.isArray(value)) return modes;
+    for (const status of TASK_STATUSES) {
+      if (isListCollapseMode(value[status])) modes[status] = value[status];
+    }
+  } catch {}
+  return modes;
+}
+
+function writeProjectListCollapseModes(projectId: string, modes: ListCollapseModes) {
+  panelStorage.setItem(
+    `${PROJECT_LIST_COLLAPSE_MODES_KEY_PREFIX}${projectId}`,
+    JSON.stringify(modes),
+  );
+}
+
+function readProjectListCollapsedStatuses(projectId: string): TaskStatus[] {
+  try {
+    const value = JSON.parse(
+      panelStorage.getItem(`${PROJECT_LIST_COLLAPSED_STATUSES_KEY_PREFIX}${projectId}`) ?? "[]",
+    );
+    if (!Array.isArray(value)) return [];
+    return TASK_STATUSES.filter((status) => value.includes(status));
+  } catch {
+    return [];
+  }
+}
+
+function writeProjectListCollapsedStatuses(projectId: string, statuses: ReadonlySet<TaskStatus>) {
+  panelStorage.setItem(
+    `${PROJECT_LIST_COLLAPSED_STATUSES_KEY_PREFIX}${projectId}`,
+    JSON.stringify(TASK_STATUSES.filter((status) => statuses.has(status))),
+  );
+}
+
+function initialProjectListCollapsedStatuses(
+  projectId: string,
+  modes: ListCollapseModes,
+): Set<TaskStatus> {
+  const rememberedStatuses = new Set(readProjectListCollapsedStatuses(projectId));
+  return new Set(TASK_STATUSES.filter((status) => (
+    modes[status] === "always-collapsed"
+    || (modes[status] === "remember" && rememberedStatuses.has(status))
+  )));
+}
+
 function readBoardCardDisplay(): BoardCardDisplay {
   try {
-    const value = JSON.parse(taskboardStorage.getItem(BOARD_CARD_DISPLAY_KEY) ?? "{}");
+    const value = JSON.parse(panelStorage.getItem(BOARD_CARD_DISPLAY_KEY) ?? "{}");
     return {
       cover: value.cover !== false,
       body: value.body === true,
@@ -362,7 +434,7 @@ function readBoardCardDisplay(): BoardCardDisplay {
 
 function readRecentProjectIds(): string[] {
   try {
-    const value = JSON.parse(taskboardStorage.getItem(RECENT_PROJECT_IDS_KEY) ?? "[]");
+    const value = JSON.parse(panelStorage.getItem(RECENT_PROJECT_IDS_KEY) ?? "[]");
     return Array.isArray(value)
       ? value.filter((projectId): projectId is string => typeof projectId === "string" && projectId.length > 0)
       : [];
@@ -396,14 +468,14 @@ function isTheme(value: unknown): value is Theme {
 function getInitialTheme(): Theme {
   const fromQuery = new URLSearchParams(window.location.search).get("theme");
   if (isTheme(fromQuery)) return fromQuery;
-  const stored = taskboardStorage.getItem("taskboard.theme");
+  const stored = panelStorage.getItem("panel.theme");
   if (isTheme(stored)) return stored;
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 function readDeviceWorkspacePaths(): Record<string, string> {
   try {
-    const value = JSON.parse(taskboardStorage.getItem(DEVICE_WORKSPACE_PATHS_KEY) ?? "{}");
+    const value = JSON.parse(panelStorage.getItem(DEVICE_WORKSPACE_PATHS_KEY) ?? "{}");
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => (
       typeof entry[1] === "string" && entry[1].trim().length > 0
@@ -415,7 +487,7 @@ function readDeviceWorkspacePaths(): Record<string, string> {
 
 function readProjectCodexIdentities(): Record<string, CodexProjectIdentity> {
   try {
-    const value = JSON.parse(taskboardStorage.getItem(PROJECT_CODEX_IDENTITIES_KEY) ?? "{}");
+    const value = JSON.parse(panelStorage.getItem(PROJECT_CODEX_IDENTITIES_KEY) ?? "{}");
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, CodexProjectIdentity] => {
       const identity = entry[1] as Partial<CodexProjectIdentity> | null;
@@ -434,7 +506,7 @@ function readProjectCodexIdentities(): Record<string, CodexProjectIdentity> {
 
 function readProjectAutomations(): ProjectAutomations {
   try {
-    const value = JSON.parse(taskboardStorage.getItem(PROJECT_AUTOMATIONS_KEY) ?? "{}");
+    const value = JSON.parse(panelStorage.getItem(PROJECT_AUTOMATIONS_KEY) ?? "{}");
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     const result: ProjectAutomations = {};
     for (const [projectId, record] of Object.entries(value)) {
@@ -537,7 +609,7 @@ function isAutomationHostItem(value: unknown): value is AutomationHostItem {
   );
 }
 
-function isLocalTaskboardOrigin(origin: string): boolean {
+function isLocalPanelOrigin(origin: string): boolean {
   try {
     const { protocol, hostname } = new URL(origin);
     return (protocol === "http:" || protocol === "https:")
@@ -567,6 +639,27 @@ function taskToDraft(task: Task): TaskDraft {
   };
 }
 
+function latestAiChatHandoff(comments: Comment[]): string | null {
+  const comment = [...comments].reverse().find((candidate) => (
+    candidate.body.startsWith(AI_CHAT_HANDOFF_COMMENT_MARKER)
+  ));
+  if (!comment) return null;
+  const body = comment.body.slice(AI_CHAT_HANDOFF_COMMENT_MARKER.length).trim();
+  return body.length <= NATIVE_HANDOFF_CONTEXT_LIMIT
+    ? body
+    : `${body.slice(0, NATIVE_HANDOFF_CONTEXT_LIMIT).trimEnd()}\n\n[交接内容已截断，请使用 panelctl 读取完整评论]`;
+}
+
+function issueThreadInstruction(task: Task, handoff: string | null): string {
+  return [
+    `e-panel Continue work on issue ${task.identifier}: ${task.title}`,
+    `Before acting, use panelctl to read the latest issue content and every comment for ${task.identifier}. Treat the latest "AI 对话交接" comment as the handoff from the prior Codex conversation; newer issue content or comments take precedence.`,
+    handoff
+      ? `Latest conversation handoff for immediate context:\n\n${handoff}`
+      : "No conversation handoff is currently recorded. Read the issue and comments directly before proceeding.",
+  ].join("\n\n");
+}
+
 interface LocalRealtimeSyncProps {
   selectedProjectId: string;
   detailTaskId: string | null;
@@ -592,7 +685,7 @@ function LocalRealtimeSync({
   setAttachmentsRevision,
 }: LocalRealtimeSyncProps) {
   useEffect(() => {
-    const source = new EventSource(resolveTaskboardUrl("/api/events"));
+    const source = new EventSource(resolvePanelUrl("/api/events"));
     let refreshTimer: number | undefined;
     let refreshProjectsPending = false;
     let refreshTasksPending = false;
@@ -703,8 +796,8 @@ export function App() {
   const [embeddedFrameChallenge, setEmbeddedFrameChallengeState] = useState("");
   const [developmentScan, setDevelopmentScan] = useState<DevelopmentScan>({ workspacePath: null, contexts: [] });
   const [developmentScanLoading, setDevelopmentScanLoading] = useState(false);
-  const [manageTaskboardSkillPath, setManageTaskboardSkillPath] = useState("");
-  const [taskboardMetadata, setTaskboardMetadata] = useState<TaskboardMetadata | null>(null);
+  const [managePanelSkillPath, setManagePanelSkillPath] = useState("");
+  const [panelMetadata, setPanelMetadata] = useState<PanelMetadata | null>(null);
   const [localAiChatAvailable, setLocalAiChatAvailable] = useState(false);
   const [aiImportReadyProjectId, setAiImportReadyProjectId] = useState<string | null>(null);
   const [aiThreads, setAiThreads] = useState<AiChatThread[]>([]);
@@ -739,6 +832,13 @@ export function App() {
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState(readTaskFilters);
   const [boardView, setBoardView] = useState<BoardView>(() => readProjectBoardView(initialProjectId));
+  const [listLayout, setListLayout] = useState<ListLayout>(() => readProjectListLayout(initialProjectId));
+  const [listCollapseModes, setListCollapseModes] = useState<ListCollapseModes>(
+    () => readProjectListCollapseModes(initialProjectId),
+  );
+  const [listCollapsedStatuses, setListCollapsedStatuses] = useState<Set<TaskStatus>>(
+    () => initialProjectListCollapsedStatuses(initialProjectId, listCollapseModes),
+  );
   const [boardCardDisplay, setBoardCardDisplay] = useState<BoardCardDisplay>(readBoardCardDisplay);
   const [dashboardSummaryAnimatedProjectId, setDashboardSummaryAnimatedProjectId] = useState<string | null>(null);
   const [ganttZoom, setGanttZoom] = useState<GanttZoom>("week");
@@ -773,7 +873,7 @@ export function App() {
   const [openingProjectId, setOpeningProjectId] = useState<string | null>(null);
   const [openingThreadTaskId, setOpeningThreadTaskId] = useState<string | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(
-    () => taskboardStorage.getItem(FIRST_USE_COMPLETE_KEY) === null,
+    () => panelStorage.getItem(FIRST_USE_COMPLETE_KEY) === null,
   );
   const [projectContextMenu, setProjectContextMenu] = useState<ProjectContextMenuState | null>(null);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
@@ -801,12 +901,12 @@ export function App() {
   const undoInFlightRef = useRef(false);
   const dragRegionRef = useRef<HTMLDivElement>(null);
   const issueListRef = useRef<HTMLDivElement>(null);
-  const boardColumnScrollRefs = useRef<Partial<Record<TaskStatus, HTMLDivElement | null>>>({});
+  const boardColumnScrollRefs = useRef<Partial<Record<TaskStatus, HTMLElement | null>>>({});
   const pendingDetailSourceScrollRef = useRef<DetailSourceScroll | null>(null);
   const selectedProjectIdRef = useRef(selectedProjectId);
   selectedProjectIdRef.current = selectedProjectId;
 
-  const revisionPollingInterval = getRevisionPollingInterval(taskboardMetadata);
+  const revisionPollingInterval = getRevisionPollingInterval(panelMetadata);
   const textRef = useRef(text);
   textRef.current = text;
   setApiText(text);
@@ -848,7 +948,7 @@ export function App() {
       const next = { ...current };
       if (normalizedPath) next[projectId] = normalizedPath;
       else delete next[projectId];
-      taskboardStorage.setItem(DEVICE_WORKSPACE_PATHS_KEY, JSON.stringify(next));
+      panelStorage.setItem(DEVICE_WORKSPACE_PATHS_KEY, JSON.stringify(next));
       return next;
     });
   }, []);
@@ -857,7 +957,7 @@ export function App() {
     setRecentProjectIds((current) => {
       if (current[0] === projectId) return current;
       const next = [projectId, ...current.filter((candidate) => candidate !== projectId)];
-      taskboardStorage.setItem(RECENT_PROJECT_IDS_KEY, JSON.stringify(next));
+      panelStorage.setItem(RECENT_PROJECT_IDS_KEY, JSON.stringify(next));
       return next;
     });
   }, []);
@@ -900,8 +1000,8 @@ export function App() {
     if (!embedded || window.parent === window) {
       return { unavailableReason: text("仅可在 Codex App 中使用", "Available only in the Codex app") };
     }
-    if (!isLocalTaskboardOrigin(new URL(document.baseURI).origin)) {
-      return { unavailableReason: text("仅本地任务面板可用", "Available only on the local taskboard") };
+    if (!isLocalPanelOrigin(new URL(document.baseURI).origin)) {
+      return { unavailableReason: text("仅本地任务面板可用", "Available only on the local panel") };
     }
     if (!selectedProject) {
       return { unavailableReason: text("请先选择项目", "Select a project first") };
@@ -922,10 +1022,10 @@ export function App() {
           "The saved SSH remote project or host is not available",
         ) };
       }
-      if (!manageTaskboardSkillPath) {
+      if (!managePanelSkillPath) {
         return { unavailableReason: text(
           "任务面板还没有读取到 Skill 路径",
-          "Taskboard has not received the Skill path",
+          "Panel has not received the Skill path",
         ) };
       }
       return { ...savedIdentity, unavailableReason: null };
@@ -962,10 +1062,10 @@ export function App() {
         "Add and map this project directory in Codex first",
       ) };
     }
-    if (!manageTaskboardSkillPath) {
+    if (!managePanelSkillPath) {
       return { unavailableReason: text(
         "任务面板还没有读取到 Skill 路径",
-        "Taskboard has not received the Skill path",
+        "Panel has not received the Skill path",
       ) };
     }
     const codexProject = hostContext?.projects?.find((project) => project.id === codexProjectId);
@@ -980,7 +1080,7 @@ export function App() {
     deviceWorkspacePaths,
     embedded,
     hostContext,
-    manageTaskboardSkillPath,
+    managePanelSkillPath,
     projectCodexIdentities,
     selectedProject,
     text,
@@ -992,10 +1092,10 @@ export function App() {
       || !automationProjectContext.codexProjectKind
       || !automationProjectContext.codexHostId
       || !automationProjectContext.workspacePath
-      || !manageTaskboardSkillPath
+      || !managePanelSkillPath
     ) return null;
     return {
-      taskboardProjectId: selectedProject.id,
+      panelProjectId: selectedProject.id,
       codexProjectId: automationProjectContext.codexProjectId,
       codexProjectKind: automationProjectContext.codexProjectKind,
       codexHostId: automationProjectContext.codexHostId,
@@ -1019,9 +1119,9 @@ export function App() {
               || left.codexProjectId.localeCompare(right.codexProjectId)
             ))
         : [],
-      skillPath: manageTaskboardSkillPath,
+      skillPath: managePanelSkillPath,
     };
-  }, [automationProjectContext, hostContext, manageTaskboardSkillPath, selectedProject]);
+  }, [automationProjectContext, hostContext, managePanelSkillPath, selectedProject]);
   const referenceTasks = useMemo(() => [...tasks, ...archivedTasks], [archivedTasks, tasks]);
   const detailTask = detailTaskIdentifier
     ? referenceTasks.find((task) => task.identifier === detailTaskIdentifier) ?? null
@@ -1075,7 +1175,7 @@ export function App() {
   }, [hostContext?.projects, projectCodexIdentities, projects, recentProjectIds, text]);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const issueReadStorageKey = selectedProjectId
-    ? `${ISSUE_READ_KEY_PREFIX}:${taskboardMetadata?.mode ?? "local"}:${selectedProjectId}`
+    ? `${ISSUE_READ_KEY_PREFIX}:${panelMetadata?.mode ?? "local"}:${selectedProjectId}`
     : null;
 
   useEffect(() => {
@@ -1110,7 +1210,7 @@ export function App() {
       if (current[task.id] === task.activityKey) return current;
       const next = { ...current, [task.id]: task.activityKey };
       try {
-        taskboardStorage.setItem(issueReadStorageKey, JSON.stringify(next));
+        panelStorage.setItem(issueReadStorageKey, JSON.stringify(next));
       } catch {
         // Read state remains valid for this page even when browser persistence is unavailable.
       }
@@ -1148,7 +1248,7 @@ export function App() {
       if (record) next[projectId] = record;
       else delete next[projectId];
       projectAutomationsRef.current = next;
-      taskboardStorage.setItem(PROJECT_AUTOMATIONS_KEY, JSON.stringify(next));
+      panelStorage.setItem(PROJECT_AUTOMATIONS_KEY, JSON.stringify(next));
       return next;
     });
   }, []);
@@ -1171,11 +1271,11 @@ export function App() {
       pendingAutomationRequestsRef.current.set(requestId, { resolve, reject, timeoutId });
     });
     postEmbeddedHostMessage({
-      type: "taskboard:automation-request",
+      type: "panel:automation-request",
       payload: {
         requestId,
         operation,
-        taskboardProjectId: context.taskboardProjectId,
+        panelProjectId: context.panelProjectId,
         codexProjectId: context.codexProjectId,
         codexProjectKind: context.codexProjectKind,
         codexHostId: context.codexHostId,
@@ -1255,7 +1355,7 @@ export function App() {
       return;
     }
     if (automationRequestInFlightRef.current) return;
-    const projectId = automationRequestContext.taskboardProjectId;
+    const projectId = automationRequestContext.panelProjectId;
     const stored = projectAutomationsRef.current[projectId];
     const initialLoad = !loadedAutomationProjectIdsRef.current.has(projectId);
     automationRequestInFlightRef.current = "list";
@@ -1364,7 +1464,7 @@ export function App() {
   const saveProjectAutomation = useCallback((options: ProjectAutomationOptions) => {
     if (!automationRequestContext) return;
     const queuedSave = {
-      projectId: automationRequestContext.taskboardProjectId,
+      projectId: automationRequestContext.panelProjectId,
       context: automationRequestContext,
       options,
     };
@@ -1384,6 +1484,7 @@ export function App() {
       pendingDetailSourceScrollRef.current = {
         projectId: selectedProjectId,
         view: "list",
+        scrollLeft: issueListRef.current.scrollLeft,
         scrollTop: issueListRef.current.scrollTop,
       };
     } else if (boardView === "issues" && fullTask) {
@@ -1432,6 +1533,7 @@ export function App() {
       : boardColumnScrollRefs.current[pendingScroll.status];
     pendingDetailSourceScrollRef.current = null;
     if (!scrollContainer) return;
+    if (pendingScroll.view === "list") scrollContainer.scrollLeft = pendingScroll.scrollLeft;
     scrollContainer.scrollTop = pendingScroll.scrollTop;
   }, [boardView, detailTaskIdentifier, selectedProjectId]);
 
@@ -1444,6 +1546,7 @@ export function App() {
         pendingDetailSourceScrollRef.current = {
           projectId: selectedProjectId,
           view: "list",
+          scrollLeft: issueListRef.current.scrollLeft,
           scrollTop: issueListRef.current.scrollTop,
         };
       } else if (routeIssueIdentifier && boardView === "issues") {
@@ -1465,6 +1568,10 @@ export function App() {
       setDetailTaskIdentifier(routeIssueIdentifier);
       if (routeProjectId === selectedProjectId) return;
       setBoardView(readProjectBoardView(routeProjectId));
+      setListLayout(readProjectListLayout(routeProjectId));
+      const collapseModes = readProjectListCollapseModes(routeProjectId);
+      setListCollapseModes(collapseModes);
+      setListCollapsedStatuses(initialProjectListCollapsedStatuses(routeProjectId, collapseModes));
       setSelectedProjectId(routeProjectId);
     }
 
@@ -1476,11 +1583,16 @@ export function App() {
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.embedded = String(embedded);
     document.documentElement.style.colorScheme = theme;
-    if (!embedded) taskboardStorage.setItem("taskboard.theme", theme);
+    if (!embedded) panelStorage.setItem("panel.theme", theme);
   }, [embedded, theme]);
 
   useEffect(() => {
-    if (selectedProjectId) setBoardView(readProjectBoardView(selectedProjectId));
+    if (!selectedProjectId) return;
+    setBoardView(readProjectBoardView(selectedProjectId));
+    setListLayout(readProjectListLayout(selectedProjectId));
+    const collapseModes = readProjectListCollapseModes(selectedProjectId);
+    setListCollapseModes(collapseModes);
+    setListCollapsedStatuses(initialProjectListCollapsedStatuses(selectedProjectId, collapseModes));
   }, [selectedProjectId]);
 
   useEffect(() => {
@@ -1500,8 +1612,8 @@ export function App() {
   }, [tasks]);
 
   useEffect(() => {
-    if (taskboardStorage.getItem(FIRST_USE_COMPLETE_KEY) === null) {
-      taskboardStorage.setItem(FIRST_USE_COMPLETE_KEY, "true");
+    if (panelStorage.getItem(FIRST_USE_COMPLETE_KEY) === null) {
+      panelStorage.setItem(FIRST_USE_COMPLETE_KEY, "true");
     }
   }, []);
 
@@ -1552,7 +1664,7 @@ export function App() {
       if (event.source !== window.parent || !event.data || typeof event.data !== "object") return;
       const message = event.data as { type?: string; payload?: unknown; theme?: unknown };
 
-      if (message.type === "taskboard:frame-challenge") {
+      if (message.type === "panel:frame-challenge") {
         const challenge = typeof message.payload === "object"
           && message.payload
           && "challenge" in message.payload
@@ -1563,11 +1675,11 @@ export function App() {
         acknowledgedFrameChallenge = challenge;
         setEmbeddedFrameChallenge(challenge);
         setEmbeddedFrameChallengeState(challenge);
-        postEmbeddedHostMessage({ type: "taskboard:ready" });
+        postEmbeddedHostMessage({ type: "panel:ready" });
         return;
       }
 
-      if (message.type === "taskboard:automation-response" && message.payload) {
+      if (message.type === "panel:automation-response" && message.payload) {
         const payload = message.payload as Partial<AutomationHostResponse>;
         if (typeof payload.requestId !== "string") return;
         const pending = pendingAutomationRequestsRef.current.get(payload.requestId);
@@ -1583,22 +1695,59 @@ export function App() {
         return;
       }
 
-      if (message.type === "taskboard:theme" && isTheme(message.theme)) {
+      if (message.type === "panel:theme" && isTheme(message.theme)) {
         setTheme(message.theme);
         return;
       }
 
-      if (message.type === "taskboard:thread-prepared" && message.payload) {
-        const payload = message.payload as { taskId?: unknown; threadId?: unknown };
-        if (typeof payload.taskId === "string" && pendingRemoteThreadClaimsRef.current.has(payload.taskId)) {
-          void bindPreparedRemoteThread(payload.taskId, payload.threadId);
-        } else {
+      if (message.type === "panel:thread-prepared" && message.payload) {
+        const payload = message.payload as { taskId?: unknown };
+        if (typeof payload.taskId !== "string" || !pendingRemoteThreadClaimsRef.current.has(payload.taskId)) {
           setOpeningThreadTaskId(null);
         }
         return;
       }
 
-      if (message.type === "taskboard:thread-create-error" && message.payload) {
+      if (message.type === "panel:thread-created" && message.payload) {
+        const payload = message.payload as { taskId?: unknown; threadId?: unknown };
+        if (typeof payload.taskId !== "string" || typeof payload.threadId !== "string") return;
+        if (pendingRemoteThreadClaimsRef.current.has(payload.taskId)) {
+          void bindPreparedRemoteThread(payload.taskId, payload.threadId);
+          return;
+        }
+        const task = tasksRef.current.find((candidate) => candidate.id === payload.taskId);
+        const threadId = payload.threadId.trim();
+        if (
+          !task
+          || !threadId
+          || task.threadBinding?.threadId === threadId
+          || task.legacyLocalThreadId === threadId
+        ) return;
+        void updateTaskRequest(task, taskToDraft(task), threadId)
+          .then((updated) => {
+            setTasks((current) => sortTasks(current.map((candidate) => (
+              candidate.id === updated.id ? updated : candidate
+            ))));
+            setAnnouncement(textRef.current(
+              `${updated.identifier} 已关联到新 Codex 对话。`,
+              `${updated.identifier} is linked to the new Codex conversation.`,
+            ));
+          })
+          .catch((error) => {
+            setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
+              ? textRef.current(
+                "新 Codex 对话已创建，但议题同时发生了变化，未能自动关联。",
+                "The Codex conversation was created, but the issue changed concurrently and could not be linked automatically.",
+              )
+              : textRef.current(
+                `新 Codex 对话已创建，但自动关联失败：${errorMessage(error)}`,
+                `The Codex conversation was created, but automatic linking failed: ${errorMessage(error)}`,
+              ));
+          });
+        return;
+      }
+
+      if (message.type === "panel:thread-create-error" && message.payload) {
         const payload = message.payload as {
           taskId?: unknown;
           error?: unknown;
@@ -1621,7 +1770,7 @@ export function App() {
         return;
       }
 
-      if (message.type === "taskboard:thread-open-error" && message.payload) {
+      if (message.type === "panel:thread-open-error" && message.payload) {
         const payload = message.payload as { error?: unknown };
         setActionError(typeof payload.error === "string"
           ? payload.error
@@ -1629,7 +1778,7 @@ export function App() {
         return;
       }
 
-      if (message.type !== "taskboard:host-context" || !message.payload) return;
+      if (message.type !== "panel:host-context" || !message.payload) return;
       const payload = message.payload as HostContext;
       setHostContext(payload);
       setCurrentUserActor(payload.user);
@@ -1639,7 +1788,7 @@ export function App() {
 
     const removeExternalLinkHandler = installEmbeddedExternalLinkHandler();
     window.addEventListener("message", receiveHostMessage);
-    postEmbeddedHostMessage({ type: "taskboard:frame-awaiting-challenge" });
+    postEmbeddedHostMessage({ type: "panel:frame-awaiting-challenge" });
     return () => {
       window.removeEventListener("message", receiveHostMessage);
       setEmbeddedFrameChallenge("");
@@ -1647,8 +1796,8 @@ export function App() {
       for (const pending of pendingAutomationRequestsRef.current.values()) {
         window.clearTimeout(pending.timeoutId);
         pending.reject(new Error(textRef.current(
-          "Taskboard 消息桥已关闭",
-          "The Taskboard host bridge was closed",
+          "Panel 消息桥已关闭",
+          "The Panel host bridge was closed",
         )));
       }
       pendingAutomationRequestsRef.current.clear();
@@ -1678,7 +1827,7 @@ export function App() {
     const publish = () => {
       const rect = region.getBoundingClientRect();
       postEmbeddedHostMessage({
-        type: "taskboard:drag-region",
+        type: "panel:drag-region",
         payload: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
       });
     };
@@ -1689,7 +1838,7 @@ export function App() {
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", publish);
-      postEmbeddedHostMessage({ type: "taskboard:drag-region", payload: null });
+      postEmbeddedHostMessage({ type: "panel:drag-region", payload: null });
     };
   }, [detailTaskId, embedded, embeddedFrameChallenge, selectedProjectId]);
 
@@ -1701,29 +1850,29 @@ export function App() {
     try {
       const [nextProjects, metadata, workspaces] = await Promise.all([
         listProjects(signal),
-        getTaskboardMetadata(signal),
+        getPanelMetadata(signal),
         listDeviceWorkspaces(signal),
       ]);
       if (requestId !== projectsRequestRef.current) return;
       const nextJiraConnection = await getJiraConnection(signal);
       if (requestId !== projectsRequestRef.current) return;
-      setTaskboardMetadata((current) => (
+      setPanelMetadata((current) => (
         current
         && current.mode === metadata.mode
         && current.realtime?.transport === metadata.realtime?.transport
         && current.realtime?.intervalMs === metadata.realtime?.intervalMs
-        && current.manageTaskboardSkillPath === metadata.manageTaskboardSkillPath
+        && current.managePanelSkillPath === metadata.managePanelSkillPath
         && current.localCapabilities?.available === metadata.localCapabilities?.available
           ? current
           : metadata
       ));
-      setManageTaskboardSkillPath(metadata.manageTaskboardSkillPath ?? "");
+      setManagePanelSkillPath(metadata.managePanelSkillPath ?? "");
       setLocalAiChatAvailable(metadata.capabilities?.localAiChat === true);
       setDeviceWorkspacePaths((current) => {
         const next = { ...current, ...workspaces };
         delete next[GLOBAL_PROJECT_ID];
         if (JSON.stringify(next) === JSON.stringify(current)) return current;
-        taskboardStorage.setItem(DEVICE_WORKSPACE_PATHS_KEY, JSON.stringify(next));
+        panelStorage.setItem(DEVICE_WORKSPACE_PATHS_KEY, JSON.stringify(next));
         return next;
       });
       setProjects(nextProjects);
@@ -1906,7 +2055,7 @@ export function App() {
       intervalMs: revisionPollingInterval,
       fetchRevision: async (since: number) => {
         try {
-          const result = await getTaskboardRevision(since, controller.signal);
+          const result = await getPanelRevision(since, controller.signal);
           setConnection("live");
           return result;
         } catch (error) {
@@ -2126,15 +2275,56 @@ export function App() {
   function selectBoardView(view: BoardView) {
     closeContextMenu();
     setGanttViewMenuOpen(false);
+    if (detailTaskIdentifier) closeTaskDetail();
+    if (view === "list" && boardView !== "list" && selectedProjectId) {
+      const collapseModes = readProjectListCollapseModes(selectedProjectId);
+      setListCollapseModes(collapseModes);
+      setListCollapsedStatuses(initialProjectListCollapsedStatuses(selectedProjectId, collapseModes));
+    }
     setBoardView(view);
     if (selectedProjectId) {
-      taskboardStorage.setItem(`${PROJECT_VIEW_KEY_PREFIX}${selectedProjectId}`, view);
+      panelStorage.setItem(`${PROJECT_VIEW_KEY_PREFIX}${selectedProjectId}`, view);
     }
+  }
+
+  function selectListLayout(layout: ListLayout) {
+    setListLayout(layout);
+    if (selectedProjectId) {
+      panelStorage.setItem(`${PROJECT_LIST_LAYOUT_KEY_PREFIX}${selectedProjectId}`, layout);
+    }
+  }
+
+  function selectListCollapseMode(status: TaskStatus, mode: ListCollapseMode) {
+    if (!selectedProjectId) return;
+    setListCollapseModes((current) => {
+      const next = { ...current, [status]: mode };
+      writeProjectListCollapseModes(selectedProjectId, next);
+      return next;
+    });
+    setListCollapsedStatuses((current) => {
+      const next = new Set(current);
+      if (mode === "always-expanded") next.delete(status);
+      else if (mode === "always-collapsed") next.add(status);
+      else writeProjectListCollapsedStatuses(selectedProjectId, next);
+      return next;
+    });
+  }
+
+  function toggleListStatus(status: TaskStatus) {
+    setListCollapsedStatuses((current) => {
+      const next = new Set(current);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      if (listCollapseModes[status] === "remember" && selectedProjectId) {
+        writeProjectListCollapsedStatuses(selectedProjectId, next);
+      }
+      return next;
+    });
   }
 
   function updateBoardCardDisplay(value: BoardCardDisplay) {
     setBoardCardDisplay(value);
-    taskboardStorage.setItem(BOARD_CARD_DISPLAY_KEY, JSON.stringify(value));
+    panelStorage.setItem(BOARD_CARD_DISPLAY_KEY, JSON.stringify(value));
   }
 
   async function saveEditor(
@@ -2404,9 +2594,11 @@ export function App() {
     void moveTask(task, destination, beforeTaskId, true);
   }
 
-  async function updateTaskProperties(task: Task, changes: Partial<TaskDraft>): Promise<Task> {
+  async function updateTaskProperties(task: Task, changes: Partial<TaskUpdate>): Promise<Task> {
     const previous = task;
     const { assigneeTarget, ...taskChanges } = changes;
+    const projectChanged = typeof changes.projectId === "string"
+      && changes.projectId !== task.projectId;
     const optimisticAssignee = assigneeTarget
       ? actorForAssigneeTarget(assigneeTarget, currentUser)
       : task.assignee;
@@ -2415,14 +2607,38 @@ export function App() {
       ? [...task.participants, optimisticAssignee]
       : task.participants;
     setActionError(null);
-    setTasks((current) => current.map((candidate) =>
-      candidate.id === task.id
-        ? { ...candidate, ...taskChanges, assignee: optimisticAssignee, participants: optimisticParticipants }
-        : candidate,
-    ));
+    if (!projectChanged) {
+      setTasks((current) => current.map((candidate) =>
+        candidate.id === task.id
+          ? { ...candidate, ...taskChanges, assignee: optimisticAssignee, participants: optimisticParticipants }
+          : candidate,
+      ));
+    }
 
     try {
       const updated = await updateTaskRequest(task, { ...taskToDraft(task), ...changes });
+      if (projectChanged) {
+        setTasks([updated]);
+        setSelectedProjectId(updated.projectId);
+        setBoardView(readProjectBoardView(updated.projectId));
+        setListLayout(readProjectListLayout(updated.projectId));
+        const collapseModes = readProjectListCollapseModes(updated.projectId);
+        setListCollapseModes(collapseModes);
+        setListCollapsedStatuses(initialProjectListCollapsedStatuses(updated.projectId, collapseModes));
+        setDetailTaskIdentifier(updated.identifier);
+        setSearch("");
+        setFilters(EMPTY_TASK_FILTERS);
+        rememberProjectOpen(updated.projectId);
+        undoStackRef.current = [];
+        setUndoNotice(null);
+        window.history.replaceState(
+          window.history.state,
+          "",
+          buildIssueUrl(window.location.href, updated.projectId, updated.identifier),
+        );
+        void refreshProjectList();
+        return updated;
+      }
       setTasks((current) => sortTasks(current.map((candidate) =>
         candidate.id === updated.id ? updated : candidate,
       )));
@@ -2619,9 +2835,9 @@ export function App() {
     }
   }
 
-  function codexProjectContextForTaskProject(taskboardProjectId: string) {
-    const taskboardProject = projects.find((project) => project.id === taskboardProjectId);
-    const savedIdentity = projectCodexIdentities[taskboardProjectId];
+  function codexProjectContextForTaskProject(panelProjectId: string) {
+    const panelProject = projects.find((project) => project.id === panelProjectId);
+    const savedIdentity = projectCodexIdentities[panelProjectId];
     if (savedIdentity?.codexProjectKind === "remote") {
       const liveProject = hostContext?.projects?.find(
         (project) => project.id === savedIdentity.codexProjectId,
@@ -2632,16 +2848,16 @@ export function App() {
         ? savedIdentity
         : null;
     }
-    const effectiveCodexProjectId = taskboardProjectId === GLOBAL_PROJECT_ID
+    const effectiveCodexProjectId = panelProjectId === GLOBAL_PROJECT_ID
       ? hostContext?.projectId
-      : taskboardProjectId;
+      : panelProjectId;
     const directCodexProject = hostContext?.projects?.find(
       (project) => project.id === effectiveCodexProjectId,
     );
-    const mappedWorkspacePath = taskboardProjectId === GLOBAL_PROJECT_ID
+    const mappedWorkspacePath = panelProjectId === GLOBAL_PROJECT_ID
       ? directCodexProject?.workspacePath ?? hostContext?.workspacePath
-      : deviceWorkspacePaths[taskboardProjectId]
-        ?? taskboardProject?.workspacePath
+      : deviceWorkspacePaths[panelProjectId]
+        ?? panelProject?.workspacePath
         ?? directCodexProject?.workspacePath;
     const codexProject = directCodexProject ?? hostContext?.projects?.find(
       (project) => project.workspacePath === mappedWorkspacePath,
@@ -2673,7 +2889,7 @@ export function App() {
     }
     if (embedded && window.parent !== window) {
       postEmbeddedHostMessage({
-        type: "taskboard:open-thread",
+        type: "panel:open-thread",
         payload: binding,
       });
       return;
@@ -2692,7 +2908,7 @@ export function App() {
   function openLegacyLocalThread(threadId: string) {
     if (embedded && window.parent !== window) {
       postEmbeddedHostMessage({
-        type: "taskboard:open-thread",
+        type: "panel:open-thread",
         payload: { threadId, legacyLocal: true },
       });
       return;
@@ -2717,7 +2933,7 @@ export function App() {
 
   function expandCodexSidebar() {
     if (!embedded || window.parent === window) return;
-    postEmbeddedHostMessage({ type: "taskboard:expand-sidebar" });
+    postEmbeddedHostMessage({ type: "panel:expand-sidebar" });
   }
 
   function remoteIdentityForTask(
@@ -2755,11 +2971,11 @@ export function App() {
           `- ${comment.authorName}（${comment.createdAt}）\n${comment.body}`
         )).join("\n\n");
     return [
-      `处理 Taskboard 议题 ${task.identifier}：${task.title}`,
+      `处理 Panel 议题 ${task.identifier}：${task.title}`,
       `\n完整描述：\n${task.description || "（无描述）"}`,
       `\n全部评论：\n${commentText}`,
       `\n开发上下文：\n${JSON.stringify(task.developmentContext)}`,
-      "\n本地 Taskboard 控制器已负责认领、对话绑定、评论和状态写回。远程 worker 不得运行 taskctl。请只完成实现和必要验证，并返回改动、验证结果、执行结果和剩余风险。",
+      "\n本地 Panel 控制器已负责认领、对话绑定、评论和状态写回。远程 worker 不得运行 taskctl。请只完成实现和必要验证，并返回改动、验证结果、执行结果和剩余风险。",
     ].join("\n");
   }
 
@@ -2934,7 +3150,7 @@ export function App() {
       });
       updateTaskFromRemoteThread(claimedTask);
       postEmbeddedHostMessage({
-        type: "taskboard:create-thread",
+        type: "panel:create-thread",
         payload: {
           taskId: latestTask.id,
           identifier: latestTask.identifier,
@@ -2988,123 +3204,73 @@ export function App() {
           ? hostContext?.workspacePath
           : undefined
       );
-    const instruction = `e-taskboard 处理任务面板任务 ${task.identifier}，并同步进度状态。`;
-
-    if (!embedded || window.parent === window) {
-      setActionError([
-        "在对话中打开仅可在 Codex 内嵌任务面板中使用。请从 Codex 侧栏打开任务面板后重试。",
-        "Open in conversation is available only in the embedded Codex Taskboard. Open Taskboard from the Codex sidebar and try again.",
-      ]);
-      return;
-    }
-    if (codexProjectContext?.codexProjectKind === "remote" && !codexProjectContext.workspacePath) {
-      setActionError(text(
-        "SSH 远程项目缺少精确工作目录映射。",
-        "The SSH remote project is missing its exact workspace mapping.",
-      ));
-      return;
-    }
-    if (openingThreadTaskId) return;
-    const canonicalReferences = [
-      ...(task.relations.parent
-        ? [{
-            relation: "parent",
-            identifier: task.relations.parent.identifier,
-            title: task.relations.parent.title,
-          }]
-        : []),
-      ...task.relations.subIssues.map((relation) => ({
-        relation: "subIssues",
-        identifier: relation.identifier,
-        title: relation.title,
-      })),
-      ...task.relations.blockedBy.map((relation) => ({
-        relation: "blockedBy",
-        identifier: relation.identifier,
-        title: relation.title,
-      })),
-      ...task.relations.blocks.map((relation) => ({
-        relation: "blocks",
-        identifier: relation.identifier,
-        title: relation.title,
-      })),
-      ...task.relations.related.map((relation) => ({
-        relation: "related",
-        identifier: relation.identifier,
-        title: relation.title,
-      })),
-    ];
-    const beforeDescription = `${instruction}\n\n议题：${task.identifier} ${task.title}\n\n正文：\n`;
-    const afterDescription = `\n\nCanonical references：\n${canonicalReferences.length > 0
-      ? canonicalReferences.map((reference) => (
-          `- ${reference.relation}: ${reference.identifier} ${reference.title}`
-        )).join("\n")
-      : "（无）"}`;
-    const embeddedInstruction = `${beforeDescription}${task.description}${afterDescription}`;
-    if (localAiChatAvailable) {
-      setActionError(null);
-      const descriptionSegments = createInlineMediaSegments(task.description, referenceTasks);
-      if (inlineMediaComposerReferences(descriptionSegments).length === 0) {
-        setAiOpenThreadRequest((current) => ({
-          projectId: task.projectId,
-          issueId: task.id,
-          composerText: embeddedInstruction,
-          requestId: (current?.requestId ?? 0) + 1,
-        }));
+    if (codexProjectContext?.codexProjectKind === "remote" && codexProjectContext.workspacePath) {
+      if (!embedded || window.parent === window) {
+        setActionError(text(
+          "请在 Codex App 中打开 SSH 远程议题对话。",
+          "Open SSH remote issue conversations in the Codex app.",
+        ));
         return;
       }
-      const persistedDocument = buildPersistedTaskComposerDocument(
-        beforeDescription,
-        descriptionSegments,
-        afterDescription,
-      );
+      if (openingThreadTaskId) return;
       setOpeningThreadTaskId(task.id);
-      try {
-        const rebound = await rebindAiChatComposerReferences({
-          contractVersion: COMPOSER_CONTRACT_VERSION,
-          projectId: task.projectId,
-          document: persistedDocument,
-        });
-        setAiOpenThreadRequest((current) => ({
-          projectId: task.projectId,
-          issueId: task.id,
-          composerDraft: {
-            ready: rebound.ready,
-            revision: rebound.revision,
-            document: rebound.ready ? rebound.document : persistedDocument,
-          },
-          requestId: (current?.requestId ?? 0) + 1,
-        }));
-      } catch (error) {
-        setActionError(errorMessage(error));
-      } finally {
-        setOpeningThreadTaskId(null);
-      }
-      return;
-    }
-    setOpeningThreadTaskId(task.id);
-    setActionError(null);
-    if (codexProjectContext?.codexProjectKind === "remote" && codexProjectContext.workspacePath) {
+      setActionError(null);
       void openRemoteTaskInThread(task, {
         ...codexProjectContext,
         workspacePath: codexProjectContext.workspacePath,
       });
       return;
     }
+
+    if (!managePanelSkillPath) {
+      setActionError(text(
+        "任务面板还没有读取到 manage-panel Skill 路径，请刷新后重试。",
+        "Panel has not received the manage-panel Skill path. Refresh and try again.",
+      ));
+      return;
+    }
+    if (openingThreadTaskId) return;
+    setOpeningThreadTaskId(task.id);
+    setActionError(null);
+
+    let instruction: string;
+    try {
+      instruction = issueThreadInstruction(task, latestAiChatHandoff(await listComments(task.id)));
+    } catch (error) {
+      setOpeningThreadTaskId(null);
+      setActionError(text(
+        `无法读取议题交接记录：${errorMessage(error)}`,
+        `Could not read the issue handoff: ${errorMessage(error)}`,
+      ));
+      return;
+    }
+    const prompt = `[$manage-panel](${managePanelSkillPath}) ${instruction}`;
+
+    if (!embedded || window.parent === window) {
+      const query = new URLSearchParams();
+      if (workspacePath) query.set("path", workspacePath);
+      query.set("prompt", prompt);
+      setOpeningThreadTaskId(null);
+      window.location.assign(`codex://new?${query.toString().replace(/\+/g, "%20")}`);
+      return;
+    }
+
     postEmbeddedHostMessage({
-      type: "taskboard:create-thread",
+      type: "panel:create-thread",
       payload: {
         taskId: task.id,
         identifier: task.identifier,
         title: task.title,
-        description: task.description,
-        canonicalReferences,
-        instruction: embeddedInstruction,
+        instruction,
+        skillName: "manage-panel",
+        skillDisplayName: "Manage Panel",
+        skillPath: managePanelSkillPath,
         projectName: selectedProject?.name,
-        codexProjectId: codexProjectContext?.codexProjectId,
-        codexProjectKind: codexProjectContext?.codexProjectKind ?? "local",
-        codexHostId: codexProjectContext?.codexHostId ?? "local",
-        codexProjectWorkspacePath: codexProjectContext?.workspacePath,
+        codexProjectId: codexProjectContext?.codexProjectId ?? (
+          selectedProject?.id === GLOBAL_PROJECT_ID ? hostContext?.projectId : selectedProject?.id
+        ),
+        codexProjectKind: "local",
+        codexHostId: "local",
         workspacePath,
       },
     });
@@ -3116,6 +3282,10 @@ export function App() {
     setProjectMenuOpen(false);
     setDetailTaskIdentifier(null);
     setBoardView(readProjectBoardView(projectId));
+    setListLayout(readProjectListLayout(projectId));
+    const collapseModes = readProjectListCollapseModes(projectId);
+    setListCollapseModes(collapseModes);
+    setListCollapsedStatuses(initialProjectListCollapsedStatuses(projectId, collapseModes));
     rememberProjectOpen(projectId);
     setSelectedProjectId(projectId);
     setSearch("");
@@ -3152,7 +3322,7 @@ export function App() {
       if (choice.codexIdentity) {
         setProjectCodexIdentities((current) => {
           const next = { ...current, [project!.id]: choice.codexIdentity! };
-          taskboardStorage.setItem(PROJECT_CODEX_IDENTITIES_KEY, JSON.stringify(next));
+          panelStorage.setItem(PROJECT_CODEX_IDENTITIES_KEY, JSON.stringify(next));
           return next;
         });
         rememberDeviceWorkspacePath(project.id, choice.codexIdentity.workspacePath);
@@ -3174,6 +3344,7 @@ export function App() {
 
   async function saveJiraConnection(input: {
     baseUrl: string;
+    authMethod: "basic" | "bearer";
     username: string;
     password: string;
     projects: string[];
@@ -3279,13 +3450,13 @@ export function App() {
       setProjects((current) => current.filter((candidate) => candidate.id !== project.id));
       setRecentProjectIds((current) => {
         const next = current.filter((candidate) => candidate !== project.id);
-        taskboardStorage.setItem(RECENT_PROJECT_IDS_KEY, JSON.stringify(next));
+        panelStorage.setItem(RECENT_PROJECT_IDS_KEY, JSON.stringify(next));
         return next;
       });
       setProjectCodexIdentities((current) => {
         const next = { ...current };
         delete next[project.id];
-        taskboardStorage.setItem(PROJECT_CODEX_IDENTITIES_KEY, JSON.stringify(next));
+        panelStorage.setItem(PROJECT_CODEX_IDENTITIES_KEY, JSON.stringify(next));
         return next;
       });
       setPendingProjectDelete(null);
@@ -3310,7 +3481,7 @@ export function App() {
 
   const headerProjectName = selectedProject?.id === GLOBAL_PROJECT_ID
     ? text("全局", "Global")
-    : selectedProject?.name ?? text("任务面板", "Taskboard");
+    : selectedProject?.name ?? text("任务面板", "Panel");
   const appShellStyle = embedded
     ? { "--codex-titlebar-left-inset": `${hostContext?.titlebarLeftInset ?? 0}px` } as CSSProperties
     : undefined;
@@ -3318,7 +3489,7 @@ export function App() {
   return (
     <TaskboardLanguageProvider language={language}>
       <div className={`app-shell${embedded ? " embedded" : ""}`} style={appShellStyle}>
-      {taskboardMetadata && taskboardMetadata.mode !== "cloud" && (
+      {panelMetadata && panelMetadata.mode !== "cloud" && (
         <LocalRealtimeSync
           selectedProjectId={selectedProjectId}
           detailTaskId={detailTaskId}
@@ -3331,10 +3502,10 @@ export function App() {
         />
       )}
       {!embedded && (
-        <aside className="app-nav" aria-label={text("任务面板导航", "Taskboard navigation")}>
+        <aside className="app-nav" aria-label={text("任务面板导航", "Panel navigation")}>
           <div className="brand-row">
             <span className="brand-mark" aria-hidden="true"><LinearIcon name="project" /></span>
-            <span>{text("任务面板", "Taskboard")}</span>
+            <span>{text("任务面板", "Panel")}</span>
           </div>
 
           <nav className="primary-nav" aria-label={text("视图", "Views")}>
@@ -3412,7 +3583,7 @@ export function App() {
                   }}
                 >
                   <span className="project-name">{headerProjectName}</span>
-                  <TaskboardIcon className="project-switcher-chevron" name="dropdown" />
+                  <PanelIcon className="project-switcher-chevron" name="dropdown" />
                 </button>
                 {projectMenuOpen && (
                   <div className="header-project-menu" role="menu" aria-label={text("项目", "Projects")}>
@@ -3437,7 +3608,7 @@ export function App() {
                           else void selectProject(project);
                         }}
                       >
-                        <TaskboardIcon className="project-avatar" name="projectFolder" />
+                        <PanelIcon className="project-avatar" name="projectFolder" />
                         <span>{project.name}</span>
                         {project.id === selectedProjectId && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
                       </button>
@@ -3461,7 +3632,7 @@ export function App() {
                       disabled={openingProjectId !== null}
                       onClick={openCreateProjectDialog}
                     >
-                      <TaskboardIcon className="project-avatar" name="create" />
+                      <PanelIcon className="project-avatar" name="create" />
                       <span>{text("创建项目", "Create project")}</span>
                     </button>
                   </div>
@@ -3503,13 +3674,13 @@ export function App() {
                 aria-label={text("新建议题", "Create issue")}
                 title={text("新建议题 (C)", "Create issue (C)")}
               >
-                <TaskboardIcon name="create" />
+                <PanelIcon name="create" />
               </button>
             )}
           </div>
         </header>
 
-        {selectedProjectId && !detailTask && <div className="board-toolbar">
+        {selectedProjectId && <div className="board-toolbar">
           <div className="view-tabs" aria-label={text("看板视图", "Board views")}>
             <button
               className={`view-tab${boardView === "dashboard" ? " active" : ""}`}
@@ -3554,9 +3725,35 @@ export function App() {
               </button>
             )}
           </div>
-          {(boardView === "issues" || boardView === "list" || boardView === "gantt") && <div className="toolbar-tools">
+          {!detailTask && (boardView === "issues" || boardView === "list" || boardView === "gantt") && <div className="toolbar-tools">
+            {boardView === "list" && (
+              <div className="list-view-options">
+                <div className="list-layout-switch" role="group" aria-label={text("列表布局", "List layout")}>
+                  <button
+                    type="button"
+                    className={`list-layout-option${listLayout === "horizontal" ? " is-active" : ""}`}
+                    aria-label={text("横向列表", "Horizontal list")}
+                    aria-pressed={listLayout === "horizontal"}
+                    title={text("横向列表", "Horizontal list")}
+                    onClick={() => selectListLayout("horizontal")}
+                  >
+                    <LinearIcon name="layoutColumns" />
+                  </button>
+                  <button
+                    type="button"
+                    className={`list-layout-option${listLayout === "vertical" ? " is-active" : ""}`}
+                    aria-label={text("纵向列表", "Vertical list")}
+                    aria-pressed={listLayout === "vertical"}
+                    title={text("纵向列表", "Vertical list")}
+                    onClick={() => selectListLayout("vertical")}
+                  >
+                    <LinearIcon name="layoutRows" />
+                  </button>
+                </div>
+              </div>
+            )}
             <div className={`search-field${search ? " has-value" : ""}`} title={text("搜索议题 (/)", "Search issues (/)")}>
-              <TaskboardIcon className="search-icon" name="search" />
+              <PanelIcon className="search-icon" name="search" />
               <input
                 id="task-search"
                 type="search"
@@ -3633,7 +3830,7 @@ export function App() {
                 title={text("其他任务", "Other issues")}
                 onClick={() => setOtherTasksOpen((current) => !current)}
               >
-                <TaskboardIcon name="panel" />
+                <PanelIcon name="panel" />
               </button>
             )}
           </div>}
@@ -3642,7 +3839,7 @@ export function App() {
         {(loadError || actionErrorText) && (
           <div className="error-banner" role="alert">
             <span className="error-mark" aria-hidden="true"><LinearIcon name="alert" /></span>
-            <div><strong>{text("任务面板需要处理", "Taskboard needs attention")}</strong><p>{actionErrorText ?? loadError?.message}</p></div>
+            <div><strong>{text("任务面板需要处理", "Panel needs attention")}</strong><p>{actionErrorText ?? loadError?.message}</p></div>
             <button
               type="button"
               onClick={() => {
@@ -3665,6 +3862,7 @@ export function App() {
             task={detailTask}
             tasks={tasks}
             referenceTasks={referenceTasks}
+            projects={projects}
             currentUser={currentUser}
             availableLabels={availableLabels}
             developmentScan={developmentScan}
@@ -3683,6 +3881,11 @@ export function App() {
             )}
             onOpenThread={openThread}
             onOpenLegacyLocalThread={openLegacyLocalThread}
+            aiChatThreads={aiThreads}
+            onOpenAiChatThread={(threadId) => setAiOpenThreadRequest((current) => ({
+              threadId,
+              requestId: (current?.requestId ?? 0) + 1,
+            }))}
             onOpenInThread={openTaskInThread}
             onCopy={(text, message) => void copyText(text, message)}
             openingThread={openingThreadTaskId === detailTask.id}
@@ -3706,8 +3909,8 @@ export function App() {
                   projectId: selectedProject.id,
                   issueId: null,
                   composerText: text(
-                    "只检查当前项目目录对应的 Codex 对话。请将其中已完成、处理中和待执行的任务整理并导入当前项目的 Taskboard。",
-                    "Only inspect Codex conversations associated with this project directory. Organize completed, in-progress, and pending tasks, then import them into this project's Taskboard.",
+                    "只检查当前项目目录对应的 Codex 对话。请将其中已完成、处理中和待执行的任务整理并导入当前项目的 Panel。",
+                    "Only inspect Codex conversations associated with this project directory. Organize completed, in-progress, and pending tasks, then import them into this project's Panel.",
                   ),
                   requestId: (current?.requestId ?? 0) + 1,
                 }))}
@@ -3739,13 +3942,26 @@ export function App() {
         ) : boardView === "list" ? (
           <IssueListView
             scrollRef={issueListRef}
+            layout={listLayout}
+            collapseModes={listCollapseModes}
+            collapsedStatuses={listCollapsedStatuses}
             tasks={filteredTasks}
             presentations={taskPresentations}
             currentUser={currentUser}
             hasActiveFilters={hasActiveTaskFilters}
+            dropTarget={dropTarget}
+            draggedTaskId={draggedTaskId}
+            movingTaskId={movingTaskId}
+            settlingTaskId={settlingTaskId}
             onOpenTask={openTaskDetail}
             onOpenConversation={openTaskConversation}
             onUpdate={updateTaskProperties}
+            onCollapseModeChange={selectListCollapseMode}
+            onToggleStatus={toggleListStatus}
+            onDragStart={startTaskDrag}
+            onDragEnd={endTaskDrag}
+            onDragEnter={setDropTarget}
+            onDrop={finishTaskDrop}
           />
         ) : boardView === "gantt" ? (
           <Suspense fallback={<div className="workflow-board-loading">{text("正在打开甘特图…", "Opening Gantt…")}</div>}>

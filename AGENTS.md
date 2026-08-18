@@ -12,17 +12,17 @@ The primary objective is to make the requested function work. Focus on the featu
 
 This ordering does not waive higher-priority safety or security requirements. Keep validation that is necessary at real external boundaries, such as user input or external APIs, but do not expand it into hypothetical protection beyond the requested path.
 
-# Taskboard Delivery Workflow
+# Panel Delivery Workflow
 
-Use this workflow when the user asks to process Taskboard work.
+Use this workflow when the user asks to process Panel work.
 
 ## 1. Read and claim work
 
-- Read only the Taskboard states that the user asked to process. For the normal development flow, claim `todo` items and continue unfinished `in_progress` items.
+- Read only the Panel states that the user asked to process. For the normal development flow, claim `todo` items and continue unfinished `in_progress` items.
 - Never assign `backlog` items. Leave an item unclaimed when its description or latest comment explicitly requires waiting.
 - Read the full issue description, attachments, and all comments before routing or changing it.
 - GitHub Issue and PR synchronization is not a default step. Read or synchronize GitHub Issue/PR data only when the user explicitly requests it.
-- Use the packaged or injected `taskctl` and the exact active Taskboard runtime. Do not fall back to a global CLI, a guessed port, or another data source.
+- Use the packaged or injected `panelctl` and the exact active Panel runtime. Do not fall back to a global CLI, a guessed port, or another data source.
 
 ## 2. Route for efficiency
 
@@ -61,7 +61,7 @@ Make the smallest root-cause change. Do not add unrelated refactors, abstraction
 - Keep the issue `in_progress` during implementation.
 - Verify the direct user path. For changes on a UI surface, use the real browser/App surface. Capture visual evidence when the result has visual impact; this evidence supports review and does not by itself require a separate user UI confirmation.
 - Report changed files, commit, exact head SHA, direct verification, PR, CI state, review complexity decision, review result, and remaining limitations in the issue.
-- Show ongoing status in the Taskboard opened through the injected Codex App.
+- Show ongoing status in the Panel opened through the injected Codex App.
 - Execution conversations do not merge, release, mark `done`, or claim user acceptance.
 
 ## 6. Review by risk
@@ -85,7 +85,7 @@ Make the smallest root-cause change. Do not add unrelated refactors, abstraction
 ## 7. Acceptance and issue status
 
 - Reviewer approval means ready for user inspection, not user acceptance.
-- When work meets the UI confirmation gate, put the complete reviewed function into the Taskboard-launched Codex App and ask the user to confirm the final visual style only after implementation and any required Pro review are complete.
+- When work meets the UI confirmation gate, put the complete reviewed function into the Panel-launched Codex App and ask the user to confirm the final visual style only after implementation and any required Pro review are complete.
 - Do not merge work that meets the UI confirmation gate until the user confirms its style. After visual-only feedback is applied and directly verified, the change can proceed without repeating Pro review.
 - UI-surface work that does not meet the confirmation gate can proceed after the coordinator verifies the real path, visual impact, scope, and required review without a separate user UI pause.
 - After implementation and required review pass, move the issue to `in_review`.
@@ -106,7 +106,7 @@ Make the smallest root-cause change. Do not add unrelated refactors, abstraction
 - Merge all included product PRs first. Use a minimal version PR for the required version fields; do not alter release infrastructure without a separate requirement.
 - Use a short tag such as `v1.0.7`. Release notes contain product changes only.
 - Keep the DMG as the first release asset.
-- Record live build, signing, notarization, upload, and publication progress in the Taskboard.
+- Record live build, signing, notarization, upload, and publication progress in the Panel.
 - Verify the tag target, release target, workflow result, asset order, and updater metadata.
 - Do not overwrite the App in `/Applications`; leave the installed version available for update-check verification.
 
@@ -123,3 +123,11 @@ A requested batch is complete only when:
 - merged worktrees and feature branches are cleaned up;
 - task conversations remain available; and
 - any requested release is published and verified.
+
+## Fork maintenance
+
+Before completing work that adds, changes, or removes intentional fork behavior, or that merges upstream, invoke `$fork-doc`. If that skill is unavailable, follow the maintenance contract in `FORK.md` manually.
+
+Reuse decisions in `FORK.md` while current evidence still supports them. Reconsider a decision only when new evidence adds, contradicts, invalidates, or leaves it unresolved.
+
+Every fork release must use `<upstream-version>-fork.<N>`. Reset to `fork.1` when the merged upstream version changes, and increment `N` for later releases on the same upstream version. This rule does not override the test-authorization requirements above.

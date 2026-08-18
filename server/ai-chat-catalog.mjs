@@ -6,7 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { parse as parseToml } from "smol-toml";
 
-import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
+import { withoutPanelLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { executableCommand } from "../shared/executable-command.mjs";
 import { composerReferencePersistence } from "./composer-reference.mjs";
 import { ApiError } from "./database.mjs";
@@ -414,7 +414,7 @@ function listSkills(codexExecutable, workspacePath, processEnv) {
         id: 1,
         method: "initialize",
         params: {
-          clientInfo: { name: "codex-taskboard", version: "0.1.0" },
+          clientInfo: { name: "codex-panel", version: "0.1.0" },
           capabilities: { experimentalApi: true },
         },
       });
@@ -949,7 +949,7 @@ export async function discoverAiCatalog({
   workspacePath,
   processEnv,
 }) {
-  const environment = withoutTaskboardLauncherEnvironment(processEnv);
+  const environment = withoutPanelLauncherEnvironment(processEnv);
   const modelCommand = executableCommand(codexExecutable, ["debug", "models"]);
   const [modelResult, skillEntries, commands] = await Promise.all([
     execFileAsync(modelCommand.executable, modelCommand.args, {

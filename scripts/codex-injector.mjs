@@ -103,6 +103,9 @@ const codexAutomationMethods = new Set([
   "inbox-items",
 ]);
 let codexAutomationRequestSequence = 0;
+let codexAppServerRequestSequence = 0;
+const taskConversationOperations = new Map();
+const taskConversationOperationTtlMs = 120_000;
 const quotaPolicyTimers = new Map();
 const quotaPolicyRecords = new Map();
 const quotaPolicyQueues = new Map();
@@ -111,6 +114,7 @@ const restoredQuotaPolicyCdps = new WeakSet();
 const quotaPolicyRestorePromises = new WeakMap();
 let quotaPoliciesLoadPromise = null;
 let quotaPoliciesWritePromise = Promise.resolve();
+const taskConversationAppServerTimeoutMs = 30_000;
 
 function parseArgs(argv) {
   const options = {
@@ -829,9 +833,9 @@ async function loadPanelFrameViaCdp(cdp, frameName, frameCapability) {
   throw new Error("Timed out waiting for the isolated Panel frame");
 }
 
-async function openExternalUrl(request) {
+async function openWithDefaultApplication(target) {
   await new Promise((resolve, reject) => {
-    const child = spawn("/usr/bin/open", [request.url], {
+    const child = spawn(process.platform === "win32" ? "explorer.exe" : "/usr/bin/open", [target], {
       detached: true,
       env: withoutPanelLauncherEnvironment(process.env),
       stdio: "ignore",
@@ -842,6 +846,50 @@ async function openExternalUrl(request) {
       resolve();
     });
   });
+}
+
+async function revealAttachment(attachmentPath, directory) {
+  if (process.platform !== "darwin") {
+    await openWithDefaultApplication(directory);
+    return;
+  }
+  try {
+    await new Promise((resolve, reject) => {
+      const child = spawn("/usr/bin/open", ["-R", attachmentPath], {
+        env: withoutPanelLauncherEnvironment(process.env),
+        stdio: "ignore",
+      });
+      child.once("error", reject);
+      child.once("close", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error("Finder could not reveal the attachment"));
+      });
+    });
+  } catch {
+    await openWithDefaultApplication(directory);
+  }
+}
+
+async function openExternalUrl(request) {
+  await openWithDefaultApplication(request.url);
+  return { opened: true };
+}
+
+async function openAttachment(request) {
+  const response = await fetch(
+    `${panelBaseUrl}/api/attachments/${encodeURIComponent(request.attachmentId)}/content`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) throw new Error(`Attachment content returned HTTP ${response.status}`);
+  const directory = path.join(
+    panelDataDirectory,
+    "opened-attachments",
+    request.attachmentId,
+  );
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const attachmentPath = path.join(directory, request.filename);
+  await writeFile(attachmentPath, Buffer.from(await response.arrayBuffer()), { mode: 0o600 });
+  await revealAttachment(attachmentPath, directory);
   return { opened: true };
 }
 
@@ -929,6 +977,94 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
   } catch {
     throw new Error("Codex automation request returned invalid JSON");
   }
+}
+
+async function requestCodexAppServerViaCdp(
+  cdp,
+  executionContextId,
+  hostId,
+  method,
+  params,
+  timeoutMs = taskConversationAppServerTimeoutMs,
+) {
+  const requestId = [
+    "panel-thread",
+    process.pid,
+    Date.now().toString(36),
+    (++codexAppServerRequestSequence).toString(36),
+  ].join("-");
+  const evaluation = await cdp.send("Runtime.evaluate", {
+    expression: `(() => new Promise((resolve) => {
+      const requestId = ${JSON.stringify(requestId)};
+      const bridge = window.electronBridge;
+      if (!bridge || typeof bridge.sendMessageFromView !== "function") {
+        resolve({ ok: false, error: "Codex App Server bridge is unavailable" });
+        return;
+      }
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        window.removeEventListener("message", onMessage, true);
+        resolve(result);
+      };
+      const onMessage = (event) => {
+        const message = event.data;
+        if (
+          !message
+          || typeof message !== "object"
+          || message.type !== "mcp-response"
+          || message.hostId !== ${JSON.stringify(hostId)}
+          || message.message?.id !== requestId
+        ) return;
+        event.stopImmediatePropagation();
+        if (message.message.error) {
+          finish({
+            ok: false,
+            error: message.message.error.message || "Codex App Server request failed",
+          });
+          return;
+        }
+        finish({ ok: true, result: message.message.result });
+      };
+      const timeout = window.setTimeout(
+        () => finish({ ok: false, error: "Codex App Server request timed out" }),
+        ${JSON.stringify(timeoutMs)},
+      );
+      window.addEventListener("message", onMessage, true);
+      Promise.resolve(bridge.sendMessageFromView({
+        type: "mcp-request",
+        hostId: ${JSON.stringify(hostId)},
+        request: {
+          id: requestId,
+          method: ${JSON.stringify(method)},
+          params: ${JSON.stringify(params)},
+        },
+        priority: "interactive",
+        source: "panel_thread_create",
+        timeoutMs: ${JSON.stringify(timeoutMs)},
+        expiresAtMs: Date.now() + ${JSON.stringify(timeoutMs)},
+      })).catch((error) => {
+        finish({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }))()`,
+    ...(Number.isInteger(executionContextId) ? { contextId: executionContextId } : {}),
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  if (evaluation.exceptionDetails) {
+    throw new Error(
+      evaluation.exceptionDetails.exception?.description
+      || "Codex App Server request failed",
+    );
+  }
+  const response = evaluation.result.value;
+  if (!response?.ok) throw new Error(response?.error || "Codex App Server request failed");
+  return response.result;
 }
 
 async function applyPanelAutomationPolicy(
@@ -1199,6 +1335,183 @@ async function restoreQuotaPolicies(cdp) {
   }
 }
 
+async function startTaskConversationViaCdp(cdp, executionContextId, request) {
+  const { codexHostId, instruction, previousThreadId, targetRoot, title } = request;
+  const normalizeWorkspaceRoot = (value) => {
+    const root = String(value || "").trim();
+    if (!root) return "";
+    const windowsPath = /^[A-Za-z]:[\\/]/.test(root) || root.includes("\\");
+    const normalizedSlashes = windowsPath ? root.replace(/\\/g, "/") : root;
+    const withoutTrailingSlash = normalizedSlashes.replace(/\/+$/, "")
+      || (normalizedSlashes.startsWith("/") ? "/" : normalizedSlashes);
+    if (!windowsPath || !/^[A-Za-z]:/.test(withoutTrailingSlash)) return withoutTrailingSlash;
+    return `${withoutTrailingSlash[0].toLowerCase()}${withoutTrailingSlash.slice(1)}`;
+  };
+  const normalizedTargetRoot = normalizeWorkspaceRoot(targetRoot);
+  const deadline = Date.now() + 8_000;
+  let submitted = false;
+  while (Date.now() < deadline) {
+    const prepared = await cdp.send("Runtime.evaluate", {
+      expression: `(() => {
+        const root = Array.from(document.querySelectorAll(
+          '[data-codex-composer-root][data-composer-placement="home"]'
+        )).find((candidate) => candidate.getClientRects().length > 0);
+        const conversationId = root
+          ?.querySelector('[data-above-composer-conversation-id]')
+          ?.getAttribute('data-above-composer-conversation-id')
+          ?.trim() || "";
+        const editor = Array.from(root?.querySelectorAll(
+          '[data-codex-composer="true"][contenteditable="true"]'
+        ) || []).find((candidate) => candidate.getClientRects().length > 0);
+        if (
+          !root
+          || conversationId
+          || !editor
+          || (editor.textContent || "") !== ${JSON.stringify(instruction)}
+        ) return false;
+        editor.focus();
+        return true;
+      })()`,
+      contextId: executionContextId,
+      returnByValue: true,
+    });
+    if (prepared.result.value !== true) {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      continue;
+    }
+    for (const type of ["keyDown", "keyUp"]) {
+      await cdp.send("Input.dispatchKeyEvent", {
+        type,
+        key: "Enter",
+        code: "Enter",
+        windowsVirtualKeyCode: 13,
+        nativeVirtualKeyCode: 13,
+      });
+    }
+    submitted = true;
+    break;
+  }
+  if (!submitted) throw new Error("Codex new conversation composer did not become ready");
+
+  const threadDeadline = Date.now() + 12_000;
+  let discoveredThreadId = "";
+  try {
+    while (Date.now() < threadDeadline) {
+      const started = await cdp.send("Runtime.evaluate", {
+        expression: `(() => {
+          const root = Array.from(document.querySelectorAll(
+            '[data-codex-composer-root][data-composer-placement="thread"]'
+          )).find((candidate) => candidate.getClientRects().length > 0);
+          const threadId = root
+            ?.querySelector('[data-above-composer-conversation-id]')
+            ?.getAttribute('data-above-composer-conversation-id')
+            ?.trim() || "";
+          return threadId.replace(/^(?:local|cloud):/i, "");
+        })()`,
+        contextId: executionContextId,
+        returnByValue: true,
+      });
+      const threadId = typeof started.result.value === "string" ? started.result.value : "";
+      if (!threadId || threadId === previousThreadId) {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        continue;
+      }
+      discoveredThreadId = threadId;
+      const readyDeadline = Date.now() + 10_000;
+      let ready = false;
+      while (Date.now() < readyDeadline) {
+        try {
+          const result = await requestCodexAppServerViaCdp(
+            cdp,
+            executionContextId,
+            codexHostId,
+            "thread/read",
+            { threadId, includeTurns: false },
+            10_000,
+          );
+          if (
+            result?.thread?.id === threadId
+            && normalizeWorkspaceRoot(result.thread.cwd) === normalizedTargetRoot
+          ) {
+            ready = true;
+            break;
+          }
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      }
+      if (!ready) throw new Error("Codex did not confirm the task conversation workspace root");
+
+      try {
+        await requestCodexAppServerViaCdp(
+          cdp,
+          executionContextId,
+          codexHostId,
+          "thread/name/set",
+          { threadId, name: title },
+          10_000,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+        if (!message.includes("rollout") || !message.includes("is empty")) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        await requestCodexAppServerViaCdp(
+          cdp,
+          executionContextId,
+          codexHostId,
+          "thread/name/set",
+          { threadId, name: title },
+          10_000,
+        );
+      }
+
+      const titleDeadline = Date.now() + 10_000;
+      while (Date.now() < titleDeadline) {
+        try {
+          const result = await requestCodexAppServerViaCdp(
+            cdp,
+            executionContextId,
+            codexHostId,
+            "thread/read",
+            { threadId, includeTurns: false },
+            10_000,
+          );
+          if (result?.thread?.id === threadId && result.thread.name === title) {
+            return { threadId, title };
+          }
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      }
+      throw new Error("Codex did not confirm the task conversation title");
+    }
+    throw new Error("Timed out while starting the Codex conversation");
+  } catch (error) {
+    if (error && typeof error === "object") {
+      if (discoveredThreadId) error.threadId = discoveredThreadId;
+      else if (submitted) error.uncertain = true;
+    }
+    throw error;
+  }
+}
+
+function getOrStartTaskConversation(cdp, executionContextId, request) {
+  const existing = taskConversationOperations.get(request.taskId);
+  if (existing) return existing.promise;
+  const operation = {
+    promise: Promise.resolve().then(() => startTaskConversationViaCdp(cdp, executionContextId, request)),
+  };
+  taskConversationOperations.set(request.taskId, operation);
+  const retainSettledOperation = () => {
+    const timer = setTimeout(() => {
+      if (taskConversationOperations.get(request.taskId) === operation) {
+        taskConversationOperations.delete(request.taskId);
+      }
+    }, taskConversationOperationTtlMs);
+    timer.unref?.();
+  };
+  void operation.promise.then(retainSettledOperation, retainSettledOperation);
+  return operation.promise;
+}
+
 async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
   const { instruction, skillDisplayName, skillName, skillPath } = request;
   const deadline = Date.now() + 8_000;
@@ -1354,6 +1667,7 @@ function installPanelHostBinding(cdp, supervisor, startupToken) {
         request.frameCapability,
       ),
       openExternal: openExternalUrl,
+      openAttachment,
       runAutomation: (request) => (
         (async () => {
           const rpc = (method, body) => requestCodexAutomationViaCdp(
@@ -1376,6 +1690,9 @@ function installPanelHostBinding(cdp, supervisor, startupToken) {
       ),
       prefill: (request) => (
         prefillTaskComposerViaCdp(cdp, undefined, request)
+      ),
+      startConversation: (request) => (
+        getOrStartTaskConversation(cdp, undefined, request)
       ),
       sendResponse: (executionContextId, response) => (
         sendHostResponse(cdp, executionContextId, response)

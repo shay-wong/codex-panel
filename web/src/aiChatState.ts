@@ -13,7 +13,7 @@ import type {
   ComposerSkillCandidate,
   ComposerSkillNode,
   ComposerTurnInput,
-  TaskboardCapabilities,
+  PanelCapabilities,
 } from "./types";
 import { COMPOSER_CONTRACT_VERSION } from "./types.ts";
 
@@ -48,7 +48,7 @@ export function parseAiChatComposerFragment(
   }
 }
 
-export function isAiChatCapabilityAvailable(capabilities?: TaskboardCapabilities): boolean {
+export function isAiChatCapabilityAvailable(capabilities?: PanelCapabilities): boolean {
   return capabilities?.localAiChat === true;
 }
 

@@ -51,9 +51,9 @@ test("the list view defaults to a horizontal list and keeps a per-project layout
     appSource,
     /function selectListLayout\(layout: ListLayout\)[\s\S]*?panelStorage\.setItem\(`\$\{PROJECT_LIST_LAYOUT_KEY_PREFIX\}\$\{selectedProjectId\}`, layout\)/,
   );
-  assert.match(appSource, /className="list-layout-switch" role="group" aria-label="列表布局"/);
-  assert.match(appSource, /aria-label="横向列表"[\s\S]*?aria-pressed=\{listLayout === "horizontal"\}/);
-  assert.match(appSource, /aria-label="纵向列表"[\s\S]*?aria-pressed=\{listLayout === "vertical"\}/);
+  assert.match(appSource, /className="list-layout-switch" role="group" aria-label=\{text\("列表布局", "List layout"\)\}/);
+  assert.match(appSource, /aria-label=\{text\("横向列表", "Horizontal list"\)\}[\s\S]*?aria-pressed=\{listLayout === "horizontal"\}/);
+  assert.match(appSource, /aria-label=\{text\("纵向列表", "Vertical list"\)\}[\s\S]*?aria-pressed=\{listLayout === "vertical"\}/);
 });
 
 test("each list status group owns an initial-state policy while remaining manually toggleable", () => {

@@ -62,6 +62,7 @@ export function ColumnStatusIcon({ status }: { status: TaskStatus }) {
 }
 
 interface BoardColumnProps {
+  scrollRef?: (element: HTMLElement | null) => void;
   status: TaskStatus;
   tasks: Task[];
   presentations: Record<string, TaskCardPresentation>;
@@ -92,6 +93,7 @@ interface BoardColumnProps {
 }
 
 export function BoardColumn({
+  scrollRef,
   status,
   tasks,
   presentations,
@@ -165,6 +167,7 @@ export function BoardColumn({
 
   return (
     <section
+      ref={scrollRef}
       className={`board-column status-${status}${isDropTarget ? " is-drop-target" : ""}`}
       aria-labelledby={`column-${status}`}
       onDragEnter={() => onDragEnter(status)}

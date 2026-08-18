@@ -155,7 +155,7 @@ function completionSelectionId(selection: CompletionSelection): string {
 let segmentSequence = 0;
 const inlineMediaMarkdownParser = unified().use(remarkParse).use(remarkGfm);
 const EMPTY_MENTION_TASKS: readonly Task[] = [];
-const INLINE_MEDIA_CLIPBOARD_MIME = "application/x-taskboard-inline-media";
+const INLINE_MEDIA_CLIPBOARD_MIME = "application/x-panel-inline-media";
 const INLINE_MEDIA_HTML_BLOCKS = new Set([
   "ADDRESS",
   "BLOCKQUOTE",
@@ -188,7 +188,7 @@ function imageSegment(file: File): InlineImageSegment {
   return {
     id,
     type: "pending-image",
-    token: `<!--taskboard-inline-image:${id}-->`,
+    token: `<!--panel-inline-image:${id}-->`,
     file,
   };
 }
@@ -521,7 +521,7 @@ function inlineMediaClipboardHtml(
   ownerDocument: Document,
 ): string {
   const wrapper = ownerDocument.createElement("div");
-  wrapper.dataset.taskboardInlineMediaClipboard = clipboardId;
+  wrapper.dataset.panelInlineMediaClipboard = clipboardId;
 
   for (const segment of segments) {
     if (segment.type === "text") {
@@ -535,7 +535,7 @@ function inlineMediaClipboardHtml(
       const link = ownerDocument.createElement("a");
       const href = /\]\(([^)]+)\)$/.exec(segment.markdown)?.[1];
       if (href) link.setAttribute("href", href);
-      link.dataset.taskboardInlineMediaMarkdown = segment.markdown;
+      link.dataset.panelInlineMediaMarkdown = segment.markdown;
       link.textContent = segment.type === "issue-reference" ? segment.identifier : segment.label;
       wrapper.append(link);
       continue;
@@ -544,12 +544,12 @@ function inlineMediaClipboardHtml(
       const image = ownerDocument.createElement("img");
       image.src = resolvePersistedAttachmentUrl(segment.url);
       image.alt = segment.alt;
-      image.dataset.taskboardInlineMediaMarkdown = segment.markdown;
+      image.dataset.panelInlineMediaMarkdown = segment.markdown;
       wrapper.append(image);
       continue;
     }
     const pendingImage = ownerDocument.createElement("span");
-    pendingImage.dataset.taskboardInlineMediaPendingImage = segment.id;
+    pendingImage.dataset.panelInlineMediaPendingImage = segment.id;
     pendingImage.textContent = segment.file.name;
     wrapper.append(pendingImage);
   }
@@ -577,8 +577,8 @@ function inlineMediaClipboardIdFromHtml(html: string): string {
   if (!html) return "";
   const document = new DOMParser().parseFromString(html, "text/html");
   return document.body
-    .querySelector<HTMLElement>("[data-taskboard-inline-media-clipboard]")
-    ?.dataset.taskboardInlineMediaClipboard ?? "";
+    .querySelector<HTMLElement>("[data-panel-inline-media-clipboard]")
+    ?.dataset.panelInlineMediaClipboard ?? "";
 }
 
 export function createInlineMediaSegmentsFromHtml(
@@ -599,7 +599,7 @@ export function createInlineMediaSegmentsFromHtml(
     const element = node as HTMLElement;
     if (["SCRIPT", "STYLE"].includes(element.tagName)) return;
 
-    const inlineMarkdown = element.dataset.taskboardInlineMediaMarkdown;
+    const inlineMarkdown = element.dataset.panelInlineMediaMarkdown;
     if (inlineMarkdown) {
       markdown += inlineMarkdown;
       structured = true;
@@ -802,7 +802,7 @@ function IssueReferenceChip({
       className={`issue-reference-inline inline-media-issue-reference${task ? ` issue-reference-status-${task.status}` : ""}`}
       contentEditable={false}
       data-inline-media-segment={segment.id}
-      data-taskboard-inline-media-markdown={segment.markdown}
+      data-panel-inline-media-markdown={segment.markdown}
       aria-disabled={disabled}
       aria-label={task
         ? text(
@@ -856,8 +856,7 @@ function ComposerReferenceChip({
       className={`inline-media-composer-reference is-${segment.type}`}
       contentEditable={false}
       data-inline-media-segment={segment.id}
-      data-taskboard-inline-media-markdown={segment.markdown}
-      disabled={disabled}
+      data-panel-inline-media-markdown={segment.markdown}
       aria-label={text(
         `${kind} ${segment.label}，按退格键或删除键移除`,
         `${kind} ${segment.label}, press Backspace or Delete to remove`,
@@ -945,8 +944,8 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
       let selectableIndex = 0;
       for (const selection of completionSelections) {
         const candidate = selection.type === "candidate" ? selection.candidate : null;
-        const groupId = candidate ? `codex:${candidate.group}` : "taskboard:issues";
-        const groupLabel = candidate?.group ?? text("Taskboard 议题", "Taskboard issues");
+        const groupId = candidate ? `codex:${candidate.group}` : "panel:issues";
+        const groupLabel = candidate?.group ?? text("Panel 议题", "Panel issues");
         let group = groupsById.get(groupId);
         if (!group) {
           group = { id: groupId, label: groupLabel, options: [] };
@@ -1013,7 +1012,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
             ? "inline-media-atom"
             : "inline-media-atom inline-media-image-atom";
           if (segment.type === "pending-image") element.contentEditable = "false";
-          else element.dataset.taskboardInlineMediaMarkdown = segment.markdown;
+          else element.dataset.panelInlineMediaMarkdown = segment.markdown;
           nextAtomHosts.set(segment.id, element);
         }
         fragment.append(element);
@@ -1631,9 +1630,9 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
         );
         return;
       }
-      const taskboardHtml = clipboardId
-        || clipboardHtml.includes("data-taskboard-inline-media-markdown");
-      if (taskboardHtml) {
+      const panelHtml = clipboardId
+        || clipboardHtml.includes("data-panel-inline-media-markdown");
+      if (panelHtml) {
         const htmlSegments = createInlineMediaSegmentsFromHtml(clipboardHtml, referenceTasks);
         if (htmlSegments) {
           event.preventDefault();

@@ -152,7 +152,7 @@ test("common issue mutations enter a Linear-style undo queue", () => {
   assert.match(appSource, /void performUndo\(\)/);
   assert.match(appSource, /moveTask\(task, destination, beforeTaskId, true\)/);
   assert.match(appSource, /className="toast undo-toast"/);
-  assert.match(appSource, />\s*撤回 <kbd>\{undoShortcut\}<\/kbd>/);
+  assert.match(appSource, />\s*\{text\("撤回", "Undo"\)\} <kbd>\{undoShortcut\}<\/kbd>/);
   assert.match(appSource, /restoreTaskRequest\(archived\)/);
   assert.match(apiSource, /export async function restoreTask/);
 });
@@ -163,18 +163,18 @@ test("issues expose processing conversations without manual binding", () => {
   assert.doesNotMatch(appSource, /detail-thread-button/);
   assert.doesNotMatch(detailSource, /输入对话 ID|解除 Codex 对话绑定|>绑定</);
   assert.doesNotMatch(editorSource, /对话 ID|linkedThreadId/);
-  assert.match(detailSource, /currentTask\.threadId/);
+  assert.match(detailSource, /currentTask\.threadBinding \|\| currentTask\.legacyLocalThreadId/);
   assert.doesNotMatch(detailSource, /currentTask\.threadIds/);
-  assert.match(detailSource, /<strong>查看对话<\/strong>/);
+  assert.match(detailSource, /<strong>\{text\("查看对话", "View conversation"\)\}<\/strong>/);
   assert.match(detailSource, /className="conversation-thread-id">\{threadId\}/);
   assert.doesNotMatch(detailSource, /shortThreadId/);
   assert.doesNotMatch(detailSource, /detail-property-label">Codex/);
-  assert.match(detailSource, /comment\.threadId/);
-  assert.match(detailSource, /threadId=\{comment\.threadId\}/);
+  assert.match(detailSource, /comment\.threadBinding \|\| comment\.legacyLocalThreadId/);
+  assert.match(detailSource, /onOpenLegacyLocalThread\(comment\.legacyLocalThreadId!\)/);
   assert.doesNotMatch(detailSource, /compact/);
   assert.doesNotMatch(styles, /issue-conversation-link\.compact/);
-  assert.match(detailSource, /代码分支/);
-  assert.match(detailSource, /Worktree/);
+  assert.match(detailSource, /\.\.\.developmentOptions\.map\(\(context\) => \(\{/);
+  assert.match(detailSource, /context\.type === "branch" \? "branch" : "folder"/);
   assert.match(detailSource, /developmentContext/);
   assert.doesNotMatch(detailSource, /placeholder="绑定分支/);
   assert.doesNotMatch(contextMenuSource, /打开关联 Codex 对话/);
@@ -189,7 +189,7 @@ test("issue activity includes its linked embedded AI conversations", () => {
   assert.match(detailSource, /kind: "ai-conversation" as const/);
   assert.match(
     detailSource,
-    /if \(item\.kind === "ai-conversation"\)[\s\S]*?<AiConversationActivity[\s\S]*?thread=\{item\.thread\}[\s\S]*?onOpen=\{onOpenAiChatThread\}/,
+    /if \(item\.kind === "ai-conversation"\)[\s\S]*?<AiConversationActivity[\s\S]*?thread=\{item\.thread\}[\s\S]*?onOpen=\{\(\) => onOpenAiChatThread\(item\.thread\.id\)\}/,
   );
   assert.match(styles, /\.activity-conversation-link \{[\s\S]*?background: var\(--surface\)/);
 });
@@ -217,10 +217,8 @@ test("comments stage, upload, render and delete their own attachments", () => {
   assert.match(apiSource, /\/api\/comments\/\$\{encodeURIComponent\(commentId\)\}\/attachments/);
   assert.match(detailSource, /pendingCommentFiles/);
   assert.match(detailSource, /uploadCommentAttachment\(comment\.id, file, "attachment"\)/);
-  assert.match(
-    detailSource,
-    /comment\.attachments[\s\S]*?\.filter\(\(attachment\) => !markdownIncludesAttachment\(comment\.body, attachment\)\)[\s\S]*?\.map\(\(attachment\) =>/,
-  );
+  assert.match(detailSource, /comment\.attachments\.some\(\(attachment\) => attachment\.kind === "attachment"\)/);
+  assert.match(detailSource, /comment\.attachments[\s\S]*?\.filter\(\(attachment\) => attachment\.kind === "attachment"\)[\s\S]*?\.map\(\(attachment\) =>/);
   assert.match(detailSource, /setPendingAttachmentDelete\(attachment\)/);
 });
 

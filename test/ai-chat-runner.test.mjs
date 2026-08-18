@@ -16,7 +16,7 @@ import {
   decodeComposerReferenceKey,
   parseComposerReferenceUri,
 } from "../server/composer-reference.mjs";
-import { createTaskboardServer } from "../server/index.mjs";
+import { createPanelServer } from "../server/index.mjs";
 import { normalizeCodexEvent } from "../server/ai-chat-process.mjs";
 
 async function waitFor(predicate, timeout = 4_000) {
@@ -30,7 +30,7 @@ async function waitFor(predicate, timeout = 4_000) {
 }
 
 async function createComposerCatalogFixture(issueSlashCommands) {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-composer-catalog-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "panel-composer-catalog-"));
   const agentsDirectory = path.join(directory, "agents");
   await mkdir(agentsDirectory);
   await writeFile(path.join(agentsDirectory, "master.toml"), [
@@ -352,7 +352,7 @@ test("composer reference URI parser rejects noncanonical and unsupported markers
 });
 
 test("composer rebind HTTP API returns send-ready documents and boundary errors", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-composer-rebind-api-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "panel-composer-rebind-api-"));
   const executable = path.join(directory, "fake-codex.mjs");
   await writeFile(executable, `#!/usr/bin/env node
 const args = process.argv.slice(2);
@@ -382,7 +382,7 @@ process.stdin.on("data", (chunk) => {
 });
 `);
   await chmod(executable, 0o755);
-  const app = createTaskboardServer({
+  const app = createPanelServer({
     dataDirectory: path.join(directory, "data"),
     codexExecutable: executable,
     codexStatePath: path.join(directory, "missing-codex-state.json"),

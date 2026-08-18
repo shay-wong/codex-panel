@@ -154,7 +154,7 @@ describe("InlineMediaComposer completion references", () => {
     expect(serializeInlineMedia(restored!)).toBe(value);
   });
 
-  it("keeps service candidates and Taskboard issues in separate groups with one keyboard index", async () => {
+  it("keeps service candidates and Panel issues in separate groups with one keyboard index", async () => {
     const issue = {
       id: "task-1",
       projectId: "project-1",
@@ -186,7 +186,7 @@ describe("InlineMediaComposer completion references", () => {
 
     expect(await screen.findByRole("option", { name: /任务总管/ })).toBeTruthy();
     expect(screen.getByText("Agents")).toBeTruthy();
-    expect(screen.getByText("Taskboard issues")).toBeTruthy();
+    expect(screen.getByText("Panel issues")).toBeTruthy();
     expect(screen.getAllByRole("option")).toHaveLength(2);
     expect(screen.getAllByRole("option")[0].textContent).toContain("LOCAL-1");
     expect(screen.getByRole("option", { name: /LOCAL-1/ }).getAttribute("aria-selected")).toBe("true");

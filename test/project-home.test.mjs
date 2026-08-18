@@ -25,10 +25,11 @@ test("each device stores an independent workspace path for every project", () =>
   assert.match(appSource, /const DEVICE_WORKSPACE_PATHS_KEY = "panel\.deviceWorkspacePaths\.v1"/);
   assert.match(appSource, /function readDeviceWorkspacePaths\(\)/);
   assert.match(appSource, /rememberDeviceWorkspacePath/);
-  assert.match(appSource, /const \[nextProjects, metadata, workspaces, nextJiraConnection\] = await Promise\.all\(\[/);
+  assert.match(appSource, /const \[nextProjects, metadata, workspaces\] = await Promise\.all\(\[/);
+  assert.match(appSource, /const nextJiraConnection = await getJiraConnection\(signal\)/);
   assert.match(appSource, /listDeviceWorkspaces\(signal\)/);
   assert.match(appSource, /const selectedDeviceWorkspacePath = selectedProjectId === GLOBAL_PROJECT_ID[\s\S]*?: deviceWorkspacePaths\[selectedProjectId\]/);
-  assert.match(appSource, /listDevelopmentContexts\([\s\S]*?controller\.signal,\s*selectedDeviceWorkspacePath,[\s\S]*?\)/);
+  assert.match(appSource, /listDevelopmentContexts\([\s\S]*?controller\.signal,\s*selectedDeviceWorkspacePath,\s*\)/);
   assert.match(apiSource, /query\.set\("workspacePath", workspacePath\)/);
   assert.match(apiSource, /\/api\/device-workspaces/);
 });
@@ -100,7 +101,7 @@ test("the project header exposes project, automation, and create controls", () =
 });
 
 test("the project header keeps detail navigation separate from the project switcher", () => {
-  assert.match(appSource, /const headerProjectName = selectedProject\?\.id === GLOBAL_PROJECT_ID\s*\? text\("全局", "Global"\)\s*: selectedProject\?\.name \?\? text\("任务面板", "Taskboard"\)/);
+  assert.match(appSource, /const headerProjectName = selectedProject\?\.id === GLOBAL_PROJECT_ID\s*\? text\("全局", "Global"\)\s*: selectedProject\?\.name \?\? text\("任务面板", "Panel"\)/);
   assert.match(appSource, /detailTask && \([\s\S]*?aria-label=\{text\("返回议题看板", "Back to issue board"\)\}[\s\S]*?<\/button>/);
   assert.match(appSource, /className="header-project-switcher"[\s\S]*?<span className="project-name">\{headerProjectName\}<\/span>/);
   assert.doesNotMatch(appSource, /className="issue-root-button"/);

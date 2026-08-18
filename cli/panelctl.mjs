@@ -16,7 +16,7 @@ import {
 export const SCHEMA_VERSION = 2;
 export const DEFAULT_API_URL = "http://127.0.0.1:47823";
 
-const BOOLEAN_OPTIONS = new Set(["json"]);
+const BOOLEAN_OPTIONS = new Set(["json", "clear-binding-thread"]);
 
 const COMMAND_OPTIONS = new Map([
   ["project list", new Set(["json"])],
@@ -70,7 +70,18 @@ const COMMAND_OPTIONS = new Map([
       "json",
     ]),
   ],
-  ["issue move", new Set(["status", "thread-id", "if-version", "json"])],
+  ["issue move", new Set([
+    "status",
+    "thread-id",
+    "binding-thread-id",
+    "binding-codex-project-id",
+    "binding-codex-project-kind",
+    "binding-codex-host-id",
+    "binding-workspace-path",
+    "clear-binding-thread",
+    "if-version",
+    "json",
+  ])],
   ["issue archive", new Set(["thread-id", "if-version", "json"])],
   ["issue restore", new Set(["thread-id", "if-version", "json"])],
   ["issue relation", new Set(["type", "issue", "thread-id", "if-version", "json"])],
@@ -89,6 +100,7 @@ const COMMAND_OPTIONS = new Map([
   ["comment update", new Set(["body", "thread-id", "if-version", "json"])],
   ["comment delete", new Set(["thread-id", "if-version", "json"])],
   ["attachment download", new Set(["output", "json"])],
+  ["attachment upload", new Set(["file", "task", "comment", "content-type", "kind", "json"])],
   ["context current", new Set(["cwd", "json"])],
 ]);
 
@@ -192,7 +204,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map, cloud login/status/logout, issue list/get/create/update/move/archive/restore/relation, comment list/add/update/delete, attachment download, context current",
+      "Expected one of: project list/create/map, cloud login/status/logout, issue list/get/create/update/move/archive/restore/relation, comment list/add/update/delete, attachment download/upload, context current",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -306,6 +318,9 @@ async function execute(parsed, overrides) {
     case "attachment download":
       expectOperandCount(parsed, 1);
       return downloadAttachment(api, parsed.operands[0], parsed.options, overrides);
+    case "attachment upload":
+      expectOperandCount(parsed, 0);
+      return uploadAttachment(api, parsed.options, overrides);
     case "context current":
       expectOperandCount(parsed, 0);
       return currentContext(api, parsed.options, overrides);
@@ -403,6 +418,45 @@ function createApiClient(overrides, { baseUrl: explicitBaseUrl } = {}) {
         size: Number(response.headers.get("content-length")) || bytes.byteLength,
       };
     },
+    async upload(pathname, { body, contentType, filename, kind }) {
+      let response;
+      try {
+        response = await fetchImplementation(resolveApiUrl(baseUrl, pathname), {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            "content-type": contentType,
+            "x-panel-client": "panelctl",
+            "x-panel-filename": encodeURIComponent(filename),
+            "x-panel-attachment-kind": kind,
+          },
+          body,
+        });
+      } catch (error) {
+        throw new PanelctlError(`Cannot reach panel service at ${baseUrl}`, {
+          code: "SERVICE_UNAVAILABLE",
+          exitCode: 3,
+          details: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      const payload = await readResponse(response);
+      if (!response.ok) {
+        const apiError = extractApiError(payload, response.status);
+        throw new PanelctlError(apiError.message, {
+          code: apiError.code,
+          exitCode: response.status === 409 ? 5 : 4,
+          details: apiError.details,
+        });
+      }
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        throw new PanelctlError("Panel service returned an invalid JSON response", {
+          code: "INVALID_RESPONSE",
+          exitCode: 4,
+        });
+      }
+      return payload;
+    },
   };
 }
 
@@ -425,6 +479,76 @@ async function downloadAttachment(api, attachmentId, options, overrides) {
     contentType: downloaded.contentType,
     size: downloaded.size,
   };
+}
+
+async function uploadAttachment(api, options, overrides) {
+  const taskId = options.task;
+  const commentId = options.comment;
+  if (Boolean(taskId) === Boolean(commentId)) {
+    throw usageError("attachment upload requires exactly one of --task or --comment");
+  }
+
+  const filePath = resolveInputPath(requiredOption(options, "file"), overrides);
+  const read = overrides.readFile ?? readFile;
+  let bytes;
+  try {
+    bytes = await read(filePath);
+  } catch (error) {
+    throw new PanelctlError(`Cannot read attachment file: ${filePath}`, {
+      code: "FILE_READ_FAILED",
+      exitCode: 2,
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const filename = path.basename(filePath);
+  if (!filename || filename === "." || filename === "..") {
+    throw usageError("Attachment --file must include a valid filename");
+  }
+  const contentType = options["content-type"]
+    ? String(options["content-type"]).trim().toLowerCase()
+    : guessContentType(filename);
+  if (!contentType) throw usageError("--content-type cannot be empty");
+  const kind = options.kind ?? (contentType.startsWith("image/") ? "inline" : "attachment");
+  if (kind !== "inline" && kind !== "attachment") {
+    throw usageError("--kind must be inline or attachment");
+  }
+
+  const pathname = taskId
+    ? `${taskPath(taskId)}/attachments`
+    : `${commentPath(commentId)}/attachments`;
+  const payload = await api.upload(pathname, {
+    body: bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes),
+    contentType,
+    filename,
+    kind,
+  });
+  return {
+    attachment: payload.attachment ?? null,
+    file: filePath,
+    kind,
+    target: taskId
+      ? { type: "task", id: taskId }
+      : { type: "comment", id: commentId },
+  };
+}
+
+function guessContentType(filename) {
+  switch (path.extname(filename).toLowerCase()) {
+    case ".png": return "image/png";
+    case ".jpg":
+    case ".jpeg": return "image/jpeg";
+    case ".gif": return "image/gif";
+    case ".webp": return "image/webp";
+    case ".svg": return "image/svg+xml";
+    case ".md": return "text/markdown";
+    case ".txt": return "text/plain";
+    case ".json": return "application/json";
+    case ".pdf": return "application/pdf";
+    case ".html":
+    case ".htm": return "text/html";
+    default: return "application/octet-stream";
+  }
 }
 
 async function cloudLogin(api, rawUrl, actorName, overrides) {
@@ -569,11 +693,61 @@ async function moveIssue(api, taskId, options, overrides) {
   const status = requiredOption(options, "status");
   assertStatus(status);
   const threadId = resolveThreadId(options, overrides);
+  const threadBinding = threadBindingFromOptions(options);
   return api.request("POST", `${taskPath(taskId)}/move`, {
     status,
     threadId,
+    ...optionalField("threadBinding", threadBinding),
     version: await resolveVersion(api, taskId, options["if-version"]),
   });
+}
+
+function threadBindingFromOptions(options) {
+  const fields = [
+    options["binding-thread-id"],
+    options["binding-codex-project-id"],
+    options["binding-codex-project-kind"],
+    options["binding-codex-host-id"],
+    options["binding-workspace-path"],
+  ];
+  if (options["clear-binding-thread"]) {
+    if (fields.some((field) => field !== undefined)) {
+      throw usageError("--clear-binding-thread cannot be combined with binding identity options");
+    }
+    return null;
+  }
+  if (fields.every((field) => field === undefined)) return undefined;
+  const threadId = requiredOption(options, "binding-thread-id").trim();
+  if (!threadId || threadId.length > 256) {
+    throw usageError("--binding-thread-id must contain 1 to 256 characters");
+  }
+  const identityFields = fields.slice(1);
+  if (identityFields.every((field) => field === undefined)) return { threadId };
+  if (identityFields.some((field) => field === undefined)) {
+    throw usageError("Binding identity requires project id, kind, host id, and workspace path");
+  }
+  const codexProjectId = options["binding-codex-project-id"].trim();
+  const codexProjectKind = options["binding-codex-project-kind"];
+  const codexHostId = options["binding-codex-host-id"].trim();
+  const workspacePath = options["binding-workspace-path"];
+  if (!codexProjectId || codexProjectId.length > 256) {
+    throw usageError("--binding-codex-project-id must contain 1 to 256 characters");
+  }
+  if (codexProjectKind !== "local" && codexProjectKind !== "remote") {
+    throw usageError("--binding-codex-project-kind must be local or remote");
+  }
+  if (
+    !codexHostId
+    || codexHostId.length > 256
+    || (codexProjectKind === "local" && codexHostId !== "local")
+    || (codexProjectKind === "remote" && codexHostId === "local")
+  ) {
+    throw usageError("--binding-codex-host-id does not match the project kind");
+  }
+  if (!path.posix.isAbsolute(workspacePath) && !path.win32.isAbsolute(workspacePath)) {
+    throw usageError("--binding-workspace-path must be absolute");
+  }
+  return { threadId, codexProjectId, codexProjectKind, codexHostId, workspacePath };
 }
 
 async function archiveIssue(api, taskId, options, overrides, action) {

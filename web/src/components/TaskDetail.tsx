@@ -6,7 +6,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { taskboardStorage } from "../storage";
+import { panelStorage } from "../storage";
 import {
   ApiError,
   attachmentDownloadUrl,
@@ -16,7 +16,7 @@ import {
   listAttachments,
   listComments,
   listTaskActivities,
-  resolveTaskboardUrl,
+  resolvePanelUrl,
   uploadAttachment,
   uploadCommentAttachment,
   updateComment,
@@ -30,18 +30,21 @@ import {
 import { TASK_PRIORITIES, TASK_STATUSES } from "../types";
 import type {
   ActorIdentity,
+  AiChatThread,
   Attachment,
   Comment,
   CodexThreadBinding,
   DevelopmentContext,
   DevelopmentScan,
   IssueRelationType,
+  Project,
   Recurrence,
   Task,
   TaskChangeActivity,
   TaskDraft,
   TaskPriority,
   TaskRelationSummary,
+  TaskUpdate,
   TaskStatus,
 } from "../types";
 import {
@@ -53,7 +56,7 @@ import { ActorAvatar } from "./ActorAvatar";
 import { ColumnStatusIcon, STATUS_DETAILS, StatusIcon } from "./BoardColumn";
 import { LabelPicker } from "./LabelPicker";
 import { LinearIcon, LinearPriorityIcon } from "./LinearIcon";
-import { TaskboardIcon } from "./TaskboardIcon";
+import { PanelIcon } from "./PanelIcon";
 import {
   fileKey,
   MAX_ATTACHMENT_SIZE,
@@ -80,8 +83,8 @@ import {
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { buildIssueUrl, readIssueIdentifier } from "../issueRoute";
 import { postEmbeddedHostMessage } from "../embeddedHost.mjs";
-import copyIdIcon from "../assets/figma-taskboard/copy-id.svg";
-import copyLinkIcon from "../assets/figma-taskboard/copy-link.svg";
+import copyIdIcon from "../assets/panel/copy-id.svg";
+import copyLinkIcon from "../assets/panel/copy-link.svg";
 import { MarkdownDocument } from "./MarkdownDocument";
 
 type TaskDetailError = string | readonly [string, string];
@@ -90,6 +93,7 @@ interface TaskDetailProps {
   task: Task;
   tasks: Task[];
   referenceTasks: Task[];
+  projects: Project[];
   currentUser: ActorIdentity;
   availableLabels: string[];
   developmentScan: DevelopmentScan;
@@ -98,7 +102,7 @@ interface TaskDetailProps {
   attachmentsRevision: number;
   onCreateLabel: (label: string) => Promise<void>;
   onDeleteLabel: (label: string) => Promise<void>;
-  onUpdate: (task: Task, changes: Partial<TaskDraft>) => Promise<Task>;
+  onUpdate: (task: Task, changes: Partial<TaskUpdate>) => Promise<Task>;
   onOpenTask: (task: TaskRelationSummary) => void;
   onAddRelation: (
     task: Task,
@@ -112,6 +116,8 @@ interface TaskDetailProps {
   ) => Promise<RelationMutationResult>;
   onOpenThread: (binding: CodexThreadBinding) => void;
   onOpenLegacyLocalThread: (threadId: string) => void;
+  aiChatThreads: AiChatThread[];
+  onOpenAiChatThread: (threadId: string) => void;
   onOpenInThread: (task: Task) => void;
   onCopy: (text: string, announcement: string) => void;
   openingThread: boolean;
@@ -170,7 +176,7 @@ async function downloadAttachmentFile(attachment: Attachment) {
   const host = new URL(document.baseURI).searchParams.get("host");
   if (host === "codex" && window.parent !== window) {
     postEmbeddedHostMessage({
-      type: "taskboard:open-attachment",
+      type: "panel:open-attachment",
       payload: {
         attachmentId: attachment.id,
         filename: attachment.filename,
@@ -179,7 +185,7 @@ async function downloadAttachmentFile(attachment: Attachment) {
     return;
   }
 
-  const response = await fetch(resolveTaskboardUrl(attachmentDownloadUrl(attachment)));
+  const response = await fetch(resolvePanelUrl(attachmentDownloadUrl(attachment)));
   if (!response.ok) {
     throw new ApiError(response.status, await response.json().catch(() => ({})));
   }
@@ -307,8 +313,8 @@ function ActivityChangeIcon({ field, before, after }: {
   }
   if (field === "relation" && typeof value === "object") {
     const relation = value as { type?: IssueRelationType };
-    if (relation.type === "blocked_by") return <TaskboardIcon name="relationBlockedBy" />;
-    if (relation.type === "blocks") return <TaskboardIcon name="relationBlocks" />;
+    if (relation.type === "blocked_by") return <PanelIcon name="relationBlockedBy" />;
+    if (relation.type === "blocks") return <PanelIcon name="relationBlocks" />;
     return <LinearIcon name="link" />;
   }
   if (field === "projectId" || field === "workflowId") return <LinearIcon name="project" />;
@@ -432,7 +438,7 @@ function ConversationLink({
       title={text(`查看对话 ${threadId}`, `View conversation ${threadId}`)}
       onClick={onOpen}
     >
-      <TaskboardIcon name="conversation" />
+      <PanelIcon name="conversation" />
       <strong>{text("查看对话", "View conversation")}</strong>
       <span className="conversation-divider" aria-hidden="true" />
       <span className="conversation-thread-id">{threadId}</span>
@@ -440,10 +446,54 @@ function ConversationLink({
   );
 }
 
+function AiConversationActivity({
+  thread,
+  onOpen,
+}: {
+  thread: AiChatThread;
+  onOpen: () => void;
+}) {
+  const { locale, text } = useTaskboardI18n();
+  const statusLabel = {
+    idle: text("空闲", "Idle"),
+    running: text("运行中", "Running"),
+    failed: text("失败", "Failed"),
+  }[thread.status];
+
+  return (
+    <div className="activity-entry activity-ai-conversation">
+      <span className="activity-rail-icon activity-conversation-icon" aria-hidden="true">
+        <LinearIcon name="conversation" />
+      </span>
+      <button
+        className="activity-conversation-link"
+        type="button"
+        title={text(`打开内嵌对话 ${thread.title}`, `Open embedded conversation ${thread.title}`)}
+        aria-label={text(
+          `打开内嵌对话：${thread.title}，${statusLabel}`,
+          `Open embedded conversation: ${thread.title}, ${statusLabel}`,
+        )}
+        onClick={onOpen}
+      >
+        <span className="activity-conversation-copy">
+          <strong>{thread.title}</strong>
+          <small>
+            <span className={`activity-conversation-state is-${thread.status}`} aria-hidden="true" />
+            <span>{text(`内嵌 AI 对话 · ${statusLabel}`, `Embedded AI conversation · ${statusLabel}`)}</span>
+            <time title={exactTime(thread.updatedAt, locale)}>{relativeTime(thread.updatedAt, locale)}</time>
+          </small>
+        </span>
+        <LinearIcon name="chevronRight" />
+      </button>
+    </div>
+  );
+}
+
 export function TaskDetail({
   task,
   tasks,
   referenceTasks,
+  projects,
   currentUser,
   availableLabels,
   developmentScan,
@@ -458,6 +508,8 @@ export function TaskDetail({
   onRemoveRelation,
   onOpenThread,
   onOpenLegacyLocalThread,
+  aiChatThreads,
+  onOpenAiChatThread,
   onOpenInThread,
   onCopy,
   openingThread,
@@ -472,7 +524,7 @@ export function TaskDetail({
   );
   const [editingDescription, setEditingDescription] = useState(false);
   const [propertyMenu, setPropertyMenu] = useState<
-    "status" | "priority" | "assignee" | "labels" | "development" | "recurrence" | null
+    "project" | "status" | "priority" | "assignee" | "labels" | "development" | "recurrence" | null
   >(null);
   const [savingProperty, setSavingProperty] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -486,7 +538,7 @@ export function TaskDetail({
   const [commentsError, setCommentsError] = useState<TaskDetailError | null>(null);
   const [commentSegments, setCommentSegments] = useState<InlineMediaSegment[]>(
     () => createInlineMediaSegments(
-      taskboardStorage.getItem(`taskboard.comment-draft.${task.id}`) ?? "",
+      panelStorage.getItem(`panel.comment-draft.${task.id}`) ?? "",
       referenceTasks,
     ),
   );
@@ -586,7 +638,7 @@ export function TaskDetail({
   useEffect(() => {
     function receiveAttachmentOpenError(event: MessageEvent) {
       if (event.source !== window.parent || !event.data || typeof event.data !== "object") return;
-      if (event.data.type !== "taskboard:attachment-open-error") return;
+      if (event.data.type !== "panel:attachment-open-error") return;
       setAttachmentsError(typeof event.data.payload?.error === "string"
         ? event.data.payload.error
         : ["无法打开附件，请重试。", "Could not open the attachment. Try again."]);
@@ -596,10 +648,10 @@ export function TaskDetail({
   }, []);
 
   useEffect(() => {
-    const key = `taskboard.comment-draft.${task.id}`;
+    const key = `panel.comment-draft.${task.id}`;
     const text = inlineMediaText(commentSegments);
-    if (text) taskboardStorage.setItem(key, text);
-    else taskboardStorage.removeItem(key);
+    if (text) panelStorage.setItem(key, text);
+    else panelStorage.removeItem(key);
   }, [commentSegments, task.id]);
 
   useEffect(() => {
@@ -631,7 +683,7 @@ export function TaskDetail({
     };
   }, [activeMenuId]);
 
-  async function saveTask(changes: Partial<TaskDraft>, property: string) {
+  async function saveTask(changes: Partial<TaskUpdate>, property: string) {
     setSavingProperty(property);
     onError(null);
     try {
@@ -963,6 +1015,10 @@ export function TaskDetail({
   const visibleTaskAttachments = attachments.filter(
     (attachment) => attachment.kind === "attachment",
   );
+  const linkedAiChatThreads = aiChatThreads.filter((thread) => (
+    thread.origin.projectId === currentTask.projectId
+    && thread.origin.issueId === currentTask.id
+  ));
   const activityTimeline = [
     ...taskActivities.flatMap((activity) => activity.changes.map((change, index) => ({
       kind: "change" as const,
@@ -976,6 +1032,12 @@ export function TaskDetail({
       id: comment.id,
       createdAt: comment.createdAt,
       comment,
+    })),
+    ...linkedAiChatThreads.map((thread) => ({
+      kind: "ai-conversation" as const,
+      id: thread.id,
+      createdAt: thread.updatedAt,
+      thread,
     })),
   ].sort((left, right) => (
     left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
@@ -1215,6 +1277,15 @@ export function TaskDetail({
                 {commentsLoading ? (
                   <div className="comments-loading" aria-label={text("正在加载活动", "Loading activity")} aria-busy="true"><i /><i /></div>
                 ) : activityTimeline.map((item) => {
+                  if (item.kind === "ai-conversation") {
+                    return (
+                      <AiConversationActivity
+                        key={`ai-conversation-${item.id}`}
+                        thread={item.thread}
+                        onOpen={() => onOpenAiChatThread(item.thread.id)}
+                      />
+                    );
+                  }
                   if (item.kind === "change") {
                     const { activity, change } = item;
                     const fieldLabels = ACTIVITY_FIELD_LABELS[change.field];
@@ -1633,6 +1704,24 @@ export function TaskDetail({
               </button>
             </div>
             <h2>{text("属性", "Properties")}</h2>
+            <div className="detail-property-row">
+              <span className="detail-property-label">{text("项目", "Project")}</span>
+              <TaskPropertyPicker
+                value={currentTask.projectId}
+                options={projects.map((project) => ({
+                  value: project.id,
+                  label: project.name,
+                  icon: <LinearIcon name="project" />,
+                }))}
+                open={propertyMenu === "project"}
+                disabled={currentTask.source === "jira" || savingProperty === "projectId" || projects.length < 2}
+                className="detail-property-picker"
+                triggerClassName="detail-property-trigger"
+                ariaLabel={text("项目", "Project")}
+                onOpenChange={(open) => setPropertyMenu(open ? "project" : null)}
+                onChange={(projectId) => void saveTask({ projectId }, "projectId")}
+              />
+            </div>
             <div className="detail-property-row">
               <span className="detail-property-label">{text("状态", "Status")}</span>
               <TaskPropertyPicker

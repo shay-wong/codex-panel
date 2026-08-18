@@ -20,7 +20,16 @@ import {
 
 const SANDBOXES = new Set(["read-only", "workspace-write", "danger-full-access"]);
 const ERROR_CONTENT_LIMIT = 65_536;
-const AGENT_DISPATCH_PROTOCOL = "taskboard.agent.v1";
+const AGENT_DISPATCH_PROTOCOL = "panel.agent.v1";
+const HANDOFF_COMMAND = /^\/(?:handoff|交接)(?:\s+([\s\S]+))?$/i;
+const HANDOFF_ISSUE_OPTION = /(^|[\s\uFFFC])--issue(?:=|\s+)([^\s]+)/i;
+const HANDOFF_COMMENT_MARKER = "<!-- codex-panel:ai-chat-handoff:v1 -->";
+const DEFAULT_HANDOFF_ACTOR = {
+  type: "agent",
+  id: "codex-agent",
+  name: "Codex Agent",
+  avatarUrl: null,
+};
 const CODEX_IMAGE_TYPES = new Set([
   "image/gif",
   "image/jpeg",
@@ -35,9 +44,9 @@ function cappedError(value) {
 
 function agentDispatchText(agent) {
   return [
-    `Taskboard private agent dispatch (${AGENT_DISPATCH_PROTOCOL}):`,
-    `Use the configured Taskboard agent ${JSON.stringify(agent.name)} (id ${JSON.stringify(agent.id)}) for this request.`,
-    "This is Taskboard product-private routing context, not a Codex App Server UserInput type.",
+    `Panel private agent dispatch (${AGENT_DISPATCH_PROTOCOL}):`,
+    `Use the configured Panel agent ${JSON.stringify(agent.name)} (id ${JSON.stringify(agent.id)}) for this request.`,
+    "This is Panel product-private routing context, not a Codex App Server UserInput type.",
   ].join("\n");
 }
 
@@ -50,6 +59,46 @@ function wait(milliseconds) {
     const timer = setTimeout(resolve, milliseconds);
     timer.unref();
   });
+}
+
+function extractHandoffOptions(message) {
+  const match = HANDOFF_ISSUE_OPTION.exec(message);
+  const messageWithoutIssue = match
+    ? `${message.slice(0, match.index)}${match[1]}${message.slice(match.index + match[0].length)}`
+    : message;
+  return {
+    issueReference: match?.[2] ?? null,
+    note: messageWithoutIssue.trim(),
+  };
+}
+
+function parseHandoffCommand(message) {
+  const match = message.trim().match(HANDOFF_COMMAND);
+  if (!match) return null;
+  return extractHandoffOptions(match[1] ?? "");
+}
+
+function handoffPrompt(issueIdentifier, note) {
+  return [
+    `Create a durable handoff summary for issue ${issueIdentifier} from this conversation.`,
+    "Return only concise Markdown for the next Codex task. Do not use tools, modify files, or update the issue yourself.",
+    "Include confirmed goals and scope, decisions and constraints, concrete implementation context discussed, remaining questions or risks, and the recommended next action.",
+    "Preserve exact identifiers, file paths, commands, and acceptance details only when they appeared in the conversation. Do not invent missing facts.",
+    "Write in the language primarily used by the user in this conversation.",
+    ...(note ? [`The user asked you to emphasize: ${note}`] : []),
+  ].join("\n");
+}
+
+function handoffComment(thread, summary) {
+  const title = thread.title.replaceAll("`", "\\`");
+  return [
+    HANDOFF_COMMENT_MARKER,
+    "### AI 对话交接",
+    "",
+    summary.trim(),
+    "",
+    `> 来源：内嵌 AI 对话「${title}」`,
+  ].join("\n");
 }
 
 function appServerThreadSettings(thread, resolved) {
@@ -126,7 +175,9 @@ export class AiChatService {
     this.database = options.database;
     this.codexExecutable = options.codexExecutable;
     this.codexStatePath = options.codexStatePath;
-    this.manageTaskboardSkillPath = options.manageTaskboardSkillPath;
+    this.managePanelSkillPath = options.managePanelSkillPath;
+    this.handoffActor = options.handoffActor ?? DEFAULT_HANDOFF_ACTOR;
+    this.onIssueCommentCreated = options.onIssueCommentCreated ?? (() => {});
     this.processEnv = options.processEnv ?? process.env;
     this.killGraceMs = options.killGraceMs ?? 1_000;
     this.appServer = options.appServer ?? new CodexAppServer({
@@ -323,7 +374,8 @@ export class AiChatService {
     const changesSettings = ["model", "reasoningEffort", "sandbox"].some(
       (key) => Object.hasOwn(changes, key),
     );
-    const wasActive = changesSettings && this.#threadIsActive(thread);
+    const changesIssue = Object.hasOwn(changes, "issueId");
+    const wasActive = (changesSettings || changesIssue) && this.#threadIsActive(thread);
 
     if (Object.hasOwn(changes, "sandbox")) this.#validateSandbox(changes.sandbox);
     if (Object.hasOwn(changes, "model") || Object.hasOwn(changes, "reasoningEffort")) {
@@ -333,7 +385,7 @@ export class AiChatService {
       const reasoningEffort = changes.reasoningEffort ?? thread.reasoningEffort;
       this.#validateReasoningEffort(model, reasoningEffort);
     }
-    if (wasActive || (changesSettings && this.#threadIsActive(thread))) {
+    if (wasActive || ((changesSettings || changesIssue) && this.#threadIsActive(thread))) {
       throw new ApiError(
         409,
         "THREAD_BUSY",
@@ -341,7 +393,27 @@ export class AiChatService {
       );
     }
 
-    return this.database.updateAiChatThread(threadId, changes);
+    const persistedChanges = { ...changes };
+    delete persistedChanges.issueId;
+    if (changesIssue) {
+      const issue = changes.issueId === null
+        ? null
+        : this.database.getTask(changes.issueId);
+      if (
+        changes.issueId !== null
+        && (!issue || issue.projectId !== thread.origin.projectId || issue.archivedAt != null)
+      ) {
+        throw new ApiError(
+          404,
+          "AI_CHAT_ISSUE_NOT_FOUND",
+          `Task '${changes.issueId}' is not an active task in project '${thread.origin.projectId}'`,
+        );
+      }
+      persistedChanges.originIssueId = issue?.id ?? null;
+      persistedChanges.originIssueIdentifier = issue?.identifier ?? null;
+    }
+
+    return this.database.updateAiChatThread(threadId, persistedChanges);
   }
 
   deleteThread(threadId) {
@@ -369,6 +441,8 @@ export class AiChatService {
       return this.#startComposerTurn(thread, input);
     }
     this.#validateTurnInput(input);
+    const handoff = parseHandoffCommand(input.message);
+    if (handoff) this.#resolveHandoffIssue(thread, handoff.issueReference);
     if (thread.sandbox === "danger-full-access" && input.dangerFullAccessConfirmed !== true) {
       throw new ApiError(
         400,
@@ -391,6 +465,9 @@ export class AiChatService {
         `AI chat thread '${threadId}' has a running turn`,
       );
     }
+    const handoffIssue = handoff
+      ? this.#resolveHandoffIssue(thread, handoff.issueReference)
+      : null;
     if (thread.sandbox === "danger-full-access" && input.dangerFullAccessConfirmed !== true) {
       throw new ApiError(
         400,
@@ -411,7 +488,7 @@ export class AiChatService {
     const skillIds = input.skillIds ?? [];
     const availableSkills = new Map(
       catalog.skills
-        .filter((skill) => skill.id !== "manage-taskboard")
+        .filter((skill) => skill.id !== "manage-panel")
         .map((skill) => [skill.id, skill]),
     );
     for (const skillId of skillIds) {
@@ -432,16 +509,19 @@ export class AiChatService {
       const prompt = buildCodexPrompt(
         thread,
         {
-          message: input.message,
+          message: handoff
+            ? handoffPrompt(handoffIssue.identifier, handoff.note)
+            : input.message,
           skills: selectedSkills,
           attachmentPaths,
         },
-        this.manageTaskboardSkillPath,
+        this.managePanelSkillPath,
       );
       const run = this.database.createAiChatRun({ threadId });
       this.#emit(threadId, { type: "ai.run", run });
       const userEventData = {};
       if (skillIds.length > 0) userEventData.skillIds = skillIds;
+      if (handoff) userEventData.handoff = true;
       if (attachments.length > 0) {
         userEventData.attachments = attachments.map(({ filename, contentType, size }) => ({
           filename,
@@ -464,6 +544,7 @@ export class AiChatService {
       let terminalOutcome = null;
       let terminalError = "";
       let pendingError = "";
+      let handoffSummary = "";
       const { child, completion } = spawnCodexTurn({
         executable: this.codexExecutable,
         args,
@@ -491,6 +572,14 @@ export class AiChatService {
             content: normalized.content,
             data: normalized.data,
           });
+          if (
+            handoff
+            && raw.type === "item.completed"
+            && raw.item?.type === "agent_message"
+            && normalized.role === "assistant"
+          ) {
+            handoffSummary = normalized.content;
+          }
           if (raw.type === "turn.completed" && terminalOutcome === null) {
             terminalOutcome = "completed";
           } else if (raw.type === "turn.failed") {
@@ -515,6 +604,9 @@ export class AiChatService {
           terminalOutcome: () => terminalOutcome,
           terminalError: () => terminalError,
           pendingError: () => pendingError,
+          handoff,
+          handoffIssue,
+          handoffSummary: () => handoffSummary,
         }),
         (error) => this.#finishRun({
           run,
@@ -525,6 +617,9 @@ export class AiChatService {
           terminalOutcome: () => terminalOutcome,
           terminalError: () => terminalError,
           pendingError: () => pendingError,
+          handoff,
+          handoffIssue,
+          handoffSummary: () => handoffSummary,
         }),
       );
       this.completions.set(run.id, finalization);
@@ -950,7 +1045,7 @@ export class AiChatService {
       return { temporaryDirectory: null, attachmentPaths: [], imagePaths: [] };
     }
     const temporaryDirectory = await mkdtemp(
-      path.join(os.tmpdir(), "codex-taskboard-ai-turn-"),
+      path.join(os.tmpdir(), "codex-panel-ai-turn-"),
     );
     try {
       const attachmentPaths = [];
@@ -986,6 +1081,9 @@ export class AiChatService {
     terminalOutcome,
     terminalError,
     pendingError,
+    handoff,
+    handoffIssue,
+    handoffSummary,
   }) {
     let status;
     let publicError = null;
@@ -1011,6 +1109,21 @@ export class AiChatService {
       publicError = "Codex did not provide a thread id";
     } else {
       status = "completed";
+    }
+
+    if (status === "completed" && handoff) {
+      const summary = handoffSummary().trim();
+      if (!summary) {
+        status = "failed";
+        publicError = "Codex did not return a handoff summary";
+      } else {
+        try {
+          this.#recordHandoff(run.threadId, handoffIssue.id, summary);
+        } catch (handoffError) {
+          status = "failed";
+          publicError = cappedError(handoffError) || "Could not record the handoff on the issue";
+        }
+      }
     }
 
     try {
@@ -1039,6 +1152,54 @@ export class AiChatService {
         await rm(active.temporaryDirectory, { recursive: true, force: true });
       }
     }
+  }
+
+  #resolveHandoffIssue(thread, issueReference) {
+    const issue = issueReference
+      ? this.database.getTask(issueReference)
+      : thread.origin.issueId
+        ? this.database.getTask(thread.origin.issueId)
+        : null;
+    if (!issue) {
+      if (issueReference) {
+        throw new ApiError(
+          404,
+          "AI_CHAT_ISSUE_NOT_FOUND",
+          `Task '${issueReference}' does not exist`,
+        );
+      }
+      throw new ApiError(
+        400,
+        "AI_CHAT_ISSUE_REQUIRED",
+        "Link this AI conversation to an issue or provide --issue ISSUE-ID",
+      );
+    }
+    if (issue.archivedAt != null) {
+      throw new ApiError(
+        409,
+        "AI_CHAT_ISSUE_UNAVAILABLE",
+        `Task '${issue.identifier}' is archived`,
+      );
+    }
+    return issue;
+  }
+
+  #recordHandoff(threadId, issueId, summary) {
+    const thread = this.getThread(threadId);
+    const issue = this.database.getTask(issueId);
+    if (!issue || issue.archivedAt != null) {
+      throw new ApiError(
+        409,
+        "AI_CHAT_ISSUE_UNAVAILABLE",
+        "The linked issue is no longer available",
+      );
+    }
+    const comment = this.database.createComment(issue.id, {
+      body: handoffComment(thread, summary),
+      actor: this.handoffActor,
+    });
+    this.onIssueCommentCreated({ comment, task: issue });
+    return comment;
   }
 
   #emit(threadId, event) {

@@ -158,6 +158,50 @@ test("composer prefill requires bounded Panel Skill metadata", async () => {
   assert.deepEqual(calls, ["prefill", true, false, false]);
 });
 
+test("SSH conversation starts and attachment opens require bounded host payloads", async () => {
+  const calls = [];
+  const handlers = {
+    parseAutomationRequest: () => null,
+    startConversation: async (request) => {
+      calls.push(["start", request.taskId, request.codexHostId]);
+      return { threadId: "thread-1" };
+    },
+    openAttachment: async (request) => calls.push(["attachment", request.filename]),
+    sendResponse: async (_executionContextId, response) => calls.push(["response", response.ok]),
+  };
+  const conversation = {
+    id: "remote-thread-request",
+    action: "start-task-conversation",
+    taskId: "task-1",
+    previousThreadId: "",
+    codexHostId: "ssh-host",
+    targetRoot: "/srv/project",
+    instruction: "Continue REMOTE-1",
+    title: "REMOTE-1: Fix bridge",
+  };
+  const attachment = {
+    id: "attachment-request",
+    action: "open-attachment",
+    attachmentId: "30c3d0c4-aa0f-4169-93c0-bb3da20bc654",
+    filename: "evidence.txt",
+  };
+
+  await handleHostBindingPayload({ payload: JSON.stringify(conversation), executionContextId: 12 }, handlers);
+  await handleHostBindingPayload({ payload: JSON.stringify(attachment), executionContextId: 12 }, handlers);
+  await handleHostBindingPayload({
+    payload: JSON.stringify({ ...attachment, id: "bad-attachment", filename: "../evidence.txt" }),
+    executionContextId: 12,
+  }, handlers);
+
+  assert.deepEqual(calls, [
+    ["start", "task-1", "ssh-host"],
+    ["response", true],
+    ["attachment", "evidence.txt"],
+    ["response", true],
+    ["response", false],
+  ]);
+});
+
 test("a stale automation parser receives an immediate host error instead of timing out", async () => {
   const responses = [];
   const staleParser = () => null;

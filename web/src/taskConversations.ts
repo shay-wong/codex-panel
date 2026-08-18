@@ -3,10 +3,8 @@ import type {
   AiChatThread,
   AiChatTodoProgress,
   CodexThreadBinding,
-  ComposerPersistedDocument,
   Task,
 } from "./types";
-import type { InlineMediaSegment } from "./components/InlineMediaComposer";
 
 export interface TaskConversationItem {
   key: string;
@@ -34,46 +32,6 @@ export interface TaskCardPresentation {
   conversations: TaskConversationItem[];
   processing: TaskProcessingPresentation;
   unread: boolean;
-}
-
-export function buildPersistedTaskComposerDocument(
-  beforeDescription: string,
-  descriptionSegments: InlineMediaSegment[],
-  afterDescription: string,
-): ComposerPersistedDocument {
-  const nodes: ComposerPersistedDocument["nodes"] = [];
-  const appendText = (value: string) => {
-    if (!value) return;
-    const previous = nodes.at(-1);
-    if (previous?.type === "text") previous.text += value;
-    else nodes.push({ type: "text", text: value });
-  };
-
-  appendText(beforeDescription);
-  for (const segment of descriptionSegments) {
-    if (segment.type === "skill-reference" || segment.type === "agent-reference") {
-      nodes.push({
-        type: "persistedReference",
-        referenceKind: segment.type === "skill-reference" ? "skill" : "agent",
-        referenceKey: segment.referenceKey,
-        label: segment.label,
-      });
-    } else if (segment.type === "unsupported-reference") {
-      nodes.push({
-        type: "unsupportedReference",
-        referenceUri: segment.referenceUri,
-        label: segment.label,
-      });
-    } else if (segment.type === "text") {
-      appendText(segment.text);
-    } else if (segment.type === "pending-image") {
-      appendText(segment.token);
-    } else {
-      appendText(segment.markdown);
-    }
-  }
-  appendText(afterDescription);
-  return { version: 1, nodes };
 }
 
 export function normalizeCodexThreadId(value: string | null | undefined) {

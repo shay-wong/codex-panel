@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
-import { buildPersistedTaskComposerDocument } from "../web/src/taskConversations.ts";
-
 const appSource = await readFile(new URL("../web/src/App.tsx", import.meta.url), "utf8");
 const apiSource = await readFile(new URL("../web/src/api.ts", import.meta.url), "utf8");
 const chatSource = await readFile(
@@ -32,65 +30,11 @@ test("all four issue composers request candidates with the owning project and su
   assert.match(appSource, /projectId=\{selectedProjectId\}/);
 });
 
-test("task composer document converts only durable references and keeps slash and legacy syntax as text", () => {
-  const document = buildPersistedTaskComposerDocument("before\n", [
-    { id: "a", type: "text", text: "/model [legacy](subagent://master) $old " },
-    {
-      id: "b",
-      type: "skill-reference",
-      markdown: "[review](taskboard://composer-reference/v1/skill/cmV2aWV3)",
-      referenceKey: "cmV2aWV3",
-      label: "review",
-    },
-    { id: "c", type: "text", text: " and " },
-    {
-      id: "d",
-      type: "agent-reference",
-      markdown: "[master](taskboard://composer-reference/v1/agent/bWFzdGVy)",
-      referenceKey: "bWFzdGVy",
-      label: "master",
-    },
-    {
-      id: "e",
-      type: "unsupported-reference",
-      markdown: "[future](taskboard://composer-reference/v2/plugin/cGx1Z2lu)",
-      referenceUri: "taskboard://composer-reference/v2/plugin/cGx1Z2lu",
-      label: "future",
-    },
-  ], "\nafter");
-
-  assert.deepEqual(document, {
-    version: 1,
-    nodes: [
-      { type: "text", text: "before\n/model [legacy](subagent://master) $old " },
-      {
-        type: "persistedReference",
-        referenceKind: "skill",
-        referenceKey: "cmV2aWV3",
-        label: "review",
-      },
-      { type: "text", text: " and " },
-      {
-        type: "persistedReference",
-        referenceKind: "agent",
-        referenceKey: "bWFzdGVy",
-        label: "master",
-      },
-      {
-        type: "unsupportedReference",
-        referenceUri: "taskboard://composer-reference/v2/plugin/cGx1Z2lu",
-        label: "future",
-      },
-      { type: "text", text: "\nafter" },
-    ],
-  });
-});
-
-test("open in conversation rebinds durable references and hydrates only a fresh composer document", () => {
+test("embedded AI composer rebinds durable references and hydrates only a fresh document", () => {
   assert.match(apiSource, /"\/api\/local\/ai\/composer\/rebind"/);
-  assert.match(appSource, /inlineMediaComposerReferences\(descriptionSegments\)\.length === 0/);
-  assert.match(appSource, /await rebindAiChatComposerReferences\(\{/);
-  assert.match(appSource, /document: rebound\.ready \? rebound\.document : persistedDocument/);
+  assert.match(chatSource, /await rebindAiChatComposerReferences\(\{/);
+  assert.match(chatSource, /if \(!rebound\.ready\)/);
+  assert.match(chatSource, /resolvedNodes\.push\(rebound\.document\.nodes\[reboundIndex\]\)/);
   assert.match(chatSource, /if \(!unavailable\) tokenElement\.dataset\.composerCandidateRef = node\.candidateRef/);
   assert.match(chatSource, /setComposerRevision\(composerDraft\.revision\)/);
   assert.match(chatSource, /\|\| composerRebindBlocked/);

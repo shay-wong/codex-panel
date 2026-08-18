@@ -35,9 +35,11 @@ test("project automation state is device-local and scoped by panel project", () 
 
 test("automation requests use the exact Codex host message contract", () => {
   assert.match(appSource, /type: "panel:automation-request"/);
-  assert.match(appSource, /operation: "ensure-active" \| "pause" \| "list"/);
-  assert.match(appSource, /panelProjectId: selectedProjectId/);
+  assert.match(appSource, /operation: "ensure-active" \| "pause" \| "list" \| "apply-policy"/);
+  assert.match(appSource, /context: AutomationRequestContext[\s\S]*?panelProjectId: context\.panelProjectId/);
   assert.match(appSource, /codexProjectId/);
+  assert.match(appSource, /codexProjectKind/);
+  assert.match(appSource, /codexHostId/);
   assert.match(appSource, /projectName: selectedProject\.name/);
   assert.match(appSource, /workspacePath/);
   assert.match(appSource, /skillPath: managePanelSkillPath/);
@@ -51,8 +53,21 @@ test("automation requests use the exact Codex host message contract", () => {
 });
 
 test("project mapping is based on exact ids and workspace paths, never project names", () => {
-  assert.match(appSource, /hostContext\?\.projects\?\.some\([\s\S]*?project\.id === selectedProject\.id/);
-  assert.match(appSource, /deviceWorkspacePaths\[project\.id\] === workspacePath/);
+  const automationContextSource = appSource.slice(
+    appSource.indexOf("const automationProjectContext"),
+    appSource.indexOf("const automationRequestContext"),
+  );
+  assert.match(
+    automationContextSource,
+    /const effectiveCodexProjectId = selectedProject\.id === GLOBAL_PROJECT_ID\s*\? hostContext\?\.projectId\s*: selectedProject\.id/,
+  );
+  assert.match(automationContextSource, /project\.id === effectiveCodexProjectId/);
+  assert.match(automationContextSource, /savedIdentity\?\.codexProjectKind === "remote"/);
+  assert.match(automationContextSource, /project\.id === savedIdentity\.codexProjectId/);
+  assert.match(automationContextSource, /liveProject\.hostId !== savedIdentity\.codexHostId/);
+  assert.match(automationContextSource, /liveProject\.workspacePath !== savedIdentity\.workspacePath/);
+  assert.match(appSource, /directCodexProject\?\.workspacePath/);
+  assert.match(appSource, /\(deviceWorkspacePaths\[project\.id\] \?\? project\.workspacePath\) === workspacePath/);
   assert.match(appSource, /请先在 Codex 中添加并映射该项目目录/);
   assert.doesNotMatch(appSource, /project\.name === selectedProject\.name/);
 });
@@ -111,7 +126,7 @@ test("unavailable automation state has one notice, clears stale errors, and cann
   );
   assert.match(
     reconcileSource,
-    /automationProjectContext\.unavailableReason[\s\S]*?\) \{\s*setAutomationError\(null\);\s*return;/,
+    /if \(!automationRequestContext\) \{\s*setAutomationError\(null\);\s*return;/,
   );
   assert.doesNotMatch(reconcileSource, /setAutomationError\(automationProjectContext\.unavailableReason/);
 });
@@ -149,20 +164,24 @@ test("opening settings and changing projects reconcile with the host list", () =
     appSource.indexOf("const reconcileProjectAutomation"),
     appSource.indexOf("const saveProjectAutomation"),
   );
-  const saveSource = appSource.slice(
-    appSource.indexOf("const saveProjectAutomation"),
-    appSource.indexOf("function openTaskDetail"),
+  const drainSource = appSource.slice(
+    appSource.indexOf("const drainQueuedAutomationSaves"),
+    appSource.indexOf("const reconcileProjectAutomation"),
   );
   assert.match(
     reconcileSource,
-    /sendAutomationRequest\(\s*"list",\s*options,\s*stored\?\.automationId,\s*\)/,
+    /sendAutomationRequest\(\s*"list",\s*options,\s*automationRequestContext,\s*stored\?\.automationId,\s*\)/,
   );
   assert.doesNotMatch(reconcileSource, /"apply-policy"/);
   assert.match(
-    saveSource,
-    /sendAutomationRequest\("apply-policy", options, stored\?\.automationId\)/,
+    drainSource,
+    /sendAutomationRequest\(\s*"apply-policy",\s*queuedSave\.options,\s*queuedSave\.context,\s*previousRecord\?\.automationId,\s*\)/,
   );
   assert.match(appSource, /const policy = isAutomationHostPolicy\(response\.policy\) \? response\.policy : null/);
+  assert.match(appSource, /typeof value\.codexProjectId === "string"/);
+  assert.match(appSource, /value\.codexProjectKind === "local" \|\| value\.codexProjectKind === "remote"/);
+  assert.match(appSource, /typeof value\.codexHostId === "string"/);
+  assert.match(appSource, /typeof value\.workspacePath === "string"/);
   assert.match(appSource, /const item = \(isAutomationHostItem\(response\.item\) \? response\.item : undefined\)\s*\?\? items\.find\(\(candidate\) => candidate\.id === policy\.automationId\)/);
   assert.match(appSource, /items\.find\(\(candidate\) => candidate\.id === policy\.automationId\)/);
   assert.match(appSource, /items\.length === 1 \? items\[0\] : undefined/);
@@ -170,6 +189,16 @@ test("opening settings and changing projects reconcile with the host list", () =
   assert.match(appSource, /status: item\?\.status \?\? "PAUSED"/);
   assert.match(appSource, /enabledByUser: policy\.enabledByUser/);
   assert.match(appSource, /quotaAware: policy\.quotaAware/);
+  assert.match(drainSource, /codexProjectId: policy\.codexProjectId/);
+  assert.match(drainSource, /codexProjectKind: policy\.codexProjectKind/);
+  assert.match(drainSource, /codexHostId: policy\.codexHostId/);
+  assert.match(drainSource, /workspacePath: policy\.workspacePath/);
+  assert.doesNotMatch(drainSource, /codexProjectId: queuedSave\.context\.codexProjectId/);
+  assert.match(reconcileSource, /const effectiveProjectIdentity = policy \?\? automationRequestContext/);
+  assert.match(reconcileSource, /codexProjectId: effectiveProjectIdentity\.codexProjectId/);
+  assert.match(reconcileSource, /codexProjectKind: effectiveProjectIdentity\.codexProjectKind/);
+  assert.match(reconcileSource, /codexHostId: effectiveProjectIdentity\.codexHostId/);
+  assert.match(reconcileSource, /workspacePath: effectiveProjectIdentity\.workspacePath/);
   assert.match(appSource, /automationId: undefined,[\s\S]*?status: "PAUSED"/);
-  assert.match(appSource, /writeProjectAutomation\(selectedProjectId, previousRecord\)/);
+  assert.match(drainSource, /writeProjectAutomation\(queuedSave\.projectId, previousRecord\)/);
 });
