@@ -531,21 +531,11 @@ function inlineMediaClipboardHtml(
       wrapper.append(text);
       continue;
     }
-    if (isInlineReference(segment)) {
-      const link = ownerDocument.createElement("a");
-      const href = /\]\(([^)]+)\)$/.exec(segment.markdown)?.[1];
-      if (href) link.setAttribute("href", href);
-      link.dataset.panelInlineMediaMarkdown = segment.markdown;
-      link.textContent = segment.type === "issue-reference" ? segment.identifier : segment.label;
-      wrapper.append(link);
-      continue;
-    }
-    if (segment.type === "persisted-image") {
-      const image = ownerDocument.createElement("img");
-      image.src = resolvePersistedAttachmentUrl(segment.url);
-      image.alt = segment.alt;
-      image.dataset.panelInlineMediaMarkdown = segment.markdown;
-      wrapper.append(image);
+    if (isInlineReference(segment) || segment.type === "persisted-image") {
+      const markdown = ownerDocument.createElement("span");
+      markdown.dataset.panelInlineMediaMarkdown = segment.markdown;
+      markdown.textContent = segment.markdown;
+      wrapper.append(markdown);
       continue;
     }
     const pendingImage = ownerDocument.createElement("span");
