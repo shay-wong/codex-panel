@@ -97,6 +97,19 @@ test("the package injection command remains resident for tab-triggered recovery"
   assert.match(source, /__codexPanelHostStartupTokenV1/);
 });
 
+test("the Windows launcher control pipe opens, checks, and stops the managed Panel", () => {
+  assert.match(source, /createInterface\(\{ input: process\.stdin, terminal: false \}\)/);
+  assert.match(source, /action === "open"/);
+  assert.match(source, /action === "status"/);
+  assert.match(source, /action === "stop"/);
+  assert.match(source, /openPanelSignalQueued/);
+  assert.match(source, /openPanelSignalOpened/);
+  assert.match(source, /panelManagedStatus/);
+  assert.match(source, /openedStatus\.pageVisible === true/);
+  assert.match(source, /renderer did not confirm page visibility/);
+  assert.match(source, /shouldOpen && \(!status\.pageVisible \|\| !status\.frameReady \|\| !frameLoaded\)/);
+});
+
 test("attach reconciles the renderer against a hashed current injection source", () => {
   assert.match(source, /createHash\("sha256"\)/);
   assert.match(source, /__CODEX_PANEL_SOURCE_HASH__/);
@@ -143,7 +156,7 @@ test("Panel environment is primary and private identity is never generated impli
   assert.match(source, /already running without the configured private identity/);
 });
 
-test("Swift manager lifecycle commands return before normal launch setup", () => {
+test("desktop manager lifecycle commands return before normal launch setup", () => {
   assert.match(source, /else if \(arg === "--discover-port"\) options\.discoverPort = true/);
   assert.match(source, /else if \(arg === "--status"\) options\.status = true/);
   assert.match(source, /else if \(arg === "--open-existing"\) options\.openExisting = true/);
@@ -177,8 +190,9 @@ test("private CDP pipe launch and renderer recovery remain enabled", () => {
   assert.match(source, /Page\.setBypassCSP/);
   assert.match(source, /frameReady: window\.__codexPanelInjection__\?\.ready === true/);
   assert.match(source, /hostBridge\.publishHeartbeat\(\)/);
-  assert.match(source, /let openPending = options\.open && firstResults\.length === 0/);
-  assert.match(source, /if \(idleAfterNormalExit\) continue/);
+  assert.match(source, /openRuntimePanel[\s\S]*?injectionReadinessMatches\(status/);
+  assert.match(source, /const hasOpenPending = \(\) => openedRequestGeneration < openRequestGeneration/);
+  assert.match(source, /if \(idleAfterNormalExit\)[\s\S]*?if \(!hasOpenPending\(\)\) continue/);
 });
 
 test("CSP bypass is activated by one controlled renderer reload", () => {

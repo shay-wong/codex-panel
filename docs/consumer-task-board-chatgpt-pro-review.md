@@ -74,5 +74,5 @@
 ## 当前状态
 
 - 该协作成果已经通过上游提交进入 `0.2.0` 基线，并随 `upstream/main` 合入当前 Fork；本节保留原始验收记录，不再代表当前工作树状态。
-- 当前 Fork 在此基础上继续使用 `Codex Panel` 产品命名和 Swift macOS 管理器；未采用上游 Tauri 启动器与发布链。
+- 当前 Fork 在此基础上继续使用 `Codex Panel` 产品命名，并已迁移到上游 Tauri/Rust 桌面基础；Fork 自有的 Panel、Jira、Skills、`panelctl`、数据目录和手动 Release 检查契约仍保留，未启用自动 updater 安装。
 - 未迁移数据库，未修改线上配置，未操作真实用户数据。

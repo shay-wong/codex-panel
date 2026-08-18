@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex Panel</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-synthesis: none;
+        --bg: #f3f4f6;
+        --surface: #ffffff;
+        --surface-raised: #fafbfc;
+        --border: #dfe2e7;
+        --border-strong: #c8cdd5;
+        --text: #1c2026;
+        --muted: #68707c;
+        --faint: #939aa5;
+        --accent: #16745b;
+        --accent-hover: #0f5f49;
+        --accent-soft: #dff2ea;
+        --danger: #b33b32;
+        --danger-soft: #fce9e7;
+        --warning: #a96812;
+        --focus: #2185d0;
+        --shadow: 0 14px 34px rgba(27, 35, 48, 0.08);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #111315;
+          --surface: #1a1d20;
+          --surface-raised: #202428;
+          --border: #33383f;
+          --border-strong: #484f58;
+          --text: #f1f3f5;
+          --muted: #a9b0ba;
+          --faint: #777f89;
+          --accent: #48b994;
+          --accent-hover: #63c9a8;
+          --accent-soft: #173d32;
+          --danger: #ef746b;
+          --danger-soft: #43231f;
+          --warning: #e0a146;
+          --focus: #73b7ef;
+          --shadow: 0 16px 38px rgba(0, 0, 0, 0.24);
+        }
+      }
+
+      * { box-sizing: border-box; }
+      html { min-width: 320px; min-height: 100%; }
+      body { min-width: 320px; min-height: 100vh; margin: 0; background: var(--bg); color: var(--text); font-size: 14px; letter-spacing: 0; }
+      button, input { font: inherit; }
+      button { letter-spacing: 0; }
+      button:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+      .app-header {
+        position: sticky;
+        z-index: 5;
+        top: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        min-height: 68px;
+        padding: 10px 20px;
+        border-bottom: 1px solid var(--border);
+        background: color-mix(in srgb, var(--surface) 94%, transparent);
+        backdrop-filter: blur(18px);
+      }
+
+      .brand { display: flex; align-items: center; min-width: 0; gap: 12px; }
+      .brand-mark { display: block; width: 40px; height: 40px; flex: 0 0 auto; object-fit: contain; }
+      .brand h1 { margin: 0; font-size: 18px; font-weight: 680; line-height: 1.2; letter-spacing: 0; }
+      .brand-meta { display: flex; align-items: center; gap: 7px; margin-top: 4px; color: var(--muted); font-size: 12px; }
+      .header-tools { display: flex; align-items: center; gap: 10px; }
+
+      .overall-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 30px;
+        padding: 0 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--surface-raised);
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .status-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--warning); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 15%, transparent); }
+      .overall-status.running .status-dot, .component.success .status-dot { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+      .overall-status.error .status-dot, .component.danger .status-dot { background: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 15%, transparent); }
+      .overall-status.stopped .status-dot, .component.idle .status-dot { background: var(--faint); box-shadow: none; }
+
+      .icon-button {
+        display: inline-grid;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        place-items: center;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 17px;
+        line-height: 1;
+      }
+
+      .icon-button:hover { border-color: var(--border-strong); color: var(--text); }
+      button[data-tooltip] { position: relative; }
+      button[data-tooltip]::before {
+        content: attr(data-tooltip);
+        position: absolute;
+        z-index: 20;
+        top: calc(100% + 6px);
+        left: 50%;
+        padding: 5px 8px;
+        border-radius: 4px;
+        background: var(--text);
+        color: var(--surface);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
+        font-size: 11px;
+        font-weight: 500;
+        line-height: 1.2;
+        opacity: 0;
+        pointer-events: none;
+        transform: translate(-50%, -2px);
+        transition: opacity 60ms ease 80ms, transform 60ms ease 80ms;
+        white-space: nowrap;
+      }
+      button[data-tooltip]:hover::before, button[data-tooltip]:focus-visible::before { opacity: 1; transform: translate(-50%, 0); }
+      .lifecycle-action[data-tooltip]::before { top: auto; right: 0; bottom: calc(100% + 6px); left: auto; transform: translateY(2px); }
+      .lifecycle-action[data-tooltip]:hover::before, .lifecycle-action[data-tooltip]:focus-visible::before { transform: translateY(0); }
+      #dismissError::before { right: 0; left: auto; transform: translateY(-2px); }
+      #dismissError:hover::before, #dismissError:focus-visible::before { transform: translateY(0); }
+      .header-action { min-height: 32px; padding: 0 11px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border)); border-radius: 6px; background: var(--accent-soft); color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 650; white-space: nowrap; }
+      .header-action:hover { border-color: var(--accent); background: var(--accent); color: #ffffff; }
+      main { width: min(100%, 920px); margin: 0 auto; padding: 20px 24px 28px; }
+      .overview { overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow); }
+      .overview-heading { display: flex; align-items: center; justify-content: space-between; gap: 22px; min-height: 104px; padding: 18px 20px; }
+      .overview-copy { min-width: 0; }
+      .eyebrow { display: block; margin-bottom: 7px; color: var(--accent); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+      .overview h2 { margin: 0; font-size: 21px; font-weight: 680; line-height: 1.25; letter-spacing: 0; }
+      .message { max-width: 520px; min-height: 20px; margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+
+      .lifecycle-actions { display: flex; overflow: visible; flex: 0 0 auto; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); }
+      .lifecycle-action { display: inline-grid; width: 38px; height: 38px; padding: 0; place-items: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; }
+      .lifecycle-action:first-child { border-radius: 5px 0 0 5px; }
+      .lifecycle-action:last-child { border-radius: 0 5px 5px 0; }
+      .lifecycle-action + .lifecycle-action { border-left: 1px solid var(--border); }
+      .lifecycle-action:hover { background: var(--surface-raised); color: var(--text); }
+      .lifecycle-action.danger { color: var(--danger); }
+      .component-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border); background: var(--surface-raised); }
+      .component { position: relative; min-width: 0; min-height: 66px; padding: 12px 16px; }
+      .component + .component { border-left: 1px solid var(--border); }
+      .component-label { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 11px; font-weight: 650; }
+      .component-value { overflow: hidden; margin-top: 9px; font-size: 13px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+
+      .notice { display: flex; align-items: flex-start; gap: 10px; margin-top: 14px; padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border)); border-radius: 6px; background: var(--danger-soft); color: var(--danger); font-size: 12px; line-height: 1.45; }
+      .notice[hidden] { display: none; }
+      .notice-text { min-width: 0; flex: 1; user-select: text; }
+      .notice-close { width: 24px; height: 24px; border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 16px; }
+
+      .section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+      .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+      .section h3 { margin: 0; font-size: 13px; font-weight: 680; letter-spacing: 0; }
+      .utility-bar { display: flex; flex-wrap: wrap; gap: 8px; }
+
+      .button { min-height: 34px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); cursor: pointer; font-size: 12px; font-weight: 560; }
+      .button:hover { background: var(--surface-raised); border-color: var(--faint); }
+      .button.danger { color: var(--danger); }
+      .button.subtle { border-color: var(--border); color: var(--muted); }
+      .button.update { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); color: var(--accent); }
+      .button.icon-only { width: 34px; padding: 0; font-size: 16px; }
+      button:disabled { cursor: default; opacity: 0.48; }
+      button.is-busy { position: relative; border-color: var(--accent) !important; background: var(--accent-soft) !important; color: transparent !important; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); opacity: 1; }
+      button.is-busy::after { content: ""; position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%; transform: translate(-50%, -50%); animation: button-spin 700ms linear infinite; }
+      .header-action.is-busy::after, .button.update.is-busy::after { border-color: var(--accent); border-top-color: transparent; }
+      button.is-success { border-color: var(--accent) !important; background: var(--accent-soft) !important; color: var(--accent) !important; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); opacity: 1; }
+      button.is-failed { border-color: var(--danger) !important; background: var(--danger-soft) !important; color: var(--danger) !important; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 30%, transparent); opacity: 1; }
+      .lifecycle-action.danger.is-busy::after { border-color: var(--danger); border-top-color: transparent; }
+      .button-symbol { display: inline-block; width: 16px; margin-right: 4px; text-align: center; }
+
+      .workspace-grid { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr); gap: 24px; }
+      .settings { border-top: 1px solid var(--border); }
+      .setting { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 56px; border-bottom: 1px solid var(--border); }
+      .setting.disabled { opacity: 0.52; }
+      .setting-copy { min-width: 0; }
+      .setting-label { display: block; font-size: 13px; font-weight: 580; }
+      .setting-detail { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.35; }
+
+      .switch { position: relative; width: 36px; height: 21px; flex: 0 0 auto; }
+      .switch input { position: absolute; opacity: 0; pointer-events: none; }
+      .switch span { position: absolute; inset: 0; border-radius: 11px; background: #8d949e; cursor: pointer; transition: background 140ms ease; }
+      .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 15px; height: 15px; border-radius: 50%; background: #ffffff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22); transition: transform 140ms ease; }
+      .switch input:checked + span { background: var(--accent); }
+      .switch input:checked + span::after { transform: translateX(15px); }
+      .switch input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
+      .switch input:disabled + span { cursor: default; }
+
+      .update-row { padding: 12px 13px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+      .update-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .update-title { font-size: 12px; font-weight: 650; }
+      .update-badge { padding: 3px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-size: 10px; font-weight: 700; }
+      .update-badge[hidden] { display: none; }
+      .update-message { min-height: 32px; margin: 8px 0 12px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+      .update-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+      .maintenance { margin-top: 16px; }
+
+      .runtime { margin-top: 22px; border-top: 1px solid var(--border); color: var(--muted); }
+      .runtime summary { padding: 14px 0 6px; cursor: pointer; font-size: 11px; font-weight: 650; list-style-position: inside; }
+      .runtime-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 22px; padding: 8px 0 2px; }
+      .runtime-item { min-width: 0; }
+      .runtime-label { display: block; color: var(--faint); font-size: 10px; }
+      .runtime-value { display: block; overflow: hidden; margin-top: 3px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
+      @keyframes button-spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+      }
+
+      @media (max-width: 680px) {
+        .app-header { padding: 12px 18px; }
+        .overall-status { display: none; }
+        main { padding: 20px 18px 28px; }
+        .overview-heading { align-items: flex-start; flex-direction: column; gap: 14px; padding: 18px; }
+        .component-strip { grid-template-columns: 1fr; }
+        .component { min-height: 62px; }
+        .component + .component { border-top: 1px solid var(--border); border-left: 0; }
+        .workspace-grid { grid-template-columns: 1fr; gap: 0; }
+        .runtime-grid { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <picture aria-hidden="true">
+          <source srcset="icon-dark.png" media="(prefers-color-scheme: dark)" />
+          <img class="brand-mark" src="icon-light.png" alt="" />
+        </picture>
+        <div>
+          <h1>Codex Panel</h1>
+          <div class="brand-meta"><span id="version">正在读取版本...</span><span aria-hidden="true">·</span><span>桌面管理器</span></div>
+        </div>
+      </div>
+      <div class="header-tools">
+        <div class="overall-status" id="status"><span class="status-dot"></span><span id="statusText">启动中</span></div>
+        <button class="icon-button" id="refresh" type="button" data-action="launcher_ui_state" data-tooltip="刷新状态" aria-label="刷新状态"><span class="refresh-symbol" aria-hidden="true">↻</span></button>
+        <button class="header-action" id="primaryAction" type="button" data-action="open_embedded_panel">打开面板</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="overview" aria-labelledby="overviewTitle">
+        <div class="overview-heading">
+          <div class="overview-copy">
+            <span class="eyebrow">本机运行状态</span>
+            <h2 id="overviewTitle">正在启动</h2>
+            <p class="message" id="message" aria-live="polite">正在读取服务状态...</p>
+          </div>
+          <div class="lifecycle-actions" aria-label="服务控制">
+            <button class="lifecycle-action" id="serviceToggle" type="button" data-action="start_service" data-tooltip="启动服务" aria-label="启动服务"><span id="serviceToggleSymbol" aria-hidden="true">▶</span></button>
+            <button class="lifecycle-action" id="restartService" type="button" data-action="reconnect_codex" data-tooltip="重启服务" aria-label="重启服务"><span aria-hidden="true">↻</span></button>
+            <button class="lifecycle-action" id="browserPanel" type="button" data-action="open_browser_panel" data-tooltip="在浏览器中打开" aria-label="在浏览器中打开"><span aria-hidden="true">↗</span></button>
+          </div>
+        </div>
+        <div class="component-strip" aria-label="组件状态">
+          <article class="component idle" id="panelComponent"><div class="component-label"><span>Panel 服务</span><span class="status-dot"></span></div><div class="component-value" id="panelStatus">正在检查</div></article>
+          <article class="component idle" id="codexComponent"><div class="component-label"><span>Codex 连接</span><span class="status-dot"></span></div><div class="component-value" id="codexStatus">正在检查</div></article>
+          <article class="component idle" id="embeddedComponent"><div class="component-label"><span>内嵌面板</span><span class="status-dot"></span></div><div class="component-value" id="embeddedStatus">正在检查</div></article>
+        </div>
+      </section>
+
+      <div class="notice" id="errorNotice" role="alert" hidden><span aria-hidden="true">!</span><span class="notice-text" id="errorText"></span><button class="notice-close" id="dismissError" type="button" data-tooltip="关闭提示" aria-label="关闭提示">×</button></div>
+
+      <div class="workspace-grid">
+        <section class="section" aria-labelledby="startupSettingsTitle">
+          <div class="section-heading"><h3 id="startupSettingsTitle">启动设置</h3></div>
+          <div class="settings">
+            <label class="setting"><span class="setting-copy"><span class="setting-label">启动时连接 Codex</span><span class="setting-detail">启动本地服务并建立内嵌连接</span></span><span class="switch"><input id="autoConnectCodex" type="checkbox" /><span></span></span></label>
+            <label class="setting" id="autoOpenSetting"><span class="setting-copy"><span class="setting-label">连接后打开任务面板</span><span class="setting-detail" id="autoOpenDetail">连接就绪后自动显示 Panel</span></span><span class="switch"><input id="autoOpenPanel" type="checkbox" /><span></span></span></label>
+            <label class="setting"><span class="setting-copy"><span class="setting-label">登录时启动</span><span class="setting-detail">登录系统后启动 Codex Panel</span></span><span class="switch"><input id="autostart" type="checkbox" /><span></span></span></label>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="maintenanceTitle">
+          <div class="section-heading"><h3 id="maintenanceTitle">更新与维护</h3></div>
+          <div class="update-row">
+            <div class="update-header"><span class="update-title">版本更新</span><span class="update-badge" id="updateBadge" hidden>有新版本</span></div>
+            <p class="update-message" id="updateMessage">尚未检查更新。</p>
+            <div class="update-actions"><button class="button update" type="button" data-action="check_for_updates">检查更新</button><button class="button" id="openRelease" type="button" data-action="open_available_release" hidden>查看 Release</button></div>
+          </div>
+          <div class="maintenance"><div class="utility-bar"><button class="button subtle" type="button" data-action="open_log">打开运行日志</button><button class="button subtle" type="button" data-action="reveal_data">显示数据目录</button></div></div>
+        </section>
+      </div>
+
+      <details class="runtime">
+        <summary>运行详情</summary>
+        <div class="runtime-grid">
+          <div class="runtime-item"><span class="runtime-label">Codex 应用</span><code class="runtime-value" id="appPath">尚未检测</code></div>
+          <div class="runtime-item"><span class="runtime-label">服务进程</span><code class="runtime-value" id="childPid">尚未启动</code></div>
+          <div class="runtime-item"><span class="runtime-label">数据目录</span><code class="runtime-value" id="dataDirectory">正在读取</code></div>
+          <div class="runtime-item"><span class="runtime-label">运行日志</span><code class="runtime-value" id="logPath">正在读取</code></div>
+        </div>
+      </details>
+    </main>
+
+    <script>
+      if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+      window.scrollTo(0, 0);
+      const invoke = window.__TAURI__.core.invoke;
+      const listen = window.__TAURI__.event.listen;
+      const elements = {
+        body: document.body,
+        status: document.getElementById("status"),
+        statusText: document.getElementById("statusText"),
+        message: document.getElementById("message"),
+        overviewTitle: document.getElementById("overviewTitle"),
+        version: document.getElementById("version"),
+        primaryAction: document.getElementById("primaryAction"),
+        serviceToggle: document.getElementById("serviceToggle"),
+        serviceToggleSymbol: document.getElementById("serviceToggleSymbol"),
+        restartService: document.getElementById("restartService"),
+        browserPanel: document.getElementById("browserPanel"),
+        updateMessage: document.getElementById("updateMessage"),
+        updateBadge: document.getElementById("updateBadge"),
+        openRelease: document.getElementById("openRelease"),
+        errorNotice: document.getElementById("errorNotice"),
+        errorText: document.getElementById("errorText"),
+        autoOpenSetting: document.getElementById("autoOpenSetting"),
+        autoOpenDetail: document.getElementById("autoOpenDetail"),
+        appPath: document.getElementById("appPath"),
+        childPid: document.getElementById("childPid"),
+        dataDirectory: document.getElementById("dataDirectory"),
+        logPath: document.getElementById("logPath"),
+      };
+      const phaseLabels = { running: "运行正常", waiting: "等待 Codex", error: "运行异常", stopped: "已停止", starting: "启动中" };
+      const phaseTitles = { running: "Panel 已就绪", waiting: "服务已启动", error: "服务需要处理", stopped: "服务已停止", starting: "正在建立连接" };
+      let currentState;
+      let busy = false;
+      let activeButton;
+      const minimumBusyDuration = 300;
+      const feedbackTimers = new WeakMap();
+
+      function setComponent(id, valueId, tone, text) {
+        document.getElementById(id).className = `component ${tone}`;
+        document.getElementById(valueId).textContent = text;
+      }
+
+      function renderComponents(snapshot) {
+        const hasProcess = snapshot.childPid !== null && snapshot.childPid !== undefined;
+        const integrationReady = snapshot.phase === "running" || snapshot.openSignalPid !== null && snapshot.openSignalPid !== undefined;
+        const isError = snapshot.phase === "error";
+        const isOpening = snapshot.openRequestPending && integrationReady;
+        const isQueued = snapshot.openRequestPending && !integrationReady;
+        setComponent("panelComponent", "panelStatus", isError ? "danger" : hasProcess ? "success" : "idle", isError ? "启动异常" : hasProcess ? `运行中 · PID ${snapshot.childPid}` : "未启动");
+        setComponent("codexComponent", "codexStatus", isError ? "danger" : integrationReady ? "success" : hasProcess ? "working" : "idle", isError ? "连接失败" : integrationReady ? "连接已就绪" : hasProcess ? "正在等待连接" : "未连接");
+        setComponent("embeddedComponent", "embeddedStatus", snapshot.embeddedVisible ? "success" : isOpening || isQueued ? "working" : "idle", snapshot.embeddedVisible ? "已在 Codex 中打开" : isOpening ? "正在打开" : isQueued ? "等待连接后打开" : integrationReady ? "可以打开" : "尚未就绪");
+      }
+
+      function renderSnapshot(snapshot) {
+        currentState = { ...(currentState || {}), snapshot };
+        elements.status.className = `overall-status ${snapshot.phase}`;
+        elements.statusText.textContent = phaseLabels[snapshot.phase] || "启动中";
+        elements.overviewTitle.textContent = phaseTitles[snapshot.phase] || "正在建立连接";
+        elements.message.textContent = snapshot.message;
+        elements.version.textContent = `版本 ${snapshot.version}`;
+        const needsStart = snapshot.phase === "stopped" || snapshot.phase === "error";
+        const integrationReady = snapshot.phase === "running" || snapshot.openSignalPid !== null && snapshot.openSignalPid !== undefined;
+        const isOpening = !needsStart && snapshot.openRequestPending && integrationReady;
+        const isQueued = !needsStart && snapshot.openRequestPending && !integrationReady;
+        elements.primaryAction.textContent = needsStart ? "启动并打开" : isOpening ? "正在打开…" : isQueued ? "等待连接" : "打开面板";
+        elements.primaryAction.disabled = busy || isOpening || isQueued;
+        const hasProcess = snapshot.childPid !== null && snapshot.childPid !== undefined;
+        elements.serviceToggle.dataset.action = hasProcess ? "stop_service" : "start_service";
+        elements.serviceToggle.classList.toggle("danger", hasProcess);
+        elements.serviceToggleSymbol.textContent = hasProcess ? "■" : "▶";
+        elements.serviceToggle.dataset.tooltip = hasProcess ? "停止服务" : "启动服务";
+        elements.serviceToggle.setAttribute("aria-label", hasProcess ? "停止服务" : "启动服务");
+        elements.serviceToggle.disabled = busy;
+        elements.restartService.disabled = busy || !hasProcess;
+        elements.browserPanel.disabled = busy || !hasProcess;
+        elements.updateMessage.textContent = snapshot.updateMessage;
+        elements.updateBadge.hidden = !snapshot.updateAvailable;
+        elements.openRelease.hidden = !snapshot.updateAvailable;
+        elements.appPath.textContent = snapshot.appPath || "尚未检测";
+        elements.appPath.title = snapshot.appPath || "";
+        elements.childPid.textContent = snapshot.childPid ? `PID ${snapshot.childPid}` : "尚未启动";
+        renderComponents(snapshot);
+        if (snapshot.phase === "error") showError(snapshot.message);
+      }
+
+      function renderPreferences(preferences) {
+        document.getElementById("autoConnectCodex").checked = preferences.autoConnectCodex;
+        document.getElementById("autoOpenPanel").checked = preferences.autoOpenPanel;
+        document.getElementById("autoOpenPanel").disabled = !preferences.autoConnectCodex;
+        elements.autoOpenSetting.classList.toggle("disabled", !preferences.autoConnectCodex);
+        elements.autoOpenDetail.textContent = preferences.autoConnectCodex ? "连接就绪后自动显示 Panel" : "需先开启“启动时连接 Codex”";
+      }
+
+      function renderState(state) {
+        currentState = state;
+        renderSnapshot(state.snapshot);
+        renderPreferences(state.preferences);
+        document.getElementById("autostart").checked = state.autostart;
+        elements.dataDirectory.textContent = state.dataDirectory;
+        elements.dataDirectory.title = state.dataDirectory;
+        elements.logPath.textContent = state.logPath;
+        elements.logPath.title = state.logPath;
+      }
+
+      function showError(cause) { elements.errorText.textContent = String(cause); elements.errorNotice.hidden = false; }
+      function clearError() { elements.errorNotice.hidden = true; elements.errorText.textContent = ""; }
+
+      function setBusy(value, trigger) {
+        if (activeButton) {
+          activeButton.classList.remove("is-busy");
+          activeButton.removeAttribute("aria-busy");
+        }
+        activeButton = value ? trigger : undefined;
+        if (activeButton) {
+          activeButton.classList.add("is-busy");
+          activeButton.setAttribute("aria-busy", "true");
+        }
+        busy = value;
+        elements.body.classList.toggle("busy", value);
+        document.querySelectorAll("button[data-action]").forEach((button) => { button.disabled = value; });
+        if (!value && currentState?.snapshot) renderSnapshot(currentState.snapshot);
+      }
+
+      function showButtonResult(button, succeeded) {
+        clearTimeout(feedbackTimers.get(button));
+        button.classList.remove("is-success", "is-failed");
+        button.classList.add(succeeded ? "is-success" : "is-failed");
+        feedbackTimers.set(button, setTimeout(() => {
+          button.classList.remove("is-success", "is-failed");
+          feedbackTimers.delete(button);
+        }, 900));
+      }
+
+      async function keepBusyVisible(startedAt) {
+        const remaining = minimumBusyDuration - (performance.now() - startedAt);
+        if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
+      }
+
+      async function refreshState() { renderState(await invoke("launcher_ui_state")); }
+
+      async function run(action, trigger) {
+        clearError();
+        setBusy(true, trigger);
+        const startedAt = performance.now();
+        let succeeded = false;
+        let failure;
+        try {
+          const result = await invoke(action);
+          if (result?.snapshot) renderState(result);
+          else await refreshState();
+          succeeded = true;
+        } catch (cause) {
+          failure = cause;
+        } finally {
+          await keepBusyVisible(startedAt);
+          setBusy(false);
+          if (!succeeded) showError(failure);
+          showButtonResult(trigger, succeeded);
+        }
+      }
+
+      document.querySelectorAll("button[data-action]").forEach((button) => button.addEventListener("click", () => run(button.dataset.action, button)));
+      document.getElementById("dismissError").addEventListener("click", clearError);
+
+      for (const key of ["autoConnectCodex", "autoOpenPanel"]) {
+        document.getElementById(key).addEventListener("change", async (event) => {
+          clearError();
+          const previous = currentState?.preferences?.[key];
+          try {
+            const preferences = await invoke("set_launcher_preference", { key, enabled: event.target.checked });
+            currentState = { ...currentState, preferences };
+            renderPreferences(preferences);
+          } catch (cause) {
+            event.target.checked = previous;
+            showError(cause);
+          }
+        });
+      }
+
+      document.getElementById("autostart").addEventListener("change", async (event) => {
+        clearError();
+        const previous = currentState?.autostart;
+        try {
+          currentState.autostart = await invoke("set_autostart", { enabled: event.target.checked });
+          event.target.checked = currentState.autostart;
+        } catch (cause) {
+          event.target.checked = previous;
+          showError(cause);
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.metaKey && event.shiftKey && event.key.toLowerCase() === "p") {
+          event.preventDefault();
+          elements.primaryAction.click();
+        }
+      });
+
+      listen("launcher-status", (event) => renderSnapshot(event.payload)).catch(showError);
+      refreshState().catch(showError);
+    </script>
+  </body>
+</html>

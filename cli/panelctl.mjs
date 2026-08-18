@@ -189,10 +189,12 @@ async function execute(parsed, overrides) {
 
   const env = overrides.env ?? process.env;
   const usesCompanionControl = command.startsWith("cloud ") || command === "project map";
+  const hasCompanionUrl = env.CODEX_PANEL_COMPANION_URL !== undefined
+    || env.CODEX_TASKBOARD_COMPANION_URL !== undefined;
+  const hasPanelUrl = env.CODEX_PANEL_URL !== undefined
+    || env.CODEX_TASKBOARD_URL !== undefined;
   const api = createApiClient(overrides, {
-    baseUrl: usesCompanionControl
-      || env.CODEX_PANEL_COMPANION_URL !== undefined
-      || env.CODEX_TASKBOARD_COMPANION_URL !== undefined
+    baseUrl: hasCompanionUrl || (usesCompanionControl && hasPanelUrl)
       ? resolveCompanionUrl(env)
       : await resolvePanelBaseUrl(env, overrides),
   });

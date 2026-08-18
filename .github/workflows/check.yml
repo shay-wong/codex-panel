@@ -28,9 +28,9 @@ jobs:
       - run: npm run check
 
   macos-launcher:
-    name: macOS Swift launcher
+    name: macOS launcher
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,7 +39,57 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: npm ci
-      - run: node --test test/integration-installer.test.mjs test/injector-host-runtime.test.mjs test/injector.test.mjs
-      - run: xcrun swift test --package-path macos/CodexPanelLauncher
-      - run: xcrun swift build --package-path macos/CodexPanelLauncher --configuration release
+      - run: npm run app:prepare -- --target universal-apple-darwin
+      - name: Build the unsigned universal app bundle
+        run: >-
+          npm run tauri -- build
+          --target universal-apple-darwin
+          --bundles app
+          --no-sign
+          --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - run: test -d "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Panel.app"
+      - name: Verify packaged panelctl and inherited listener
+        run: >-
+          npm run app:verify-packaged-panelctl --
+          "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Panel.app"
+      - name: Ad-hoc sign the launcher for bundle verification
+        run: |
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Panel.app"
+          EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          /usr/bin/codesign --force --options runtime --entitlements src-tauri/Entitlements.plist --sign - "$APP/Contents/MacOS/$EXECUTABLE"
+          /usr/bin/codesign --force --options runtime --entitlements src-tauri/Entitlements.plist --sign - "$APP"
+      - name: Verify the Tauri app bundle
+        run: >-
+          npm run app:preflight --
+          "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Panel.app"
+
+  windows-launcher:
+    name: Windows x64 launcher
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          targets: x86_64-pc-windows-msvc
+      - run: npm ci
+      - name: Run the Windows Node.js test suite
+        run: npm test
+      - run: npm run app:prepare -- --target x86_64-pc-windows-msvc
+      - name: Compile the Windows launcher without producing an unsigned installer
+        run: >-
+          npm run tauri -- build
+          --target x86_64-pc-windows-msvc
+          --no-bundle
+          --no-sign
+          --ci

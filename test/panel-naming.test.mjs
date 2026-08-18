@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { resolveServerOptions } from "../server/app.mjs";
+import { resolveInstallLayout } from "../scripts/install-macos-launcher.mjs";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 
@@ -71,4 +72,34 @@ test("a configured data path uses panel.sqlite without migrating legacy files", 
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("the macOS product installer always uses the fixed Panel data directory", () => {
+  const layout = resolveInstallLayout({
+    environment: {
+      CODEX_PANEL_HOME: "/tmp/other-panel-home",
+      CODEX_PANEL_DATA_DIR: "/tmp/other-panel-data",
+    },
+    homeDirectory: "/Users/panel-test",
+    platform: "darwin",
+  });
+
+  assert.equal(
+    layout.installRoot,
+    "/Users/panel-test/Library/Application Support/Codex Panel",
+  );
+  assert.equal(
+    layout.dataDirectory,
+    "/Users/panel-test/Library/Application Support/Codex Panel/data",
+  );
+});
+
+test("the Windows release preserves the hashed Node sidecar", async () => {
+  const source = await readFile(
+    path.join(projectRoot, "scripts", "build-windows-app.mjs"),
+    "utf8",
+  );
+  assert.match(source, /certificateThumbprint: thumbprint/);
+  assert.match(source, /tsp: true/);
+  assert.match(source, /TAURI_SKIP_SIDECAR_SIGNATURE_CHECK: "true"/);
 });

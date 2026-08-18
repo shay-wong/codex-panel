@@ -7,7 +7,10 @@ dist/
 cloud-migration-exports/
 .playwright-cli/
 /output/
-macos/CodexPanelLauncher/.build/
+src-tauri/binaries/
+src-tauri/gen/
+src-tauri/resources/
+src-tauri/target/
 *.log
 .DS_Store
 /*-proof.png

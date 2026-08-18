@@ -4,6 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { accessSync, constants } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -1518,19 +1519,30 @@ async function openRuntimePanel(runtime, expectedSourceHash, expectedStartupToke
     const cdp = await runtime.connect(target);
     try {
       const status = await readInjectionStatus(cdp);
-      if (status.sourceHash !== expectedSourceHash || !status.entryMounted) continue;
-      if (expectedStartupToken) {
-        const token = await cdp.send("Runtime.evaluate", {
-          expression: `window[${JSON.stringify(hostStartupTokenName)}] || null`,
-          returnByValue: true,
-        });
-        if (token.result.value !== expectedStartupToken) continue;
-      }
+      const ready = expectedStartupToken
+        ? injectionReadinessMatches(status, {
+          expectedSourceHash,
+          expectedStartupToken,
+        })
+        : status.sourceHash === expectedSourceHash && status.entryMounted;
+      if (!ready) continue;
       await cdp.send("Runtime.evaluate", {
         expression: "window.__codexPanelInjection__?.open()",
         returnByValue: true,
       });
-      return true;
+      const deadline = Date.now() + 2_000;
+      let openedStatus = await readInjectionStatus(cdp);
+      while (Date.now() < deadline && openedStatus.pageVisible !== true) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        openedStatus = await readInjectionStatus(cdp);
+      }
+      const openedReady = expectedStartupToken
+        ? injectionReadinessMatches(openedStatus, {
+          expectedSourceHash,
+          expectedStartupToken,
+        })
+        : openedStatus.sourceHash === expectedSourceHash && openedStatus.entryMounted;
+      if (openedStatus.pageVisible === true && openedReady) return true;
     } finally {
       cdp.close();
     }
@@ -1624,7 +1636,7 @@ async function injectTarget(
       const frameLoaded = status.frameUrl
         ? await waitForFrame(cdp, status.frameUrl, 15_000)
         : false;
-      if (reconciled.shouldRemainOpen && (!status.frameReady || !frameLoaded)) {
+      if (reconciled.shouldRemainOpen && (!status.pageVisible || !status.frameReady || !frameLoaded)) {
         throw new Error("Panel frame did not report ready in the Codex renderer");
       }
       retained = true;
@@ -1658,7 +1670,7 @@ async function injectTarget(
     const frameLoaded = status.frameUrl
       ? await waitForFrame(cdp, status.frameUrl, 15_000)
       : false;
-    if (shouldOpen && (!status.frameReady || !frameLoaded)) {
+    if (shouldOpen && (!status.pageVisible || !status.frameReady || !frameLoaded)) {
       throw new Error("Panel frame did not report ready in the Codex renderer");
     }
     const result = {
@@ -1752,6 +1764,9 @@ ${runtimeSource}`,
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (!options.cdpPipe && options.launch && options.attachExisting) {
+    options.port = await discoverCodexPort(options.port) ?? options.port;
+  }
   const cdpVersionUrl = `http://127.0.0.1:${options.port}/json/version`;
 
   if (options.stopManaged) {
@@ -1859,7 +1874,12 @@ async function main() {
   let codexProcess = null;
   let cdpRuntime = null;
   let controlServer = null;
+  let openControl = null;
   const injectedTargets = new Map();
+  let openRequestGeneration = options.open ? 1 : 0;
+  let openedRequestGeneration = 0;
+  let openRequestInFlight = null;
+  const hasOpenPending = () => openedRequestGeneration < openRequestGeneration;
   let stopping = false;
   let wakeStop;
   const stopRequested = new Promise((resolve) => {
@@ -1870,6 +1890,10 @@ async function main() {
     stopping = true;
     wakeStop();
   };
+  if (options.watch) {
+    process.once("SIGINT", requestStop);
+    process.once("SIGTERM", requestStop);
+  }
   const detached = !options.watch;
   const supervisor = createPanelSupervisor({
     detached,
@@ -1921,29 +1945,69 @@ async function main() {
       if (!cdpReachable && !options.launch) {
         throw new Error(`Codex CDP is not listening on 127.0.0.1:${options.port}`);
       }
-      if (!cdpReachable && options.launch && codexIsRunning()) {
-        throw new Error(
-          "Codex is already running without this CDP port. Quit Codex completely, then run this command again.",
-        );
-      }
     }
 
     await assertPanelServiceModeAvailable();
     await supervisor.ensure({ force: true });
 
-    if (options.cdpPipe) {
-      const launched = await launchCodexWithPipe(executablePath);
-      codexProcess = launched.child;
-      cdpRuntime = pipeCdpRuntime(launched.browser);
-    } else if (!cdpReachable) {
-      codexProcess = launchCodex(executablePath, options.port);
-      await waitUntilReachable(cdpVersionUrl, 30_000);
-      cdpRuntime = tcpCdpRuntime(options.port);
-    } else {
-      cdpRuntime = tcpCdpRuntime(options.port);
-    }
-
     const { source, sourceHash } = await currentInjectionSource();
+    const publishManagedStatus = async () => {
+      let status = { ready: false, pageVisible: false };
+      if (cdpRuntime) {
+        try {
+          const readiness = await inspectRuntimeInjectionReadiness(
+            cdpRuntime,
+            sourceHash,
+            options.startupToken,
+          );
+          status = {
+            ready: readiness.ready === true,
+            pageVisible: readiness.ready === true && readiness.status?.pageVisible === true,
+          };
+        } catch (_) {}
+      }
+      console.log(JSON.stringify({ panelManagedStatus: status }));
+      return status;
+    };
+    const requestPanelOpen = () => {
+      if (openRequestInFlight) return openRequestInFlight;
+      const generation = openRequestGeneration;
+      openRequestInFlight = (async () => {
+        if (generation <= openedRequestGeneration || !cdpRuntime) return false;
+        const opened = await openRuntimePanel(
+          cdpRuntime,
+          sourceHash,
+          options.startupToken,
+        );
+        if (!opened) return false;
+        openedRequestGeneration = Math.max(openedRequestGeneration, generation);
+        console.log(JSON.stringify({ openPanelSignalOpened: true }));
+        await publishManagedStatus();
+        return true;
+      })().catch((error) => {
+        console.error(`Waiting to open Panel: ${error.message}`);
+        return false;
+      }).finally(() => {
+        openRequestInFlight = null;
+      });
+      return openRequestInFlight;
+    };
+    if (options.watch && process.platform === "win32") {
+      openControl = createInterface({ input: process.stdin, terminal: false });
+      openControl.on("line", (line) => {
+        const action = line.trim();
+        if (action === "open") {
+          openRequestGeneration += 1;
+          console.log(JSON.stringify({ openPanelSignalQueued: true }));
+          void requestPanelOpen();
+        } else if (action === "status") {
+          void publishManagedStatus();
+        } else if (action === "stop") {
+          requestStop();
+        }
+      });
+      console.log(JSON.stringify({ openPanelSignalReady: true }));
+    }
     if (panelRuntimeFile && options.startupToken) {
       const controlSocket = injectorControlSocketPath(panelRuntimeFile);
       controlServer = await startInjectorControlServer({
@@ -1951,6 +2015,7 @@ async function main() {
         startupToken: options.startupToken,
         handlers: {
           status: async () => {
+            if (!cdpRuntime) throw new Error("Panel renderer injection is waiting for Codex");
             const readiness = await inspectRuntimeInjectionReadiness(
               cdpRuntime,
               sourceHash,
@@ -1960,13 +2025,22 @@ async function main() {
             return readiness;
           },
           open: async () => {
+            if (!cdpRuntime) throw new Error("Panel renderer injection is waiting for Codex");
             const opened = await openRuntimePanel(
               cdpRuntime,
               sourceHash,
               options.startupToken,
             );
             if (!opened) throw new Error("Managed Panel renderer is not ready to open");
-            return { opened: true };
+            const readiness = await inspectRuntimeInjectionReadiness(
+              cdpRuntime,
+              sourceHash,
+              options.startupToken,
+            );
+            if (!readiness.ready || readiness.status?.pageVisible !== true) {
+              throw new Error("Managed Panel renderer did not confirm page visibility");
+            }
+            return { opened: true, ...readiness };
           },
           shutdown: async () => {
             setImmediate(requestStop);
@@ -1983,13 +2057,49 @@ async function main() {
         ...(!options.cdpPipe ? { port: options.port } : {}),
       });
     }
+    console.log(JSON.stringify({ panelServiceReady: true }));
+
+    if (!options.cdpPipe && !cdpReachable && options.launch && codexIsRunning()) {
+      console.error(
+        "Waiting for Codex: the running app has no debugging port; Panel service remains available.",
+      );
+      while (!stopping && codexIsRunning()) {
+        await Promise.race([
+          new Promise((resolve) => setTimeout(resolve, 500)),
+          stopRequested,
+        ]);
+        if (!stopping) {
+          try {
+            await supervisor.ensure();
+          } catch (error) {
+            console.error(`Waiting for Panel service: ${error.message}`);
+          }
+        }
+      }
+      if (stopping) return;
+      cdpReachable = await isReachable(cdpVersionUrl);
+    }
+
+    if (options.cdpPipe) {
+      const launched = await launchCodexWithPipe(executablePath);
+      codexProcess = launched.child;
+      cdpRuntime = pipeCdpRuntime(launched.browser);
+    } else if (!cdpReachable) {
+      codexProcess = launchCodex(executablePath, options.port);
+      await waitUntilReachable(cdpVersionUrl, 30_000);
+      cdpRuntime = tcpCdpRuntime(options.port);
+    } else {
+      cdpRuntime = tcpCdpRuntime(options.port);
+    }
+    const firstOpenGeneration = openRequestGeneration;
+    const shouldOpenFirstTarget = hasOpenPending();
     let firstResults = [];
     try {
       firstResults = await injectAll(
         cdpRuntime,
         source,
         sourceHash,
-        options.open,
+        shouldOpenFirstTarget,
         options.screenshot,
         injectedTargets,
         options.watch,
@@ -2002,9 +2112,14 @@ async function main() {
       console.error(`Waiting for Codex renderer: ${error.message}`);
     }
     if (firstResults.length > 0) {
+      if (shouldOpenFirstTarget) {
+        openedRequestGeneration = Math.max(openedRequestGeneration, firstOpenGeneration);
+        console.log(JSON.stringify({ openPanelSignalOpened: true }));
+      }
       console.log(JSON.stringify({ injected: firstResults }, null, 2));
+      console.log(JSON.stringify({ panelManagedReady: true }));
+      await publishManagedStatus();
     }
-    let openPending = options.open && firstResults.length === 0;
     let idleAfterNormalExit = false;
 
     if (!options.watch) {
@@ -2012,8 +2127,6 @@ async function main() {
       return;
     }
 
-    process.once("SIGINT", requestStop);
-    process.once("SIGTERM", requestStop);
     while (!stopping) {
       await Promise.race([
         new Promise((resolve) => setTimeout(resolve, 2_000)),
@@ -2041,13 +2154,30 @@ async function main() {
           await connection.hostBridge?.publishHeartbeat();
         } catch (_) {}
       }
-      if (idleAfterNormalExit) continue;
+      if (idleAfterNormalExit) {
+        if (!hasOpenPending()) continue;
+        try {
+          if (options.cdpPipe) {
+            const launched = await launchCodexWithPipe(executablePath);
+            codexProcess = launched.child;
+            cdpRuntime = pipeCdpRuntime(launched.browser);
+          } else {
+            codexProcess = launchCodex(executablePath, options.port);
+            await waitUntilReachable(cdpVersionUrl, 30_000);
+            cdpRuntime = tcpCdpRuntime(options.port);
+          }
+          idleAfterNormalExit = false;
+        } catch (error) {
+          console.error(`Waiting to restart Codex: ${error.message}`);
+          continue;
+        }
+      }
       try {
         const results = await injectAll(
           cdpRuntime,
           source,
           sourceHash,
-          openPending,
+          false,
           null,
           injectedTargets,
           true,
@@ -2056,8 +2186,12 @@ async function main() {
           options.startupToken,
         );
         if (results.length > 0) {
-          openPending = false;
           console.log(JSON.stringify({ injected: results }, null, 2));
+          console.log(JSON.stringify({ panelManagedReady: true }));
+          await publishManagedStatus();
+        }
+        if (hasOpenPending() && injectedTargets.size > 0) {
+          await requestPanelOpen();
         }
       } catch (error) {
         if (stopping) break;
@@ -2118,7 +2252,7 @@ async function main() {
               await waitUntilReachable(cdpVersionUrl, 30_000);
               cdpRuntime = tcpCdpRuntime(options.port);
             }
-            openPending = options.open;
+            if (options.open) openRequestGeneration += 1;
           } catch (restartError) {
             console.error(`Waiting to restart Codex: ${restartError.message}`);
           }
@@ -2131,6 +2265,7 @@ async function main() {
     if (options.watch) {
       process.removeListener("SIGINT", requestStop);
       process.removeListener("SIGTERM", requestStop);
+      openControl?.close();
       await cleanup();
     }
   }

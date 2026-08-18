@@ -69,21 +69,23 @@ npm run codex:install
 
 ## 嵌入 Codex
 
-### 推荐：使用原生 Codex Panel 管理器
+### 推荐：使用 Codex Panel 桌面端
 
-`npm run codex:install` 会创建或刷新 `~/Applications/Codex Panel.app`，并删除之前由本项目管理的 `~/Applications/Codex.app` 引导器。这个原生 SwiftUI 管理器直接使用已安装的 runtime 和数据目录，因此移动或删除源仓库也不会使它失效。可以从 Finder、Dock 或明确路径打开：
+`npm run codex:install` 会创建或刷新 `~/Applications/Codex Panel.app`，删除之前由本项目管理的 `~/Applications/Codex.app` 引导器，并迁移旧 Swift 启动器。桌面端基于 Tauri/Rust，固定使用 `~/Library/Application Support/Codex Panel/data` 数据目录，因此移动或删除源仓库也不会使它失效。可以从 Finder 或明确路径打开：
 
 ```bash
 open "$HOME/Applications/Codex Panel.app"
 ```
 
-管理器会作为普通 Dock 应用持续运行。主窗口显示 Panel 服务、Codex/CDP 和内嵌集成状态，可以打开任务面板、启动、重启或停止受管进程，也可以打开浏览器页面、日志和数据目录。“已连接”表示当前签名版本的注入已挂载到 renderer，并持续发布属于本次管理器的心跳；仅有 HTTP 服务或 CDP 端口可达不会再误报嵌入成功。如果受管集成意外退出，管理器会在 2、5、15 秒后依次尝试恢复；60 秒内退出超过三次后停止自动恢复，并提示查看日志。设置中可以注册 macOS 登录项，并分别控制启动时是否连接 Codex、连接后是否自动打开任务面板；后两项默认开启。
+应用常驻 macOS 菜单栏。菜单会显示当前运行状态，并提供打开内嵌 Panel、一个随状态切换的启动/停止项、独立的重启服务操作，以及浏览器、日志和数据目录入口；浏览器和重启操作只在服务运行时启用。菜单还可分别控制开机自启动、应用启动时连接 Codex、连接后自动打开 Panel；后两项默认开启。只有当前注入已挂载到 renderer 并持续发布新鲜心跳时，状态才显示“正常”。受管集成意外退出后会按 2、5、15 秒重试；60 秒内第四次失败后停止自动恢复。
 
-“更新”标签页会显示完整 Fork 版本，在每次启动时检查一次 Fork 的 GitHub Releases，也支持手动检查。只有规范化的 `vX.Y.Z-fork.N` 标签会成为更新候选，发现新版本时只会打开经过校验的 `shay-wong/codex-panel` Release 页面。当前 Fork 还没有带固定公钥的签名、公证 updater archive，因此应用不会自行下载或替换自身。
+可见的管理窗口是由 Tauri WebView 承载的本地 HTML/CSS 界面；服务、进程和文件操作仍由 Rust command 执行。紧凑的顶部控制面把当前状态、Panel 主操作、同一个启动/停止按钮、独立的重启服务、浏览器入口，以及 Panel 服务、Codex 连接和内嵌面板状态放在一起，不再重复单独的服务控制区；Codex 连接就绪与内嵌 Panel 实际可见会分别显示，等待 renderer 的打开请求会保持排队而不是误报失败。异步操作按钮会至少显示 300ms loading，再短暂保留清晰的成功或失败状态，浏览器入口会校验并保留启动器的私有回环地址。启动偏好、更新与 Release、日志、数据目录和运行详情位于下方。窗口标题区与 macOS App/Dock 使用同一套带 `PANEL` 角标的 Codex 明暗图标，并跟随系统外观切换。
 
-应用图标直接使用 `ChatGPT.app` 内官方的 Codex 浅色和深色资源，并在右上角增加斜向 `PANEL` 角标；缺少任一官方外观资源时安装会明确失败，运行中的 Dock 图标会跟随 macOS 当前外观切换。如果本机存在与全局 Git 邮箱匹配的有效 Apple Development 身份，安装器会使用它，让后续更新保持稳定的 macOS 权限要求；也可以通过 `CODEX_PANEL_CODESIGN_IDENTITY` 指定身份。安装器会记录真实 designated requirement，只有 requirement、真实 signer 和内容摘要都匹配时才复用未变化的 bundle。没有稳定身份时会回退到 ad-hoc 签名，并在显式重装时重建启动器，因此 macOS 可能再次请求文件访问权限。
+应用最多每 24 小时自动检查一次 Fork 的 GitHub Releases，成功结果缓存 24 小时；临时失败 5 分钟后重试，匿名 API 限流则缓存到 GitHub 返回的重置时间。手动检查始终绕过缓存。检查会优先使用本机已登录的 `gh` CLI，无法使用时才回退到匿名 GitHub API，并分别提示额度耗尽、网络失败、暂无 Release、已是最新版本或发现新版本。只有规范化的 `vX.Y.Z-fork.N` 标签会成为更新候选，发现新版本时只会打开经过校验的 `shay-wong/codex-panel` Release 页面；应用不会自动下载或安装更新。
 
-管理器启动代码前会校验自身 App 签名、bundle 内 runtime、安装时记录的 Node.js 哈希，以及官方 `ChatGPT.app` 与其内置 Codex CLI 的签名要求、固定 bundle 路径和真实可执行文件路径。同一 OpenAI 身份签名的正常 ChatGPT 更新无需重新安装 Panel；未签名修改、签名身份变化、符号链接和逃出已签名 App bundle 的可执行路径都会被拒绝。随后运行仅监听回环地址的 Panel 服务，并连接 Codex 实际使用的 CDP 端口，或先以 CDP 启动官方 `/Applications/ChatGPT.app`，再注入 Panel 侧边栏。需要冷启动时，管理器会把官方应用交给 macOS LaunchServices 启动，而不是让 injector 直接执行 ChatGPT 可执行文件；这样 ChatGPT/Codex 自己承担 TCC 权限归因，不会把其文件访问等权限请求记到 Codex Panel 名下。管理器的状态、打开和停止请求使用受启动 token 保护的 Unix socket，描述文件与 socket 均只允许当前用户访问；清理旧进程时会在发信号前再次校验固定 Node 路径、injector 绝对路径、watch 模式和启动 token。它只退役选中端口上的 Panel injector，也不会把自己管理的 injector 替换为 detached 进程。正常打开的 Codex 无法在运行中补开 CDP；如果管理器提示需要重启 Codex，请完全退出 Codex 后再次点击“启动服务”。停止或退出管理器只会等待它负责的 Panel 服务和 injector 进程结束；官方 ChatGPT/Codex 应用及其 CDP 端口会继续运行，直到你主动退出 ChatGPT。Swift 管理器有意继续使用回环 TCP CDP，而不启用上游私有 pipe：pipe 必须由 injector 持有整个 ChatGPT 生命周期，但当前管理器明确允许 ChatGPT 在自己退出后继续运行，并在下次启动时重新连接。它不会修改官方应用或其 `app.asar`。
+App bundle 内包含 Panel runtime、`panelctl`、两个 Panel Skills，以及用于运行它们的官方签名 Node.js runtime。macOS 安装器优先使用 `CODEX_PANEL_CODESIGN_IDENTITY`，其次使用可复用的本机 Apple Development 身份；两者都不可用时回退到 ad-hoc 签名。Windows 正式发行要求配置 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT`，并生成带 Authenticode 签名的 NSIS 安装包。
+
+连接前，应用会先校验自身 App 签名和打包 runtime，再按 OpenAI 的 Identifier 和 Team ID 校验官方 `ChatGPT.app` 及其内置 Codex 可执行文件，拒绝符号链接，并从子进程环境中移除 Node、shell 和动态加载器注入变量。Windows 还会在执行前校验 launcher 的 Authenticode 证书，以及编译进签名 launcher、覆盖 Node 和全部 Panel runtime 文件的 SHA-256 清单。Panel 服务通过启动器持有的监听器和私有实例 token 仅绑定回环地址。如果正在运行的 Codex 已暴露有效 CDP，包括旧 Swift 启动器留下的端口，新 injector 会接管真实端口；否则通过 macOS LaunchServices 使用随机私有 CDP 端口启动官方应用。已经在无 CDP 模式下运行的 Codex 仍需完全退出后才能重新以 CDP 启动。运行状态、打开和停止请求在 macOS 使用受启动 token 保护且仅当前用户可访问的 Unix socket，在 Windows 使用启动器持有的子进程控制管道。停止或退出 Tauri 只会等待自己负责的 injector 和 Panel 服务退出，官方 ChatGPT/Codex 应用继续运行。应用不会修改 `ChatGPT.app` 或 `app.asar`。
 
 更新仓库代码或替换 Node.js 后，请重新运行 `npm run codex:install`。OpenAI 正常签名的 `ChatGPT.app` 更新无需重新安装 Panel。`npm run launcher:install` 仍作为兼容别名保留。最近一次管理器日志位于 `~/Library/Logs/Codex Panel.log`。
 
