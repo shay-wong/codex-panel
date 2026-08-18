@@ -11,6 +11,7 @@ const command = executableCommand(executable, JSON.parse(encodedArgs));
 const child = spawn(command.executable, command.args, {
   env: process.env,
   stdio: "inherit",
+  windowsHide: true,
 });
 
 const control = new Socket({ fd: 3, readable: true, writable: false });

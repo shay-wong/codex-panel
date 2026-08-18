@@ -24,25 +24,25 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`57f1f8c9b24598bc3d3ef1d8a40554fc3c5d1f47`
-- 精确已合并上游基线：`57f1f8c9b24598bc3d3ef1d8a40554fc3c5d1f47`
-- 比较范围：`57f1f8c9b24598bc3d3ef1d8a40554fc3c5d1f47..HEAD`
+- 本次合并的上游父提交：`194b5e370bfd24f4e09ba5859364c6e2722dca61`
+- 精确已合并上游基线：`194b5e370bfd24f4e09ba5859364c6e2722dca61`
+- 比较范围：`194b5e370bfd24f4e09ba5859364c6e2722dca61..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
-本次上游合并将基线更新到 `1.0.8`，吸收单连接 Jira REST 同步与直接回写、GFM 与 Mermaid 渲染、标签和 thread identity、附件类型、Issue 引用编辑以及进程树和启动器稳定性修复。Fork 原有的 Jira CLI、多 provider 与 Scheduled Task 方案已由上游 Jira 模型替代，不再属于活跃 Fork 能力。桌面端已经采用上游 Tauri/Rust 基础并迁入 Fork 现有能力，产品名仍为 `Codex Panel`；自动 updater 安装、上游发布工作流和 `taskctl` 命名未纳入 Fork 产品入口。
+本次上游合并将基线更新到 `1.1.1`，继续吸收新版 AI Composer、Agent/Skill/命令补全、可搜索 Issue 关系选择器，以及 Windows AI 与 Server 启动修复。Fork 原有的 Jira CLI、多 provider 与 Scheduled Task 方案已由上游 Jira 模型替代，不再属于活跃 Fork 能力。桌面端继续采用上游 Tauri/Rust 基础并迁入 Fork 现有能力，产品名仍为 `Codex Panel`；自动 updater 安装、上游发布工作流和 `taskctl` 命名未纳入 Fork 产品入口。
 
 ## Fork 发布版本策略
 
 - 权威上游版本来源：精确合并基线中的 `package.json`
 - 当前 Fork 版本来源：`package.json` 和 `package-lock.json` 的根包条目
-- 精确基线的上游版本：`1.0.8`
-- 当前 Fork 版本：`0.1.0`
+- 精确基线的上游版本：`1.1.1`
+- 当前 Fork 版本：`1.1.1`
 - 匹配的 Fork 标签或 GitHub Release：无
 
 每个 Fork 发布版本都必须使用 `<upstream-version>-fork.<N>`。上游版本变化时从 `fork.1` 开始；同一上游版本的后续 Fork 发布递增 `N`。已准备但尚未发布的版本号在未被占用时可以保留。
 
-当前不带后缀的 `0.1.0` 不是有效的 Fork 发布版本，并且落后于已合并上游的 `1.0.8`。下一个规范化 Fork 发布版本是 `1.0.8-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
+当前不带后缀的 `1.1.1` 不是有效的 Fork 发布版本。下一个规范化 Fork 发布版本是 `1.1.1-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
 
 ## 活跃 Fork 能力
 
@@ -183,5 +183,5 @@
 - 仅存在于上游的轻量标签 `pre-cloud-collaboration-2026-07-24` 不是 Fork 发布版本。
 - 不含有意 Fork 解决结果的纯上游合并、生成产物噪声、被忽略的本地状态，以及最终效果已被回退的行为都不属于 Fork 能力。
 - 尚未合并的上游独有工作属于待合并输入，不属于 Fork 能力。
-- 截至上游 `1.0.8`，Tauri/Rust 桌面基础已经进入 Fork；自动 updater 安装、上游发布工作流、`taskctl` 主命名和与 Fork 发布策略冲突的打包入口仍明确排除。
-- 上游 `1.0.8` 的单连接 Jira REST 同步、直接回写及主题化 Issue 属性菜单已经等价吸收，不再作为 Fork 能力维护。
+- 截至上游 `1.1.1`，Tauri/Rust 桌面基础、新版 AI Composer、Agent/Skill/命令补全和可搜索 Issue 关系选择器已经进入 Fork；自动 updater 安装、上游发布工作流、`taskctl` 主命名和与 Fork 发布策略冲突的打包入口仍明确排除。
+- 上游 `1.1.1` 的单连接 Jira REST 同步、直接回写及主题化 Issue 属性菜单已经等价吸收，不再作为 Fork 能力维护。

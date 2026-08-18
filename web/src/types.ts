@@ -80,6 +80,181 @@ export interface AiChatAttachmentInput {
   dataBase64: string;
 }
 
+export const COMPOSER_CONTRACT_VERSION = "composer.v1" as const;
+
+export type ComposerTrigger = "@" | "/";
+export type ComposerSurface = "ai-chat" | "issue-description" | "comment";
+
+export type ComposerSourceKind =
+  | "skills"
+  | "slash"
+  | "apps"
+  | "files"
+  | "agents"
+  | "plugins"
+  | "customPrompts";
+
+export type ComposerSourceReasonCode =
+  | "SOURCE_UNAVAILABLE"
+  | "NO_STABLE_CATALOG"
+  | "ACTION_UNVERIFIED"
+  | "INVOCATION_NAME_UNAVAILABLE"
+  | "ENCODER_UNSUPPORTED"
+  | "EXPERIMENTAL_SOURCE_NOT_ALLOWED";
+
+export interface ComposerSourceState {
+  kind: ComposerSourceKind;
+  state: "available" | "unavailable" | "unsupported";
+  reasonCode: ComposerSourceReasonCode | null;
+}
+
+interface ComposerCandidateBase {
+  candidateRef: string;
+  label: string;
+  description: string | null;
+  group: string;
+  groupOrder: number;
+  itemOrder: number;
+  selectable: true;
+  insertionText?: string;
+}
+
+export interface ComposerReferencePersistence {
+  format: "taskboard.composer-reference.v1";
+  kind: "skill" | "agent";
+  referenceKey: string;
+  markdown: string;
+}
+
+export interface ComposerInsertTextSelection {
+  type: "insertText";
+  text: string;
+}
+
+export interface ComposerSkillCandidate extends ComposerCandidateBase {
+  kind: "skill";
+  trigger: "@" | "/";
+  persistence?: ComposerReferencePersistence;
+}
+
+export interface ComposerAgentCandidate extends ComposerCandidateBase {
+  kind: "agent";
+  trigger: "@";
+  persistence?: ComposerReferencePersistence;
+}
+
+export interface ComposerSlashActionCandidate extends ComposerCandidateBase {
+  kind: "slashAction";
+  trigger: "/";
+  command: string;
+  dispatch: {
+    type: "client" | "server";
+    handlerId: string;
+  };
+  selection?: ComposerInsertTextSelection;
+}
+
+export type ComposerCandidate =
+  | ComposerSkillCandidate
+  | ComposerAgentCandidate
+  | ComposerSlashActionCandidate;
+
+export interface ComposerCandidatesQuery {
+  projectId?: string;
+  threadId?: string;
+  surface?: ComposerSurface;
+  trigger: ComposerTrigger;
+  query: string;
+}
+
+export interface ComposerCandidatesResponse {
+  contractVersion: typeof COMPOSER_CONTRACT_VERSION;
+  revision: string;
+  candidates: ComposerCandidate[];
+  sources: ComposerSourceState[];
+}
+
+export interface ComposerTextNode {
+  type: "text";
+  text: string;
+}
+
+export interface ComposerSkillNode {
+  type: "skill";
+  candidateRef: string;
+  label: string;
+}
+
+export interface ComposerAgentNode {
+  type: "agent";
+  candidateRef: string;
+  label: string;
+}
+
+export type ComposerNode = ComposerTextNode | ComposerSkillNode | ComposerAgentNode;
+
+export interface ComposerPersistedReferenceNode {
+  type: "persistedReference";
+  referenceKind: "skill" | "agent";
+  referenceKey: string;
+  label: string;
+}
+
+export interface ComposerUnsupportedReferenceNode {
+  type: "unsupportedReference";
+  referenceUri: string;
+  label: string;
+}
+
+export interface ComposerPersistedDocument {
+  version: 1;
+  nodes: Array<ComposerTextNode | ComposerPersistedReferenceNode | ComposerUnsupportedReferenceNode>;
+}
+
+export interface ComposerDocument {
+  version: 1;
+  nodes: ComposerNode[];
+}
+
+export interface ComposerRebindRequest {
+  contractVersion: typeof COMPOSER_CONTRACT_VERSION;
+  projectId: string;
+  threadId?: string;
+  document: ComposerPersistedDocument;
+}
+
+export interface ComposerRebindBinding {
+  nodeIndex: number;
+  status: "resolved" | "unavailable";
+  referenceKind: "skill" | "agent" | "unsupported";
+  label?: string;
+  reasonCode?:
+    | "SOURCE_UNAVAILABLE"
+    | "REFERENCE_NOT_FOUND"
+    | "REFERENCE_AMBIGUOUS"
+    | "REFERENCE_KIND_UNSUPPORTED"
+    | "REFERENCE_FORMAT_UNSUPPORTED";
+}
+
+export type ComposerRebindResponse = {
+  contractVersion: typeof COMPOSER_CONTRACT_VERSION;
+  revision: string;
+  bindings: ComposerRebindBinding[];
+  sources: ComposerSourceState[];
+  diagnostics: unknown[];
+} & (
+  | { ready: true; document: ComposerDocument }
+  | { ready: false; document?: never }
+);
+
+export interface ComposerTurnInput {
+  contractVersion: typeof COMPOSER_CONTRACT_VERSION;
+  revision: string;
+  document: ComposerDocument;
+  dangerFullAccessConfirmed?: boolean;
+  attachments?: AiChatAttachmentInput[];
+}
+
 export interface AiChatCatalog {
   models: AiChatModel[];
   skills: AiChatSkill[];

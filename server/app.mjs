@@ -23,6 +23,7 @@ import { executableCommand } from "../shared/executable-command.mjs";
 import { normalizeWorkflowSnapshot } from "../shared/workflow-control-flow.mjs";
 import { AiChatService } from "./ai-chat.mjs";
 import { resolveAiWorkspace, resolveMappedAiWorkspace } from "./ai-chat-catalog.mjs";
+import { decodeComposerReferenceKey } from "./composer-reference.mjs";
 import { createCloudConfigStore } from "./cloud-config.mjs";
 import {
   CloudProxyError,
@@ -995,6 +996,7 @@ function parseAiAttachments(value) {
 
 function parseAiTurn(body) {
   assertPlainObject(body);
+  if (body.contractVersion !== undefined) return parseComposerTurn(body);
   assertAllowedKeys(body, new Set([
     "message",
     "skillIds",
@@ -1025,6 +1027,343 @@ function parseAiTurn(body) {
     skillIds,
     dangerFullAccessConfirmed: body.dangerFullAccessConfirmed,
     attachments,
+  };
+}
+
+function parseComposerCandidateQuery(searchParams) {
+  assertAllowedQuery(
+    searchParams,
+    new Set(["projectId", "threadId", "trigger", "query", "surface"]),
+    "GET /api/local/ai/composer/candidates",
+  );
+  let projectId;
+  const rawProjectId = searchParams.get("projectId");
+  if (rawProjectId !== null) {
+    try {
+      projectId = validateProjectId(rawProjectId);
+    } catch {
+      throw new ApiError(400, "INVALID_COMPOSER_QUERY", "Composer project id is invalid");
+    }
+  }
+  const trigger = searchParams.get("trigger");
+  if (trigger !== "/" && trigger !== "@") {
+    throw new ApiError(400, "INVALID_COMPOSER_QUERY", "Composer trigger must be '/' or '@'");
+  }
+  const query = searchParams.get("query") ?? "";
+  if (query.length > 256) {
+    throw new ApiError(400, "INVALID_COMPOSER_QUERY", "Composer query cannot exceed 256 characters");
+  }
+  let threadId;
+  try {
+    threadId = parseThreadId(searchParams.get("threadId") ?? undefined);
+  } catch {
+    throw new ApiError(400, "INVALID_COMPOSER_QUERY", "Composer thread id is invalid");
+  }
+  const surface = searchParams.get("surface") ?? "ai-chat";
+  if (!new Set(["ai-chat", "issue-description", "comment"]).has(surface)) {
+    throw new ApiError(400, "INVALID_COMPOSER_QUERY", "Composer surface is invalid");
+  }
+  return { projectId, threadId, trigger, query, surface };
+}
+
+function invalidComposerRebindRequest(message) {
+  return new ApiError(400, "INVALID_COMPOSER_REBIND_REQUEST", message);
+}
+
+function assertComposerRebindKeys(value, allowed, field) {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw invalidComposerRebindRequest(`'${field}.${key}' is not allowed`);
+    }
+  }
+}
+
+function parseComposerRebindRequest(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw invalidComposerRebindRequest("Composer rebind body must be an object");
+  }
+  assertComposerRebindKeys(
+    value,
+    new Set(["contractVersion", "projectId", "threadId", "document"]),
+    "body",
+  );
+  if (value.contractVersion !== "composer.v1") {
+    throw invalidComposerRebindRequest("'contractVersion' must be 'composer.v1'");
+  }
+  let projectId;
+  try {
+    projectId = validateProjectId(value.projectId);
+  } catch {
+    throw invalidComposerRebindRequest("'projectId' is invalid");
+  }
+  let threadId;
+  try {
+    threadId = parseThreadId(value.threadId);
+  } catch {
+    throw invalidComposerRebindRequest("'threadId' is invalid");
+  }
+  const document = value.document;
+  if (!document || typeof document !== "object" || Array.isArray(document)) {
+    throw invalidComposerRebindRequest("'document' must be an object");
+  }
+  assertComposerRebindKeys(document, new Set(["version", "nodes"]), "document");
+  if (document.version !== 1) {
+    throw invalidComposerRebindRequest("'document.version' must be 1");
+  }
+  if (!Array.isArray(document.nodes) || document.nodes.length > 200) {
+    throw invalidComposerRebindRequest("'document.nodes' must contain at most 200 entries");
+  }
+  let textLength = 0;
+  const nodes = document.nodes.map((node, nodeIndex) => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) {
+      throw invalidComposerRebindRequest(`'document.nodes[${nodeIndex}]' must be an object`);
+    }
+    if (node.type === "text") {
+      assertComposerRebindKeys(node, new Set(["type", "text"]), `document.nodes[${nodeIndex}]`);
+      if (typeof node.text !== "string") {
+        throw invalidComposerRebindRequest(`'document.nodes[${nodeIndex}].text' must be a string`);
+      }
+      textLength += node.text.length;
+      return { type: "text", text: node.text };
+    }
+    if (node.type === "unsupportedReference") {
+      assertComposerRebindKeys(
+        node,
+        new Set(["type", "referenceUri", "label"]),
+        `document.nodes[${nodeIndex}]`,
+      );
+      if (typeof node.label !== "string" || node.label.length === 0 || node.label.length > 256) {
+        throw invalidComposerRebindRequest(`'document.nodes[${nodeIndex}].label' is invalid`);
+      }
+      if (typeof node.referenceUri !== "string" || node.referenceUri.length > 1_024) {
+        throw invalidComposerRebindRequest(
+          `'document.nodes[${nodeIndex}].referenceUri' is invalid`,
+        );
+      }
+      const match = /^taskboard:\/\/composer-reference\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(
+        node.referenceUri,
+      );
+      if (!match) {
+        throw invalidComposerRebindRequest(
+          `'document.nodes[${nodeIndex}].referenceUri' is not a composer reference marker`,
+        );
+      }
+      try {
+        decodeComposerReferenceKey(match[3]);
+      } catch {
+        throw invalidComposerRebindRequest(
+          `'document.nodes[${nodeIndex}].referenceUri' has an invalid reference key`,
+        );
+      }
+      const reasonCode = match[1] !== "v1"
+        ? "REFERENCE_FORMAT_UNSUPPORTED"
+        : !new Set(["skill", "agent"]).has(match[2])
+          ? "REFERENCE_KIND_UNSUPPORTED"
+          : null;
+      if (!reasonCode) {
+        throw invalidComposerRebindRequest(
+          `'document.nodes[${nodeIndex}]' must use persistedReference for supported markers`,
+        );
+      }
+      return {
+        type: "unsupportedReference",
+        referenceUri: node.referenceUri,
+        label: node.label,
+        reasonCode,
+      };
+    }
+    if (node.type !== "persistedReference") {
+      throw invalidComposerRebindRequest(
+        `'document.nodes[${nodeIndex}].type' must be text, persistedReference or unsupportedReference`,
+      );
+    }
+    assertComposerRebindKeys(
+      node,
+      new Set(["type", "referenceKind", "referenceKey", "label"]),
+      `document.nodes[${nodeIndex}]`,
+    );
+    if (node.referenceKind !== "skill" && node.referenceKind !== "agent") {
+      throw invalidComposerRebindRequest(
+        `'document.nodes[${nodeIndex}].referenceKind' must be skill or agent`,
+      );
+    }
+    if (
+      typeof node.referenceKey !== "string"
+      || node.referenceKey.length === 0
+      || node.referenceKey.length > 512
+    ) {
+      throw invalidComposerRebindRequest(
+        `'document.nodes[${nodeIndex}].referenceKey' is invalid`,
+      );
+    }
+    if (typeof node.label !== "string" || node.label.length === 0 || node.label.length > 256) {
+      throw invalidComposerRebindRequest(`'document.nodes[${nodeIndex}].label' is invalid`);
+    }
+    let stableId;
+    try {
+      stableId = decodeComposerReferenceKey(node.referenceKey);
+    } catch {
+      throw invalidComposerRebindRequest(
+        `'document.nodes[${nodeIndex}].referenceKey' is not canonical base64url`,
+      );
+    }
+    if (node.referenceKind === "skill" && stableId !== stableId.normalize("NFC")) {
+      throw invalidComposerRebindRequest(
+        `'document.nodes[${nodeIndex}].referenceKey' does not contain an NFC Skill name`,
+      );
+    }
+    return {
+      type: "persistedReference",
+      referenceKind: node.referenceKind,
+      referenceKey: node.referenceKey,
+      label: node.label,
+      stableId,
+    };
+  });
+  if (textLength > 100_000) {
+    throw invalidComposerRebindRequest("Composer text cannot exceed 100000 characters");
+  }
+  return {
+    contractVersion: "composer.v1",
+    projectId,
+    threadId,
+    document: { version: 1, nodes },
+  };
+}
+
+async function resolveComposerRebindWorkspace(aiChat, input) {
+  let thread;
+  if (input.threadId !== undefined) {
+    try {
+      thread = aiChat.getThread(input.threadId);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "AI_CHAT_THREAD_NOT_FOUND") {
+        throw new ApiError(400, "INVALID_COMPOSER_QUERY", "Composer thread does not exist");
+      }
+      throw error;
+    }
+    if (thread.origin.projectId !== input.projectId) {
+      throw new ApiError(
+        400,
+        "INVALID_COMPOSER_QUERY",
+        "Composer thread does not belong to the selected project",
+      );
+    }
+    try {
+      if (!(await stat(thread.origin.workspacePath)).isDirectory()) throw new Error("not a directory");
+    } catch {
+      throw new ApiError(
+        409,
+        "PROJECT_WORKSPACE_UNAVAILABLE",
+        "The conversation workspace is not available on this device",
+      );
+    }
+    return thread.origin.workspacePath;
+  }
+  let resolved;
+  try {
+    resolved = await aiChat.resolveContext(input.projectId, thread?.origin.issueId);
+  } catch (error) {
+    if (
+      error instanceof ApiError
+      && ["PROJECT_NOT_FOUND", "AI_CHAT_ISSUE_NOT_FOUND"].includes(error.code)
+    ) {
+      throw new ApiError(400, "INVALID_COMPOSER_QUERY", "Composer project is invalid");
+    }
+    throw error;
+  }
+  return resolved.workspacePath;
+}
+
+function parseComposerDocument(value) {
+  assertPlainObject(value);
+  assertAllowedKeys(value, new Set(["version", "nodes"]));
+  if (value.version !== 1) {
+    throw new ApiError(400, "INVALID_COMPOSER_DOCUMENT", "'document.version' must be 1");
+  }
+  if (!Array.isArray(value.nodes) || value.nodes.length > 200) {
+    throw new ApiError(
+      400,
+      "INVALID_COMPOSER_DOCUMENT",
+      "'document.nodes' must be an array with at most 200 entries",
+    );
+  }
+  let textLength = 0;
+  const nodes = value.nodes.map((node, index) => {
+    assertPlainObject(node);
+    if (typeof node.type !== "string" || !node.type) {
+      throw new ApiError(
+        400,
+        "INVALID_COMPOSER_DOCUMENT",
+        `'document.nodes[${index}].type' is required`,
+      );
+    }
+    if (node.type === "text") {
+      assertAllowedKeys(node, new Set(["type", "text"]));
+      if (typeof node.text !== "string") {
+        throw new ApiError(
+          400,
+          "INVALID_COMPOSER_DOCUMENT",
+          `'document.nodes[${index}].text' must be a string`,
+        );
+      }
+      textLength += node.text.length;
+      return { type: "text", text: node.text };
+    }
+    if (node.type === "skill" || node.type === "agent") {
+      assertAllowedKeys(node, new Set(["type", "candidateRef", "label"]));
+      return {
+        type: node.type,
+        candidateRef: stringField(
+          node.candidateRef,
+          `document.nodes[${index}].candidateRef`,
+          { required: true, maxLength: 512 },
+        ),
+        label: stringField(node.label, `document.nodes[${index}].label`, {
+          required: true,
+          maxLength: 256,
+        }),
+      };
+    }
+    return { type: node.type };
+  });
+  if (textLength > 100_000) {
+    throw new ApiError(
+      400,
+      "INVALID_COMPOSER_DOCUMENT",
+      "Composer text cannot exceed 100000 characters",
+    );
+  }
+  return { version: 1, nodes };
+}
+
+function parseComposerTurn(body) {
+  assertAllowedKeys(body, new Set([
+    "contractVersion",
+    "revision",
+    "document",
+    "dangerFullAccessConfirmed",
+    "attachments",
+  ]));
+  if (body.contractVersion !== "composer.v1") {
+    throw new ApiError(
+      400,
+      "INVALID_COMPOSER_DOCUMENT",
+      "'contractVersion' must be 'composer.v1'",
+    );
+  }
+  if (
+    body.dangerFullAccessConfirmed !== undefined
+    && typeof body.dangerFullAccessConfirmed !== "boolean"
+  ) {
+    throw new ApiError(400, "INVALID_FIELD", "'dangerFullAccessConfirmed' must be a boolean");
+  }
+  return {
+    contractVersion: "composer.v1",
+    revision: stringField(body.revision, "revision", { required: true, maxLength: 512 }),
+    document: parseComposerDocument(body.document),
+    dangerFullAccessConfirmed: body.dangerFullAccessConfirmed,
+    attachments: parseAiAttachments(body.attachments),
   };
 }
 
@@ -2100,6 +2439,34 @@ export function createPanelServer(options = {}) {
         return sendJson(response, 200, await aiChat.getCatalog(projectId));
       }
 
+      if (pathname === "/api/local/ai/composer/candidates") {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        const query = parseComposerCandidateQuery(url.searchParams);
+        return sendJson(
+          response,
+          200,
+          await aiChat.composerCatalog.candidatesForSurface(
+            await aiChat.getComposerCandidates(query),
+            query,
+          ),
+        );
+      }
+
+      if (pathname === "/api/local/ai/composer/rebind") {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "POST /api/local/ai/composer/rebind");
+        const input = parseComposerRebindRequest(await readJson(request));
+        const workspacePath = await resolveComposerRebindWorkspace(aiChat, input);
+        return sendJson(
+          response,
+          200,
+          await aiChat.composerCatalog.rebindPersistedReferences({
+            workspacePath,
+            nodes: input.document.nodes,
+          }),
+        );
+      }
+
       const projectSummaryRoute = pathname.match(/^\/api\/local\/projects\/([^/]+)\/summary$/);
       if (projectSummaryRoute) {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
@@ -2165,6 +2532,16 @@ export function createPanelServer(options = {}) {
           )),
         );
         return sendJson(response, 202, { run });
+      }
+
+      const aiThreadCompactRoute = pathname.match(/^\/api\/local\/ai\/threads\/([^/]+)\/compact$/);
+      if (aiThreadCompactRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "POST /api/local/ai/threads/:id/compact");
+        const threadId = decodeRouteSegment(aiThreadCompactRoute[1], "Thread id");
+        await assertEmptyRequestBody(request, "POST /api/local/ai/threads/:id/compact");
+        const thread = await aiChat.compactThread(threadId);
+        return sendJson(response, 200, { thread });
       }
 
       const aiThreadRoute = pathname.match(/^\/api\/local\/ai\/threads\/([^/]+)$/);

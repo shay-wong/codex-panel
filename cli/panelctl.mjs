@@ -75,7 +75,17 @@ const COMMAND_OPTIONS = new Map([
   ["issue restore", new Set(["thread-id", "if-version", "json"])],
   ["issue relation", new Set(["type", "issue", "thread-id", "if-version", "json"])],
   ["comment list", new Set(["json"])],
-  ["comment add", new Set(["body", "thread-id", "json"])],
+  ["comment add", new Set([
+    "body",
+    "thread-id",
+    "binding-thread-id",
+    "binding-codex-project-id",
+    "binding-codex-project-kind",
+    "binding-codex-host-id",
+    "binding-workspace-path",
+    "clear-binding-thread",
+    "json",
+  ])],
   ["comment update", new Set(["body", "thread-id", "if-version", "json"])],
   ["comment delete", new Set(["thread-id", "if-version", "json"])],
   ["attachment download", new Set(["output", "json"])],
@@ -278,6 +288,7 @@ async function execute(parsed, overrides) {
       return api.request("POST", `${taskPath(parsed.operands[0])}/comments`, {
         body: requiredOption(parsed.options, "body"),
         threadId: resolveThreadId(parsed.options, overrides),
+        ...optionalField("threadBinding", threadBindingFromOptions(parsed.options)),
       });
     case "comment update":
       expectOperandCount(parsed, 1);

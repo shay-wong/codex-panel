@@ -240,6 +240,11 @@ async function copyApplicationResources() {
   await Promise.all([
     cp(path.join(projectRoot, "server"), path.join(appResources, "server"), { recursive: true }),
     cp(path.join(projectRoot, "shared"), path.join(appResources, "shared"), { recursive: true }),
+    cp(
+      path.join(projectRoot, "node_modules", "smol-toml"),
+      path.join(appResources, "node_modules", "smol-toml"),
+      { recursive: true },
+    ),
     cp(path.join(projectRoot, "dist", "web"), path.join(appResources, "dist", "web"), {
       recursive: true,
     }),

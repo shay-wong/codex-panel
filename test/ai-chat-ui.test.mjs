@@ -183,7 +183,7 @@ test("chat renders Markdown, public thinking steps and never renders host-only f
 test("composer does not submit during IME composition and background runs keep launcher state fresh", () => {
   const composingGuard = chatSource.indexOf("event.nativeEvent.isComposing");
   const shiftEnterGuard = chatSource.indexOf('event.key === "Enter" && event.shiftKey');
-  const skillSelection = chatSource.indexOf('event.key === "Enter" && skillMention');
+  const skillSelection = chatSource.indexOf('(event.key === "Enter" || event.key === "Tab")');
   const messageSubmission = chatSource.indexOf('if (event.key === "Enter") {', skillSelection);
   assert.ok(composingGuard > 0);
   assert.ok(composingGuard < shiftEnterGuard);

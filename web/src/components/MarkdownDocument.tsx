@@ -493,11 +493,14 @@ export function MarkdownDocument({
             const markdown = typeof start === "number" && typeof end === "number"
               ? value.slice(start, end)
               : undefined;
+            const isComposerReference = Boolean(
+              markdown && /^\[[\s\S]*\]\(taskboard:\/\/composer-reference\/[^)]+\)$/.test(markdown),
+            );
             return (
               <a
                 {...props}
                 className={[className, isRenderedLink ? "issue-reference-link" : ""].filter(Boolean).join(" ") || undefined}
-                data-taskboard-inline-media-markdown={isRenderedLink ? markdown : undefined}
+                data-taskboard-inline-media-markdown={isRenderedLink || isComposerReference ? markdown : undefined}
                 href={href}
                 target="_blank"
                 rel="noreferrer"
@@ -513,7 +516,16 @@ export function MarkdownDocument({
             const markdown = typeof start === "number" && typeof end === "number"
               ? value.slice(start, end)
               : undefined;
-            return <img {...props} data-taskboard-inline-media-markdown={markdown} />;
+            const selfContainedMarkdown = markdown
+              && /^!\[(?:\\.|[^\]])*\]\(/.test(markdown)
+              ? markdown
+              : undefined;
+            return (
+              <img
+                {...props}
+                data-taskboard-inline-media-markdown={selfContainedMarkdown}
+              />
+            );
           },
           pre: MarkdownPre,
         }}

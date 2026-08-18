@@ -8,6 +8,11 @@ import type {
   AiChatThreadSnapshot,
   Attachment,
   Comment,
+  ComposerCandidatesQuery,
+  ComposerCandidatesResponse,
+  ComposerRebindRequest,
+  ComposerRebindResponse,
+  ComposerTurnInput,
   CodexThreadBinding,
   DevelopmentScan,
   HostContext,
@@ -242,6 +247,29 @@ export async function getAiChatCatalog(
   );
 }
 
+export async function getAiChatComposerCandidates(
+  input: ComposerCandidatesQuery,
+  signal?: AbortSignal,
+): Promise<ComposerCandidatesResponse> {
+  const query = new URLSearchParams({
+    trigger: input.trigger,
+    query: input.query,
+  });
+  if (input.projectId) query.set("projectId", input.projectId);
+  if (input.threadId) query.set("threadId", input.threadId);
+  if (input.surface) query.set("surface", input.surface);
+  return request<ComposerCandidatesResponse>(`/api/local/ai/composer/candidates?${query}`, { signal });
+}
+
+export async function rebindAiChatComposerReferences(
+  input: ComposerRebindRequest,
+): Promise<ComposerRebindResponse> {
+  return request<ComposerRebindResponse>("/api/local/ai/composer/rebind", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function listAiChatThreads(signal?: AbortSignal): Promise<AiChatThread[]> {
   const data = await request<{ threads: AiChatThread[] }>("/api/local/ai/threads", { signal });
   return data.threads;
@@ -318,12 +346,34 @@ export async function startAiChatTurn(
   return data.run;
 }
 
+export async function startAiChatComposerTurn(
+  threadId: string,
+  input: ComposerTurnInput,
+): Promise<AiChatRun> {
+  const data = await request<{ run: AiChatRun }>(
+    `/api/local/ai/threads/${encodeURIComponent(threadId)}/turns`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+  return data.run;
+}
+
 export async function interruptAiChatRun(runId: string): Promise<AiChatRun> {
   const data = await request<{ run: AiChatRun }>(
     `/api/local/ai/runs/${encodeURIComponent(runId)}/interrupt`,
     { method: "POST" },
   );
   return data.run;
+}
+
+export async function compactAiChatThread(threadId: string): Promise<AiChatThread> {
+  const data = await request<{ thread: AiChatThread }>(
+    `/api/local/ai/threads/${encodeURIComponent(threadId)}/compact`,
+    { method: "POST" },
+  );
+  return data.thread;
 }
 
 export function subscribeAiChatThread(

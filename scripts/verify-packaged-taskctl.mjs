@@ -15,54 +15,40 @@ function waitForExit(child, timeoutMs) {
   return Promise.race([
     new Promise((resolve) => child.once("exit", resolve)),
     new Promise((_, reject) => setTimeout(
-      () => reject(new Error("Packaged Panel server did not exit")),
+      () => reject(new Error("Packaged Taskboard server did not exit")),
       timeoutMs,
     )),
   ]);
 }
 
 function runTaskctl(wrapperPath, homeDirectory, args) {
-  const dataDirectory = path.join(
-    homeDirectory,
-    "Library",
-    "Application Support",
-    "Codex Panel",
-    "data",
-  );
   const result = spawnSync(wrapperPath, args, {
     encoding: "utf8",
     env: {
       HOME: homeDirectory,
       PATH: "/usr/bin:/bin",
-      CODEX_PANEL_DATA_DIR: dataDirectory,
-      CODEX_PANEL_RUNTIME_FILE: path.join(dataDirectory, "launcher-runtime.json"),
       CODEX_THREAD_ID: "00000000-0000-4000-8000-000000000001",
     },
   });
   if (result.status !== 0) {
-    throw new Error(
-      result.stderr?.trim()
-      || result.stdout?.trim()
-      || result.error?.message
-      || "Packaged panelctl failed",
-    );
+    throw new Error(result.stderr.trim() || result.stdout.trim() || "Packaged taskctl failed");
   }
   return JSON.parse(result.stdout);
 }
 
-const temporaryHome = await mkdtemp(path.join(os.tmpdir(), "codex-panel-taskctl."));
+const temporaryHome = await mkdtemp(path.join(os.tmpdir(), "codex-taskboard-taskctl."));
 const dataDirectory = path.join(
   temporaryHome,
   "Library",
   "Application Support",
-  "Codex Panel",
-  "data",
+  "Codex Taskboard",
 );
 await mkdir(dataDirectory, { recursive: true });
 const runtimeFile = path.join(dataDirectory, "launcher-runtime.json");
 const nodePath = path.join(appPath, "Contents", "MacOS", "node");
 const appRoot = path.join(appPath, "Contents", "Resources", "app");
-const wrapperPath = path.join(appPath, "Contents", "Resources", "bin", "panelctl");
+const wrapperPath = path.join(appPath, "Contents", "Resources", "bin", "taskctl");
+await stat(path.join(appRoot, "node_modules", "smol-toml", "package.json"));
 const reservation = createServer();
 await new Promise((resolve, reject) => {
   reservation.once("error", reject);
@@ -71,7 +57,7 @@ await new Promise((resolve, reject) => {
 const address = reservation.address();
 const inheritedFd = reservation._handle?.fd;
 if (!address || typeof address === "string" || !Number.isInteger(inheritedFd)) {
-  throw new Error("Could not reserve the packaged Panel listener");
+  throw new Error("Could not reserve the packaged Taskboard listener");
 }
 
 const instanceToken = randomUUID();
@@ -80,13 +66,13 @@ const server = spawn(nodePath, [path.join(appRoot, "server", "index.mjs")], {
   cwd: appRoot,
   env: {
     ...process.env,
-    CODEX_PANEL_DATA_DIR: dataDirectory,
-    CODEX_PANEL_HOST: "127.0.0.1",
-    CODEX_PANEL_PORT: String(address.port),
-    CODEX_PANEL_LISTEN_FD: "5",
-    CODEX_PANEL_INSTANCE_TOKEN: instanceToken,
-    CODEX_PANEL_INSTANCE_SECRET: instanceSecret,
-    CODEX_PANEL_VERSION: "preflight",
+    CODEX_TASKBOARD_DATA_DIR: dataDirectory,
+    CODEX_TASKBOARD_HOST: "127.0.0.1",
+    CODEX_TASKBOARD_PORT: String(address.port),
+    CODEX_TASKBOARD_LISTEN_FD: "5",
+    CODEX_TASKBOARD_INSTANCE_TOKEN: instanceToken,
+    CODEX_TASKBOARD_INSTANCE_SECRET: instanceSecret,
+    CODEX_TASKBOARD_VERSION: "preflight",
   },
   stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", inheritedFd],
 });
@@ -102,7 +88,7 @@ try {
     server.stdout.setEncoding("utf8");
     server.stdout.on("data", (chunk) => {
       stdout += chunk;
-      if (stdout.includes("Codex Panel listening")) {
+      if (stdout.includes("Codex Taskboard listening")) {
         clearTimeout(timeout);
         resolve();
       }
@@ -123,12 +109,12 @@ try {
     { mode: 0o600 },
   );
   if ((await stat(runtimeFile)).mode % 0o1000 !== 0o600) {
-    throw new Error("Packaged Panel runtime descriptor must use mode 0600");
+    throw new Error("Packaged Taskboard runtime descriptor must use mode 0600");
   }
 
   const projects = runTaskctl(wrapperPath, temporaryHome, ["project", "list", "--json"]);
   const projectId = projects.projects?.[0]?.id;
-  if (!projectId) throw new Error("Packaged panelctl did not list the local project");
+  if (!projectId) throw new Error("Packaged taskctl did not list the local project");
   const cloudStatus = runTaskctl(wrapperPath, temporaryHome, ["cloud", "status", "--json"]);
   if (cloudStatus.mode !== "local") throw new Error("Packaged cloud status used the wrong endpoint");
   const mapping = runTaskctl(wrapperPath, temporaryHome, [
@@ -185,4 +171,4 @@ try {
   await rm(temporaryHome, { recursive: true, force: true });
 }
 
-console.log("Verified packaged panelctl discovery and launcher-owned listener");
+console.log("Verified packaged taskctl discovery and launcher-owned listener");
