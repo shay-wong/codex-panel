@@ -128,6 +128,11 @@ export async function getJiraConnection(signal?: AbortSignal): Promise<JiraConne
         projects: [],
         projectId: "jira-my-tasks",
         lastSyncedAt: null,
+        lastAttemptedAt: null,
+        lastSuccessfulAt: null,
+        syncedIssueCount: 0,
+        unknownIssueCount: 0,
+        syncError: null,
         insecureHttp: false,
       };
     }
@@ -141,6 +146,7 @@ export async function configureJiraConnection(input: {
   username: string;
   password: string;
   projects: string[];
+  acceptAccountChange?: boolean;
 }): Promise<JiraConnection> {
   const data = await request<{ connection: JiraConnection }>("/api/local/jira-connection", {
     method: "PUT",
@@ -149,9 +155,12 @@ export async function configureJiraConnection(input: {
   return data.connection;
 }
 
-export async function syncJiraConnection(): Promise<JiraConnection> {
+export async function syncJiraConnection(acceptAccountChange = false): Promise<JiraConnection> {
   const data = await request<{ connection: JiraConnection }>("/api/local/jira-connection/sync", {
     method: "POST",
+    ...(acceptAccountChange
+      ? { body: JSON.stringify({ acceptAccountChange: true }) }
+      : {}),
   });
   return data.connection;
 }

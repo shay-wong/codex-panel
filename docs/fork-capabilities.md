@@ -82,6 +82,12 @@ Jira connection settings provide two explicit authentication modes. Account / AP
 
 Credentials remain in the local Panel data directory with the existing local file protections and are never returned to the browser. Jira integration remains unavailable in Cloud mode. Use HTTPS unless the Jira server is on a trusted private network because HTTP exposes either authentication mode to network observers.
 
+## Reliable Jira open-issue synchronization
+
+Panel searches only for open issues assigned to the signed-in Jira user. It reads every search page before applying one database transaction, then rechecks previously synced issues that disappeared from the open result. Confirmed completed or out-of-scope issues are archived from the Jira project; issues that cannot be confirmed remain visible and are marked with an unknown synchronization state.
+
+Authentication, permission, network, and partial-page failures never clear the last successful Jira data. Cached issues remain available while a compact Jira status bar and the connection dialog show the last attempt, last success, open and unknown counts, and an actionable failure. Panel also compares Jira's stable `/myself` account identity and asks for confirmation before it searches or stores issues from a different account. Opening the Jira project retains the existing one-minute refresh throttle; manual synchronization remains uncached and may be run repeatedly.
+
 ## Link Jira requirements to repository issues
 
 A synced Jira issue remains an external requirement in the dedicated Jira project. Open its detail view and choose **Manage Jira links** to select one or more Panel projects that have local workspaces. Repository changes are shown as a pending difference and take effect only after **Save repositories**; saving never creates, moves, or deletes execution issues.

@@ -2372,7 +2372,14 @@ export function createPanelServer(options = {}) {
           }
           const body = await readJson(request);
           assertPlainObject(body);
-          assertAllowedKeys(body, new Set(["baseUrl", "authMethod", "username", "password", "projects"]));
+          assertAllowedKeys(body, new Set([
+            "baseUrl",
+            "authMethod",
+            "username",
+            "password",
+            "projects",
+            "acceptAccountChange",
+          ]));
           const baseUrl = stringField(body.baseUrl, "baseUrl", { required: true, maxLength: 2048 });
           const authMethod = body.authMethod ?? undefined;
           if (authMethod !== undefined && authMethod !== "basic" && authMethod !== "bearer") {
@@ -2386,6 +2393,9 @@ export function createPanelServer(options = {}) {
           if (password.length > 4096) {
             throw new ApiError(400, "INVALID_FIELD", "'password' cannot exceed 4096 characters");
           }
+          if (body.acceptAccountChange !== undefined && typeof body.acceptAccountChange !== "boolean") {
+            throw new ApiError(400, "INVALID_FIELD", "'acceptAccountChange' must be a boolean");
+          }
           try {
             const connection = await jira.configure({
               baseUrl,
@@ -2393,6 +2403,7 @@ export function createPanelServer(options = {}) {
               username,
               password,
               projects: body.projects,
+              acceptAccountChange: body.acceptAccountChange === true,
             });
             events.emit("project.labels.updated", { project: database.getProject(JIRA_PROJECT_ID) });
             return sendJson(response, 200, { connection });
@@ -2409,8 +2420,19 @@ export function createPanelServer(options = {}) {
         if ([...url.searchParams.keys()].length > 0) {
           throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Jira 同步接口不接受查询参数");
         }
-        await assertEmptyRequestBody(request, "POST /api/local/jira-connection/sync");
-        const connection = await jira.sync({ force: true });
+        const hasBody = Number(request.headers["content-length"] ?? 0) > 0
+          || request.headers["transfer-encoding"] !== undefined;
+        let acceptAccountChange = false;
+        if (hasBody) {
+          const body = await readJson(request);
+          assertPlainObject(body);
+          assertAllowedKeys(body, new Set(["acceptAccountChange"]));
+          if (typeof body.acceptAccountChange !== "boolean") {
+            throw new ApiError(400, "INVALID_FIELD", "'acceptAccountChange' must be a boolean");
+          }
+          acceptAccountChange = body.acceptAccountChange;
+        }
+        const connection = await jira.sync({ force: true, acceptAccountChange });
         events.emit("project.labels.updated", { project: database.getProject(JIRA_PROJECT_ID) });
         return sendJson(response, 200, { connection });
       }
@@ -2805,7 +2827,14 @@ export function createPanelServer(options = {}) {
       if (pathname === "/api/tasks") {
         if (request.method === "GET") {
           const filters = parseTaskFilters(url.searchParams);
-          if (filters.projectId === JIRA_PROJECT_ID) await jira.sync();
+          if (filters.projectId === JIRA_PROJECT_ID) {
+            try {
+              await jira.sync();
+            } catch (error) {
+              if (!(error instanceof ApiError)) throw error;
+              // Jira sync state carries the failure; keep cached issues readable.
+            }
+          }
           return sendJson(response, 200, { tasks: database.listTasks(filters) });
         }
         if (request.method === "POST") {

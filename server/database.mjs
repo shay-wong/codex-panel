@@ -543,6 +543,16 @@ export class PanelDatabase {
         error TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS jira_sync_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        attempted_at TEXT,
+        succeeded_at TEXT,
+        issue_count INTEGER NOT NULL DEFAULT 0,
+        unknown_issue_count INTEGER NOT NULL DEFAULT 0,
+        error_code TEXT,
+        error_message TEXT
+      );
+
       CREATE TABLE IF NOT EXISTS ai_chat_threads (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -1052,8 +1062,10 @@ export class PanelDatabase {
 
   syncJiraTasks(issues, {
     archiveMissing = true,
+    originId = null,
     projectName,
     legacyIdentity = null,
+    unknownTasks = [],
     syncedAt = now(),
   } = {}) {
     const timestamp = syncedAt;
@@ -1132,7 +1144,7 @@ export class PanelDatabase {
           assignee_type = ?, assignee_id = ?, assignee_name = ?, assignee_avatar_url = ?,
           due_date = ?, external_origin = ?, external_id = ?, external_key = ?, external_url = ?,
           external_status = ?, external_synced_at = ?, external_sync_error = NULL,
-          archived_at = NULL,
+          archived_at = ?,
           version = version + 1, updated_at = ?
         WHERE id = ?
       `);
@@ -1195,7 +1207,7 @@ export class PanelDatabase {
           || existing.external_url !== issue.externalUrl
           || existing.external_status !== issue.externalStatus
           || existing.external_sync_error !== null
-          || existing.archived_at !== null;
+          || Boolean(existing.archived_at) !== Boolean(issue.archived);
         if (!changed) {
           this.database.prepare(`
             UPDATE tasks
@@ -1227,6 +1239,7 @@ export class PanelDatabase {
           issue.externalUrl,
           issue.externalStatus,
           syncedAt,
+          issue.archived ? timestamp : null,
           issue.updatedAt,
           existing.id,
         );
@@ -1235,19 +1248,29 @@ export class PanelDatabase {
       if (archiveMissing) {
         const existingTasks = this.database.prepare(`
           SELECT id FROM tasks
-          WHERE project_id = ? AND external_source = 'jira' AND archived_at IS NULL
-        `).all(JIRA_PROJECT_ID);
+          WHERE project_id = ?
+            AND external_source = 'jira'
+            AND archived_at IS NULL
+            AND (? IS NULL OR external_origin = ?)
+        `).all(JIRA_PROJECT_ID, originId, originId);
         const archiveTask = this.database.prepare(`
           UPDATE tasks
           SET archived_at = ?, version = version + 1, updated_at = ?
           WHERE id = ?
         `);
+        const unknownTaskIds = new Set(unknownTasks.map((task) => task.id));
         for (const task of existingTasks) {
-          if (!seenTaskIds.has(task.id)) {
+          if (!seenTaskIds.has(task.id) && !unknownTaskIds.has(task.id)) {
             archiveTask.run(timestamp, timestamp, task.id);
           }
         }
       }
+      const markUnknown = this.database.prepare(`
+        UPDATE tasks
+        SET external_sync_error = ?
+        WHERE id = ? AND external_source = 'jira' AND archived_at IS NULL
+      `);
+      for (const task of unknownTasks) markUnknown.run(task.message, task.id);
       this.database.prepare("UPDATE projects SET updated_at = ? WHERE id = ?")
         .run(timestamp, JIRA_PROJECT_ID);
       this.database.exec("COMMIT");
@@ -1279,12 +1302,69 @@ export class PanelDatabase {
     return project;
   }
 
-  markJiraSyncError(message) {
+  listActiveJiraTasks(originId) {
+    return this.database.prepare(`
+      SELECT id, external_id AS externalId, external_key AS externalKey
+      FROM tasks
+      WHERE external_source = 'jira'
+        AND external_origin = ?
+        AND archived_at IS NULL
+        AND external_key IS NOT NULL
+      ORDER BY created_at, id
+    `).all(originId);
+  }
+
+  getJiraSyncState() {
+    const row = this.database.prepare("SELECT * FROM jira_sync_state WHERE id = 1").get();
+    return {
+      lastAttemptedAt: row?.attempted_at ?? null,
+      lastSuccessfulAt: row?.succeeded_at ?? null,
+      syncedIssueCount: Number(row?.issue_count ?? 0),
+      unknownIssueCount: Number(row?.unknown_issue_count ?? 0),
+      syncError: row?.error_message
+        ? { code: row.error_code ?? "JIRA_SYNC_FAILED", message: row.error_message }
+        : null,
+    };
+  }
+
+  recordJiraSyncAttempt(attemptedAt = now()) {
+    this.database.prepare(`
+      INSERT INTO jira_sync_state (id, attempted_at)
+      VALUES (1, ?)
+      ON CONFLICT(id) DO UPDATE SET attempted_at = excluded.attempted_at
+    `).run(attemptedAt);
+  }
+
+  recordJiraSyncSuccess({ attemptedAt, succeededAt, issueCount, unknownIssueCount }) {
+    this.database.prepare(`
+      INSERT INTO jira_sync_state (
+        id, attempted_at, succeeded_at, issue_count, unknown_issue_count, error_code, error_message
+      ) VALUES (1, ?, ?, ?, ?, NULL, NULL)
+      ON CONFLICT(id) DO UPDATE SET
+        attempted_at = excluded.attempted_at,
+        succeeded_at = excluded.succeeded_at,
+        issue_count = excluded.issue_count,
+        unknown_issue_count = excluded.unknown_issue_count,
+        error_code = NULL,
+        error_message = NULL
+    `).run(attemptedAt, succeededAt, issueCount, unknownIssueCount);
+  }
+
+  markJiraSyncError(message, code = "JIRA_SYNC_FAILED", attemptedAt = now()) {
+    const safeMessage = String(message).slice(0, 1000);
+    this.database.prepare(`
+      INSERT INTO jira_sync_state (id, attempted_at, error_code, error_message)
+      VALUES (1, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        attempted_at = excluded.attempted_at,
+        error_code = excluded.error_code,
+        error_message = excluded.error_message
+    `).run(attemptedAt, String(code).slice(0, 120), safeMessage);
     this.database.prepare(`
       UPDATE tasks
       SET external_sync_error = ?
       WHERE external_source = 'jira' AND archived_at IS NULL
-    `).run(String(message).slice(0, 1000));
+    `).run(safeMessage);
   }
 
   getJiraContext(id) {
