@@ -813,8 +813,8 @@ if (args[0] === "app-server") {
       emit({type:"item.completed",item:{id:"item-error-1",type:"error",message:"Recoverable item error"}});
     }
     if (prompt.includes("WAIT")) {
-      const timer = setTimeout(() => { emit({type:"turn.completed",usage:{input_tokens:1,output_tokens:2}}); }, 800);
-      process.on("SIGTERM", () => { clearTimeout(timer); process.exit(143); });
+      setInterval(() => {}, 1000);
+      process.on("SIGTERM", () => process.exit(143));
       return;
     }
     if (prompt.includes("FAIL")) process.exit(7);
