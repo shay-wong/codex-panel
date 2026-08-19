@@ -2064,40 +2064,63 @@ fn launcher_ui_state(
 }
 
 #[tauri::command]
-fn start_service(
+async fn start_service(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
 ) -> Result<LauncherUiState, String> {
-    let should_open = state.preferences.lock().unwrap().auto_open_panel;
-    start_launcher(&app, &state, should_open)?;
-    current_ui_state(&app, &state)
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let should_open = state.preferences.lock().unwrap().auto_open_panel;
+        start_launcher(&app, &state, should_open)?;
+        current_ui_state(&app, &state)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn stop_service(
+async fn stop_service(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
 ) -> Result<LauncherUiState, String> {
-    stop_managed_child(&app, &state);
-    current_ui_state(&app, &state)
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        stop_managed_child(&app, &state);
+        current_ui_state(&app, &state)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn reconnect_codex(
+async fn reconnect_codex(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
 ) -> Result<LauncherUiState, String> {
-    restart_launcher(&app, &state)?;
-    current_ui_state(&app, &state)
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        restart_launcher(&app, &state)?;
+        current_ui_state(&app, &state)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn open_embedded_panel(app: AppHandle, state: State<'_, Arc<LauncherState>>) -> Result<(), String> {
-    if state.child.lock().unwrap().is_some() {
-        open_panel(&app, &state)
-    } else {
-        start_launcher(&app, &state, true).map(|_| ())
-    }
+async fn open_embedded_panel(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+) -> Result<(), String> {
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        if state.child.lock().unwrap().is_some() {
+            open_panel(&app, &state)
+        } else {
+            start_launcher(&app, &state, true).map(|_| ())
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
