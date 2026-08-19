@@ -133,7 +133,7 @@ npm run codex:inject -- --port 9229 --open
 
 脚本会在 Codex 侧边栏中添加 Panel 入口，并让 iframe 覆盖 Codex 的整个主工作区，包括上下文标题栏区域，从而避免 Panel 自身标题栏上方出现空白。完整的矩形标题栏位于 Electron 可拖拽层之上，并标记为 `no-drag`；Panel 激活时会隐藏原生上下文操作，因此其自身操作可以保持正常的边缘间距，不需要额外的右侧留白。原生侧边栏会继续保留，之前的页面选择和上下文标题栏会暂时隐藏；选择其他 Codex 页面后会恢复。
 
-无论当前位于会话页，还是 Plugins、Sites 等原生页面，都可以直接点击 Panel 入口打开任务面板。Panel 激活时，通过 Codex 全局命令菜单选择对话、插件、设置、站点、Pull Requests、已安排任务等原生目的地，会在鼠标点击和 Enter 选择后恢复 Codex 原生界面；切换主题等工具命令不会关闭 Panel。不会改变路由的命令目前匹配简体中文、繁体中文和英文标题，其他界面语言留待 Codex 在菜单 DOM 中提供稳定命令标识后支持。
+无论当前位于会话页，还是 Plugins、Sites 等原生页面，都可以直接点击 Panel 入口打开任务面板。Panel 激活时，通过 Codex 全局命令菜单选择对话、插件、设置、站点、Pull Requests、已安排任务等原生目的地，会在鼠标点击和 Enter 选择后恢复 Codex 原生界面；打开活动视图或选择通知也会恢复对应的原生目的地，不再停留在 Panel 后方。切换主题等工具命令不会关闭 Panel。不会改变路由的命令目前匹配简体中文、繁体中文和英文标题，其他界面语言留待 Codex 在菜单 DOM 中提供稳定命令标识后支持。
 
 “在对话中打开”会选择对应的原生 Codex 项目，并在本地和 SSH 项目中都打开尚未发送的输入框。本地草稿使用 `$manage-panel`，包含 Issue 编号、标题、最新“AI 对话交接”和 `panelctl` 读取位置，并在执行前刷新 Issue；SSH worker 无法调用本机 `panelctl`，所以远程草稿直接包含当前 Issue 描述、评论和开发上下文。两种草稿都跟随 Panel 界面语言、不显示内部路由标记且不会自动发送；只有第一次真实发送创建 Codex 任务后，Panel 才会写回对应的本地或 SSH thread binding，SSH Issue 也只在此时移到处理中。记录的 ID 可通过 Codex 原生路由桥接点击打开。每个 Issue 可以绑定一个 Git 分支或一个 worktree；选项从所选 Codex 项目的仓库中扫描，而不是手工输入。该集成复用 Codex 现有的项目、输入框和路由标记，不会修改 React、替换 `fetch`、加载私有代码块或编辑 Codex 数据文件。
 

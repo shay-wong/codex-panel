@@ -626,15 +626,21 @@ test("host navigation follows Codex's renderer message bus", () => {
   assert.doesNotMatch(source, /new CustomEvent\("codex-message-from-view"/);
 });
 
-test("command-menu native destinations close Panel without global history interception", () => {
+test("native destinations close Panel without global history interception", () => {
   const labelsStart = source.indexOf("const NATIVE_PAGE_LABELS");
   const labelsEnd = source.indexOf("\n\n  const previous", labelsStart);
+  const navigationStart = source.indexOf("function isNativePageNavigation");
+  const navigationEnd = source.indexOf("\n\n  function handleNativeDestinationCommand", navigationStart);
   const handlerStart = source.indexOf("function handleNativeDestinationCommand");
   const handlerEnd = source.indexOf("\n\n  function onCommandMenuSelect", handlerStart);
+  const clickStart = source.indexOf("function onDocumentClick");
+  const clickEnd = source.indexOf("\n\n  function onDesktopAppEntry", clickStart);
   assert.notEqual(labelsStart, -1, "native destination labels must exist");
   assert.ok(labelsEnd > labelsStart, "native destination labels must be extractable");
   assert.notEqual(handlerStart, -1, "native destination handler must exist");
   assert.ok(handlerEnd > handlerStart, "native destination handler must be extractable");
+  assert.notEqual(navigationStart, -1, "native page navigation handler must exist");
+  assert.ok(navigationEnd > navigationStart, "native page navigation handler must be extractable");
   assert.match(source, /const NATIVE_DESTINATION_COMMAND_LABELS = \[/);
   assert.doesNotMatch(source, /installNativeHistoryInterceptor/);
   assert.doesNotMatch(source, /historyInterceptors/);
@@ -655,6 +661,18 @@ test("command-menu native destinations close Panel without global history interc
       nativeDestinationLabels.includes(label.toLowerCase()),
       `production labels must include ${label}`,
     );
+  }
+  const nativeHeaderLabels = vm.runInNewContext(
+    `(() => { ${source.slice(labelsStart, labelsEnd)}; return NATIVE_HEADER_DESTINATION_LABELS; })()`,
+  );
+  for (const label of [
+    "view activity, needs attention",
+    "查看活动，需要关注",
+    "查看活動",
+    "查看活動，有項目需要注意",
+    "查看活動，需要注意",
+  ]) {
+    assert.ok(nativeHeaderLabels.includes(label), `production labels must include ${label}`);
   }
 
   let active = true;
@@ -698,24 +716,26 @@ test("command-menu native destinations close Panel without global history interc
   for (const label of [
     "切换到聊天",
     "设置",
+    "settings 常规",
+    "command-menu-quick-chat-result:local:thread-1",
     "插件",
     ...traditionalChineseDestinations,
   ]) {
     active = true;
     assert.equal(handleNativeDestinationCommand(target(label)), true, label);
   }
-  assert.equal(closeCount, 3 + traditionalChineseDestinations.length);
+  assert.equal(closeCount, 5 + traditionalChineseDestinations.length);
 
   active = true;
   assert.equal(handleNativeDestinationCommand(target("切换到深色主题")), false);
   timers.shift()();
-  assert.equal(closeCount, 3 + traditionalChineseDestinations.length);
+  assert.equal(closeCount, 5 + traditionalChineseDestinations.length);
   assert.equal(active, true);
 
   assert.equal(handleNativeDestinationCommand(target("打开其他原生页面")), false);
   window.location.pathname = "/native-page";
   timers.shift()();
-  assert.equal(closeCount, 4 + traditionalChineseDestinations.length);
+  assert.equal(closeCount, 6 + traditionalChineseDestinations.length);
   assert.equal(active, false);
 
   active = true;
@@ -724,8 +744,179 @@ test("command-menu native destinations close Panel without global history interc
   assert.equal(active, true);
 
   destroyed = true;
+  assert.match(source, /const NATIVE_HEADER_DESTINATION_LABELS = \[/);
+  assert.match(source, /if \(buttonMatches\(clickable, NATIVE_HEADER_DESTINATION_LABELS\)\) return true/);
+  const isNativePageNavigation = vm.runInNewContext(
+    `(${source.slice(navigationStart, navigationEnd)})`,
+    {
+      entry: null,
+      ENTRY_ID: "codex-panel-entry",
+      NATIVE_HEADER_DESTINATION_LABELS: nativeHeaderLabels,
+      NATIVE_PAGE_LABELS: [],
+      buttonMatches: (button, labels) => labels.includes(
+        String(button.textContent || button.getAttribute("aria-label") || "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase(),
+      ),
+    },
+  );
+  const activityTarget = (label) => {
+    const button = {
+      textContent: "",
+      getAttribute: (name) => name === "aria-label" ? label : null,
+      closest: () => null,
+      hasAttribute: () => false,
+    };
+    return {
+      closest: (selector) => selector.includes("button") ? button : null,
+    };
+  };
+  for (const label of nativeHeaderLabels) {
+    assert.equal(isNativePageNavigation(activityTarget(label)), true, label);
+  }
+  let activityCloseCount = 0;
+  const onActivityClick = vm.runInNewContext(
+    `(${source.slice(clickStart, clickEnd)})`,
+    {
+      active: true,
+      isNativePageNavigation,
+      handleNativeDestinationCommand: () => false,
+      normalizeThreadId: (value) => String(value || "").replace(/^(?:local|cloud):/i, ""),
+      closePanel: () => { activityCloseCount += 1; },
+    },
+  );
+  onActivityClick({ target: activityTarget("View activity, needs attention") });
+  assert.equal(activityCloseCount, 1);
+  const threadRow = {
+    closest: (selector) => selector === "[data-app-action-sidebar-thread-id]" ? threadRow : null,
+    getAttribute: () => null,
+    hasAttribute: (name) => name === "data-app-action-sidebar-thread-id",
+  };
+  const threadBody = {
+    closest: (selector) => selector.includes("button") ? threadRow : null,
+  };
+  const threadToolButton = {
+    closest: (selector) => selector === "[data-app-action-sidebar-thread-id]" ? threadRow : null,
+    getAttribute: () => null,
+    hasAttribute: () => false,
+  };
+  const threadTool = {
+    closest: (selector) => selector.includes("button") ? threadToolButton : null,
+  };
+  assert.equal(isNativePageNavigation(threadBody), true, "thread row body navigates");
+  assert.equal(isNativePageNavigation(threadTool), false, "nested thread tools do not navigate");
+  assert.ok(clickEnd > clickStart, "document click handler must be extractable");
+  const clickResult = vm.runInNewContext(`(() => {
+    let active = true;
+    let lastNativeThreadId = "thread-1";
+    let closeCount = 0;
+    const normalizeThreadId = (value) => String(value || "").replace(/^(?:local|cloud):/i, "");
+    const isNativePageNavigation = (target) => target.navigate;
+    const handleNativeDestinationCommand = () => false;
+    const closePanel = () => { closeCount += 1; };
+    ${source.slice(clickStart, clickEnd)}
+    const row = { getAttribute: () => "local:thread-2" };
+    onDocumentClick({ target: { navigate: false, closest: () => row } });
+    const afterTool = { lastNativeThreadId, closeCount };
+    onDocumentClick({ target: { navigate: true, closest: () => row } });
+    return { afterTool, afterRow: { lastNativeThreadId, closeCount } };
+  })()`);
+  assert.deepEqual(JSON.parse(JSON.stringify(clickResult)), {
+    afterTool: { lastNativeThreadId: "thread-1", closeCount: 0 },
+    afterRow: { lastNativeThreadId: "thread-2", closeCount: 1 },
+  });
+  assert.match(source, /panelNativeThreadId = normalizeThreadId\(\s*activeThreadRow\(\)\?\.getAttribute/);
+  const threadHandlerStart = source.indexOf("function closePanelForNativeThreadChange");
+  const threadHandlerEnd = source.indexOf("\n\n  function scheduleRefresh", threadHandlerStart);
+  assert.notEqual(threadHandlerStart, -1, "native thread change handler must exist");
+  const threadChanges = vm.runInNewContext(`(() => {
+    let active = true;
+    let lastNativeThreadId = "thread-1";
+    let panelNativeThreadId = "thread-1";
+    let currentThreadId = "thread-1";
+    let closeCount = 0;
+    const normalizeThreadId = (value) => String(value || "").replace(/^(?:local|cloud):/i, "");
+    const activeThreadRow = () => ({
+      getAttribute: () => "local:" + currentThreadId,
+    });
+    const closePanel = () => {
+      active = false;
+      closeCount += 1;
+    };
+    ${source.slice(threadHandlerStart, threadHandlerEnd)}
+    const unchanged = closePanelForNativeThreadChange();
+    currentThreadId = "thread-2";
+    lastNativeThreadId = "thread-2";
+    const changed = closePanelForNativeThreadChange();
+    return { unchanged, changed, closeCount, active, lastNativeThreadId };
+  })()`);
+  assert.deepEqual(JSON.parse(JSON.stringify(threadChanges)), {
+    unchanged: false,
+    changed: true,
+    closeCount: 1,
+    active: false,
+    lastNativeThreadId: "thread-2",
+  });
+  const initiallyUnknownThread = vm.runInNewContext(`(() => {
+    let active = true;
+    let lastNativeThreadId = "thread-1";
+    let panelNativeThreadId = "";
+    let currentThreadId = "thread-1";
+    let closeCount = 0;
+    const normalizeThreadId = (value) => String(value || "").replace(/^(?:local|cloud):/i, "");
+    const activeThreadRow = () => ({
+      getAttribute: () => "local:" + currentThreadId,
+    });
+    const closePanel = () => {
+      active = false;
+      closeCount += 1;
+    };
+    ${source.slice(threadHandlerStart, threadHandlerEnd)}
+    const established = closePanelForNativeThreadChange();
+    const unchanged = closePanelForNativeThreadChange();
+    currentThreadId = "thread-2";
+    const changed = closePanelForNativeThreadChange();
+    return { established, unchanged, changed, closeCount, active, lastNativeThreadId };
+  })()`);
+  assert.deepEqual(JSON.parse(JSON.stringify(initiallyUnknownThread)), {
+    established: false,
+    unchanged: false,
+    changed: true,
+    closeCount: 1,
+    active: false,
+    lastNativeThreadId: "thread-2",
+  });
+  assert.match(source, /if \(closePanelForNativeThreadChange\(\)\) return/);
   assert.match(source, /document\.addEventListener\("cmdk-item-select", onCommandMenuSelect, true\)/);
   assert.match(source, /document\.removeEventListener\("cmdk-item-select", onCommandMenuSelect, true\)/);
+});
+
+test("native notification app entries close Panel", () => {
+  const handlerStart = source.indexOf("function onDesktopAppEntry");
+  const handlerEnd = source.indexOf("\n\n  function closePanelForNativeThreadChange", handlerStart);
+  assert.ok(handlerEnd > handlerStart, "desktop app entry handler must be extractable");
+
+  const run = (data, eventSource = null) => vm.runInNewContext(`(() => {
+    let active = true;
+    let closeCount = 0;
+    const closePanel = () => { closeCount += 1; };
+    ${source.slice(handlerStart, handlerEnd)}
+    onDesktopAppEntry({ data, source: eventSource });
+    return closeCount;
+  })()`, { data, eventSource });
+  const notification = {
+    type: "desktop-app-entry-received",
+    receipt: { attribution: { channel: "push_notification", source: "native_notification" } },
+  };
+  assert.equal(run(notification), 1);
+  assert.equal(run(notification, {}), 0);
+  assert.equal(run({
+    type: "desktop-app-entry-received",
+    receipt: { attribution: { channel: "deep_link", source: "protocol" } },
+  }), 0);
+  assert.match(source, /window\.addEventListener\("message", onDesktopAppEntry\)/);
+  assert.match(source, /window\.removeEventListener\("message", onDesktopAppEntry\)/);
 });
 
 test("the standalone web page opens unlinked issues as prefilled empty Codex tasks", () => {
