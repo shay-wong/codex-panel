@@ -52,7 +52,7 @@ async function assertPrivateRegularFile(filePath) {
   if (typeof process.getuid === "function" && details.uid !== process.getuid()) {
     throw new Error("Panel runtime descriptor belongs to another user");
   }
-  if ((details.mode & 0o077) !== 0) {
+  if (process.platform !== "win32" && (details.mode & 0o077) !== 0) {
     throw new Error("Panel runtime descriptor permissions must be user-only");
   }
 }
