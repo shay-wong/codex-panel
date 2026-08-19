@@ -6,6 +6,7 @@ This file records user-visible changes introduced by the fork.
 
 - Fixed Windows launcher startup so the injector keeps the runtime descriptor used by `panelctl` without attempting to create a Unix control socket; open, status, and stop continue through the launcher's owned child pipe.
 - Added Bearer token authentication for Jira Data Center and Server personal access tokens while retaining Basic authentication for account passwords and Jira Cloud email/API-token connections.
+- Added explicit Jira requirement links to one or more repository projects and their existing execution issues, with compact details on both sides and Jira refreshes kept separate from local execution work.
 - Replaced the fork-specific Jira CLI, provider, and Scheduled Task workflow with upstream's local Jira REST connection: assigned issues sync into a dedicated Jira project, refresh on project access or manual request, and write title, description, priority, label, due-date, and status changes directly back to Jira.
 - Added an issue-detail project picker that keeps the issue open after a successful move, preserves its linked conversation, and surfaces existing relation, conversation, or development-context move blockers without mutating the issue.
 - Updated the horizontal list to use the issue board's status, column, and card hierarchy, show Jira external keys when available, and keep the vertical list compact.

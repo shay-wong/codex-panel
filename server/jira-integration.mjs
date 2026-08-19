@@ -118,6 +118,7 @@ function normalizeIssue(issue, config, index = 0) {
     externalId,
     externalKey,
     externalUrl: `${config.baseUrl}/browse/${encodeURIComponent(externalKey)}`,
+    externalStatus: limitedString(fields.status?.name, "Unknown", 128),
     createdAt: typeof fields.created === "string" ? fields.created : new Date().toISOString(),
     updatedAt: typeof fields.updated === "string" ? fields.updated : new Date().toISOString(),
   };
@@ -265,12 +266,13 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       await assertLiveOrigin(config);
       issues = await fetchAssignedIssues(config);
     }
+    const syncedAt = new Date().toISOString();
     database.syncJiraTasks(
       issues.map((issue, index) => normalizeIssue(issue, config, index)),
-      { archiveMissing, projectName: `Jira · ${config.displayName}`, legacyIdentity },
+      { archiveMissing, projectName: `Jira · ${config.displayName}`, legacyIdentity, syncedAt },
     );
     if (storedConfig.version === 1) config = await configStore.save(config);
-    lastSyncedAt = new Date().toISOString();
+    lastSyncedAt = syncedAt;
     return safeConfig(config, lastSyncedAt);
   }
 
@@ -281,9 +283,14 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       return safeConfig(config, lastSyncedAt);
     }
     if (pendingSync) return pendingSync;
-    pendingSync = syncWithConfig(config).finally(() => {
-      pendingSync = null;
-    });
+    pendingSync = syncWithConfig(config)
+      .catch((error) => {
+        database.markJiraSyncError(error instanceof Error ? error.message : String(error));
+        throw error;
+      })
+      .finally(() => {
+        pendingSync = null;
+      });
     return pendingSync;
   }
 
@@ -385,16 +392,18 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       const legacyIdentity = current?.version === 1
         ? { urlHash: legacyJiraOriginId(current.baseUrl), originId: config.originId }
         : null;
+      const syncedAt = new Date().toISOString();
       database.syncJiraTasks(
         issues.map((issue, index) => normalizeIssue(issue, config, index)),
         {
           archiveMissing: true,
           projectName: `Jira · ${config.displayName}`,
           legacyIdentity,
+          syncedAt,
         },
       );
       const savedConfig = await configStore.save(config);
-      lastSyncedAt = new Date().toISOString();
+      lastSyncedAt = syncedAt;
       return safeConfig(savedConfig, lastSyncedAt);
     },
     sync,
@@ -403,7 +412,12 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       if (!config || config.version !== 2) {
         throw new ApiError(409, "JIRA_NOT_CONFIGURED", "Jira 尚未完成稳定身份配置");
       }
-      return syncWithConfig(config, { archiveMissing: false });
+      try {
+        return await syncWithConfig(config, { archiveMissing: false });
+      } catch (error) {
+        database.markJiraSyncError(error instanceof Error ? error.message : String(error));
+        throw error;
+      }
     },
     async updateTask(task, changes) {
       const config = await configStore.read();

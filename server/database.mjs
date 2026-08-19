@@ -253,6 +253,9 @@ function taskFromRow(row) {
     externalOrigin: row.external_origin ?? null,
     externalKey: row.external_key ?? null,
     externalUrl: row.external_url ?? null,
+    externalStatus: row.external_status ?? null,
+    externalSyncedAt: row.external_synced_at ?? null,
+    externalSyncError: row.external_sync_error ?? null,
     archivedAt: row.archived_at,
     version: row.version,
     createdAt: row.created_at,
@@ -268,6 +271,8 @@ function taskRelationSummaryFromRow(row) {
     projectId: row.project_id,
     title: row.title,
     status: row.status,
+    externalUrl: row.external_url ?? null,
+    externalStatus: row.external_status ?? null,
     priority: row.priority,
     assignee: {
       type: row.assignee_type,
@@ -276,6 +281,7 @@ function taskRelationSummaryFromRow(row) {
       avatarUrl: row.assignee_avatar_url,
     },
     archivedAt: row.archived_at,
+    version: row.version,
   };
 }
 
@@ -461,6 +467,9 @@ export class PanelDatabase {
         external_id TEXT,
         external_key TEXT,
         external_url TEXT,
+        external_status TEXT,
+        external_synced_at TEXT,
+        external_sync_error TEXT,
         archived_at TEXT,
         version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
         created_at TEXT NOT NULL,
@@ -672,6 +681,15 @@ export class PanelDatabase {
     if (!migratedTaskColumns.some((column) => column.name === "external_url")) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN external_url TEXT");
     }
+    if (!migratedTaskColumns.some((column) => column.name === "external_status")) {
+      this.database.exec("ALTER TABLE tasks ADD COLUMN external_status TEXT");
+    }
+    if (!migratedTaskColumns.some((column) => column.name === "external_synced_at")) {
+      this.database.exec("ALTER TABLE tasks ADD COLUMN external_synced_at TEXT");
+    }
+    if (!migratedTaskColumns.some((column) => column.name === "external_sync_error")) {
+      this.database.exec("ALTER TABLE tasks ADD COLUMN external_sync_error TEXT");
+    }
     this.database.exec(`
       DROP INDEX IF EXISTS tasks_external_source_id;
       CREATE UNIQUE INDEX IF NOT EXISTS tasks_external_source_origin_id
@@ -759,6 +777,24 @@ export class PanelDatabase {
       CREATE UNIQUE INDEX IF NOT EXISTS task_relations_one_parent
         ON task_relations(target_task_id)
         WHERE relation_type = 'parent';
+
+      CREATE TABLE IF NOT EXISTS jira_task_projects (
+        jira_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (jira_task_id, project_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS jira_task_links (
+        jira_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE RESTRICT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (jira_task_id, task_id),
+        CHECK (jira_task_id <> task_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS jira_task_links_jira
+        ON jira_task_links(jira_task_id, created_at);
     `);
 
     const commentColumns = this.database.prepare("PRAGMA table_info(comments)").all();
@@ -1014,8 +1050,13 @@ export class PanelDatabase {
     `).get(JIRA_PROJECT_ID);
   }
 
-  syncJiraTasks(issues, { archiveMissing = true, projectName, legacyIdentity = null } = {}) {
-    const timestamp = now();
+  syncJiraTasks(issues, {
+    archiveMissing = true,
+    projectName,
+    legacyIdentity = null,
+    syncedAt = now(),
+  } = {}) {
+    const timestamp = syncedAt;
     const seenTaskIds = new Set();
     const projectLabels = JSON.stringify([
       ...new Set(issues.flatMap((issue) => issue.labels)),
@@ -1070,6 +1111,7 @@ export class PanelDatabase {
           workflow_id, git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
           external_source, external_origin, external_id, external_key, external_url,
+          external_status, external_synced_at, external_sync_error,
           archived_at, version, created_at, updated_at
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?,
@@ -1079,6 +1121,7 @@ export class PanelDatabase {
           NULL, NULL, NULL, NULL,
           NULL, ?, NULL, NULL,
           'jira', ?, ?, ?, ?,
+          ?, ?, NULL,
           NULL, 1, ?, ?
         )
       `);
@@ -1088,6 +1131,7 @@ export class PanelDatabase {
           sort_order = ?, creator_type = ?, creator_id = ?, creator_name = ?, creator_avatar_url = ?,
           assignee_type = ?, assignee_id = ?, assignee_name = ?, assignee_avatar_url = ?,
           due_date = ?, external_origin = ?, external_id = ?, external_key = ?, external_url = ?,
+          external_status = ?, external_synced_at = ?, external_sync_error = NULL,
           archived_at = NULL,
           version = version + 1, updated_at = ?
         WHERE id = ?
@@ -1121,6 +1165,8 @@ export class PanelDatabase {
             issue.externalId,
             issue.externalKey,
             issue.externalUrl,
+            issue.externalStatus,
+            syncedAt,
             issue.createdAt,
             issue.updatedAt,
           );
@@ -1147,8 +1193,17 @@ export class PanelDatabase {
           || existing.external_id !== issue.externalId
           || existing.external_key !== issue.externalKey
           || existing.external_url !== issue.externalUrl
+          || existing.external_status !== issue.externalStatus
+          || existing.external_sync_error !== null
           || existing.archived_at !== null;
-        if (!changed) continue;
+        if (!changed) {
+          this.database.prepare(`
+            UPDATE tasks
+            SET external_synced_at = ?, external_sync_error = NULL
+            WHERE id = ?
+          `).run(syncedAt, existing.id);
+          continue;
+        }
         updateTask.run(
           issue.identifier,
           issue.title,
@@ -1170,6 +1225,8 @@ export class PanelDatabase {
           issue.externalId,
           issue.externalKey,
           issue.externalUrl,
+          issue.externalStatus,
+          syncedAt,
           issue.updatedAt,
           existing.id,
         );
@@ -1220,6 +1277,215 @@ export class PanelDatabase {
       throw new ApiError(409, "PROJECT_NOT_EMPTY", "Project still contains issues", { issueCount });
     }
     return project;
+  }
+
+  markJiraSyncError(message) {
+    this.database.prepare(`
+      UPDATE tasks
+      SET external_sync_error = ?
+      WHERE external_source = 'jira' AND archived_at IS NULL
+    `).run(String(message).slice(0, 1000));
+  }
+
+  getJiraContext(id) {
+    const task = this.#requireTask(id);
+    const jiraTask = task.source === "jira"
+      ? task
+      : (() => {
+        const row = this.database.prepare(`
+          SELECT jira.*
+          FROM jira_task_links
+          JOIN tasks AS jira ON jira.id = jira_task_links.jira_task_id
+          WHERE jira_task_links.task_id = ?
+        `).get(task.id);
+        return row ? this.#taskWithRelations(row) : null;
+      })();
+    if (!jiraTask) {
+      const availableJira = task.source === "jira" ? [] : this.database.prepare(`
+        SELECT jira.*
+        FROM jira_task_projects
+        JOIN tasks AS jira ON jira.id = jira_task_projects.jira_task_id
+        WHERE jira_task_projects.project_id = ?
+          AND jira.archived_at IS NULL
+        ORDER BY jira.sort_order, jira.created_at, jira.id
+      `).all(task.projectId).map(taskRelationSummaryFromRow);
+      return { jira: null, projects: [], issues: [], availableIssues: [], availableJira };
+    }
+    const projects = this.database.prepare(`
+      SELECT projects.*
+      FROM jira_task_projects
+      JOIN projects ON projects.id = jira_task_projects.project_id
+      WHERE jira_task_projects.jira_task_id = ?
+      ORDER BY projects.name, projects.id
+    `).all(jiraTask.id).map(projectFromRow);
+    const issues = this.database.prepare(`
+      SELECT tasks.*
+      FROM jira_task_links
+      JOIN tasks ON tasks.id = jira_task_links.task_id
+      WHERE jira_task_links.jira_task_id = ?
+      ORDER BY tasks.project_id, tasks.sort_order, tasks.created_at, tasks.id
+    `).all(jiraTask.id).map(taskRelationSummaryFromRow);
+    const availableIssues = task.source === "jira"
+      ? this.database.prepare(`
+        SELECT tasks.*
+        FROM tasks
+        JOIN jira_task_projects ON jira_task_projects.project_id = tasks.project_id
+        LEFT JOIN jira_task_links ON jira_task_links.task_id = tasks.id
+        WHERE jira_task_projects.jira_task_id = ?
+          AND tasks.external_source IS NOT 'jira'
+          AND tasks.archived_at IS NULL
+          AND jira_task_links.task_id IS NULL
+        ORDER BY tasks.project_id, tasks.status, tasks.sort_order, tasks.created_at, tasks.id
+      `).all(jiraTask.id).map(taskRelationSummaryFromRow)
+      : [];
+    return { jira: jiraTask, projects, issues, availableIssues, availableJira: [] };
+  }
+
+  setJiraProjects(id, version, projectIds, actor) {
+    const jiraTask = this.#requireTask(id);
+    this.#requireVersion(jiraTask, version);
+    if (jiraTask.source !== "jira") {
+      throw new ApiError(409, "JIRA_TASK_REQUIRED", "Only Jira issues can link repositories");
+    }
+    const uniqueProjectIds = [...new Set(projectIds)];
+    if (uniqueProjectIds.length > 0) {
+      const placeholders = uniqueProjectIds.map(() => "?").join(", ");
+      const projects = this.database.prepare(`
+        SELECT id FROM projects
+        WHERE id IN (${placeholders}) AND id != ? AND workspace_path IS NOT NULL
+      `).all(...uniqueProjectIds, JIRA_PROJECT_ID);
+      if (projects.length !== uniqueProjectIds.length) {
+        throw new ApiError(
+          400,
+          "JIRA_PROJECT_INVALID",
+          "Jira can only link projects with a local workspace",
+        );
+      }
+    }
+    const currentProjectIds = this.database.prepare(`
+      SELECT project_id FROM jira_task_projects
+      WHERE jira_task_id = ? ORDER BY project_id
+    `).all(jiraTask.id).map((row) => row.project_id);
+    const nextProjectIds = [...uniqueProjectIds].sort();
+    if (JSON.stringify(currentProjectIds) === JSON.stringify(nextProjectIds)) {
+      return this.getJiraContext(jiraTask.id);
+    }
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const invalidLinkedIssue = this.database.prepare(`
+        SELECT tasks.identifier
+        FROM jira_task_links
+        JOIN tasks ON tasks.id = jira_task_links.task_id
+        WHERE jira_task_links.jira_task_id = ?
+          AND tasks.project_id NOT IN (${nextProjectIds.length > 0 ? nextProjectIds.map(() => "?").join(", ") : "NULL"})
+        ORDER BY tasks.identifier
+        LIMIT 1
+      `).get(jiraTask.id, ...nextProjectIds);
+      if (invalidLinkedIssue) {
+        throw new ApiError(
+          409,
+          "JIRA_PROJECT_HAS_LINKED_ISSUES",
+          `Unlink or move '${invalidLinkedIssue.identifier}' before removing its project`,
+        );
+      }
+      this.database.prepare("DELETE FROM jira_task_projects WHERE jira_task_id = ?").run(jiraTask.id);
+      const insert = this.database.prepare(`
+        INSERT INTO jira_task_projects (jira_task_id, project_id, created_at)
+        VALUES (?, ?, ?)
+      `);
+      for (const projectId of nextProjectIds) insert.run(jiraTask.id, projectId, timestamp);
+      this.#recordTaskActivity(jiraTask.id, actor, [{
+        field: "jiraProjects",
+        before: currentProjectIds,
+        after: nextProjectIds,
+      }], timestamp);
+      this.#touchTask(jiraTask.id, version, null, null, timestamp);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getJiraContext(jiraTask.id);
+  }
+
+  addJiraTaskLink(jiraId, version, taskId, actor) {
+    const jiraTask = this.#requireTask(jiraId);
+    const task = this.#requireTask(taskId);
+    this.#requireVersion(jiraTask, version);
+    if (jiraTask.source !== "jira" || task.source === "jira") {
+      throw new ApiError(409, "JIRA_LINK_INVALID", "Link one Jira issue to one Panel issue");
+    }
+    if (task.archivedAt !== null) {
+      throw new ApiError(409, "TASK_ARCHIVED", "Archived issues cannot be linked to Jira");
+    }
+    const linkedProject = this.database.prepare(`
+      SELECT 1 FROM jira_task_projects WHERE jira_task_id = ? AND project_id = ?
+    `).get(jiraTask.id, task.projectId);
+    if (!linkedProject) {
+      throw new ApiError(
+        409,
+        "JIRA_PROJECT_LINK_REQUIRED",
+        "Link the issue project to Jira before linking the issue",
+      );
+    }
+    const existing = this.database.prepare(`
+      SELECT jira_task_id FROM jira_task_links WHERE task_id = ?
+    `).get(task.id);
+    if (existing?.jira_task_id === jiraTask.id) {
+      throw new ApiError(409, "JIRA_LINK_EXISTS", "This Jira link already exists");
+    }
+    if (existing) {
+      throw new ApiError(409, "JIRA_LINK_CONFLICT", "This Panel issue is already linked to another Jira issue");
+    }
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        INSERT INTO jira_task_links (jira_task_id, task_id, created_at) VALUES (?, ?, ?)
+      `).run(jiraTask.id, task.id, timestamp);
+      this.#recordTaskActivity(jiraTask.id, actor, [{
+        field: "jiraIssue",
+        before: null,
+        after: relationActivityValue("jira", task),
+      }], timestamp);
+      this.#touchTask(jiraTask.id, version, null, null, timestamp);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getJiraContext(jiraTask.id);
+  }
+
+  removeJiraTaskLink(jiraId, version, taskId, actor) {
+    const jiraTask = this.#requireTask(jiraId);
+    const task = this.#requireTask(taskId);
+    this.#requireVersion(jiraTask, version);
+    if (jiraTask.source !== "jira" || task.source === "jira") {
+      throw new ApiError(409, "JIRA_LINK_INVALID", "Link one Jira issue to one Panel issue");
+    }
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const removed = this.database.prepare(`
+        DELETE FROM jira_task_links WHERE jira_task_id = ? AND task_id = ?
+      `).run(jiraTask.id, task.id);
+      if (removed.changes !== 1) {
+        throw new ApiError(404, "JIRA_LINK_NOT_FOUND", "This Jira link does not exist");
+      }
+      this.#recordTaskActivity(jiraTask.id, actor, [{
+        field: "jiraIssue",
+        before: relationActivityValue("jira", task),
+        after: null,
+      }], timestamp);
+      this.#touchTask(jiraTask.id, version, null, null, timestamp);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getJiraContext(jiraTask.id);
   }
 
   getProject(id) {
@@ -1848,6 +2114,25 @@ export class PanelDatabase {
     }
     const projectChanged = Boolean(targetProject && targetProject.id !== current.projectId);
     if (projectChanged) {
+      const jiraLink = this.database.prepare(`
+        SELECT jira_task_id
+        FROM jira_task_links
+        WHERE task_id = ?
+      `).get(current.id);
+      if (jiraLink) {
+        const projectAllowed = this.database.prepare(`
+          SELECT 1
+          FROM jira_task_projects
+          WHERE jira_task_id = ? AND project_id = ?
+        `).get(jiraLink.jira_task_id, targetProject.id);
+        if (!projectAllowed) {
+          throw new ApiError(
+            409,
+            "JIRA_PROJECT_MOVE_BLOCKED",
+            "This issue can only move to a project linked to its Jira issue",
+          );
+        }
+      }
       if (current.developmentContext) {
         throw new ApiError(
           409,
@@ -2110,6 +2395,16 @@ export class PanelDatabase {
       this.#requireVersion(current, version);
       if (current.archivedAt === null) {
         throw new ApiError(409, "TASK_NOT_ARCHIVED", "Only archived tasks can be deleted");
+      }
+      const jiraLink = this.database.prepare(`
+        SELECT jira_task_id FROM jira_task_links WHERE task_id = ?
+      `).get(current.id);
+      if (jiraLink) {
+        throw new ApiError(
+          409,
+          "JIRA_LINK_DELETE_BLOCKED",
+          "Unlink the Jira issue before permanently deleting this issue",
+        );
       }
       const attachmentIds = this.database.prepare(
         "SELECT id FROM attachments WHERE task_id = ? ORDER BY created_at, id",

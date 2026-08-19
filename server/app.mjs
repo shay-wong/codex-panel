@@ -722,6 +722,18 @@ function parseArchive(body) {
   };
 }
 
+function parseJiraProjects(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "projectIds"]));
+  if (!Array.isArray(body.projectIds)) {
+    throw new ApiError(400, "INVALID_FIELD", "'projectIds' must be an array");
+  }
+  return {
+    version: parseVersion(body.version),
+    projectIds: body.projectIds.map((projectId) => validateProjectId(projectId)),
+  };
+}
+
 function parseIssueRelationType(value) {
   if (!["parent", "blocks", "blocked_by", "related"].includes(value)) {
     throw new ApiError(
@@ -2886,6 +2898,59 @@ export function createPanelServer(options = {}) {
           return sendJson(response, 200, result);
         }
         return methodNotAllowed(response, ["POST", "DELETE"]);
+      }
+
+      const jiraContextRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-context$/);
+      if (jiraContextRoute) {
+        let taskId;
+        try {
+          taskId = decodeURIComponent(jiraContextRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Task id contains invalid encoding");
+        }
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Jira context routes do not accept query parameters");
+        }
+        if (request.method === "GET") {
+          return sendJson(response, 200, { context: database.getJiraContext(taskId) });
+        }
+        if (request.method === "PUT") {
+          const { version, projectIds } = parseJiraProjects(await readJson(request));
+          const context = database.setJiraProjects(
+            taskId,
+            version,
+            projectIds,
+            actorFromRequest(request),
+          );
+          events.emit("task.jira.updated", { taskId, task: context.jira });
+          return sendJson(response, 200, { context });
+        }
+        return methodNotAllowed(response, ["GET", "PUT"]);
+      }
+
+      const jiraLinkRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-links\/([^/]+)$/);
+      if (jiraLinkRoute) {
+        let jiraTaskId;
+        let taskId;
+        try {
+          jiraTaskId = decodeURIComponent(jiraLinkRoute[1]);
+          taskId = decodeURIComponent(jiraLinkRoute[2]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Task id contains invalid encoding");
+        }
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Jira link routes do not accept query parameters");
+        }
+        const { version } = parseArchive(await readJson(request));
+        const actor = actorFromRequest(request);
+        const context = request.method === "POST"
+          ? database.addJiraTaskLink(jiraTaskId, version, taskId, actor)
+          : request.method === "DELETE"
+            ? database.removeJiraTaskLink(jiraTaskId, version, taskId, actor)
+            : null;
+        if (!context) return methodNotAllowed(response, ["POST", "DELETE"]);
+        events.emit("task.jira.updated", { taskId, task: context.jira });
+        return sendJson(response, 200, { context });
       }
 
       const taskActivitiesRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/activities$/);
