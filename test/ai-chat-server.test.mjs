@@ -415,11 +415,13 @@ test("server close terminates active HTTP sockets instead of leaking a retired p
   const fixture = await createServerFixture();
   const address = fixture.app.server.address();
   assert(address && typeof address === "object");
+  const serverConnected = once(fixture.app.server, "connection");
   const socket = connect({ host: "127.0.0.1", port: address.port });
   let closing = null;
   let appClosed = false;
   try {
     await once(socket, "connect");
+    await serverConnected;
     socket.write("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n");
     const socketClosed = new Promise((resolve, reject) => {
       socket.once("close", resolve);
