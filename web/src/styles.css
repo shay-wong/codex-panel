@@ -4480,7 +4480,7 @@ kbd {
   border-top: var(--border-hairline) solid var(--border);
 }
 
-.jira-context-overview > button {
+.jira-context-overview > .jira-context-manage {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto 14px;
   align-items: center;
@@ -4496,38 +4496,76 @@ kbd {
   text-align: left;
 }
 
-.jira-context-overview > button:hover {
+.jira-context-overview > .jira-context-manage:hover {
   border-color: var(--border-strong);
   background: var(--surface-hover);
 }
 
-.jira-context-overview > button > svg {
+.jira-context-overview > .jira-context-manage > svg {
   width: 14px;
   height: 14px;
 }
 
-.jira-context-overview > button > span {
+.jira-context-overview > .jira-context-manage > span {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
-.jira-context-overview > button strong,
-.jira-context-overview > button small {
+.jira-context-overview > .jira-context-manage strong,
+.jira-context-overview > .jira-context-manage small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.jira-context-overview > button strong {
+.jira-context-overview > .jira-context-manage strong {
   font-size: 11px;
 }
 
-.jira-context-overview > button small,
-.jira-context-overview > button b {
+.jira-context-overview > .jira-context-manage small,
+.jira-context-overview > .jira-context-manage b {
   color: var(--text-tertiary);
   font-size: 10px;
   font-weight: 400;
+}
+
+.jira-simple-start-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  gap: 6px;
+  margin: 7px 7px 0;
+  padding: 0 10px;
+  border: var(--border-hairline) solid var(--accent);
+  border-radius: 5px;
+  background: var(--accent);
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.jira-simple-start-button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.jira-simple-start-button:disabled {
+  border-color: var(--border);
+  background: var(--surface-muted);
+  color: var(--text-tertiary);
+}
+
+.jira-simple-start-button.is-complete {
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+  background: color-mix(in srgb, var(--success) 12%, var(--surface));
+  color: var(--success);
+}
+
+.jira-simple-start-button > svg,
+.jira-simple-start-button .ai-chat-spinner {
+  width: 12px;
+  height: 12px;
 }
 
 .jira-context-section > header {

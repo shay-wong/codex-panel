@@ -21,6 +21,7 @@ import {
   removeJiraTaskLink,
   resolvePanelUrl,
   saveJiraTaskProjects,
+  startSimpleJiraTask,
   uploadAttachment,
   uploadCommentAttachment,
   updateComment,
@@ -547,6 +548,7 @@ export function TaskDetail({
   const [jiraProjectIds, setJiraProjectIds] = useState<string[]>([]);
   const [jiraLinkSavingId, setJiraLinkSavingId] = useState<string | null>(null);
   const [jiraManagerOpen, setJiraManagerOpen] = useState(false);
+  const [jiraSimpleStartSaving, setJiraSimpleStartSaving] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentsError, setAttachmentsError] = useState<TaskDetailError | null>(null);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
@@ -837,6 +839,27 @@ export function TaskDetail({
       onError(issueMessageFor(error));
     } finally {
       setJiraLinkSavingId(null);
+    }
+  }
+
+  async function createAndStartSimpleJira() {
+    if (jiraSimpleStartSaving) return;
+    setJiraSimpleStartSaving(true);
+    onError(null);
+    try {
+      const latest = await getJiraTaskContext(currentTask.id);
+      if (!latest.jira) {
+        setJiraContext(latest);
+        return;
+      }
+      const context = await startSimpleJiraTask(latest.jira);
+      setJiraContext(context);
+      if (context.jira) setCurrentTask(context.jira);
+    } catch (error) {
+      onError(issueMessageFor(error));
+      setJiraContext(await getJiraTaskContext(currentTask.id).catch(() => jiraContext));
+    } finally {
+      setJiraSimpleStartSaving(false);
     }
   }
 
@@ -1147,6 +1170,26 @@ export function TaskDetail({
     !selectedJiraProjectIds.has(project.id)
   )) ?? [];
   const jiraProjectsChanged = addedJiraProjects.length > 0 || removedJiraProjects.length > 0;
+  const jiraSimpleStartCreating = jiraContext?.simpleStart?.status === "creating";
+  const jiraSimpleStartComplete = jiraContext?.simpleStart?.status === "complete";
+  const jiraSimpleStartEnabled = jiraSimpleStartCreating || (
+    currentTask.status === "todo"
+    && (jiraContext?.projects.length ?? 0) > 0
+    && !jiraProjectsChanged
+  );
+  const jiraSimpleStartLabel = jiraSimpleStartSaving
+    ? text("创建中…", "Creating…")
+    : jiraSimpleStartComplete
+      ? text("已创建并开始", "Created and started")
+      : jiraSimpleStartCreating
+        ? text("继续创建", "Continue creating")
+        : jiraProjectsChanged
+          ? text("先保存仓库变更", "Save repository changes first")
+          : currentTask.status !== "todo"
+            ? text("仅待认领可开始", "Only waiting Jira can start")
+            : (jiraContext?.projects.length ?? 0) === 0
+              ? text("先关联仓库", "Link a repository first")
+              : text("创建并开始", "Create and start");
   const repositoryProjects = projects.filter((project) => (
     project.source !== "jira" && Boolean(project.workspacePath)
   ));
@@ -2027,7 +2070,7 @@ export function TaskDetail({
             {jiraAvailable && (currentTask.source === "jira" ? (
               <section className="jira-context-section jira-context-overview" aria-label={text("Jira 关联", "Jira links")}>
                 <h2>Jira</h2>
-                <button type="button" onClick={() => setJiraManagerOpen(true)}>
+                <button className="jira-context-manage" type="button" onClick={() => setJiraManagerOpen(true)}>
                   <LinearIcon name="link" />
                   <span>
                     <strong>{currentTask.externalStatus ?? text("未知状态", "Unknown status")}</strong>
@@ -2038,6 +2081,18 @@ export function TaskDetail({
                   </span>
                   <b>{text("管理关联", "Manage")}</b>
                   <LinearIcon name="chevronRight" />
+                </button>
+                <button
+                  className={`jira-simple-start-button${jiraSimpleStartComplete ? " is-complete" : ""}`}
+                  type="button"
+                  disabled={jiraContextLoading || jiraSimpleStartSaving || jiraSimpleStartComplete || !jiraSimpleStartEnabled}
+                  aria-busy={jiraSimpleStartSaving}
+                  onClick={() => void createAndStartSimpleJira()}
+                >
+                  {jiraSimpleStartSaving
+                    ? <span className="ai-chat-spinner" aria-hidden="true" />
+                    : <LinearIcon name={jiraSimpleStartComplete ? "check" : "play"} />}
+                  <span>{jiraSimpleStartLabel}</span>
                 </button>
               </section>
             ) : jiraContext?.jira ? (

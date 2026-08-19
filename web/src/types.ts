@@ -462,6 +462,18 @@ export interface JiraTaskContext {
   issues: TaskRelationSummary[];
   availableIssues: TaskRelationSummary[];
   availableJira: TaskRelationSummary[];
+  simpleStart: JiraSimpleStartOperation | null;
+}
+
+export interface JiraSimpleStartOperation {
+  id: string;
+  status: "creating" | "complete";
+  transitionedAt: string | null;
+  projectCount: number;
+  readyCount: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
 }
 
 export interface JiraConnection {

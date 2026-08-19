@@ -734,6 +734,12 @@ function parseJiraProjects(body) {
   };
 }
 
+function parseJiraSimpleStart(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version"]));
+  return { version: parseVersion(body.version) };
+}
+
 function parseIssueRelationType(value) {
   if (!["parent", "blocks", "blocked_by", "related"].includes(value)) {
     throw new ApiError(
@@ -2008,6 +2014,118 @@ export function createPanelServer(options = {}) {
     processEnv: codexProcessEnvironment,
     resolveContext: resolveAiChatContext,
   });
+  const pendingJiraSimpleStarts = new Map();
+
+  async function createAndStartSimpleJira(jiraTaskId, version, actor) {
+    const started = database.beginJiraSimpleStart(jiraTaskId, version);
+    if (started.operation.status === "complete") {
+      return {
+        context: database.getJiraContext(jiraTaskId),
+        operation: started.operation,
+      };
+    }
+    if (!started.operation.transitionedAt) {
+      await jira.moveTask(started.jira, "in_progress");
+      database.markJiraSimpleStartTransitioned(started.operation.id);
+    }
+
+    for (const item of database.listJiraSimpleStartItems(jiraTaskId)) {
+      let task = database.getTask(item.taskId);
+      if (!task) {
+        task = database.createTask({
+          id: item.taskId,
+          projectId: item.projectId,
+          title: started.jira.title,
+          description: started.jira.description,
+          status: "backlog",
+          priority: started.jira.priority,
+          labels: started.jira.labels,
+          actor,
+          assignee: CODEX_AGENT_ACTOR,
+          workflowId: null,
+          developmentContext: null,
+          startDate: null,
+          dueDate: null,
+          recurrence: null,
+        });
+        events.emit("task.created", { task });
+      }
+      if (task.projectId !== item.projectId || task.source === "jira" || task.archivedAt !== null) {
+        throw new ApiError(
+          409,
+          "JIRA_SIMPLE_START_TASK_CONFLICT",
+          `Issue '${task.identifier}' no longer belongs to the selected active repository`,
+        );
+      }
+
+      let context = database.getJiraContext(jiraTaskId);
+      if (!context.issues.some((issue) => issue.id === task.id)) {
+        context = database.addJiraTaskLink(
+          jiraTaskId,
+          context.jira.version,
+          task.id,
+          actor,
+        );
+        events.emit("task.jira.updated", { taskId: task.id, task: context.jira });
+      }
+
+      let thread = item.threadId ? database.getAiChatThread(item.threadId) : null;
+      thread ??= database.findAiChatThreadForIssue(task.id);
+      if (!thread) {
+        thread = await aiChat.createThread({
+          projectId: task.projectId,
+          issueId: task.id,
+          title: `${task.identifier} · ${started.jira.externalKey ?? started.jira.identifier}`,
+        });
+      }
+      if (item.threadId !== thread.id) {
+        database.markJiraSimpleStartThread(started.operation.id, item.projectId, thread.id);
+      }
+    }
+
+    for (const item of database.listJiraSimpleStartItems(jiraTaskId)) {
+      const task = database.getTask(item.taskId);
+      if (task.status !== "backlog") continue;
+      const moved = database.moveTask(
+        task.id,
+        task.version,
+        "todo",
+        undefined,
+        undefined,
+        undefined,
+        actor,
+      );
+      events.emit("task.moved", { task: moved });
+    }
+
+    const currentJira = database.getTask(jiraTaskId);
+    if (currentJira.status !== "in_progress") {
+      const moved = database.moveTask(
+        currentJira.id,
+        currentJira.version,
+        "in_progress",
+        undefined,
+        undefined,
+        undefined,
+        actor,
+      );
+      events.emit("task.moved", { task: moved });
+    }
+    database.completeJiraSimpleStart(started.operation.id);
+    return {
+      context: database.getJiraContext(jiraTaskId),
+      operation: database.getJiraSimpleStartOperation(jiraTaskId),
+    };
+  }
+
+  function runSimpleJiraStart(jiraTaskId, version, actor) {
+    const current = pendingJiraSimpleStarts.get(jiraTaskId);
+    if (current) return current;
+    const operation = createAndStartSimpleJira(jiraTaskId, version, actor)
+      .finally(() => pendingJiraSimpleStarts.delete(jiraTaskId));
+    pendingJiraSimpleStarts.set(jiraTaskId, operation);
+    return operation;
+  }
   const projectSummary = new ProjectSummaryService({
     database,
     codexExecutable: resolved.codexExecutable,
@@ -2955,6 +3073,26 @@ export function createPanelServer(options = {}) {
           return sendJson(response, 200, { context });
         }
         return methodNotAllowed(response, ["GET", "PUT"]);
+      }
+
+      const jiraSimpleStartRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-simple-start$/);
+      if (jiraSimpleStartRoute) {
+        let jiraTaskId;
+        try {
+          jiraTaskId = decodeURIComponent(jiraSimpleStartRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Task id contains invalid encoding");
+        }
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Jira start routes do not accept query parameters");
+        }
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        const { version } = parseJiraSimpleStart(await readJson(request));
+        return sendJson(
+          response,
+          200,
+          await runSimpleJiraStart(jiraTaskId, version, actorFromRequest(request)),
+        );
       }
 
       const jiraLinkRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-links\/([^/]+)$/);
