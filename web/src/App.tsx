@@ -3847,7 +3847,7 @@ export function App() {
             referenceTasks={referenceTasks}
             projects={projects}
             currentUser={currentUser}
-            jiraAvailable={panelMetadata?.localCapabilities?.available === true}
+            jiraAvailable={panelMetadata !== null && panelMetadata.mode !== "cloud"}
             availableLabels={availableLabels}
             developmentScan={developmentScan}
             developmentScanLoading={developmentScanLoading}
