@@ -100,6 +100,7 @@ interface TaskDetailProps {
   referenceTasks: Task[];
   projects: Project[];
   currentUser: ActorIdentity;
+  jiraAvailable: boolean;
   availableLabels: string[];
   developmentScan: DevelopmentScan;
   developmentScanLoading: boolean;
@@ -508,6 +509,7 @@ export function TaskDetail({
   referenceTasks,
   projects,
   currentUser,
+  jiraAvailable,
   availableLabels,
   developmentScan,
   developmentScanLoading,
@@ -541,7 +543,7 @@ export function TaskDetail({
   >(null);
   const [savingProperty, setSavingProperty] = useState<string | null>(null);
   const [jiraContext, setJiraContext] = useState<JiraTaskContext | null>(null);
-  const [jiraContextLoading, setJiraContextLoading] = useState(true);
+  const [jiraContextLoading, setJiraContextLoading] = useState(jiraAvailable);
   const [jiraProjectIds, setJiraProjectIds] = useState<string[]>([]);
   const [jiraLinkSavingId, setJiraLinkSavingId] = useState<string | null>(null);
   const [jiraManagerOpen, setJiraManagerOpen] = useState(false);
@@ -600,6 +602,13 @@ export function TaskDetail({
   }, [task]);
 
   useEffect(() => {
+    if (!jiraAvailable) {
+      setJiraContext(null);
+      setJiraProjectIds([]);
+      setJiraContextLoading(false);
+      setJiraManagerOpen(false);
+      return;
+    }
     const controller = new AbortController();
     setJiraContextLoading(true);
     void getJiraTaskContext(task.id, controller.signal).then(
@@ -615,7 +624,7 @@ export function TaskDetail({
       },
     );
     return () => controller.abort();
-  }, [task.id]);
+  }, [jiraAvailable, task.id, task.version]);
 
   useEffect(() => {
     resizeTextarea(titleRef.current);
@@ -762,7 +771,12 @@ export function TaskDetail({
     setSavingProperty("jiraProjects");
     onError(null);
     try {
-      const context = await saveJiraTaskProjects(jiraContext.jira, jiraProjectIds);
+      const latest = await getJiraTaskContext(currentTask.id);
+      if (!latest.jira) {
+        setJiraContext(latest);
+        return;
+      }
+      const context = await saveJiraTaskProjects(latest.jira, jiraProjectIds);
       setJiraContext(context);
       if (context.jira) setCurrentTask(context.jira);
     } catch (error) {
@@ -780,7 +794,15 @@ export function TaskDetail({
     setJiraLinkSavingId(taskId);
     onError(null);
     try {
-      const context = await addJiraTaskLink(jiraTask, taskId);
+      const latest = await getJiraTaskContext(currentTask.id);
+      const latestJira = latest.jira?.id === jiraTask.id
+        ? latest.jira
+        : latest.availableJira.find((item) => item.id === jiraTask.id);
+      if (!latestJira) {
+        setJiraContext(latest);
+        return;
+      }
+      const context = await addJiraTaskLink(latestJira, taskId);
       if (currentTask.source === "jira") {
         setJiraContext(context);
         if (context.jira) setCurrentTask(context.jira);
@@ -799,7 +821,12 @@ export function TaskDetail({
     setJiraLinkSavingId(taskId);
     onError(null);
     try {
-      const context = await removeJiraTaskLink(jiraContext.jira, taskId);
+      const latest = await getJiraTaskContext(currentTask.id);
+      if (!latest.jira) {
+        setJiraContext(latest);
+        return;
+      }
+      const context = await removeJiraTaskLink(latest.jira, taskId);
       if (currentTask.source === "jira") {
         setJiraContext(context);
         if (context.jira) setCurrentTask(context.jira);
@@ -1997,7 +2024,7 @@ export function TaskDetail({
                 }}
               />
             </div>
-            {currentTask.source === "jira" ? (
+            {jiraAvailable && (currentTask.source === "jira" ? (
               <section className="jira-context-section jira-context-overview" aria-label={text("Jira 关联", "Jira links")}>
                 <h2>Jira</h2>
                 <button type="button" onClick={() => setJiraManagerOpen(true)}>
@@ -2052,7 +2079,7 @@ export function TaskDetail({
                   ))}
                 </select>
               </section>
-            ) : null}
+            ) : null)}
             <IssueRelationSidebar
               task={currentTask}
               tasks={tasks}
@@ -2078,7 +2105,7 @@ export function TaskDetail({
         </div>
       </div>
 
-      {jiraManagerOpen && currentTask.source === "jira" && (
+      {jiraAvailable && jiraManagerOpen && currentTask.source === "jira" && (
         <div className="delete-backdrop jira-manager-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget && savingProperty !== "jiraProjects") {
             setJiraProjectIds(jiraContext?.projects.map((project) => project.id) ?? []);
