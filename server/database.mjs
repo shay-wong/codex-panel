@@ -845,30 +845,6 @@ export class PanelDatabase {
       ${JIRA_SIMPLE_START_ITEMS_TABLE.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS")}
     `);
 
-    const simpleStartItemColumns = this.database.prepare(
-      "PRAGMA table_info(jira_simple_start_items)",
-    ).all();
-    if (simpleStartItemColumns.some((column) => column.name === "thread_id" && column.notnull === 0)) {
-      this.database.exec(`
-        BEGIN IMMEDIATE;
-        ALTER TABLE jira_simple_start_items RENAME TO jira_simple_start_items_legacy;
-        ${JIRA_SIMPLE_START_ITEMS_TABLE}
-        INSERT INTO jira_simple_start_items (
-          operation_id, project_id, task_id, thread_id, created_at, updated_at
-        )
-        SELECT
-          operation_id,
-          project_id,
-          task_id,
-          COALESCE(thread_id, lower(hex(randomblob(16)))),
-          created_at,
-          updated_at
-        FROM jira_simple_start_items_legacy;
-        DROP TABLE jira_simple_start_items_legacy;
-        COMMIT;
-      `);
-    }
-
     const commentColumns = this.database.prepare("PRAGMA table_info(comments)").all();
     if (!commentColumns.some((column) => column.name === "thread_id")) {
       this.database.exec("ALTER TABLE comments ADD COLUMN thread_id TEXT");
