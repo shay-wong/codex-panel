@@ -386,9 +386,12 @@ export interface TaskRelationSummary {
   projectId: string;
   title: string;
   status: TaskStatus;
+  externalUrl?: string | null;
+  externalStatus?: string | null;
   priority: TaskPriority;
   assignee: ActorIdentity;
   archivedAt: string | null;
+  version: number;
 }
 
 export interface TaskRelations {
@@ -443,11 +446,22 @@ export interface Task {
   externalOrigin?: string | null;
   externalKey?: string | null;
   externalUrl: string | null;
+  externalStatus?: string | null;
+  externalSyncedAt?: string | null;
+  externalSyncError?: string | null;
   archivedAt: string | null;
   relations: TaskRelations;
   version: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface JiraTaskContext {
+  jira: Task | null;
+  projects: Project[];
+  issues: TaskRelationSummary[];
+  availableIssues: TaskRelationSummary[];
+  availableJira: TaskRelationSummary[];
 }
 
 export interface JiraConnection {

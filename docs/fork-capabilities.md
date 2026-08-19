@@ -81,3 +81,11 @@ Panel rejects the move before mutation when the issue has relations, an issue-li
 Jira connection settings provide two explicit authentication modes. Account / API token uses Basic Auth for an account password or a Jira Cloud email and API token. Bearer token uses a Jira Data Center or Server personal access token without sending a username. Basic Auth requires a username or email, and switching modes requires entering the credential again.
 
 Credentials remain in the local Panel data directory with the existing local file protections and are never returned to the browser. Jira integration remains unavailable in Cloud mode. Use HTTPS unless the Jira server is on a trusted private network because HTTP exposes either authentication mode to network observers.
+
+## Link Jira requirements to repository issues
+
+A synced Jira issue remains an external requirement in the dedicated Jira project. Open its detail view and choose **Manage Jira links** to select one or more Panel projects that have local workspaces. Repository changes are shown as a pending difference and take effect only after **Save repositories**; saving never creates, moves, or deletes execution issues.
+
+The same dialog can link existing active issues from the selected repositories. One Jira requirement may link multiple execution issues across repositories, while each execution issue may link to only one Jira requirement. Linked Jira details appear compactly on the execution issue with a direct Jira link, and both detail views can remove the relationship. A linked execution issue may move only among repositories selected by its Jira requirement. Archiving keeps the relationship, while permanent deletion requires unlinking first.
+
+Jira synchronization updates the external requirement's Jira key, title, original status, URL, last synchronization time, and synchronization error. It does not change the linked execution issue's title, description, status, or other local work fields.

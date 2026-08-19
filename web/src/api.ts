@@ -18,6 +18,7 @@ import type {
   HostContext,
   IssueRelationType,
   JiraConnection,
+  JiraTaskContext,
   Project,
   ProjectSummary,
   Task,
@@ -519,6 +520,53 @@ export async function getTask(taskId: string, signal?: AbortSignal): Promise<Tas
     { signal },
   );
   return data.task;
+}
+
+export async function getJiraTaskContext(
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<JiraTaskContext> {
+  const data = await request<{ context: JiraTaskContext }>(
+    `/api/tasks/${encodeURIComponent(taskId)}/jira-context`,
+    { signal },
+  );
+  return data.context;
+}
+
+export async function saveJiraTaskProjects(
+  task: Task,
+  projectIds: string[],
+): Promise<JiraTaskContext> {
+  const data = await request<{ context: JiraTaskContext }>(
+    `/api/tasks/${encodeURIComponent(task.id)}/jira-context`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ version: task.version, projectIds }),
+    },
+  );
+  return data.context;
+}
+
+export async function addJiraTaskLink(
+  jiraTask: Pick<Task, "id" | "version">,
+  taskId: string,
+): Promise<JiraTaskContext> {
+  const data = await request<{ context: JiraTaskContext }>(
+    `/api/tasks/${encodeURIComponent(jiraTask.id)}/jira-links/${encodeURIComponent(taskId)}`,
+    { method: "POST", body: JSON.stringify({ version: jiraTask.version }) },
+  );
+  return data.context;
+}
+
+export async function removeJiraTaskLink(
+  jiraTask: Pick<Task, "id" | "version">,
+  taskId: string,
+): Promise<JiraTaskContext> {
+  const data = await request<{ context: JiraTaskContext }>(
+    `/api/tasks/${encodeURIComponent(jiraTask.id)}/jira-links/${encodeURIComponent(taskId)}`,
+    { method: "DELETE", body: JSON.stringify({ version: jiraTask.version }) },
+  );
+  return data.context;
 }
 
 export function listArchivedTasks(projectId: string, signal?: AbortSignal): Promise<Task[]> {

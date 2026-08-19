@@ -9,14 +9,18 @@ import {
 import { panelStorage } from "../storage";
 import {
   ApiError,
+  addJiraTaskLink,
   attachmentDownloadUrl,
   createComment,
   deleteAttachment,
   deleteComment,
+  getJiraTaskContext,
   listAttachments,
   listComments,
   listTaskActivities,
+  removeJiraTaskLink,
   resolvePanelUrl,
+  saveJiraTaskProjects,
   uploadAttachment,
   uploadCommentAttachment,
   updateComment,
@@ -37,6 +41,7 @@ import type {
   DevelopmentContext,
   DevelopmentScan,
   IssueRelationType,
+  JiraTaskContext,
   Project,
   Recurrence,
   Task,
@@ -95,6 +100,7 @@ interface TaskDetailProps {
   referenceTasks: Task[];
   projects: Project[];
   currentUser: ActorIdentity;
+  jiraAvailable: boolean;
   availableLabels: string[];
   developmentScan: DevelopmentScan;
   developmentScanLoading: boolean;
@@ -227,6 +233,8 @@ const ACTIVITY_FIELD_LABELS: Record<string, readonly [string, string]> = {
   recurrence: ["重复", "recurrence"],
   archivedAt: ["归档状态", "archive status"],
   relation: ["关系", "relation"],
+  jiraProjects: ["Jira 仓库", "Jira repositories"],
+  jiraIssue: ["Jira 关联", "Jira link"],
 };
 
 const RELATION_LABELS: Record<IssueRelationType, readonly [string, string]> = {
@@ -294,6 +302,10 @@ function activityValue(
     const [chineseLabel, englishLabel] = RELATION_LABELS[relation.type];
     return `${text(chineseLabel, englishLabel)} ${relation.externalKey ?? relation.identifier} · ${relation.title}`;
   }
+  if (field === "jiraIssue" && typeof value === "object") {
+    const issue = value as { externalKey?: string | null; identifier: string; title: string };
+    return `${issue.externalKey ?? issue.identifier} · ${issue.title}`;
+  }
   if (Array.isArray(value)) return value.join(language === "zh" ? "、" : ", ");
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
@@ -311,13 +323,15 @@ function ActivityChangeIcon({ field, before, after }: {
   if (field === "priority" && typeof value === "string" && TASK_PRIORITIES.includes(value as TaskPriority)) {
     return <LinearPriorityIcon priority={value as TaskPriority} />;
   }
-  if (field === "relation" && typeof value === "object") {
+  if ((field === "relation" || field === "jiraIssue") && typeof value === "object") {
     const relation = value as { type?: IssueRelationType };
     if (relation.type === "blocked_by") return <PanelIcon name="relationBlockedBy" />;
     if (relation.type === "blocks") return <PanelIcon name="relationBlocks" />;
     return <LinearIcon name="link" />;
   }
-  if (field === "projectId" || field === "workflowId") return <LinearIcon name="project" />;
+  if (field === "projectId" || field === "workflowId" || field === "jiraProjects") {
+    return <LinearIcon name="project" />;
+  }
   if (field === "labels") return <LinearIcon name="label" />;
   if (field === "assignee") return <LinearIcon name="myIssues" />;
   if (field === "developmentContext") return <LinearIcon name="branch" />;
@@ -495,6 +509,7 @@ export function TaskDetail({
   referenceTasks,
   projects,
   currentUser,
+  jiraAvailable,
   availableLabels,
   developmentScan,
   developmentScanLoading,
@@ -527,6 +542,11 @@ export function TaskDetail({
     "project" | "status" | "priority" | "assignee" | "labels" | "development" | "recurrence" | null
   >(null);
   const [savingProperty, setSavingProperty] = useState<string | null>(null);
+  const [jiraContext, setJiraContext] = useState<JiraTaskContext | null>(null);
+  const [jiraContextLoading, setJiraContextLoading] = useState(jiraAvailable);
+  const [jiraProjectIds, setJiraProjectIds] = useState<string[]>([]);
+  const [jiraLinkSavingId, setJiraLinkSavingId] = useState<string | null>(null);
+  const [jiraManagerOpen, setJiraManagerOpen] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentsError, setAttachmentsError] = useState<TaskDetailError | null>(null);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
@@ -580,6 +600,31 @@ export function TaskDetail({
       setChangeStatusToTodo(false);
     }
   }, [task]);
+
+  useEffect(() => {
+    if (!jiraAvailable) {
+      setJiraContext(null);
+      setJiraProjectIds([]);
+      setJiraContextLoading(false);
+      setJiraManagerOpen(false);
+      return;
+    }
+    const controller = new AbortController();
+    setJiraContextLoading(true);
+    void getJiraTaskContext(task.id, controller.signal).then(
+      (context) => {
+        setJiraContext(context);
+        setJiraProjectIds(context.projects.map((project) => project.id));
+        setJiraContextLoading(false);
+      },
+      (error) => {
+        if ((error as Error).name === "AbortError") return;
+        onError(messageFor(error));
+        setJiraContextLoading(false);
+      },
+    );
+    return () => controller.abort();
+  }, [jiraAvailable, task.id, task.version]);
 
   useEffect(() => {
     resizeTextarea(titleRef.current);
@@ -718,6 +763,80 @@ export function TaskDetail({
     } catch (error) {
       onError(issueMessageFor(error));
       throw error;
+    }
+  }
+
+  async function saveJiraProjects() {
+    if (!jiraContext?.jira || savingProperty === "jiraProjects") return;
+    setSavingProperty("jiraProjects");
+    onError(null);
+    try {
+      const latest = await getJiraTaskContext(currentTask.id);
+      if (!latest.jira) {
+        setJiraContext(latest);
+        return;
+      }
+      const context = await saveJiraTaskProjects(latest.jira, jiraProjectIds);
+      setJiraContext(context);
+      if (context.jira) setCurrentTask(context.jira);
+    } catch (error) {
+      onError(issueMessageFor(error));
+    } finally {
+      setSavingProperty(null);
+    }
+  }
+
+  async function addJiraLink(
+    taskId: string,
+    jiraTask: Pick<Task, "id" | "version"> | null = jiraContext?.jira ?? null,
+  ) {
+    if (!jiraTask || jiraLinkSavingId) return;
+    setJiraLinkSavingId(taskId);
+    onError(null);
+    try {
+      const latest = await getJiraTaskContext(currentTask.id);
+      const latestJira = latest.jira?.id === jiraTask.id
+        ? latest.jira
+        : latest.availableJira.find((item) => item.id === jiraTask.id);
+      if (!latestJira) {
+        setJiraContext(latest);
+        return;
+      }
+      const context = await addJiraTaskLink(latestJira, taskId);
+      if (currentTask.source === "jira") {
+        setJiraContext(context);
+        if (context.jira) setCurrentTask(context.jira);
+      } else {
+        setJiraContext(await getJiraTaskContext(currentTask.id));
+      }
+    } catch (error) {
+      onError(issueMessageFor(error));
+    } finally {
+      setJiraLinkSavingId(null);
+    }
+  }
+
+  async function removeJiraLink(taskId: string) {
+    if (!jiraContext?.jira || jiraLinkSavingId) return;
+    setJiraLinkSavingId(taskId);
+    onError(null);
+    try {
+      const latest = await getJiraTaskContext(currentTask.id);
+      if (!latest.jira) {
+        setJiraContext(latest);
+        return;
+      }
+      const context = await removeJiraTaskLink(latest.jira, taskId);
+      if (currentTask.source === "jira") {
+        setJiraContext(context);
+        if (context.jira) setCurrentTask(context.jira);
+      } else {
+        setJiraContext(await getJiraTaskContext(currentTask.id));
+      }
+    } catch (error) {
+      onError(issueMessageFor(error));
+    } finally {
+      setJiraLinkSavingId(null);
     }
   }
 
@@ -1018,6 +1137,18 @@ export function TaskDetail({
   const linkedAiChatThreads = aiChatThreads.filter((thread) => (
     thread.origin.projectId === currentTask.projectId
     && thread.origin.issueId === currentTask.id
+  ));
+  const linkedJiraProjectIds = new Set(jiraContext?.projects.map((project) => project.id) ?? []);
+  const selectedJiraProjectIds = new Set(jiraProjectIds);
+  const addedJiraProjects = projects.filter((project) => (
+    selectedJiraProjectIds.has(project.id) && !linkedJiraProjectIds.has(project.id)
+  ));
+  const removedJiraProjects = jiraContext?.projects.filter((project) => (
+    !selectedJiraProjectIds.has(project.id)
+  )) ?? [];
+  const jiraProjectsChanged = addedJiraProjects.length > 0 || removedJiraProjects.length > 0;
+  const repositoryProjects = projects.filter((project) => (
+    project.source !== "jira" && Boolean(project.workspacePath)
   ));
   const activityTimeline = [
     ...taskActivities.flatMap((activity) => activity.changes.map((change, index) => ({
@@ -1893,6 +2024,62 @@ export function TaskDetail({
                 }}
               />
             </div>
+            {jiraAvailable && (currentTask.source === "jira" ? (
+              <section className="jira-context-section jira-context-overview" aria-label={text("Jira 关联", "Jira links")}>
+                <h2>Jira</h2>
+                <button type="button" onClick={() => setJiraManagerOpen(true)}>
+                  <LinearIcon name="link" />
+                  <span>
+                    <strong>{currentTask.externalStatus ?? text("未知状态", "Unknown status")}</strong>
+                    <small>{text(
+                      `${jiraContext?.projects.length ?? 0} 个仓库 · ${jiraContext?.issues.length ?? 0} 个 Issue`,
+                      `${jiraContext?.projects.length ?? 0} repositories · ${jiraContext?.issues.length ?? 0} issues`,
+                    )}</small>
+                  </span>
+                  <b>{text("管理关联", "Manage")}</b>
+                  <LinearIcon name="chevronRight" />
+                </button>
+              </section>
+            ) : jiraContext?.jira ? (
+              <section className="jira-context-section jira-context-summary" aria-label={text("关联 Jira", "Linked Jira")}>
+                <h2>{text("关联 Jira", "Linked Jira")}</h2>
+                <a href={jiraContext.jira.externalUrl ?? "#"} target="_blank" rel="noreferrer">
+                  <LinearIcon name="link" />
+                  <span>
+                    <strong>{jiraContext.jira.externalKey ?? jiraContext.jira.identifier}</strong>
+                    <small>{jiraContext.jira.title}</small>
+                  </span>
+                  <b>{jiraContext.jira.externalStatus ?? taskStatusLabel(language, jiraContext.jira.status)}</b>
+                  <LinearIcon name="openExternal" />
+                </a>
+                <button
+                  type="button"
+                  disabled={jiraLinkSavingId !== null}
+                  onClick={() => void removeJiraLink(currentTask.id)}
+                >
+                  {jiraLinkSavingId ? text("解除中…", "Unlinking…") : text("解除关联", "Unlink")}
+                </button>
+              </section>
+            ) : (jiraContext?.availableJira.length ?? 0) > 0 ? (
+              <section className="jira-context-section jira-context-summary" aria-label={text("关联 Jira", "Link Jira")}>
+                <h2>{text("关联 Jira", "Link Jira")}</h2>
+                <select
+                  value=""
+                  disabled={jiraLinkSavingId !== null}
+                  onChange={(event) => {
+                    const jira = jiraContext?.availableJira.find((item) => item.id === event.target.value);
+                    if (jira) void addJiraLink(currentTask.id, jira);
+                  }}
+                >
+                  <option value="">{text("选择 Jira…", "Choose Jira…")}</option>
+                  {jiraContext?.availableJira.map((jira) => (
+                    <option value={jira.id} key={jira.id}>
+                      {jira.externalKey ?? jira.identifier} · {jira.title}
+                    </option>
+                  ))}
+                </select>
+              </section>
+            ) : null)}
             <IssueRelationSidebar
               task={currentTask}
               tasks={tasks}
@@ -1917,6 +2104,138 @@ export function TaskDetail({
           </aside>
         </div>
       </div>
+
+      {jiraAvailable && jiraManagerOpen && currentTask.source === "jira" && (
+        <div className="delete-backdrop jira-manager-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && savingProperty !== "jiraProjects") {
+            setJiraProjectIds(jiraContext?.projects.map((project) => project.id) ?? []);
+            setJiraManagerOpen(false);
+          }
+        }}>
+          <div className="jira-manager-dialog" role="dialog" aria-modal="true" aria-labelledby="jira-manager-title">
+            <header>
+              <div>
+                <h2 id="jira-manager-title">{text("管理 Jira 关联", "Manage Jira links")}</h2>
+                <p>{currentTask.externalKey} · {currentTask.title}</p>
+              </div>
+              <button
+                type="button"
+                aria-label={text("关闭", "Close")}
+                disabled={savingProperty === "jiraProjects"}
+                onClick={() => {
+                  setJiraProjectIds(jiraContext?.projects.map((project) => project.id) ?? []);
+                  setJiraManagerOpen(false);
+                }}
+              ><LinearIcon name="close" /></button>
+            </header>
+            <div className="jira-manager-body">
+              <section>
+                <h3>{text("仓库", "Repositories")}</h3>
+                {jiraContextLoading ? (
+                  <p className="jira-context-empty">{text("加载中…", "Loading…")}</p>
+                ) : repositoryProjects.length > 0 ? (
+                  <div className="jira-project-options">
+                    {repositoryProjects.map((project) => (
+                      <label key={project.id}>
+                        <input
+                          type="checkbox"
+                          checked={selectedJiraProjectIds.has(project.id)}
+                          disabled={savingProperty === "jiraProjects"}
+                          onChange={(event) => setJiraProjectIds((current) => event.target.checked
+                            ? [...current, project.id]
+                            : current.filter((projectId) => projectId !== project.id))}
+                        />
+                        <LinearIcon name="project" />
+                        <span>{project.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="jira-context-empty">{text("暂无已连接本地仓库", "No local repositories connected")}</p>
+                )}
+                {jiraProjectsChanged && (
+                  <p className="jira-project-diff">
+                    {[
+                      ...addedJiraProjects.map((project) => text(`新增 ${project.name}`, `Add ${project.name}`)),
+                      ...removedJiraProjects.map((project) => text(`移除 ${project.name}`, `Remove ${project.name}`)),
+                    ].join(" · ")}
+                  </p>
+                )}
+                <div className={`jira-sync-health${currentTask.externalSyncError ? " is-error" : ""}`}>
+                  <span>{text("Jira 状态", "Jira status")}</span>
+                  <strong>{currentTask.externalStatus ?? text("未知", "Unknown")}</strong>
+                  <span>{text("同步", "Sync")}</span>
+                  <strong>{currentTask.externalSyncError
+                    ? text("失败", "Failed")
+                    : currentTask.externalSyncedAt
+                      ? exactTime(currentTask.externalSyncedAt, locale)
+                      : text("尚未同步", "Not synced")}</strong>
+                  {currentTask.externalSyncError && <small>{currentTask.externalSyncError}</small>}
+                </div>
+              </section>
+              <section>
+                <h3>{text("执行 Issue", "Execution issues")}</h3>
+                <div className="jira-linked-issues">
+                  {jiraContext?.issues.map((issue) => (
+                    <div className="jira-linked-row" key={issue.id}>
+                      <button type="button" onClick={() => onOpenTask(issue)}>
+                        <StatusIcon status={issue.status} />
+                        <span>{issue.identifier}</span>
+                        <strong>{projects.find((project) => project.id === issue.projectId)?.name ?? issue.projectId} · {issue.title}</strong>
+                      </button>
+                      <button
+                        className="jira-link-remove"
+                        type="button"
+                        disabled={jiraLinkSavingId !== null}
+                        title={text("解除 Jira 关联", "Unlink Jira")}
+                        aria-label={text(`解除 ${issue.identifier} 的 Jira 关联`, `Unlink Jira from ${issue.identifier}`)}
+                        onClick={() => void removeJiraLink(issue.id)}
+                      ><LinearIcon name="close" /></button>
+                    </div>
+                  ))}
+                  {jiraContext?.issues.length === 0 && (
+                    <p className="jira-context-empty">{text("尚未关联执行 Issue", "No execution issues linked")}</p>
+                  )}
+                </div>
+                {(jiraContext?.availableIssues.length ?? 0) > 0 && (
+                  <label className="jira-issue-link-select">
+                    <span>{text("关联已有 Issue", "Link existing issue")}</span>
+                    <select
+                      value=""
+                      disabled={jiraLinkSavingId !== null}
+                      onChange={(event) => {
+                        if (event.target.value) void addJiraLink(event.target.value);
+                      }}
+                    >
+                      <option value="">{text("选择 Issue…", "Choose issue…")}</option>
+                      {jiraContext?.availableIssues.map((issue) => (
+                        <option value={issue.id} key={issue.id}>{issue.identifier} · {issue.title}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </section>
+            </div>
+            <footer>
+              <span>{jiraProjectsChanged
+                ? text("仓库变更仅在保存后生效", "Repository changes apply only after saving")
+                : text("不会自动创建、迁移或删除 Issue", "Issues are never created, moved, or deleted automatically")}</span>
+              <div>
+                <button className="button secondary" type="button" onClick={() => {
+                  setJiraProjectIds(jiraContext?.projects.map((project) => project.id) ?? []);
+                  setJiraManagerOpen(false);
+                }}>{text("关闭", "Close")}</button>
+                <button
+                  className="button primary"
+                  type="button"
+                  disabled={!jiraProjectsChanged || savingProperty === "jiraProjects"}
+                  onClick={() => void saveJiraProjects()}
+                >{savingProperty === "jiraProjects" ? text("保存中…", "Saving…") : text("保存仓库变更", "Save repositories")}</button>
+              </div>
+            </footer>
+          </div>
+        </div>
+      )}
 
       {pendingDelete && (
         <div className="delete-backdrop" role="presentation" onMouseDown={(event) => {

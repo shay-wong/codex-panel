@@ -451,6 +451,7 @@ const EVENT_NAMES = [
   "task.restored",
   "task.deleted",
   "task.relation.updated",
+  "task.jira.updated",
   "comment.created",
   "comment.updated",
   "comment.deleted",
@@ -1500,6 +1501,19 @@ export function App() {
   ]);
 
   function openTaskDetail(task: Pick<Task, "identifier" | "projectId">) {
+    if (task.projectId !== selectedProjectId) {
+      setBoardView(readProjectBoardView(task.projectId));
+      setListLayout(readProjectListLayout(task.projectId));
+      const collapseModes = readProjectListCollapseModes(task.projectId);
+      setListCollapseModes(collapseModes);
+      setListCollapsedStatuses(initialProjectListCollapsedStatuses(task.projectId, collapseModes));
+      setSelectedProjectId(task.projectId);
+      setSearch("");
+      setFilters(EMPTY_TASK_FILTERS);
+      rememberProjectOpen(task.projectId);
+      undoStackRef.current = [];
+      setUndoNotice(null);
+    }
     const fullTask = tasksRef.current.find((candidate) => candidate.identifier === task.identifier);
     if (fullTask) markTaskRead(fullTask);
     if (boardView === "list" && issueListRef.current) {
@@ -3833,6 +3847,7 @@ export function App() {
             referenceTasks={referenceTasks}
             projects={projects}
             currentUser={currentUser}
+            jiraAvailable={panelMetadata !== null && panelMetadata.mode !== "cloud"}
             availableLabels={availableLabels}
             developmentScan={developmentScan}
             developmentScanLoading={developmentScanLoading}

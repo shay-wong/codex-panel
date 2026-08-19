@@ -166,6 +166,29 @@
 - 移除条件：上游提供等价的 Bearer PAT 支持、认证切换和凭据边界后同步移除。
 - 针对性验证：使用定向请求 harness 确认空白 Basic 用户名在网络请求前返回 `JIRA_USERNAME_REQUIRED`，合法 Basic 和 Bearer 分别只发送对应认证头；运行 `npm run typecheck`、`npm run build:web` 和 `git diff --check`，并在安装态设置界面确认两种认证方式可以切换且切换后要求重新输入凭据。
 
+### Jira 外部需求与仓库执行 Issue 关联
+
+- 生命周期：`等待上游吸收`
+- 原始目的：把 Jira 保持为独立外部需求，同时允许一个需求跨多个仓库拆成多个本地执行 Issue，避免 Jira 刷新覆盖仓库内的实施内容。
+- 行为不变量：一个 Jira 可以选择一个或多个具有本地 workspace 的项目并关联其中多个执行 Issue；每个执行 Issue 最多关联一个 Jira。仓库变更必须先展示差异并等待显式保存，不自动创建、迁移或删除 Issue。关联 Issue 只能移动到该 Jira 已选项目；归档保留关系，永久删除前必须解除。Jira 同步只更新外部需求镜像的 key、标题、原始状态、URL、同步时间和错误，不修改关联执行 Issue 的本地字段。
+- 代码和测试路径：`server/database.mjs`、`server/app.mjs`、`server/jira-integration.mjs`、`web/src/App.tsx`、`web/src/api.ts`、`web/src/components/TaskDetail.tsx`、`web/src/styles.css` 和 `web/src/types.ts`。本次按仓库确认与测试授权规则未新增持久化测试。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：当前 Jira 外部需求关联能力；提交后可用 `git log -S'jira_task_links' -- server/database.mjs` 定位。
+- 合并指引：上游调整 Jira 同步、任务 schema、项目移动或详情侧栏时，保留外部需求与本地执行单元的边界、Jira 对执行 Issue 的一对多关系、执行 Issue 对 Jira 的至多一关系，以及仓库约束和显式保存行为；不得把专用关系退化为同项目 Issue 关系或让同步写入执行 Issue。
+- 移除条件：上游提供等价的跨仓库 Jira 需求关联、双向详情维护、同步隔离和生命周期约束后同步移除。
+- 针对性验证：运行 `npm run typecheck` 和 `npm run build:web`；在 Jira 详情选择多个仓库、保存并关联执行 Issue，确认双方详情可打开和解除关系，仓库差异不会在保存前生效，普通 Issue 详情保持紧凑。
+
+### 本地化交付审查
+
+- 生命周期：`长期保留`
+- 原始目的：让 Fork 的交付审查不依赖 ChatGPT 网页、浏览器自动化或外部交互式登录，避免本地已完成并通过 CI 的工作被不可用的网页会话阻塞。
+- 行为不变量：每个执行会话都必须对自己的最终候选进行本地代码审查，审查深度随实现风险增加，但不增加第二个强制审查入口。实质性候选变化会使旧 SHA 的审查失效；协调会话只核验审查证据，不重复审查。用户 UI 确认仍按实际视觉影响执行，但不再等待任何外部审查服务或 ChatGPT 网页审查。
+- 代码和测试路径：`AGENTS.md`；这是仅面向维护者和 AI 编码代理的交付策略，不涉及产品代码或持久化测试。
+- 来源：当前 Fork 交付策略调整；提交后可用 `git log -S'Fork delivery must not depend on ChatGPT web' -- AGENTS.md` 定位。
+- 合并指引：上游调整审查流程时，保留“执行 Agent 本地审查覆盖全部实现、风险只影响审查深度、结果绑定精确 SHA、无第二审查服务或外部网页登录依赖”四个不变量，不恢复强制 ChatGPT 网页审查。
+- 移除条件：Fork 明确重新采用可靠且非交互的外部审查基础设施，或停止维护独立交付流程时同步移除。
+- 针对性验证：确认 `AGENTS.md` 的 Review by risk 和 Acceptance 段落不要求第二个审查服务、ChatGPT 网页、浏览器或外部登录，并仍要求执行 Agent 本地审查、按风险增加深度及 SHA 失效规则。
+
 ## 上游合并检查清单
 
 1. 每次实际完成上游合并后，根据 Git 祖先关系重新确定精确基线，不得用持续移动的上游分支头替代。

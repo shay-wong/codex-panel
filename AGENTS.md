@@ -67,26 +67,24 @@ Make the smallest root-cause change. Do not add unrelated refactors, abstraction
 ## 6. Review by risk
 
 - Each dispatched execution conversation decides the review complexity for its own implementation after direct-path verification. The coordinating conversation does not make this complexity decision or perform the code review.
-- For lower-complexity work, the dispatched execution Agent performs the code review. It checks implementation correctness, the requested path, scope, and real bugs without sending the PR to ChatGPT web Pro.
-- For complex or risky work, the corresponding dispatched execution conversation opens ChatGPT web Pro itself and submits the PR URL and exact head SHA for review. It asks Pro to review only implementation correctness and real bugs.
+- Every dispatched execution Agent performs a local code review that checks implementation correctness, the requested path, scope, and real bugs.
+- Review depth scales with implementation risk, but the dispatched execution Agent remains the reviewer. Fork delivery must not depend on another review service, ChatGPT web, browser automation, or an external interactive login.
 - Development and review must avoid over-design and over-defensive recommendations. Do not request or add hypothetical guardrails, unrelated refactors, compatibility layers, style preferences, or scope expansion.
-- Independent dispatched conversations run their required reviews in parallel. Do not serialize independent Agent or Pro reviews through the coordinating conversation.
-- For Pro review, wait for the complete answer. Do not use an instant-answer result. Check at approximately five-minute intervals when necessary; a complete review can take more than 30 minutes.
-- Fix actionable blockers in the same PR. The dispatched execution conversation decides whether the changed complexity warrants another Pro review; trivial targeted follow-up edits can use its normal Agent review.
+- Independent dispatched conversations run their own local reviews in parallel. Do not serialize them through the coordinating conversation.
+- Fix actionable blockers in the same PR. A material candidate change invalidates reviews tied to an earlier SHA; review the final candidate before handoff.
 - Before accepting a handoff, the coordinating conversation checks that the execution evidence, scope, CI state, complexity decision, and required review result are present. It does not repeat the code review.
 - Decide the UI confirmation gate from the actual visual impact and risk. Do not trigger it mechanically because code is in a UI component or changes a UI file.
 - Logic-only changes on a UI surface do not need separate user UI confirmation when they do not cause a meaningful visual change. This includes interaction logic, data behavior, toggle behavior, popover close conditions, and copy-and-paste behavior.
 - Small, low-risk, and visually unambiguous changes can skip user UI confirmation after the coordinator checks the real path and visual evidence. Examples include a local font-size, spacing, alignment, or color adjustment.
 - Require user UI confirmation before merge when the change adds UI, meaningfully changes layout, information hierarchy, or the presentation of a core interaction, has multiple reasonable visual choices, or the user explicitly asks to confirm the style.
-- User UI confirmation is a final acceptance gate, not an intermediate development checkpoint. For work that requires it, ask only after the full function is complete, direct verification passes, and any complexity-based Pro review passes. Never ask the user to confirm a partially implemented UI.
-- After Pro approval, visual-only adjustments made from the user's final UI feedback do not require another Pro review. The coordinator checks that the delta is limited to the requested visual change, reruns the real path, and can then proceed to merge. If the adjustment changes functional logic or introduces new complex risk, reassess whether code review or Pro review is required.
-- The dispatched execution conversation closes its temporary review browser tabs after review finishes.
+- User UI confirmation is a final acceptance gate, not an intermediate development checkpoint. For work that requires it, ask only after the full function is complete, direct verification passes, and the required local review passes. Never ask the user to confirm a partially implemented UI.
+- After local review approval, visual-only adjustments made from the user's final UI feedback do not require another full review. The coordinator checks that the delta is limited to the requested visual change, reruns the real path, and can then proceed to merge. If the adjustment changes functional logic or introduces new complex risk, reassess the required local review depth.
 
 ## 7. Acceptance and issue status
 
 - Reviewer approval means ready for user inspection, not user acceptance.
-- When work meets the UI confirmation gate, put the complete reviewed function into the Panel-launched Codex App and ask the user to confirm the final visual style only after implementation and any required Pro review are complete.
-- Do not merge work that meets the UI confirmation gate until the user confirms its style. After visual-only feedback is applied and directly verified, the change can proceed without repeating Pro review.
+- When work meets the UI confirmation gate, put the complete reviewed function into the Panel-launched Codex App and ask the user to confirm the final visual style only after implementation and required local review are complete.
+- Do not merge work that meets the UI confirmation gate until the user confirms its style. After visual-only feedback is applied and directly verified, the change can proceed without repeating the full review.
 - UI-surface work that does not meet the confirmation gate can proceed after the coordinator verifies the real path, visual impact, scope, and required review without a separate user UI pause.
 - After implementation and required review pass, move the issue to `in_review`.
 - Never move an issue to `done` unless the user explicitly accepts it or asks for completion.
