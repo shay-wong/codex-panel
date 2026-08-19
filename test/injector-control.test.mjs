@@ -15,7 +15,9 @@ import {
   stopManagedInjector,
 } from "../scripts/codex-injector-control.mjs";
 
-test("the injector control socket requires the manager token and stays user-only", async (context) => {
+test("the injector control socket requires the manager token and stays user-only", {
+  skip: process.platform === "win32",
+}, async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-control-"));
   const runtimeFile = path.join(directory, "launcher-runtime.json");
   const controlSocket = injectorControlSocketPath(runtimeFile);
@@ -83,7 +85,9 @@ test("the injector control socket requires the manager token and stays user-only
   );
 });
 
-test("the control client keeps the socket open for asynchronous handler replies", async (context) => {
+test("the control client keeps the socket open for asynchronous handler replies", {
+  skip: process.platform === "win32",
+}, async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-control-async-"));
   const runtimeFile = path.join(directory, "launcher-runtime.json");
   const controlSocket = injectorControlSocketPath(runtimeFile);
@@ -123,7 +127,9 @@ test("the control client keeps the socket open for asynchronous handler replies"
   }), { ready: true });
 });
 
-test("a runtime descriptor cannot redirect the manager token to another socket", async (context) => {
+test("a runtime descriptor cannot redirect the manager token to another socket", {
+  skip: process.platform === "win32",
+}, async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-control-path-"));
   const runtimeFile = path.join(directory, "launcher-runtime.json");
   const foreignSocket = path.join(directory, "foreign.sock");
@@ -221,7 +227,9 @@ test("a reused stale runtime PID is discarded without signaling the unrelated pr
   await assert.rejects(readFile(runtimeFile, "utf8"), { code: "ENOENT" });
 });
 
-test("managed shutdown revalidates ownership immediately before every signal", async (context) => {
+test("managed shutdown revalidates ownership immediately before every signal", {
+  skip: process.platform === "win32",
+}, async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-control-signals-"));
   const runtimeFile = path.join(directory, "launcher-runtime.json");
   const controlSocket = injectorControlSocketPath(runtimeFile);

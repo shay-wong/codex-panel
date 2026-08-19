@@ -105,7 +105,9 @@ test("cloud config persists Basic Auth credentials and device mappings in a mode
       portfolio: "/Users/alice/Documents/portfolio",
     },
   });
-  assert.equal((await stat(configPath)).mode & 0o777, 0o600);
+  if (process.platform !== "win32") {
+    assert.equal((await stat(configPath)).mode & 0o777, 0o600);
+  }
   assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), await store.read());
 });
 
@@ -742,7 +744,7 @@ test("panelctl cloud status, logout, and project map use local companion endpoin
     ["http://127.0.0.1:49000/api/local/project-mappings/portfolio", "PUT"],
   ]);
   assert.deepEqual(JSON.parse(calls[2].init.body), {
-    workspacePath: "/work/portfolio",
+    workspacePath: path.resolve("/work/portfolio"),
   });
 });
 

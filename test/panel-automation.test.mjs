@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import { test } from "node:test";
 
 import {
@@ -172,7 +173,7 @@ test("the stable name and generated prompt are project-scoped and encode the cla
   );
   assert.match(prompt, /\[\$manage-panel\]\([^)]*\) e-panel /);
   assert.match(prompt, /本轮所有 panelctl 操作都使用完整命令前缀/);
-  assert.match(prompt, /\/Users\/example\/panel\/cli\/panelctl\.mjs/);
+  assert.ok(prompt.includes(path.resolve("/Users/example/panel/cli/panelctl.mjs")));
   assert.doesNotMatch(prompt, /taskctl/);
   assert.match(prompt, /PPT Skill/);
   assert.match(prompt, /每 5 分钟检查/);

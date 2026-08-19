@@ -20,8 +20,11 @@ async function createPublisherFixture() {
   const capturePath = path.join(directory, "panelctl.jsonl");
   const handoffPath = path.join(directory, "handoff.md");
   const handoff = "\n# Session handoff\n\nKeep the exact acceptance decision.\n\n";
-  const panelctlPath = path.join(binDirectory, "panelctl");
+  const panelctlPath = process.platform === "win32"
+    ? path.join(directory, "app", "cli", "panelctl.mjs")
+    : path.join(binDirectory, "panelctl");
   await mkdir(binDirectory);
+  await mkdir(path.dirname(panelctlPath), { recursive: true });
   await writeFile(handoffPath, handoff);
   await writeFile(panelctlPath, `#!/usr/bin/env node
 import { appendFileSync } from "node:fs";
@@ -47,6 +50,12 @@ process.stdout.write(JSON.stringify({
 }) + "\\n");
 `);
   await chmod(panelctlPath, 0o755);
+  if (process.platform === "win32") {
+    await writeFile(
+      path.join(binDirectory, "panelctl.cmd"),
+      `@"${process.execPath}" "%~dp0panelctl.mjs" %*\r\n`,
+    );
+  }
   return {
     capturePath,
     directory,
@@ -75,6 +84,12 @@ test("handoff-panel remains an explicit wrapper around the installed handoff Ski
   assert.doesNotMatch(skillSource, /Before creating the handoff, run `panelctl issue get/);
   assert.match(agentMetadata, /allow_implicit_invocation: false/);
   assert.match(installerSource, /handoff-panel/);
+});
+
+test("the publisher uses the packaged Windows panelctl command", async () => {
+  const publisherSource = await readFile(publisherPath, "utf8");
+  assert.match(publisherSource, /path\.resolve\(windowsBin, "\.\.", "app", "cli", "panelctl\.mjs"\)/);
+  assert.match(publisherSource, /process\.platform === "win32" \? process\.execPath : "panelctl"/);
 });
 
 test("the publisher validates the issue and adds the handoff as an attributed Panel comment", async () => {

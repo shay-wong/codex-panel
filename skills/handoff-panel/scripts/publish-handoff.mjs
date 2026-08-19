@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { parseArgs } from "node:util";
 
 const HANDOFF_COMMENT_MARKER = "<!-- codex-panel:ai-chat-handoff:v1 -->";
@@ -44,11 +46,26 @@ function parseCommandArgs(argv) {
 }
 
 function runPanelctl(args) {
-  const result = spawnSync("panelctl", args, {
-    encoding: "utf8",
-    env: process.env,
-    maxBuffer: 10 * 1024 * 1024,
-  });
+  const windowsBin = process.platform === "win32"
+    ? (process.env.PATH ?? "")
+      .split(path.delimiter)
+      .find((entry) => existsSync(path.join(entry, "panelctl.cmd")))
+    : null;
+  if (process.platform === "win32" && !windowsBin) {
+    throw new Error("Could not find the packaged panelctl command");
+  }
+  const windowsCli = windowsBin
+    ? path.resolve(windowsBin, "..", "app", "cli", "panelctl.mjs")
+    : null;
+  const result = spawnSync(
+    process.platform === "win32" ? process.execPath : "panelctl",
+    process.platform === "win32" ? [windowsCli, ...args] : args,
+    {
+      encoding: "utf8",
+      env: process.env,
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
   if (result.error) {
     throw new Error(`Could not run panelctl: ${result.error.message}`);
   }

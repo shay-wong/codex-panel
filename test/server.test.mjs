@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { access, chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -745,20 +745,25 @@ test("workflow capabilities come from the live Codex skill and MCP catalogs", as
   let workspacePath;
   const baseUrl = await startServer(async (directory) => {
     workspacePath = directory;
-    const codexExecutable = path.join(directory, "fake-codex");
-    await writeFile(codexExecutable, `#!/bin/sh
-if [ "$1" = "mcp" ]; then
-  printf '%s\\n' '[{"name":"context7","enabled":true,"transport":{"type":"streamable_http"}},{"name":"disabled-server","enabled":false,"transport":{"type":"stdio"}}]'
-  exit 0
-fi
-while IFS= read -r line; do
-  case "$line" in
-    *'"id":1'*) printf '%s\\n' '{"id":1,"result":{"platformFamily":"unix"}}' ;;
-    *'"id":2'*) printf '%s\\n' '{"id":2,"result":{"data":[{"cwd":"workspace","skills":[{"name":"user-skill","description":"User skill","path":"/user/skills/user-skill/SKILL.md","enabled":true,"scope":"user","interface":null},{"name":"repo-skill","description":"Repository skill","path":"/workspace/.agents/skills/repo-skill/SKILL.md","enabled":true,"scope":"repo","interface":{"displayName":"Repository Skill"}},{"name":"user-skill","enabled":true,"scope":"system","interface":{"displayName":"Duplicate"}},{"name":"disabled-skill","enabled":false,"scope":"user","interface":null}],"errors":[]}]}}' ;;
-  esac
-done
+    const codexExecutable = path.join(directory, "fake-codex.mjs");
+    await writeFile(codexExecutable, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "mcp") {
+  process.stdout.write(JSON.stringify([
+    { name: "context7", enabled: true, transport: { type: "streamable_http" } },
+    { name: "disabled-server", enabled: false, transport: { type: "stdio" } },
+  ]) + "\\n");
+  process.exit(0);
+}
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  for (const line of chunk.split("\\n").filter(Boolean)) {
+    const message = JSON.parse(line);
+    if (message.id === 1) process.stdout.write('{"id":1,"result":{"platformFamily":"unix"}}\\n');
+    if (message.id === 2) process.stdout.write('{"id":2,"result":{"data":[{"cwd":"workspace","skills":[{"name":"user-skill","description":"User skill","path":"/user/skills/user-skill/SKILL.md","enabled":true,"scope":"user","interface":null},{"name":"repo-skill","description":"Repository skill","path":"/workspace/.agents/skills/repo-skill/SKILL.md","enabled":true,"scope":"repo","interface":{"displayName":"Repository Skill"}},{"name":"user-skill","enabled":true,"scope":"system","interface":{"displayName":"Duplicate"}},{"name":"disabled-skill","enabled":false,"scope":"user","interface":null}],"errors":[]}]}}\\n');
+  }
+});
 `);
-    await chmod(codexExecutable, 0o755);
     return { codexExecutable };
   });
 

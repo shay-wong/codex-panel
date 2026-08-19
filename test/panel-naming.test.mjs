@@ -84,14 +84,14 @@ test("the macOS product installer always uses the fixed Panel data directory", (
     platform: "darwin",
   });
 
-  assert.equal(
-    layout.installRoot,
-    "/Users/panel-test/Library/Application Support/Codex Panel",
+  const productRoot = path.join(
+    "/Users/panel-test",
+    "Library",
+    "Application Support",
+    "Codex Panel",
   );
-  assert.equal(
-    layout.dataDirectory,
-    "/Users/panel-test/Library/Application Support/Codex Panel/data",
-  );
+  assert.equal(layout.installRoot, productRoot);
+  assert.equal(layout.dataDirectory, path.join(productRoot, "data"));
 });
 
 test("the Windows release preserves the hashed Node sidecar", async () => {

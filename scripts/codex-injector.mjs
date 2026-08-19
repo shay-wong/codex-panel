@@ -2373,7 +2373,7 @@ async function main() {
     }
     if (panelRuntimeFile && options.startupToken) {
       const controlSocket = injectorControlSocketPath(panelRuntimeFile);
-      controlServer = await startInjectorControlServer({
+      controlServer = process.platform === "win32" ? null : await startInjectorControlServer({
         controlSocket,
         startupToken: options.startupToken,
         handlers: {

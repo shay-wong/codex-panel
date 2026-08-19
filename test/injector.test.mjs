@@ -120,6 +120,10 @@ test("the Windows launcher control pipe opens, checks, and stops the managed Pan
   assert.match(source, /openedStatus\.pageVisible === true/);
   assert.match(source, /renderer did not confirm page visibility/);
   assert.match(source, /shouldOpen && \(!status\.pageVisible \|\| !status\.frameReady \|\| !frameLoaded\)/);
+  assert.match(
+    source,
+    /controlServer = process\.platform === "win32" \? null : await startInjectorControlServer/,
+  );
 });
 
 test("attach reconciles the renderer against a hashed current injection source", () => {
