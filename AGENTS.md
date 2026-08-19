@@ -12,6 +12,15 @@ The primary objective is to make the requested function work. Focus on the featu
 
 This ordering does not waive higher-priority safety or security requirements. Keep validation that is necessary at real external boundaries, such as user input or external APIs, but do not expand it into hypothetical protection beyond the requested path.
 
+## Development and test isolation
+
+- Every development, preview, demo, test, or mock Panel runtime must use a newly created isolated temporary data directory and disposable workspace. Never reuse production Panel data, databases, configuration, credentials, Codex state, or real project workspaces.
+- Automated tests must not contact real Jira or other external services. Use fakes or local emulators. A real integration test must be explicitly requested and use a dedicated non-production instance or project with restricted test credentials.
+- Cloud development and tests must use local emulation or separate non-production Worker, D1, and R2 resources. Never bind a development or test runtime to production cloud resources.
+- Before startup, resolve the effective development or test paths and the active production paths from runtime or launcher configuration, then compare their canonical paths. Stop if they are equal or nested, an intended override did not take effect, or any effective path or external resource binding cannot be confirmed as non-production.
+- Prepare fixtures only inside the isolated environment, then confirm the effective data directory, workspace, external endpoints, and cloud bindings before exercising the runtime.
+- A backup does not make production data or external resources acceptable development or test targets.
+
 # Panel Delivery Workflow
 
 Use this workflow when the user asks to process Panel work.
