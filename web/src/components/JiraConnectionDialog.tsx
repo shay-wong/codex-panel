@@ -24,7 +24,7 @@ export function JiraConnectionDialog({
   onClose,
   onSave,
 }: JiraConnectionDialogProps) {
-  const { text } = useTaskboardI18n();
+  const { locale, text } = useTaskboardI18n();
   const [baseUrl, setBaseUrl] = useState(connection?.baseUrl ?? "http://");
   const [authMethod, setAuthMethod] = useState<"basic" | "bearer">(
     connection?.authMethod ?? "basic",
@@ -158,6 +158,35 @@ export function JiraConnectionDialog({
         </label>
         {connection?.configured && connection.displayName && (
           <p>{text("当前账号：", "Current account: ")}{connection.displayName}</p>
+        )}
+        {connection?.configured && (
+          <dl className={`jira-sync-summary${connection.syncError ? " is-error" : ""}`}>
+            <div>
+              <dt>{text("最后尝试", "Last attempt")}</dt>
+              <dd>{connection.lastAttemptedAt
+                ? new Date(connection.lastAttemptedAt).toLocaleString(locale)
+                : text("尚未同步", "Not synced yet")}</dd>
+            </div>
+            <div>
+              <dt>{text("最后成功", "Last success")}</dt>
+              <dd>{connection.lastSuccessfulAt
+                ? new Date(connection.lastSuccessfulAt).toLocaleString(locale)
+                : text("尚无成功记录", "No successful sync yet")}</dd>
+            </div>
+            <div>
+              <dt>{text("同步结果", "Sync result")}</dt>
+              <dd>{text(
+                `${connection.syncedIssueCount} 个未完成 · ${connection.unknownIssueCount} 个状态未知`,
+                `${connection.syncedIssueCount} open · ${connection.unknownIssueCount} unknown`,
+              )}</dd>
+            </div>
+            {connection.syncError && (
+              <div>
+                <dt>{text("失败原因", "Failure")}</dt>
+                <dd>{connection.syncError.message}</dd>
+              </div>
+            )}
+          </dl>
         )}
         {error && <p className="project-dialog-error" role="alert">{error}</p>}
         <div>

@@ -1,7 +1,8 @@
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-const CONFIG_VERSION = 2;
+const CONFIG_VERSION = 3;
+const STABLE_IDENTITY_CONFIG_VERSION = 2;
 const LEGACY_CONFIG_VERSION = 1;
 
 export class JiraConfigError extends Error {
@@ -88,7 +89,7 @@ function parseConfig(value) {
     value === null
     || typeof value !== "object"
     || Array.isArray(value)
-    || (value.version !== LEGACY_CONFIG_VERSION && value.version !== CONFIG_VERSION)
+    || ![LEGACY_CONFIG_VERSION, STABLE_IDENTITY_CONFIG_VERSION, CONFIG_VERSION].includes(value.version)
   ) {
     throw new JiraConfigError("INVALID_JIRA_CONFIG", "Jira 配置文件无效");
   }
@@ -98,19 +99,27 @@ function parseConfig(value) {
     "username",
     "password",
     "originId",
+    "accountId",
     "displayName",
     "projects",
   ]);
   if (value.version === LEGACY_CONFIG_VERSION) allowedKeys.delete("originId");
+  if (value.version !== CONFIG_VERSION) allowedKeys.delete("accountId");
   if (Object.keys(value).some((key) => !allowedKeys.has(key))) {
     throw new JiraConfigError("INVALID_JIRA_CONFIG", "Jira 配置文件包含未知字段");
   }
   const credentials = validateCredentials(value.username, value.password);
   if (
-    value.version === CONFIG_VERSION
+    value.version >= STABLE_IDENTITY_CONFIG_VERSION
     && (typeof value.originId !== "string" || !/^[a-f0-9]{64}$/.test(value.originId))
   ) {
     throw new JiraConfigError("INVALID_JIRA_CONFIG", "Jira 配置缺少稳定实例身份");
+  }
+  if (
+    value.version === CONFIG_VERSION
+    && (typeof value.accountId !== "string" || !value.accountId.trim() || value.accountId.length > 254)
+  ) {
+    throw new JiraConfigError("INVALID_JIRA_CONFIG", "Jira 配置缺少稳定账号身份");
   }
   if (typeof value.displayName !== "string" || !value.displayName.trim()) {
     throw new JiraConfigError("INVALID_JIRA_CONFIG", "Jira 配置缺少用户显示名称");
@@ -119,7 +128,8 @@ function parseConfig(value) {
     version: value.version,
     baseUrl: normalizeJiraUrl(value.baseUrl),
     ...credentials,
-    ...(value.version === CONFIG_VERSION ? { originId: value.originId } : {}),
+    ...(value.version >= STABLE_IDENTITY_CONFIG_VERSION ? { originId: value.originId } : {}),
+    ...(value.version === CONFIG_VERSION ? { accountId: value.accountId.trim() } : {}),
     displayName: value.displayName.trim().slice(0, 254),
     projects: validateProjects(value.projects),
   };

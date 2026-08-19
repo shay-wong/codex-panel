@@ -413,6 +413,63 @@ kbd {
   background: var(--warning);
 }
 
+.jira-sync-status-bar {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 28px;
+  gap: 7px;
+  padding: 4px 16px;
+  border-bottom: var(--border-hairline) solid var(--border);
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.jira-sync-status-bar > span {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.jira-sync-status-bar.is-error > span {
+  background: var(--danger);
+}
+
+.jira-sync-status-bar strong {
+  flex: 0 0 auto;
+  color: var(--text-primary);
+  font-weight: 590;
+}
+
+.jira-sync-status-bar small {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jira-sync-status-bar.is-error small {
+  color: var(--danger);
+}
+
+.jira-sync-status-bar button {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+}
+
+.jira-sync-status-bar button:hover {
+  color: var(--text-primary);
+}
+
 .connection-live > span:first-child {
   background: var(--success);
 }
@@ -5213,6 +5270,36 @@ kbd {
 .delete-dialog .jira-http-warning {
   margin-top: 7px;
   color: var(--warning-text, #9a6700);
+}
+
+.jira-sync-summary {
+  display: grid;
+  gap: 5px;
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+.jira-sync-summary > div {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 11px;
+}
+
+.jira-sync-summary dt {
+  color: var(--text-tertiary);
+}
+
+.jira-sync-summary dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+
+.jira-sync-summary.is-error > div:last-child dd {
+  color: var(--danger);
 }
 
 .delete-dialog .project-dialog-error {

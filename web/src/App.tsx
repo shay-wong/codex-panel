@@ -315,6 +315,7 @@ const DEFAULT_USER_ACTOR: ActorIdentity = {
 };
 
 const GLOBAL_PROJECT_ID = "local";
+const JIRA_PROJECT_ID = "jira-my-tasks";
 const RECENT_PROJECT_IDS_KEY = "panel.recentProjectIds.v1";
 const PROJECT_VIEW_KEY_PREFIX = "panel.project-view.v1.";
 const PROJECT_LIST_LAYOUT_KEY_PREFIX = "panel.project-list-layout.v1.";
@@ -1995,6 +1996,14 @@ export function App() {
         setTasksLoadError({ source: "tasks", requestId, message: errorMessage(error) });
       }
     } finally {
+      if (projectId === JIRA_PROJECT_ID) {
+        try {
+          const connection = await getJiraConnection(options.signal);
+          if (requestId === tasksRequestRef.current) setJiraConnection(connection);
+        } catch {
+          // The task request already exposes the actionable sync failure.
+        }
+      }
       if (!options.quiet && requestId === tasksRequestRef.current) setTasksLoading(false);
     }
   }, []);
@@ -3336,7 +3345,17 @@ export function App() {
     setJiraSaving(true);
     setJiraError(null);
     try {
-      const connection = await configureJiraConnection(input);
+      let connection: JiraConnection;
+      try {
+        connection = await configureJiraConnection(input);
+      } catch (error) {
+        if (
+          !(error instanceof ApiError)
+          || error.code !== "JIRA_ACCOUNT_CHANGED"
+          || !window.confirm(`${error.message}\n\n${text("确认切换账号并继续同步？", "Switch accounts and continue syncing?")}`)
+        ) throw error;
+        connection = await configureJiraConnection({ ...input, acceptAccountChange: true });
+      }
       const nextProjects = await listProjects();
       setJiraConnection(connection);
       setProjects(nextProjects);
@@ -3348,7 +3367,13 @@ export function App() {
         `Synced Jira issues for ${connection.displayName ?? connection.username}`,
       ));
     } catch (error) {
-      setJiraError(errorMessage(error));
+      try {
+        const connection = await getJiraConnection();
+        setJiraConnection(connection);
+        if (!connection.syncError) setJiraError(errorMessage(error));
+      } catch {
+        setJiraError(errorMessage(error));
+      }
     } finally {
       setJiraSaving(false);
     }
@@ -3359,7 +3384,17 @@ export function App() {
     setJiraSyncing(true);
     setActionError(null);
     try {
-      const connection = await syncJiraConnection();
+      let connection: JiraConnection;
+      try {
+        connection = await syncJiraConnection();
+      } catch (error) {
+        if (
+          !(error instanceof ApiError)
+          || error.code !== "JIRA_ACCOUNT_CHANGED"
+          || !window.confirm(`${error.message}\n\n${text("确认切换账号并继续同步？", "Switch accounts and continue syncing?")}`)
+        ) throw error;
+        connection = await syncJiraConnection(true);
+      }
       setJiraConnection(connection);
       await Promise.all([
         refreshTasks(selectedProjectId, { quiet: true }),
@@ -3367,7 +3402,13 @@ export function App() {
       ]);
       setAnnouncement(text("Jira 任务已同步", "Jira issues synced"));
     } catch (error) {
-      setActionError(errorMessage(error));
+      try {
+        const connection = await getJiraConnection();
+        setJiraConnection(connection);
+        if (!connection.syncError) setActionError(errorMessage(error));
+      } catch {
+        setActionError(errorMessage(error));
+      }
     } finally {
       setJiraSyncing(false);
     }
@@ -3818,6 +3859,40 @@ export function App() {
             )}
           </div>}
         </div>}
+
+        {isJiraProject && jiraConnection?.configured && (
+          <div
+            className={`jira-sync-status-bar${jiraConnection.syncError ? " is-error" : ""}`}
+            role={jiraConnection.syncError ? "alert" : "status"}
+          >
+            <span aria-hidden="true" />
+            <strong>{jiraConnection.syncError
+              ? text("Jira 同步失败", "Jira sync failed")
+              : text(
+                `已同步 ${jiraConnection.syncedIssueCount} 个未完成任务`,
+                `${jiraConnection.syncedIssueCount} open issues synced`,
+              )}</strong>
+            <small>{jiraConnection.syncError?.message ?? text(
+              [
+                jiraConnection.unknownIssueCount > 0
+                  ? `${jiraConnection.unknownIssueCount} 个状态未知`
+                  : null,
+                jiraConnection.lastSuccessfulAt
+                  ? `最后成功 ${new Date(jiraConnection.lastSuccessfulAt).toLocaleString(locale)}`
+                  : "尚无成功记录",
+              ].filter(Boolean).join(" · "),
+              [
+                jiraConnection.unknownIssueCount > 0
+                  ? `${jiraConnection.unknownIssueCount} unknown`
+                  : null,
+                jiraConnection.lastSuccessfulAt
+                  ? `Last success ${new Date(jiraConnection.lastSuccessfulAt).toLocaleString(locale)}`
+                  : "No successful sync yet",
+              ].filter(Boolean).join(" · "),
+            )}</small>
+            <button type="button" onClick={openJiraDialog}>{text("查看详情", "View details")}</button>
+          </div>
+        )}
 
         {(loadError || actionErrorText) && (
           <div className="error-banner" role="alert">

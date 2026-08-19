@@ -473,6 +473,11 @@ export interface JiraConnection {
   projects: string[];
   projectId: string;
   lastSyncedAt: string | null;
+  lastAttemptedAt: string | null;
+  lastSuccessfulAt: string | null;
+  syncedIssueCount: number;
+  unknownIssueCount: number;
+  syncError: { code: string; message: string } | null;
   insecureHttp: boolean;
 }
 

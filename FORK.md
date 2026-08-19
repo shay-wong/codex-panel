@@ -166,6 +166,18 @@
 - 移除条件：上游提供等价的 Bearer PAT 支持、认证切换和凭据边界后同步移除。
 - 针对性验证：使用定向请求 harness 确认空白 Basic 用户名在网络请求前返回 `JIRA_USERNAME_REQUIRED`，合法 Basic 和 Bearer 分别只发送对应认证头；运行 `npm run typecheck`、`npm run build:web` 和 `git diff --check`，并在安装态设置界面确认两种认证方式可以切换且切换后要求重新输入凭据。
 
+### Jira 未完成任务可靠同步
+
+- 生命周期：`等待上游吸收`
+- 原始目的：稳定同步当前 Jira 登录用户的全部未完成任务，并在分页失败、任务消失、权限变化或账号切换时保留上次可信数据和明确的用户控制。
+- 行为不变量：JQL 只读取 `assignee = currentUser()` 且 `statusCategory != Done` 的任务；全部搜索分页成功后才在一个事务中落库。搜索结果中消失的已有 Jira 必须按 Key 复查，能确认已完成或离开范围时归档，无法确认时保留并标记同步状态未知。认证、权限、网络和分页失败不得清理缓存任务，进入 Jira 项目时仍返回缓存并展示持久化错误。`/myself` 稳定身份变化必须在搜索新账号任务前要求确认。打开 Jira 项目沿用一分钟节流，手动同步始终强制执行且不限次数。顶部紧凑状态栏和 Jira 设置必须显示最后尝试、最后成功、未完成数量、未知数量及可执行失败原因。
+- 代码和测试路径：`server/app.mjs`、`server/database.mjs`、`server/jira-config.mjs`、`server/jira-integration.mjs`、`web/src/App.tsx`、`web/src/api.ts`、`web/src/components/JiraConnectionDialog.tsx`、`web/src/styles.css`、`web/src/types.ts` 和 `test/jira-integration.test.mjs`。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：当前 Jira 可靠同步扩展；提交后可用 `git log -S'jira_sync_state' -- server/database.mjs` 定位。
+- 合并指引：上游调整 Jira 搜索、任务列表入口、配置格式或同步 UI 时，保留“完整分页后单事务写入、消失任务逐项复查、失败继续读取缓存、账号变化先确认、状态持久可见”五个边界；不得让自动同步失败阻断已有 Jira 任务读取，也不得恢复 Scheduled Task 或多 provider 设计。
+- 移除条件：上游提供等价的未完成任务原子同步、缺失复查、缓存回退、账号切换确认和同步健康展示后同步移除。
+- 针对性验证：运行 `node --test test/jira-integration.test.mjs`、`npm run typecheck`、`npm run build:web` 和 `git diff --check`；使用本地 Jira 响应端确认分页成功、失败缓存、账号变化确认前无搜索，以及桌面和 390px 窄视口的状态栏与详情布局。
+
 ### Jira 外部需求与仓库执行 Issue 关联
 
 - 生命周期：`等待上游吸收`
@@ -207,4 +219,4 @@
 - 不含有意 Fork 解决结果的纯上游合并、生成产物噪声、被忽略的本地状态，以及最终效果已被回退的行为都不属于 Fork 能力。
 - 尚未合并的上游独有工作属于待合并输入，不属于 Fork 能力。
 - 截至上游 `1.1.2`，Tauri/Rust 桌面基础、新版 AI Composer、Agent/Skill/命令补全、可搜索 Issue 关系选择器和富文本剪贴板 metadata 保留已经进入 Fork；自动 updater 安装、上游发布工作流、`taskctl` 主命名和与 Fork 发布策略冲突的打包入口仍明确排除。
-- 上游 `1.1.2` 的单连接 Jira REST 同步、直接回写及主题化 Issue 属性菜单已经等价吸收，不再作为 Fork 能力维护。
+- 上游 `1.1.2` 的单连接 Jira REST 基础同步、直接回写及主题化 Issue 属性菜单已经等价吸收；Fork 仅继续维护本文记录的可靠同步、Bearer 认证和跨仓库关联扩展。
