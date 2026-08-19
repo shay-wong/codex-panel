@@ -1308,6 +1308,7 @@
       || message.capability !== frameCapability
     ) return;
     if (message.type === "panel:frame-awaiting-challenge" || message.type === "taskboard:frame-awaiting-challenge") {
+      if (!frameChallenge) frameChallenge = crypto.randomUUID();
       postFrameChallenge();
       return;
     }
