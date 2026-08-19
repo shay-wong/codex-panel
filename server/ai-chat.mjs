@@ -356,6 +356,7 @@ export class AiChatService {
     const issue = resolved.issue;
 
     return this.database.createAiChatThread({
+      id: input.id,
       title: input.title ?? issue?.identifier ?? "New conversation",
       origin: {
         projectId: resolved.project.id,

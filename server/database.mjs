@@ -6,6 +6,19 @@ import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_LABEL_NAMES, JIRA_PROJECT_ID } from "../shared/domain.mjs";
 
 const DEFAULT_PROJECT_LABELS_JSON = JSON.stringify(DEFAULT_LABEL_NAMES);
+const JIRA_SIMPLE_START_ITEMS_TABLE = `
+  CREATE TABLE jira_simple_start_items (
+    operation_id TEXT NOT NULL REFERENCES jira_simple_start_operations(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    task_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (operation_id, project_id),
+    UNIQUE (operation_id, task_id),
+    UNIQUE (operation_id, thread_id)
+  );
+`;
 
 export class ApiError extends Error {
   constructor(status, code, message, details) {
@@ -829,16 +842,32 @@ export class PanelDatabase {
         updated_at TEXT NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS jira_simple_start_items (
-        operation_id TEXT NOT NULL REFERENCES jira_simple_start_operations(id) ON DELETE CASCADE,
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
-        task_id TEXT NOT NULL UNIQUE,
-        thread_id TEXT UNIQUE REFERENCES ai_chat_threads(id) ON DELETE SET NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (operation_id, project_id)
-      );
+      ${JIRA_SIMPLE_START_ITEMS_TABLE.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS")}
     `);
+
+    const simpleStartItemColumns = this.database.prepare(
+      "PRAGMA table_info(jira_simple_start_items)",
+    ).all();
+    if (simpleStartItemColumns.some((column) => column.name === "thread_id" && column.notnull === 0)) {
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        ALTER TABLE jira_simple_start_items RENAME TO jira_simple_start_items_legacy;
+        ${JIRA_SIMPLE_START_ITEMS_TABLE}
+        INSERT INTO jira_simple_start_items (
+          operation_id, project_id, task_id, thread_id, created_at, updated_at
+        )
+        SELECT
+          operation_id,
+          project_id,
+          task_id,
+          COALESCE(thread_id, lower(hex(randomblob(16)))),
+          created_at,
+          updated_at
+        FROM jira_simple_start_items_legacy;
+        DROP TABLE jira_simple_start_items_legacy;
+        COMMIT;
+      `);
+    }
 
     const commentColumns = this.database.prepare("PRAGMA table_info(comments)").all();
     if (!commentColumns.some((column) => column.name === "thread_id")) {
@@ -1473,9 +1502,10 @@ export class PanelDatabase {
       SELECT
         operations.*,
         COUNT(items.project_id) AS project_count,
-        SUM(CASE WHEN items.thread_id IS NOT NULL THEN 1 ELSE 0 END) AS ready_count
+        SUM(CASE WHEN threads.id IS NOT NULL THEN 1 ELSE 0 END) AS ready_count
       FROM jira_simple_start_operations AS operations
       LEFT JOIN jira_simple_start_items AS items ON items.operation_id = operations.id
+      LEFT JOIN ai_chat_threads AS threads ON threads.id = items.thread_id
       WHERE operations.jira_task_id = ?
       GROUP BY operations.id
     `).get(jiraTaskId);
@@ -1527,7 +1557,7 @@ export class PanelDatabase {
       return {
         projectId: project.id,
         taskId: linked[0]?.id ?? randomUUID(),
-        threadId: null,
+        threadId: randomUUID(),
       };
     });
     this.database.exec("BEGIN IMMEDIATE");
@@ -1540,10 +1570,17 @@ export class PanelDatabase {
       const insertItem = this.database.prepare(`
         INSERT INTO jira_simple_start_items (
           operation_id, project_id, task_id, thread_id, created_at, updated_at
-        ) VALUES (?, ?, ?, NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?)
       `);
       for (const item of items) {
-        insertItem.run(operationId, item.projectId, item.taskId, timestamp, timestamp);
+        insertItem.run(
+          operationId,
+          item.projectId,
+          item.taskId,
+          item.threadId,
+          timestamp,
+          timestamp,
+        );
       }
       this.database.exec("COMMIT");
     } catch (error) {
@@ -1566,18 +1603,6 @@ export class PanelDatabase {
     `).run(timestamp, timestamp, operationId);
     if (result.changes !== 1) {
       throw new ApiError(409, "JIRA_SIMPLE_START_INACTIVE", "Jira 创建操作已经结束");
-    }
-  }
-
-  markJiraSimpleStartThread(operationId, projectId, threadId) {
-    const timestamp = now();
-    const result = this.database.prepare(`
-      UPDATE jira_simple_start_items
-      SET thread_id = ?, updated_at = ?
-      WHERE operation_id = ? AND project_id = ?
-    `).run(threadId, timestamp, operationId, projectId);
-    if (result.changes !== 1) {
-      throw new ApiError(409, "JIRA_SIMPLE_START_ITEM_NOT_FOUND", "Jira 仓库创建项不存在");
     }
   }
 
@@ -1970,16 +1995,6 @@ export class PanelDatabase {
       thread.latestTodo = latestTodos.get(thread.id) ?? null;
       return thread;
     });
-  }
-
-  findAiChatThreadForIssue(issueId) {
-    const row = this.database.prepare(`
-      SELECT * FROM ai_chat_threads
-      WHERE origin_issue_id = ?
-      ORDER BY created_at, id
-      LIMIT 1
-    `).get(issueId);
-    return row ? this.#aiChatThreadWithCurrentRun(row) : null;
   }
 
   getAiChatThread(id) {

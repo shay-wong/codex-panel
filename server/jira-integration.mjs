@@ -471,6 +471,16 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
     });
   }
 
+  async function applyTaskTransition(config, issueKey, targetStatus) {
+    const issue = await request(
+      config,
+      `/rest/api/2/issue/${encodeURIComponent(issueKey)}?fields=status`,
+    );
+    if (taskStatusFromJira(issue?.fields?.status) === targetStatus) return;
+    const transition = await resolveTransition(config, issueKey, targetStatus);
+    await applyTransition(config, issueKey, transition);
+  }
+
   async function resolveJiraPriority(config, targetPriority) {
     if (targetPriority === "none") return null;
     const priorities = await request(config, "/rest/api/2/priority");
@@ -604,11 +614,8 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       if (priorityChanged) {
         fields.priority = await resolveJiraPriority(config, changes.priority);
       }
-      const transition = statusChanged
-        ? await resolveTransition(config, task.externalKey, changes.status)
-        : null;
-      if (transition) {
-        await applyTransition(config, task.externalKey, transition);
+      if (statusChanged) {
+        await applyTaskTransition(config, task.externalKey, changes.status);
         return true;
       }
       if (fieldsChanged) {
@@ -632,8 +639,7 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
         );
       }
       await assertLiveOrigin(config);
-      const transition = await resolveTransition(config, task.externalKey, status);
-      await applyTransition(config, task.externalKey, transition);
+      await applyTaskTransition(config, task.externalKey, status);
     },
   };
 }

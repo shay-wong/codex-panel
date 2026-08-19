@@ -825,6 +825,7 @@ export function App() {
   const [localAiChatAvailable, setLocalAiChatAvailable] = useState(false);
   const [aiImportReadyProjectId, setAiImportReadyProjectId] = useState<string | null>(null);
   const [aiThreads, setAiThreads] = useState<AiChatThread[]>([]);
+  const [aiThreadsRevision, setAiThreadsRevision] = useState(0);
   const [aiOpenThreadRequest, setAiOpenThreadRequest] = useState<AiChatOpenThreadRequest | null>(null);
   const [readActivityKeys, setReadActivityKeys] = useState<Record<string, string>>({});
   const [codexThreadProgress, setCodexThreadProgress] = useState<
@@ -3941,6 +3942,7 @@ export function App() {
             onOpenThread={openThread}
             onOpenLegacyLocalThread={openLegacyLocalThread}
             aiChatThreads={aiThreads}
+            onAiChatThreadsRefresh={() => setAiThreadsRevision((revision) => revision + 1)}
             onOpenAiChatThread={(threadId) => setAiOpenThreadRequest((current) => ({
               threadId,
               requestId: (current?.requestId ?? 0) + 1,
@@ -4421,6 +4423,7 @@ export function App() {
             available
             projectId={selectedProjectId || null}
             issueId={detailTaskId}
+            threadsRevision={aiThreadsRevision}
             onThreadsChange={setAiThreads}
             openThreadRequest={aiOpenThreadRequest}
           />

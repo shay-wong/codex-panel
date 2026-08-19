@@ -124,6 +124,7 @@ interface TaskDetailProps {
   onOpenThread: (binding: CodexThreadBinding) => void;
   onOpenLegacyLocalThread: (threadId: string) => void;
   aiChatThreads: AiChatThread[];
+  onAiChatThreadsRefresh: () => void;
   onOpenAiChatThread: (threadId: string) => void;
   onOpenInThread: (task: Task) => void;
   onCopy: (text: string, announcement: string) => void;
@@ -525,6 +526,7 @@ export function TaskDetail({
   onOpenThread,
   onOpenLegacyLocalThread,
   aiChatThreads,
+  onAiChatThreadsRefresh,
   onOpenAiChatThread,
   onOpenInThread,
   onCopy,
@@ -859,6 +861,7 @@ export function TaskDetail({
       onError(issueMessageFor(error));
       setJiraContext(await getJiraTaskContext(currentTask.id).catch(() => jiraContext));
     } finally {
+      onAiChatThreadsRefresh();
       setJiraSimpleStartSaving(false);
     }
   }

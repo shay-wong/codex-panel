@@ -2069,17 +2069,21 @@ export function createPanelServer(options = {}) {
         events.emit("task.jira.updated", { taskId: task.id, task: context.jira });
       }
 
-      let thread = item.threadId ? database.getAiChatThread(item.threadId) : null;
-      thread ??= database.findAiChatThreadForIssue(task.id);
+      let thread = database.getAiChatThread(item.threadId);
       if (!thread) {
         thread = await aiChat.createThread({
+          id: item.threadId,
           projectId: task.projectId,
           issueId: task.id,
           title: `${task.identifier} · ${started.jira.externalKey ?? started.jira.identifier}`,
         });
       }
-      if (item.threadId !== thread.id) {
-        database.markJiraSimpleStartThread(started.operation.id, item.projectId, thread.id);
+      if (thread.origin.issueId !== task.id || thread.status !== "idle") {
+        throw new ApiError(
+          409,
+          "JIRA_SIMPLE_START_THREAD_CONFLICT",
+          `Conversation '${thread.id}' is no longer idle for '${task.identifier}'`,
+        );
       }
     }
 
