@@ -54,6 +54,15 @@
   const PROJECT_SECTION_LABELS = ["projects", "项目"];
   const TASK_SECTION_LABELS = ["tasks", "任务", "chats", "对话"];
   const SEND_LABELS = ["send", "发送", "傳送"];
+  const NATIVE_HEADER_DESTINATION_LABELS = [
+    "查看活动",
+    "查看活动，需要关注",
+    "查看活動",
+    "查看活動，有項目需要注意",
+    "查看活動，需要注意",
+    "view activity",
+    "view activity, needs attention",
+  ];
   // TODO: Prefer stable command IDs if Codex exposes them, then support every app locale.
   const NATIVE_DESTINATION_COMMAND_LABELS = [
     ...NATIVE_PAGE_LABELS,
@@ -122,6 +131,7 @@
   let pendingThreadCreation = null;
   let pendingThreadAssociation = null;
   let lastNativeThreadId = "";
+  let panelNativeThreadId = "";
   let lastNativeProjectId = "";
   let codexProjectMetadata = new Map();
   let suspendedNativeBrowserPanel = null;
@@ -1781,6 +1791,7 @@
     if (restoreFocus) lastFocusedElement?.focus?.();
     lastFocusedElement = null;
     hostContextSnapshot = null;
+    panelNativeThreadId = "";
   }
 
   function openPanel() {
@@ -1788,6 +1799,9 @@
     if (!active) {
       lastFocusedElement = document.activeElement;
       hostContextSnapshot = readHostContext();
+      panelNativeThreadId = normalizeThreadId(
+        activeThreadRow()?.getAttribute("data-app-action-sidebar-thread-id"),
+      ) || normalizeThreadId(threadIdFromLocation()) || lastNativeThreadId;
     }
     const generation = ++openGeneration;
     active = true;
@@ -1801,12 +1815,14 @@
   function isNativePageNavigation(target) {
     const clickable = target?.closest?.("button,a,[role='button'],[data-app-action-sidebar-thread-id]");
     if (!clickable || clickable === entry || clickable.closest(`#${ENTRY_ID}`)) return false;
+    if (buttonMatches(clickable, NATIVE_HEADER_DESTINATION_LABELS)) return true;
+    const threadRow = clickable.closest("[data-app-action-sidebar-thread-id]");
+    if (threadRow) return clickable === threadRow;
     if (!clickable.closest("aside nav[role='navigation']")) return false;
     if (clickable.hasAttribute("data-app-action-sidebar-section-toggle")) return false;
     if (buttonMatches(clickable, NATIVE_PAGE_LABELS)) return true;
     return Boolean(clickable.closest(
-      "[data-app-action-sidebar-thread-id],"
-      + "[data-app-action-sidebar-project-row],"
+      "[data-app-action-sidebar-project-row],"
       + "[data-app-action-sidebar-project-id]",
     ));
   }
@@ -1816,9 +1832,12 @@
       '.global-command-menu-dialog [cmdk-item][role="option"]',
     );
     if (!active || !item) return false;
-    if (NATIVE_DESTINATION_COMMAND_LABELS.includes(
-      normalizedLabel(item.getAttribute("data-value")),
-    )) {
+    const value = normalizedLabel(item.getAttribute("data-value"));
+    if (
+      NATIVE_DESTINATION_COMMAND_LABELS.includes(value)
+      || value.startsWith("settings ")
+      || value.startsWith("command-menu-quick-chat-result:")
+    ) {
       closePanel(false);
       return true;
     }
@@ -1837,18 +1856,51 @@
   }
 
   function onDocumentClick(event) {
-    const threadRow = event.target?.closest?.("[data-app-action-sidebar-thread-id]");
-    const clickedThreadId = normalizeThreadId(threadRow?.getAttribute?.("data-app-action-sidebar-thread-id"));
-    if (clickedThreadId) lastNativeThreadId = clickedThreadId;
+    const nativeNavigation = isNativePageNavigation(event.target);
+    if (nativeNavigation) {
+      const threadRow = event.target?.closest?.("[data-app-action-sidebar-thread-id]");
+      const clickedThreadId = normalizeThreadId(threadRow?.getAttribute?.("data-app-action-sidebar-thread-id"));
+      if (clickedThreadId) lastNativeThreadId = clickedThreadId;
+    }
     if (handleNativeDestinationCommand(event.target)) return;
-    if (!active || !isNativePageNavigation(event.target)) return;
+    if (!active || !nativeNavigation) return;
     closePanel(false);
+  }
+
+  function onDesktopAppEntry(event) {
+    const message = event.data;
+    const attribution = message?.receipt?.attribution;
+    if (
+      !active
+      || event.source !== null
+      || message?.type !== "desktop-app-entry-received"
+      || attribution?.channel !== "push_notification"
+      || attribution?.source !== "native_notification"
+    ) return;
+    closePanel(false);
+  }
+
+  function closePanelForNativeThreadChange() {
+    if (!active) return false;
+    const currentThreadId = normalizeThreadId(
+      activeThreadRow()?.getAttribute("data-app-action-sidebar-thread-id"),
+    );
+    if (!currentThreadId) return false;
+    if (!panelNativeThreadId) {
+      panelNativeThreadId = currentThreadId;
+      return false;
+    }
+    if (currentThreadId === panelNativeThreadId) return false;
+    lastNativeThreadId = currentThreadId;
+    closePanel(false);
+    return true;
   }
 
   function scheduleRefresh() {
     if (destroyed || reattachTimer !== null) return;
     reattachTimer = window.setTimeout(() => {
       reattachTimer = null;
+      if (closePanelForNativeThreadChange()) return;
       ensureEntry();
       mountActivePage();
       void publishPendingThreadAssociation();
@@ -1909,6 +1961,7 @@
     document.removeEventListener("cmdk-item-select", onCommandMenuSelect, true);
     window.removeEventListener("message", onFrameMessage);
     window.removeEventListener("message", onHostBridgeMessage);
+    window.removeEventListener("message", onDesktopAppEntry);
     window.removeEventListener("popstate", onNativeRouteChange);
     window.removeEventListener("hashchange", onNativeRouteChange);
     window.removeEventListener("resize", scheduleRefresh);
@@ -1954,6 +2007,7 @@
 
   window.addEventListener("message", onFrameMessage);
   window.addEventListener("message", onHostBridgeMessage);
+  window.addEventListener("message", onDesktopAppEntry);
   window.addEventListener("popstate", onNativeRouteChange);
   window.addEventListener("hashchange", onNativeRouteChange);
   window.addEventListener("resize", scheduleRefresh);

@@ -3,6 +3,32 @@ import fs from "node:fs";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 
+test("launcher lifecycle commands do not block WebView rendering", () => {
+  const source = fs.readFileSync(new URL("../src-tauri/src/main.rs", import.meta.url), "utf8");
+
+  const lifecycleCalls = {
+    start_service: ["start_launcher", "current_ui_state"],
+    stop_service: ["stop_managed_child", "current_ui_state"],
+    reconnect_codex: ["restart_launcher", "current_ui_state"],
+    open_embedded_panel: ["open_panel", "start_launcher"],
+  };
+  for (const [command, calls] of Object.entries(lifecycleCalls)) {
+    const body = source.match(new RegExp(`async fn ${command}\\([\\s\\S]*?\\n\\}`))?.[0];
+    assert.ok(body, `${command} must remain async`);
+    const blockingStart = body.indexOf("tauri::async_runtime::spawn_blocking(move || {");
+    const blockingEnd = body.indexOf("\n    })", blockingStart);
+    assert.ok(blockingStart >= 0, `${command} must use spawn_blocking`);
+    assert.ok(blockingEnd > blockingStart, `${command} must await the blocking closure`);
+    for (const call of calls) {
+      const callIndex = body.indexOf(`${call}(`);
+      assert.ok(
+        callIndex > blockingStart && callIndex < blockingEnd,
+        `${command} must keep ${call} inside spawn_blocking`,
+      );
+    }
+  }
+});
+
 test("launcher actions show feedback on the button that was clicked", async () => {
   const html = fs.readFileSync(new URL("../src-tauri/ui/index.html", import.meta.url), "utf8");
   let openRequestPending = false;
