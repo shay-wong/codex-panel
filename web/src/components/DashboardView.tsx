@@ -503,7 +503,7 @@ export function DashboardView({
 
         <div className="dashboard-metrics">
           {metrics.map((metric) => {
-            const percent = tasks.length ? Math.round((metric.value / tasks.length) * 100) : 0;
+            const percent = activeTasks.length ? Math.round((metric.value / activeTasks.length) * 100) : 0;
             return (
               <article className={`dashboard-metric tone-${metric.tone}`} key={metric.label}>
                 <span className="dashboard-metric-label">{metric.label}</span>
