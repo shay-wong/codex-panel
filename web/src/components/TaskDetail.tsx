@@ -2101,14 +2101,18 @@ export function TaskDetail({
             ) : jiraContext?.jira ? (
               <section className="jira-context-section jira-context-summary" aria-label={text("关联 Jira", "Linked Jira")}>
                 <h2>{text("关联 Jira", "Linked Jira")}</h2>
-                <a href={jiraContext.jira.externalUrl ?? "#"} target="_blank" rel="noreferrer">
+                <a href={buildIssueUrl(
+                  window.location.href,
+                  jiraContext.jira.projectId,
+                  jiraContext.jira.identifier,
+                ).toString()}>
                   <LinearIcon name="link" />
                   <span>
                     <strong>{jiraContext.jira.externalKey ?? jiraContext.jira.identifier}</strong>
                     <small>{jiraContext.jira.title}</small>
                   </span>
                   <b>{jiraContext.jira.externalStatus ?? taskStatusLabel(language, jiraContext.jira.status)}</b>
-                  <LinearIcon name="openExternal" />
+                  <LinearIcon name="chevronRight" />
                 </a>
                 <button
                   type="button"
