@@ -99,6 +99,7 @@ interface AiChatProps {
   available: boolean;
   projectId: string | null;
   issueId: string | null;
+  threadsRevision: number;
   onThreadsChange?: (threads: AiChatThread[]) => void;
   openThreadRequest?: AiChatOpenThreadRequest | null;
 }
@@ -1291,6 +1292,7 @@ export function AiChat({
   available,
   projectId,
   issueId,
+  threadsRevision,
   onThreadsChange,
   openThreadRequest,
 }: AiChatProps) {
@@ -1566,7 +1568,7 @@ export function AiChat({
       return;
     }
     void loadThreads();
-  }, [available, loadThreads]);
+  }, [available, loadThreads, threadsRevision]);
 
   useEffect(() => {
     onThreadsChange?.(available ? threads : []);

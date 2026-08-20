@@ -41,6 +41,10 @@ const DEFAULT_USER_ACTOR: ActorIdentity = {
 let currentUserActor = DEFAULT_USER_ACTOR;
 let apiText = (_chinese: string, english: string) => english;
 
+function isAbortError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
+}
+
 export function setCurrentUserActor(actor?: ActorIdentity) {
   currentUserActor = actor?.type === "user" ? actor : DEFAULT_USER_ACTOR;
 }
@@ -91,7 +95,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     response = await fetch(resolvePanelUrl(path), { ...init, headers });
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") throw error;
+    if (isAbortError(error)) throw error;
     throw new ApiError(0, {
       error: {
         code: "SERVICE_UNAVAILABLE",
@@ -99,7 +103,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       },
     });
   }
-  const body = (await response.json().catch(() => ({}))) as T & ApiErrorBody;
+  let body: T & ApiErrorBody;
+  try {
+    body = await response.json() as T & ApiErrorBody;
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    body = {} as T & ApiErrorBody;
+  }
 
   if (!response.ok) throw new ApiError(response.status, body);
   return body;
@@ -552,6 +562,16 @@ export async function saveJiraTaskProjects(
       method: "PUT",
       body: JSON.stringify({ version: task.version, projectIds }),
     },
+  );
+  return data.context;
+}
+
+export async function startSimpleJiraTask(
+  task: Pick<Task, "id" | "version">,
+): Promise<JiraTaskContext> {
+  const data = await request<{ context: JiraTaskContext }>(
+    `/api/tasks/${encodeURIComponent(task.id)}/jira-simple-start`,
+    { method: "POST", body: JSON.stringify({ version: task.version }) },
   );
   return data.context;
 }

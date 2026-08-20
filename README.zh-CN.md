@@ -4,7 +4,7 @@
 
 一个本地优先的 Issue 看板，可在浏览器中运行，也可以通过独立 CDP 启动器或注入脚本嵌入 Codex。React UI 与随附 Codex Skill 使用的 `panelctl` CLI 共用同一套 HTTP API。
 
-面板支持概览、列表、甘特图和归档 Issue 工作流。横向列表沿用议题看板的分栏与卡片层级，竖向列表保持紧凑；同步自 Jira 的 Issue 会优先显示外部 Key。Issue 可以设置开始与截止日期，也可以从详情页移动到其他项目并保留关联对话。本地 Jira 连接会把分配给当前 Jira 登录用户的未完成任务同步到固定 Jira 项目。每个 Jira 需求可以选择一个或多个仓库项目，并关联这些仓库中已有的执行 Issue；每个执行 Issue 最多属于一个 Jira 需求，Jira 刷新不会覆盖本地工作内容。打开 Jira 项目时最多每分钟刷新一次，也可以手动同步。只有全部 Jira 搜索分页成功后才会应用刷新；Jira 不可用时仍显示缓存任务，切换到其他 Jira 登录账号前必须确认。Jira 顶部和设置中会显示最后尝试、最后成功、未完成与状态未知数量，以及可执行的失败原因。修改已同步 Jira Issue 的标题、描述、优先级、标签、截止日期或状态时，Panel 会直接回写 Jira。连接支持账号密码或 Jira Cloud 邮箱与 API Token 的 Basic Auth，也支持 Jira Data Center 或 Server Personal Access Token 的 Bearer Auth。凭据保存在 Panel 本地数据目录中，云端模式不可用；除非 Jira 位于受信任的内网，否则应使用 HTTPS。
+面板支持概览、列表、甘特图和归档 Issue 工作流。横向列表沿用议题看板的分栏与卡片层级，竖向列表保持紧凑；同步自 Jira 的 Issue 会优先显示外部 Key。Issue 可以设置开始与截止日期，也可以从详情页移动到其他项目并保留关联对话。本地 Jira 连接会把分配给当前 Jira 登录用户的未完成任务同步到固定 Jira 项目。每个 Jira 需求可以选择一个或多个仓库项目，并关联这些仓库中已有的执行 Issue；每个执行 Issue 最多属于一个 Jira 需求，Jira 刷新不会覆盖本地工作内容。执行 Issue 上的关联 Jira 卡片会返回 Panel 内的需求详情，外部 Jira 入口仍保留在该详情页。已保存仓库关联的待认领 Jira 还可以一键切换到进行中，为每个仓库创建一个执行 Issue 和一个独立的空闲 AI 对话，并在所有仓库就绪后再统一把 Issue 释放到待认领；部分失败后重试会继续原操作，不会重复创建。打开 Jira 项目时最多每分钟刷新一次，也可以手动同步。只有全部 Jira 搜索分页成功后才会应用刷新；Jira 不可用时仍显示缓存任务，切换到其他 Jira 登录账号前必须确认。Jira 顶部和设置中会显示最后尝试、最后成功、未完成与状态未知数量，以及可执行的失败原因。修改已同步 Jira Issue 的标题、描述、优先级、标签、截止日期或状态时，Panel 会直接回写 Jira。连接支持账号密码或 Jira Cloud 邮箱与 API Token 的 Basic Auth，也支持 Jira Data Center 或 Server Personal Access Token 的 Bearer Auth。凭据保存在 Panel 本地数据目录中，云端模式不可用；除非 Jira 位于受信任的内网，否则应使用 HTTPS。
 
 ## 环境要求
 

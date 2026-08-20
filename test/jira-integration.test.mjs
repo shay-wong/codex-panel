@@ -152,3 +152,36 @@ test("Jira REST sync is atomic, rechecks missing issues, and confirms account ch
   assert.equal(readConfig().accountId, "account-b");
   assert.ok(requests.filter((pathname) => pathname === "/rest/api/2/search").length >= 4);
 });
+
+test("Jira transition retries accept the remote target state after a lost response", async () => {
+  let statusCategory = "new";
+  let transitionPosts = 0;
+  const { integration } = fixture(async (url, init = {}) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/rest/applinks/1.0/manifest") return json({ id: "jira-instance" });
+    if (parsed.pathname === "/rest/api/2/issue/OPEN-1" && parsed.searchParams.has("fields")) {
+      return json({ fields: { status: { statusCategory: { key: statusCategory } } } });
+    }
+    if (parsed.pathname === "/rest/api/2/issue/OPEN-1/transitions" && init.method !== "POST") {
+      return json({
+        transitions: [{ id: "21", name: "Start", to: { statusCategory: { key: "indeterminate" } } }],
+      });
+    }
+    if (parsed.pathname === "/rest/api/2/issue/OPEN-1/transitions" && init.method === "POST") {
+      transitionPosts += 1;
+      statusCategory = "indeterminate";
+      throw new Error("response lost");
+    }
+    throw new Error(`Unexpected Jira request: ${parsed.pathname}`);
+  });
+  const task = {
+    externalOrigin: ORIGIN,
+    externalKey: "OPEN-1",
+    status: "todo",
+  };
+
+  await assert.rejects(integration.moveTask(task, "in_progress"), { code: "JIRA_UNAVAILABLE" });
+  await integration.moveTask(task, "in_progress");
+
+  assert.equal(transitionPosts, 1);
+});

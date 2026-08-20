@@ -6,6 +6,19 @@ import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_LABEL_NAMES, JIRA_PROJECT_ID } from "../shared/domain.mjs";
 
 const DEFAULT_PROJECT_LABELS_JSON = JSON.stringify(DEFAULT_LABEL_NAMES);
+const JIRA_SIMPLE_START_ITEMS_TABLE = `
+  CREATE TABLE jira_simple_start_items (
+    operation_id TEXT NOT NULL REFERENCES jira_simple_start_operations(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    task_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (operation_id, project_id),
+    UNIQUE (operation_id, task_id),
+    UNIQUE (operation_id, thread_id)
+  );
+`;
 
 export class ApiError extends Error {
   constructor(status, code, message, details) {
@@ -381,6 +394,19 @@ function aiChatThreadFromRow(row) {
     latestTodo: null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function jiraSimpleStartFromRow(row) {
+  return {
+    id: row.id,
+    status: row.status,
+    transitionedAt: row.transitioned_at,
+    projectCount: Number(row.project_count ?? 0),
+    readyCount: Number(row.ready_count ?? 0),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at,
   };
 }
 
@@ -805,6 +831,18 @@ export class PanelDatabase {
 
       CREATE INDEX IF NOT EXISTS jira_task_links_jira
         ON jira_task_links(jira_task_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS jira_simple_start_operations (
+        id TEXT PRIMARY KEY,
+        jira_task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+        status TEXT NOT NULL CHECK (status IN ('creating', 'complete')),
+        transitioned_at TEXT,
+        completed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      ${JIRA_SIMPLE_START_ITEMS_TABLE.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS")}
     `);
 
     const commentColumns = this.database.prepare("PRAGMA table_info(comments)").all();
@@ -1389,7 +1427,14 @@ export class PanelDatabase {
           AND jira.archived_at IS NULL
         ORDER BY jira.sort_order, jira.created_at, jira.id
       `).all(task.projectId).map(taskRelationSummaryFromRow);
-      return { jira: null, projects: [], issues: [], availableIssues: [], availableJira };
+      return {
+        jira: null,
+        projects: [],
+        issues: [],
+        availableIssues: [],
+        availableJira,
+        simpleStart: null,
+      };
     }
     const projects = this.database.prepare(`
       SELECT projects.*
@@ -1418,7 +1463,148 @@ export class PanelDatabase {
         ORDER BY tasks.project_id, tasks.status, tasks.sort_order, tasks.created_at, tasks.id
       `).all(jiraTask.id).map(taskRelationSummaryFromRow)
       : [];
-    return { jira: jiraTask, projects, issues, availableIssues, availableJira: [] };
+    return {
+      jira: jiraTask,
+      projects,
+      issues,
+      availableIssues,
+      availableJira: [],
+      simpleStart: this.getJiraSimpleStartOperation(jiraTask.id),
+    };
+  }
+
+  getJiraSimpleStartOperation(jiraTaskId) {
+    const row = this.database.prepare(`
+      SELECT
+        operations.*,
+        COUNT(items.project_id) AS project_count,
+        SUM(CASE WHEN threads.id IS NOT NULL THEN 1 ELSE 0 END) AS ready_count
+      FROM jira_simple_start_operations AS operations
+      LEFT JOIN jira_simple_start_items AS items ON items.operation_id = operations.id
+      LEFT JOIN ai_chat_threads AS threads ON threads.id = items.thread_id
+      WHERE operations.jira_task_id = ?
+      GROUP BY operations.id
+    `).get(jiraTaskId);
+    return row ? jiraSimpleStartFromRow(row) : null;
+  }
+
+  listJiraSimpleStartItems(jiraTaskId) {
+    return this.database.prepare(`
+      SELECT items.project_id, items.task_id, items.thread_id
+      FROM jira_simple_start_operations AS operations
+      JOIN jira_simple_start_items AS items ON items.operation_id = operations.id
+      WHERE operations.jira_task_id = ?
+      ORDER BY items.project_id
+    `).all(jiraTaskId).map((row) => ({
+      projectId: row.project_id,
+      taskId: row.task_id,
+      threadId: row.thread_id,
+    }));
+  }
+
+  beginJiraSimpleStart(jiraTaskId, version) {
+    const jiraTask = this.#requireTask(jiraTaskId);
+    const existing = this.getJiraSimpleStartOperation(jiraTask.id);
+    if (existing) {
+      return { jira: jiraTask, operation: existing, items: this.listJiraSimpleStartItems(jiraTask.id) };
+    }
+    this.#requireVersion(jiraTask, version);
+    if (jiraTask.source !== "jira" || jiraTask.archivedAt !== null) {
+      throw new ApiError(409, "JIRA_SIMPLE_START_UNAVAILABLE", "Only active Jira issues can be started");
+    }
+    if (jiraTask.status !== "todo") {
+      throw new ApiError(409, "JIRA_SIMPLE_START_STATUS", "只有待认领的 Jira 可以创建并开始");
+    }
+    const context = this.getJiraContext(jiraTask.id);
+    if (context.projects.length === 0) {
+      throw new ApiError(409, "JIRA_SIMPLE_START_PROJECT_REQUIRED", "请先为 Jira 关联至少一个仓库");
+    }
+    const operationId = randomUUID();
+    const timestamp = now();
+    const items = context.projects.map((project) => {
+      const linked = context.issues.filter((issue) => issue.projectId === project.id);
+      if (linked.length > 1) {
+        throw new ApiError(
+          409,
+          "JIRA_SIMPLE_START_PROJECT_CONFLICT",
+          `仓库 ${project.name} 已关联多个执行 Issue，请先保留一个`,
+        );
+      }
+      return {
+        projectId: project.id,
+        taskId: linked[0]?.id ?? randomUUID(),
+        threadId: randomUUID(),
+      };
+    });
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        INSERT INTO jira_simple_start_operations (
+          id, jira_task_id, status, transitioned_at, completed_at, created_at, updated_at
+        ) VALUES (?, ?, 'creating', NULL, NULL, ?, ?)
+      `).run(operationId, jiraTask.id, timestamp, timestamp);
+      const insertItem = this.database.prepare(`
+        INSERT INTO jira_simple_start_items (
+          operation_id, project_id, task_id, thread_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (const item of items) {
+        insertItem.run(
+          operationId,
+          item.projectId,
+          item.taskId,
+          item.threadId,
+          timestamp,
+          timestamp,
+        );
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return {
+      jira: jiraTask,
+      operation: this.getJiraSimpleStartOperation(jiraTask.id),
+      items,
+    };
+  }
+
+  markJiraSimpleStartTransitioned(operationId) {
+    const timestamp = now();
+    const result = this.database.prepare(`
+      UPDATE jira_simple_start_operations
+      SET transitioned_at = COALESCE(transitioned_at, ?), updated_at = ?
+      WHERE id = ? AND status = 'creating'
+    `).run(timestamp, timestamp, operationId);
+    if (result.changes !== 1) {
+      throw new ApiError(409, "JIRA_SIMPLE_START_INACTIVE", "Jira 创建操作已经结束");
+    }
+  }
+
+  completeJiraSimpleStart(operationId) {
+    const operation = this.database.prepare(`
+      SELECT id FROM jira_simple_start_operations WHERE id = ? AND status = 'creating'
+    `).get(operationId);
+    if (!operation) return;
+    const pending = this.database.prepare(`
+      SELECT 1
+      FROM jira_simple_start_items AS items
+      LEFT JOIN tasks ON tasks.id = items.task_id
+      LEFT JOIN ai_chat_threads ON ai_chat_threads.id = items.thread_id
+      WHERE items.operation_id = ?
+        AND (tasks.id IS NULL OR ai_chat_threads.id IS NULL)
+      LIMIT 1
+    `).get(operationId);
+    if (pending) {
+      throw new ApiError(409, "JIRA_SIMPLE_START_INCOMPLETE", "仍有仓库未完成 Issue 或对话创建");
+    }
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE jira_simple_start_operations
+      SET status = 'complete', completed_at = ?, updated_at = ?
+      WHERE id = ?
+    `).run(timestamp, timestamp, operationId);
   }
 
   setJiraProjects(id, version, projectIds, actor) {
@@ -2113,7 +2299,7 @@ export class PanelDatabase {
       `).get(prefix.length + 2, `${prefix}-[0-9]*`).number;
       const number = Math.max(project.next_task_number, maximum === null ? 1 : maximum + 1);
       const identifier = `${prefix}-${number}`;
-      const id = randomUUID();
+      const id = input.id ?? randomUUID();
       const timestamp = now();
       let sortOrder = input.sortOrder;
       if (sortOrder === undefined) {

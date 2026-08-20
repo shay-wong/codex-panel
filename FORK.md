@@ -183,13 +183,13 @@
 
 - 生命周期：`等待上游吸收`
 - 原始目的：把 Jira 保持为独立外部需求，同时允许一个需求跨多个仓库拆成多个本地执行 Issue，避免 Jira 刷新覆盖仓库内的实施内容。
-- 行为不变量：一个 Jira 可以选择一个或多个具有本地 workspace 的项目并关联其中多个执行 Issue；每个执行 Issue 最多关联一个 Jira。仓库变更必须先展示差异并等待显式保存，不自动创建、迁移或删除 Issue。关联 Issue 只能移动到该 Jira 已选项目；归档保留关系，永久删除前必须解除。Jira 同步只更新外部需求镜像的 key、标题、原始状态、URL、同步时间和错误，不修改关联执行 Issue 的本地字段。
-- 代码和测试路径：`server/database.mjs`、`server/app.mjs`、`server/jira-integration.mjs`、`web/src/App.tsx`、`web/src/api.ts`、`web/src/components/TaskDetail.tsx`、`web/src/styles.css` 和 `web/src/types.ts`。本次按仓库确认与测试授权规则未新增持久化测试。
+- 行为不变量：一个 Jira 可以选择一个或多个具有本地 workspace 的项目并关联其中多个执行 Issue；每个执行 Issue 最多关联一个 Jira。执行 Issue 的关联卡片必须返回 Panel 内的 Jira 需求，外部 Jira 入口保留在需求详情页。仓库变更必须先展示差异并等待显式保存；普通关联不自动创建、迁移或删除 Issue。只有已保存至少一个仓库的待认领 Jira 才可一键创建并开始：Jira 先回写为进行中，每仓库复用唯一执行 Issue 或创建一个 backlog Issue 及独立空闲 AI 对话，全部仓库就绪后才统一释放到待认领。部分失败必须持久化保留进度，重试复用预留 Issue 与会话 ID、已有关联和对话，不重复回写或创建。关联 Issue 只能移动到该 Jira 已选项目；归档保留关系，永久删除前必须解除。Jira 同步只更新外部需求镜像的 key、标题、原始状态、URL、同步时间和错误，不修改关联执行 Issue 的本地字段。
+- 代码和测试路径：`server/database.mjs`、`server/app.mjs`、`server/jira-integration.mjs`、`web/src/App.tsx`、`web/src/api.ts`、`web/src/components/TaskDetail.tsx`、`web/src/styles.css`、`web/src/types.ts` 和 `test/jira-integration.test.mjs`。
 - 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
 - 来源：当前 Jira 外部需求关联能力；提交后可用 `git log -S'jira_task_links' -- server/database.mjs` 定位。
-- 合并指引：上游调整 Jira 同步、任务 schema、项目移动或详情侧栏时，保留外部需求与本地执行单元的边界、Jira 对执行 Issue 的一对多关系、执行 Issue 对 Jira 的至多一关系，以及仓库约束和显式保存行为；不得把专用关系退化为同项目 Issue 关系或让同步写入执行 Issue。
+- 合并指引：上游调整 Jira 同步、任务 schema、项目移动或详情侧栏时，保留外部需求与本地执行单元的边界、Jira 对执行 Issue 的一对多关系、执行 Issue 对 Jira 的至多一关系、仓库约束和显式保存，以及一键创建的持久化幂等重试和全部就绪后再释放行为；不得把专用关系退化为同项目 Issue 关系或让同步写入执行 Issue。
 - 移除条件：上游提供等价的跨仓库 Jira 需求关联、双向详情维护、同步隔离和生命周期约束后同步移除。
-- 针对性验证：运行 `npm run typecheck` 和 `npm run build:web`；在 Jira 详情选择多个仓库、保存并关联执行 Issue，确认双方详情可打开和解除关系，仓库差异不会在保存前生效，普通 Issue 详情保持紧凑。
+- 针对性验证：运行 `node --test test/jira-integration.test.mjs test/server.test.mjs`、`npm run typecheck` 和 `npm run build:web`；在 Jira 详情选择多个仓库、保存并关联执行 Issue，确认双方详情可打开和解除关系，仓库差异不会在保存前生效，普通 Issue 详情保持紧凑。使用本地 Jira 响应端让第二个仓库首次失败并重试，确认 Jira 只转换一次、每仓库只有一个 Issue 和一个对话，而且首次失败时没有 Issue 提前进入待认领。
 
 ### 本地化交付审查
 
