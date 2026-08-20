@@ -463,6 +463,34 @@ export interface JiraTaskContext {
   availableIssues: TaskRelationSummary[];
   availableJira: TaskRelationSummary[];
   simpleStart: JiraSimpleStartOperation | null;
+  plan: JiraPlan | null;
+}
+
+export interface JiraPlan {
+  threadId: string | null;
+  status: "planning" | "review" | "publishing" | "published";
+  spec: string;
+  needsReview: boolean;
+  promptedAt: string | null;
+  publication: number;
+  version: number;
+  publishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  items: JiraPlanItem[];
+}
+
+export interface JiraPlanItem {
+  key: string;
+  publication: number;
+  projectId: string;
+  taskId: string;
+  title: string;
+  description: string;
+  priority: TaskPriority;
+  labels: string[];
+  blockedBy: string[];
+  task: TaskRelationSummary | null;
 }
 
 export interface JiraSimpleStartOperation {

@@ -137,6 +137,45 @@ panelctl comment delete COMMENT_ID --if-version N [--thread-id ID] [--json]
 
 Each comment JSON object independently records the most recent conversation that created or changed that comment as `threadId`. Comment operations never change the parent issue's `threadId`.
 
+## Jira planning
+
+Use these commands only inside a planning conversation opened from a Jira issue:
+
+```bash
+panelctl jira planning get JIRA_ID [--json]
+panelctl jira planning save JIRA_ID --spec-file SPEC.md --if-version N [--json]
+panelctl jira planning publish JIRA_ID --tickets-file TICKETS.json --if-version N [--json]
+```
+
+`jira planning get` returns the Jira context and `plan.version`. Save the synthesized Spec first. After the user approves the ticket breakdown, publish a JSON manifest in dependency order:
+
+```json
+{
+  "items": [
+    {
+      "key": "api-contract",
+      "projectId": "checkout-api",
+      "title": "Add checkout contract",
+      "description": "## What to build\n...",
+      "priority": "medium",
+      "labels": ["特性"],
+      "blockedBy": []
+    },
+    {
+      "key": "web-flow",
+      "projectId": "checkout-web",
+      "title": "Connect the checkout flow",
+      "description": "## What to build\n...",
+      "priority": "medium",
+      "labels": ["特性"],
+      "blockedBy": ["api-contract"]
+    }
+  ]
+}
+```
+
+Keys are stable within one Jira plan and blockers reference those keys. Every `projectId` must already be linked to the Jira issue. Publication creates or updates `backlog` Issues, links them to Jira, preserves dependency edges, cancels replaced Issues that have not started, and keeps Issues that are already active, under review, or complete.
+
 ## Download inline images
 
 Issue descriptions and comments may contain inline images at exact positions in their Markdown:

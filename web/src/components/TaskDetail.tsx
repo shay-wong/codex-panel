@@ -21,6 +21,7 @@ import {
   removeJiraTaskLink,
   resolvePanelUrl,
   saveJiraTaskProjects,
+  startJiraPlanning,
   startSimpleJiraTask,
   uploadAttachment,
   uploadCommentAttachment,
@@ -551,6 +552,7 @@ export function TaskDetail({
   const [jiraLinkSavingId, setJiraLinkSavingId] = useState<string | null>(null);
   const [jiraManagerOpen, setJiraManagerOpen] = useState(false);
   const [jiraSimpleStartSaving, setJiraSimpleStartSaving] = useState(false);
+  const [jiraPlanningSaving, setJiraPlanningSaving] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentsError, setAttachmentsError] = useState<TaskDetailError | null>(null);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
@@ -863,6 +865,28 @@ export function TaskDetail({
     } finally {
       onAiChatThreadsRefresh();
       setJiraSimpleStartSaving(false);
+    }
+  }
+
+  async function createOrContinueJiraPlanning() {
+    if (jiraPlanningSaving) return;
+    setJiraPlanningSaving(true);
+    try {
+      const latest = await getJiraTaskContext(currentTask.id);
+      if (!latest.jira) {
+        setJiraContext(latest);
+        return;
+      }
+      const context = await startJiraPlanning(latest.jira);
+      setJiraContext(context);
+      if (context.jira) setCurrentTask(context.jira);
+      onAiChatThreadsRefresh();
+      if (context.plan?.threadId) onOpenAiChatThread(context.plan.threadId);
+    } catch (error) {
+      onError(messageFor(error));
+      setJiraContext(await getJiraTaskContext(currentTask.id).catch(() => jiraContext));
+    } finally {
+      setJiraPlanningSaving(false);
     }
   }
 
@@ -1179,6 +1203,7 @@ export function TaskDetail({
     currentTask.status === "todo"
     && (jiraContext?.projects.length ?? 0) > 0
     && !jiraProjectsChanged
+    && !jiraContext?.plan
   );
   const jiraSimpleStartLabel = jiraSimpleStartSaving
     ? text("创建中…", "Creating…")
@@ -1188,11 +1213,36 @@ export function TaskDetail({
         ? text("继续创建", "Continue creating")
         : jiraProjectsChanged
           ? text("先保存仓库变更", "Save repository changes first")
+          : jiraContext?.plan
+            ? text("已选择 AI 规划", "AI planning selected")
           : currentTask.status !== "todo"
             ? text("仅待认领可开始", "Only waiting Jira can start")
             : (jiraContext?.projects.length ?? 0) === 0
               ? text("先关联仓库", "Link a repository first")
               : text("创建并开始", "Create and start");
+  const jiraPlanStatusLabel = !jiraContext?.plan
+    ? text("尚未规划", "Not planned")
+    : jiraContext.plan.needsReview
+      ? text("需要复核", "Review required")
+      : jiraContext.plan.status === "planning"
+        ? text("规划中", "Planning")
+        : jiraContext.plan.status === "review"
+          ? text("待确认发布", "Awaiting publication")
+          : jiraContext.plan.status === "publishing"
+            ? text("发布未完成", "Publication interrupted")
+            : text(
+              `已发布 ${jiraContext.plan.items.length} 个 Issue`,
+              `${jiraContext.plan.items.length} issues published`,
+            );
+  const jiraPlanningLabel = jiraPlanningSaving
+    ? text("正在打开…", "Opening…")
+    : jiraContext?.simpleStart
+      ? text("已选择一键执行", "Simple execution selected")
+    : jiraContext?.plan?.needsReview
+      ? text("重新复核", "Review again")
+      : jiraContext?.plan
+        ? text("继续规划", "Continue planning")
+        : text("AI 规划", "Plan with AI");
   const repositoryProjects = projects.filter((project) => (
     project.source !== "jira" && Boolean(project.workspacePath)
   ));
@@ -2078,25 +2128,39 @@ export function TaskDetail({
                   <span>
                     <strong>{currentTask.externalStatus ?? text("未知状态", "Unknown status")}</strong>
                     <small>{text(
-                      `${jiraContext?.projects.length ?? 0} 个仓库 · ${jiraContext?.issues.length ?? 0} 个 Issue`,
-                      `${jiraContext?.projects.length ?? 0} repositories · ${jiraContext?.issues.length ?? 0} issues`,
+                      `${jiraContext?.projects.length ?? 0} 个仓库 · ${jiraContext?.issues.length ?? 0} 个 Issue · ${jiraPlanStatusLabel}`,
+                      `${jiraContext?.projects.length ?? 0} repositories · ${jiraContext?.issues.length ?? 0} issues · ${jiraPlanStatusLabel}`,
                     )}</small>
                   </span>
                   <b>{text("管理关联", "Manage")}</b>
                   <LinearIcon name="chevronRight" />
                 </button>
-                <button
-                  className={`jira-simple-start-button${jiraSimpleStartComplete ? " is-complete" : ""}`}
-                  type="button"
-                  disabled={jiraContextLoading || jiraSimpleStartSaving || jiraSimpleStartComplete || !jiraSimpleStartEnabled}
-                  aria-busy={jiraSimpleStartSaving}
-                  onClick={() => void createAndStartSimpleJira()}
-                >
-                  {jiraSimpleStartSaving
-                    ? <span className="ai-chat-spinner" aria-hidden="true" />
-                    : <LinearIcon name={jiraSimpleStartComplete ? "check" : "play"} />}
-                  <span>{jiraSimpleStartLabel}</span>
-                </button>
+                <div className="jira-context-actions">
+                  <button
+                    className={`jira-planning-button${jiraContext?.plan?.needsReview ? " needs-review" : ""}`}
+                    type="button"
+                    disabled={jiraContextLoading || jiraPlanningSaving || Boolean(jiraContext?.simpleStart)}
+                    aria-busy={jiraPlanningSaving}
+                    onClick={() => void createOrContinueJiraPlanning()}
+                  >
+                    {jiraPlanningSaving
+                      ? <span className="ai-chat-spinner" aria-hidden="true" />
+                      : <LinearIcon name="conversation" />}
+                    <span>{jiraPlanningLabel}</span>
+                  </button>
+                  <button
+                    className={`jira-simple-start-button${jiraSimpleStartComplete ? " is-complete" : ""}`}
+                    type="button"
+                    disabled={jiraContextLoading || jiraSimpleStartSaving || jiraSimpleStartComplete || !jiraSimpleStartEnabled}
+                    aria-busy={jiraSimpleStartSaving}
+                    onClick={() => void createAndStartSimpleJira()}
+                  >
+                    {jiraSimpleStartSaving
+                      ? <span className="ai-chat-spinner" aria-hidden="true" />
+                      : <LinearIcon name={jiraSimpleStartComplete ? "check" : "play"} />}
+                    <span>{jiraSimpleStartLabel}</span>
+                  </button>
+                </div>
               </section>
             ) : jiraContext?.jira ? (
               <section className="jira-context-section jira-context-summary" aria-label={text("关联 Jira", "Linked Jira")}>
@@ -2114,6 +2178,14 @@ export function TaskDetail({
                   <b>{jiraContext.jira.externalStatus ?? taskStatusLabel(language, jiraContext.jira.status)}</b>
                   <LinearIcon name="chevronRight" />
                 </a>
+                {jiraContext.plan?.needsReview && <p className="jira-project-diff">{text(
+                  ["in_progress", "in_review", "blocked", "done"].includes(currentTask.status)
+                    ? "Jira 规划需要复核；此 Issue 已开始，不会自动取消。"
+                    : "Jira 规划需要复核；此 Issue 已暂停进入执行。",
+                  ["in_progress", "in_review", "blocked", "done"].includes(currentTask.status)
+                    ? "The Jira plan requires review. This started issue will not be canceled automatically."
+                    : "The Jira plan requires review. This issue is paused from execution.",
+                )}</p>}
                 <button
                   type="button"
                   disabled={jiraLinkSavingId !== null}
@@ -2234,6 +2306,33 @@ export function TaskDetail({
                       : text("尚未同步", "Not synced")}</strong>
                   {currentTask.externalSyncError && <small>{currentTask.externalSyncError}</small>}
                 </div>
+                {jiraContext?.plan && (
+                  <div className={`jira-plan-summary${jiraContext.plan.needsReview ? " needs-review" : ""}`}>
+                    <div>
+                      <span>{text("规划", "Planning")}</span>
+                      <strong>{jiraPlanStatusLabel}</strong>
+                      <button type="button" onClick={() => void createOrContinueJiraPlanning()}>
+                        {text("打开对话", "Open conversation")}
+                      </button>
+                    </div>
+                    {jiraContext.plan.needsReview && <p>{text(
+                      "Jira 内容或关联仓库已变化；未开始 Issue 已暂停进入执行，已开始成果只告警且不会自动取消。",
+                      "Jira content or linked repositories changed. Unstarted issues are paused; started work is warned and will not be canceled automatically.",
+                    )}</p>}
+                    {jiraContext.plan.spec && (
+                      <details>
+                        <summary>Spec</summary>
+                        <div className="jira-plan-spec">
+                          <DescriptionDocument
+                            value={jiraContext.plan.spec}
+                            referenceTasks={referenceTasks}
+                            onOpenTask={onOpenTask}
+                          />
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                )}
               </section>
               <section>
                 <h3>{text("执行 Issue", "Execution issues")}</h3>
