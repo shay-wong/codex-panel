@@ -268,7 +268,7 @@ describe("InlineMediaComposer completion references", () => {
     ));
   });
 
-  it("keeps non-contiguous groups unique, source diagnostics non-selectable, and active identity stable", async () => {
+  it("keeps non-contiguous groups unique, source diagnostics hidden, and active identity stable", async () => {
     const agent = (id: string, label: string) => ({
       kind: "agent" as const,
       trigger: "@" as const,
@@ -329,10 +329,15 @@ describe("InlineMediaComposer completion references", () => {
     ).toBe("true"));
 
     api.getCandidates.mockResolvedValueOnce(withDiagnostics([]));
-    view.rerender(<TestComposer initial="@x" projectId="project-3" />);
+    view.rerender(<TestComposer initial="@" projectId="project-3" />);
     placeCaretAtEnd(screen.getByRole("textbox", { name: "Description" }));
-    fireEvent.keyUp(screen.getByRole("textbox", { name: "Description" }), { key: "x" });
-    expect(await screen.findByText(/EXPERIMENTAL_SOURCE_NOT_ALLOWED/)).toBeTruthy();
+    fireEvent.keyUp(screen.getByRole("textbox", { name: "Description" }), { key: "@" });
+    await waitFor(() => expect(api.getCandidates).toHaveBeenLastCalledWith(
+      expect.objectContaining({ projectId: "project-3", trigger: "@", query: "" }),
+      expect.any(AbortSignal),
+    ));
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    expect(screen.queryByText(/EXPERIMENTAL_SOURCE_NOT_ALLOWED/)).toBeNull();
     expect(screen.queryAllByRole("option")).toHaveLength(0);
   });
 
@@ -369,16 +374,15 @@ describe("InlineMediaComposer completion references", () => {
     expect(parentKeyDown).toHaveBeenCalledTimes(2);
   });
 
-  it("closes the menu with Escape without changing the text", async () => {
+  it("hides the menu when no matching completion is returned", async () => {
     api.getCandidates.mockResolvedValue(response([]));
     render(<TestComposer initial="@missing" />);
     const editor = screen.getByRole("textbox", { name: "Description" });
     placeCaretAtEnd(editor);
     fireEvent.keyUp(editor, { key: "g" });
-    await screen.findByText("No matching completions");
 
-    fireEvent.keyDown(editor, { key: "Escape" });
-    expect(screen.queryByRole("listbox")).toBeNull();
+    await waitFor(() => expect(api.getCandidates).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
     expect(screen.getByTestId("serialized").textContent).toBe("@missing");
   });
 
