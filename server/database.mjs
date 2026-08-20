@@ -410,6 +410,20 @@ function jiraSimpleStartFromRow(row) {
   };
 }
 
+function jiraPlanItemFromRow(row) {
+  return {
+    key: row.item_key,
+    publication: row.publication,
+    projectId: row.project_id,
+    taskId: row.task_id,
+    title: row.title,
+    description: row.description,
+    priority: row.priority,
+    labels: JSON.parse(row.labels),
+    blockedBy: JSON.parse(row.blocked_by),
+  };
+}
+
 function aiChatEventFromRow(row) {
   return {
     id: row.id,
@@ -843,6 +857,49 @@ export class PanelDatabase {
       );
 
       ${JIRA_SIMPLE_START_ITEMS_TABLE.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS")}
+
+      CREATE TABLE IF NOT EXISTS jira_plans (
+        jira_task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+        thread_id TEXT UNIQUE REFERENCES ai_chat_threads(id) ON DELETE SET NULL,
+        status TEXT NOT NULL CHECK (status IN ('planning', 'review', 'publishing', 'published')),
+        spec TEXT NOT NULL DEFAULT '',
+        source_snapshot TEXT NOT NULL,
+        prompted_at TEXT,
+        publication INTEGER NOT NULL DEFAULT 0 CHECK (publication >= 0),
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        published_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS jira_plan_items (
+        jira_task_id TEXT NOT NULL REFERENCES jira_plans(jira_task_id) ON DELETE CASCADE,
+        publication INTEGER NOT NULL CHECK (publication > 0),
+        item_key TEXT NOT NULL,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+        task_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        priority TEXT NOT NULL CHECK (priority IN ('none', 'urgent', 'high', 'medium', 'low')),
+        labels TEXT NOT NULL DEFAULT '[]',
+        blocked_by TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (jira_task_id, publication, item_key),
+        UNIQUE (jira_task_id, publication, task_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS jira_plan_items_task
+        ON jira_plan_items(task_id);
+
+      CREATE TABLE IF NOT EXISTS jira_plan_edges (
+        jira_task_id TEXT NOT NULL REFERENCES jira_plans(jira_task_id) ON DELETE CASCADE,
+        publication INTEGER NOT NULL CHECK (publication > 0),
+        source_task_id TEXT NOT NULL,
+        target_task_id TEXT NOT NULL,
+        created_relation INTEGER NOT NULL CHECK (created_relation IN (0, 1)),
+        PRIMARY KEY (jira_task_id, publication, source_task_id, target_task_id),
+        CHECK (source_task_id <> target_task_id)
+      );
     `);
 
     const commentColumns = this.database.prepare("PRAGMA table_info(comments)").all();
@@ -1434,6 +1491,7 @@ export class PanelDatabase {
         availableIssues: [],
         availableJira,
         simpleStart: null,
+        plan: null,
       };
     }
     const projects = this.database.prepare(`
@@ -1470,7 +1528,345 @@ export class PanelDatabase {
       availableIssues,
       availableJira: [],
       simpleStart: this.getJiraSimpleStartOperation(jiraTask.id),
+      plan: this.getJiraPlan(jiraTask.id),
     };
+  }
+
+  #jiraPlanSourceSnapshot(jiraTask) {
+    const projectIds = this.database.prepare(`
+      SELECT project_id
+      FROM jira_task_projects
+      WHERE jira_task_id = ?
+      ORDER BY project_id
+    `).all(jiraTask.id).map((row) => row.project_id);
+    return JSON.stringify({
+      title: jiraTask.title,
+      description: jiraTask.description,
+      priority: jiraTask.priority,
+      labels: [...jiraTask.labels].sort(),
+      projectIds,
+    });
+  }
+
+  listJiraPlanItems(jiraTaskId, publication) {
+    if (!publication) return [];
+    const taskStatement = this.database.prepare("SELECT * FROM tasks WHERE id = ?");
+    return this.database.prepare(`
+      SELECT *
+      FROM jira_plan_items
+      WHERE jira_task_id = ? AND publication = ?
+      ORDER BY rowid
+    `).all(jiraTaskId, publication).map((row) => {
+      const item = jiraPlanItemFromRow(row);
+      const task = taskStatement.get(item.taskId);
+      return {
+        ...item,
+        task: task ? taskRelationSummaryFromRow(task) : null,
+      };
+    });
+  }
+
+  getJiraPlan(jiraTaskId) {
+    const row = this.database.prepare(`
+      SELECT * FROM jira_plans WHERE jira_task_id = ?
+    `).get(jiraTaskId);
+    if (!row) return null;
+    const jiraTask = this.#requireTask(jiraTaskId);
+    return {
+      threadId: row.thread_id,
+      status: row.status,
+      spec: row.spec,
+      needsReview: row.source_snapshot !== this.#jiraPlanSourceSnapshot(jiraTask)
+        || (row.publication > 0 && row.status !== "published"),
+      promptedAt: row.prompted_at,
+      publication: row.publication,
+      version: row.version,
+      publishedAt: row.published_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      items: this.listJiraPlanItems(jiraTaskId, row.publication),
+    };
+  }
+
+  beginJiraPlanning(jiraTaskId, taskVersion, threadId) {
+    const jiraTask = this.#requireTask(jiraTaskId);
+    this.#requireVersion(jiraTask, taskVersion);
+    if (jiraTask.source !== "jira" || jiraTask.archivedAt !== null) {
+      throw new ApiError(409, "JIRA_PLANNING_UNAVAILABLE", "Only active Jira issues can be planned");
+    }
+    if (this.getJiraSimpleStartOperation(jiraTask.id)) {
+      throw new ApiError(
+        409,
+        "JIRA_PLANNING_SIMPLE_START_CONFLICT",
+        "This Jira issue already uses the simple execution flow",
+      );
+    }
+    const existing = this.database.prepare(`
+      SELECT * FROM jira_plans WHERE jira_task_id = ?
+    `).get(jiraTask.id);
+    const sourceSnapshot = this.#jiraPlanSourceSnapshot(jiraTask);
+    const timestamp = now();
+    if (!existing) {
+      if (!threadId) {
+        throw new ApiError(409, "JIRA_PLANNING_THREAD_REQUIRED", "Planning requires an AI conversation");
+      }
+      this.database.prepare(`
+        INSERT INTO jira_plans (
+          jira_task_id, thread_id, status, spec, source_snapshot, prompted_at,
+          publication, version, published_at, created_at, updated_at
+        ) VALUES (?, ?, 'planning', '', ?, NULL, 0, 1, NULL, ?, ?)
+      `).run(jiraTask.id, threadId, sourceSnapshot, timestamp, timestamp);
+      return { plan: this.getJiraPlan(jiraTask.id), shouldPrompt: true };
+    }
+    const nextThreadId = threadId ?? existing.thread_id;
+    if (!nextThreadId) {
+      throw new ApiError(409, "JIRA_PLANNING_THREAD_REQUIRED", "Planning requires an AI conversation");
+    }
+    const shouldRefresh = existing.source_snapshot !== sourceSnapshot
+      || existing.thread_id !== nextThreadId;
+    if (shouldRefresh) {
+      this.database.prepare(`
+        UPDATE jira_plans
+        SET thread_id = ?, status = 'planning', source_snapshot = ?, prompted_at = NULL,
+            version = version + 1, updated_at = ?
+        WHERE jira_task_id = ?
+      `).run(nextThreadId, sourceSnapshot, timestamp, jiraTask.id);
+    }
+    const plan = this.getJiraPlan(jiraTask.id);
+    return { plan, shouldPrompt: shouldRefresh || plan.promptedAt === null };
+  }
+
+  markJiraPlanPrompted(jiraTaskId) {
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE jira_plans
+      SET prompted_at = ?, version = version + 1, updated_at = ?
+      WHERE jira_task_id = ? AND prompted_at IS NULL
+    `).run(timestamp, timestamp, jiraTaskId);
+    return this.getJiraPlan(jiraTaskId);
+  }
+
+  saveJiraPlanSpec(jiraTaskId, version, spec) {
+    const plan = this.database.prepare(`
+      SELECT * FROM jira_plans WHERE jira_task_id = ?
+    `).get(jiraTaskId);
+    if (!plan) {
+      throw new ApiError(404, "JIRA_PLAN_NOT_FOUND", "Start Jira planning before saving a spec");
+    }
+    if (plan.version !== version) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Jira plan changed since it was read");
+    }
+    if (plan.status === "publishing") {
+      throw new ApiError(409, "JIRA_PLAN_PUBLISHING", "Finish the current publication before editing the spec");
+    }
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE jira_plans
+      SET spec = ?, status = 'review', version = version + 1, updated_at = ?
+      WHERE jira_task_id = ? AND version = ?
+    `).run(spec, timestamp, jiraTaskId, version);
+    return this.getJiraPlan(jiraTaskId);
+  }
+
+  beginJiraPlanPublish(jiraTaskId, version, items) {
+    const jiraTask = this.#requireTask(jiraTaskId);
+    const plan = this.database.prepare(`
+      SELECT * FROM jira_plans WHERE jira_task_id = ?
+    `).get(jiraTaskId);
+    if (!plan) {
+      throw new ApiError(404, "JIRA_PLAN_NOT_FOUND", "Start Jira planning before publishing tickets");
+    }
+    if (plan.version !== version) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Jira plan changed since it was read");
+    }
+    if (!plan.spec.trim()) {
+      throw new ApiError(409, "JIRA_PLAN_SPEC_REQUIRED", "Save the Jira planning spec before publishing tickets");
+    }
+    if (plan.status !== "review" && plan.status !== "publishing") {
+      throw new ApiError(409, "JIRA_PLAN_REVIEW_REQUIRED", "Save the reviewed Jira spec before publishing tickets");
+    }
+    if (plan.source_snapshot !== this.#jiraPlanSourceSnapshot(jiraTask)) {
+      throw new ApiError(409, "JIRA_PLAN_REVIEW_REQUIRED", "Jira content or linked repositories changed; review the plan again");
+    }
+    const projectIds = new Set(this.database.prepare(`
+      SELECT project_id FROM jira_task_projects WHERE jira_task_id = ?
+    `).all(jiraTaskId).map((row) => row.project_id));
+    if (projectIds.size === 0) {
+      throw new ApiError(409, "JIRA_PLAN_PROJECT_REQUIRED", "Link at least one repository before publishing tickets");
+    }
+    const invalid = items.find((item) => !projectIds.has(item.projectId));
+    if (invalid) {
+      throw new ApiError(
+        409,
+        "JIRA_PLAN_PROJECT_INVALID",
+        `Ticket '${invalid.key}' uses a repository that is not linked to Jira`,
+      );
+    }
+
+    const comparable = (entries) => JSON.stringify(entries.map((item) => ({
+      key: item.key,
+      projectId: item.projectId,
+      title: item.title,
+      description: item.description,
+      priority: item.priority,
+      labels: item.labels,
+      blockedBy: item.blockedBy,
+    })));
+    if (plan.status === "publishing") {
+      const currentItems = this.listJiraPlanItems(jiraTaskId, plan.publication);
+      if (comparable(currentItems) !== comparable(items)) {
+        throw new ApiError(
+          409,
+          "JIRA_PLAN_PUBLISH_CONFLICT",
+          "Retry the interrupted publication with the same ticket manifest",
+        );
+      }
+      return {
+        plan: this.getJiraPlan(jiraTaskId),
+        items: currentItems,
+        previousItems: this.listJiraPlanItems(jiraTaskId, plan.publication - 1),
+      };
+    }
+
+    const publication = plan.publication + 1;
+    const previousItems = this.listJiraPlanItems(jiraTaskId, plan.publication);
+    const missingPreservedItem = previousItems.find((previous) => (
+      previous.task
+      && ["in_progress", "in_review", "blocked", "done"].includes(previous.task.status)
+      && !items.some((item) => item.key === previous.key && item.projectId === previous.task.projectId)
+    ));
+    if (missingPreservedItem) {
+      throw new ApiError(
+        409,
+        "JIRA_PLAN_PRESERVED_TASK_REQUIRED",
+        `Keep started issue '${missingPreservedItem.task.identifier}' in the revised plan`,
+      );
+    }
+    const previousByKey = new Map(previousItems.map((item) => [item.key, item]));
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const insert = this.database.prepare(`
+        INSERT INTO jira_plan_items (
+          jira_task_id, publication, item_key, project_id, task_id,
+          title, description, priority, labels, blocked_by, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const item of items) {
+        const previous = previousByKey.get(item.key);
+        const previousTask = previous
+          ? this.database.prepare("SELECT * FROM tasks WHERE id = ? AND archived_at IS NULL").get(previous.taskId)
+          : null;
+        insert.run(
+          jiraTaskId,
+          publication,
+          item.key,
+          item.projectId,
+          previousTask?.project_id === item.projectId ? previous.taskId : randomUUID(),
+          item.title,
+          item.description,
+          item.priority,
+          JSON.stringify(item.labels),
+          JSON.stringify(item.blockedBy),
+          timestamp,
+        );
+      }
+      this.database.prepare(`
+        UPDATE jira_plans
+        SET status = 'publishing', publication = ?, version = version + 1, updated_at = ?
+        WHERE jira_task_id = ? AND version = ?
+      `).run(publication, timestamp, jiraTaskId, version);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return {
+      plan: this.getJiraPlan(jiraTaskId),
+      items: this.listJiraPlanItems(jiraTaskId, publication),
+      previousItems,
+    };
+  }
+
+  replaceJiraPlanBlocks(jiraTaskId, previousPublication, publication, nextEdges) {
+    const previousRows = previousPublication > 0 ? this.database.prepare(`
+      SELECT source_task_id, target_task_id, created_relation
+      FROM jira_plan_edges
+      WHERE jira_task_id = ? AND publication = ?
+    `).all(jiraTaskId, previousPublication) : [];
+    const previous = new Map(previousRows.map((row) => [
+      `${row.source_task_id}\0${row.target_task_id}`,
+      row.created_relation === 1,
+    ]));
+    const next = new Set(nextEdges.map(([sourceId, targetId]) => `${sourceId}\0${targetId}`));
+    const remove = this.database.prepare(`
+      DELETE FROM task_relations
+      WHERE relation_type = 'blocks' AND source_task_id = ? AND target_task_id = ?
+    `);
+    const insert = this.database.prepare(`
+      INSERT OR IGNORE INTO task_relations (
+        relation_type, source_task_id, target_task_id, created_at
+      ) VALUES ('blocks', ?, ?, ?)
+    `);
+    const record = this.database.prepare(`
+      INSERT INTO jira_plan_edges (
+        jira_task_id, publication, source_task_id, target_task_id, created_relation
+      ) VALUES (?, ?, ?, ?, ?)
+    `);
+    const timestamp = now();
+    const cancelableStatuses = new Set(["backlog", "todo", "canceled"]);
+    const taskStatus = this.database.prepare("SELECT status FROM tasks WHERE id = ?");
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      for (const [edge, createdRelation] of previous) {
+        if (next.has(edge) || !createdRelation) continue;
+        const endpoints = edge.split("\0");
+        if (endpoints.every((taskId) => cancelableStatuses.has(taskStatus.get(taskId)?.status))) {
+          remove.run(...endpoints);
+        }
+      }
+      for (const edge of next) {
+        const endpoints = edge.split("\0");
+        const inserted = insert.run(...endpoints, timestamp);
+        record.run(
+          jiraTaskId,
+          publication,
+          ...endpoints,
+          previous.get(edge) === true || inserted.changes === 1 ? 1 : 0,
+        );
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  finishJiraPlanPublish(jiraTaskId, publication) {
+    const timestamp = now();
+    const result = this.database.prepare(`
+      UPDATE jira_plans
+      SET status = 'published', published_at = ?, version = version + 1, updated_at = ?
+      WHERE jira_task_id = ? AND publication = ? AND status = 'publishing'
+    `).run(timestamp, timestamp, jiraTaskId, publication);
+    if (result.changes !== 1) {
+      throw new ApiError(409, "JIRA_PLAN_PUBLISH_INACTIVE", "The Jira plan is not publishing");
+    }
+    return this.getJiraPlan(jiraTaskId);
+  }
+
+  #assertJiraPlanAllowsExecution(taskId, status) {
+    if (status !== "in_progress") return;
+    const link = this.database.prepare(`
+      SELECT jira_task_id FROM jira_task_links WHERE task_id = ?
+    `).get(taskId);
+    if (link && this.getJiraPlan(link.jira_task_id)?.needsReview) {
+      throw new ApiError(
+        409,
+        "JIRA_PLAN_REVIEW_REQUIRED",
+        "Review the changed Jira plan before starting this issue",
+      );
+    }
   }
 
   getJiraSimpleStartOperation(jiraTaskId) {
@@ -1507,6 +1903,13 @@ export class PanelDatabase {
     const existing = this.getJiraSimpleStartOperation(jiraTask.id);
     if (existing) {
       return { jira: jiraTask, operation: existing, items: this.listJiraSimpleStartItems(jiraTask.id) };
+    }
+    if (this.getJiraPlan(jiraTask.id)) {
+      throw new ApiError(
+        409,
+        "JIRA_SIMPLE_START_PLANNING_CONFLICT",
+        "This Jira issue already uses the AI planning flow",
+      );
     }
     this.#requireVersion(jiraTask, version);
     if (jiraTask.source !== "jira" || jiraTask.archivedAt !== null) {
@@ -2371,6 +2774,9 @@ export class PanelDatabase {
   updateTask(id, version, changes, threadId, threadBinding, actor) {
     const current = this.#requireTask(id);
     this.#requireVersion(current, version);
+    if (Object.hasOwn(changes, "status") && changes.status !== current.status) {
+      this.#assertJiraPlanAllowsExecution(current.id, changes.status);
+    }
     const activityChanges = taskFieldChanges(current, changes);
     const targetProject = Object.hasOwn(changes, "projectId")
       ? this.database.prepare("SELECT id, name, workspace_path, labels FROM projects WHERE id = ?").get(changes.projectId)
@@ -2539,6 +2945,7 @@ export class PanelDatabase {
     if (current.archivedAt !== null) {
       throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot be moved");
     }
+    if (status !== current.status) this.#assertJiraPlanAllowsExecution(current.id, status);
     if (status !== current.status && sortOrder === undefined) {
       const row = this.database.prepare(`
         SELECT MIN(sort_order) AS minimum

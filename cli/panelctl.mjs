@@ -85,6 +85,7 @@ const COMMAND_OPTIONS = new Map([
   ["issue archive", new Set(["thread-id", "if-version", "json"])],
   ["issue restore", new Set(["thread-id", "if-version", "json"])],
   ["issue relation", new Set(["type", "issue", "thread-id", "if-version", "json"])],
+  ["jira planning", new Set(["spec-file", "tickets-file", "if-version", "json"])],
   ["comment list", new Set(["json"])],
   ["comment add", new Set([
     "body",
@@ -204,7 +205,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map, cloud login/status/logout, issue list/get/create/update/move/archive/restore/relation, comment list/add/update/delete, attachment download/upload, context current",
+      "Expected one of: project list/create/map, cloud login/status/logout, issue list/get/create/update/move/archive/restore/relation, jira planning, comment list/add/update/delete, attachment download/upload, context current",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -292,6 +293,8 @@ async function execute(parsed, overrides) {
         parsed.options,
         overrides,
       );
+    case "jira planning":
+      return jiraPlanning(api, parsed.operands, parsed.options, overrides);
     case "comment list":
       expectOperandCount(parsed, 1);
       return api.request("GET", `${taskPath(parsed.operands[0])}/comments`);
@@ -327,6 +330,54 @@ async function execute(parsed, overrides) {
     default:
       throw usageError(`Unsupported command: ${command}`);
   }
+}
+
+async function jiraPlanning(api, operands, options, overrides) {
+  if (operands.length !== 2) {
+    throw usageError("jira planning expects: get|save|publish JIRA_ID");
+  }
+  const [action, jiraTaskId] = operands;
+  const contextPath = `${taskPath(jiraTaskId)}/jira-context`;
+  if (action === "get") {
+    if (options["spec-file"] || options["tickets-file"] || options["if-version"]) {
+      throw usageError("jira planning get does not accept write options");
+    }
+    return api.request("GET", contextPath);
+  }
+  const version = explicitVersion(options["if-version"]);
+  const read = overrides.readFile ?? readFile;
+  if (action === "save") {
+    if (options["tickets-file"]) throw usageError("jira planning save does not accept --tickets-file");
+    const specPath = resolveInputPath(requiredOption(options, "spec-file"), overrides);
+    let spec;
+    try {
+      spec = await read(specPath, "utf8");
+    } catch (error) {
+      throw new PanelctlError(`Cannot read Jira spec file: ${specPath}`, {
+        code: "FILE_READ_FAILED",
+        exitCode: 2,
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return api.request("PUT", `${taskPath(jiraTaskId)}/jira-planning/spec`, { version, spec });
+  }
+  if (action === "publish") {
+    if (options["spec-file"]) throw usageError("jira planning publish does not accept --spec-file");
+    const ticketsPath = resolveInputPath(requiredOption(options, "tickets-file"), overrides);
+    let manifest;
+    try {
+      manifest = JSON.parse(await read(ticketsPath, "utf8"));
+    } catch (error) {
+      throw new PanelctlError(`Cannot read Jira ticket manifest: ${ticketsPath}`, {
+        code: "FILE_READ_FAILED",
+        exitCode: 2,
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const items = Array.isArray(manifest) ? manifest : manifest?.items;
+    return api.request("POST", `${taskPath(jiraTaskId)}/jira-planning/publish`, { version, items });
+  }
+  throw usageError("jira planning action must be get, save, or publish");
 }
 
 function createApiClient(overrides, { baseUrl: explicitBaseUrl } = {}) {

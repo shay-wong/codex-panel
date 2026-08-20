@@ -33,3 +33,14 @@ Use `panelctl` for every project, issue, relation, and comment operation. Consum
 Use `issue list --archived true|false|all` when archived state matters. Issue creation and updates support `--start-date`; `issue update --project` moves an issue to another project while preserving its linked conversation when no other conversation change is requested.
 
 For version conflicts outside the initial claim, read the issue again, reconcile the newer state, and retry with its current version.
+
+## Jira planning conversations
+
+When the conversation was opened from a Jira issue and the initial instruction provides its exact Jira task ID:
+
+1. Treat Jira as the requirement and the generated Panel Issues as repository-owned execution work. Do not edit repository code in the planning conversation.
+2. After `to-spec`, save the Spec as the Jira planning artifact with `jira planning save`; do not create a Panel Issue for the Spec.
+3. After `to-tickets` and explicit user approval of the breakdown, publish one manifest with `jira planning publish`; do not create the tickets one by one.
+4. Read `jira planning get` immediately before each write and pass the returned `plan.version` with `--if-version`.
+5. Every ticket must target a repository already linked to the Jira issue. Published tickets start in `backlog`; dependency keys become blocking relations, including across linked repositories.
+6. If Jira content or linked repositories changed, stop publication and continue the planning conversation so the user can review the updated plan.

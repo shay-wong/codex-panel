@@ -576,6 +576,16 @@ export async function startSimpleJiraTask(
   return data.context;
 }
 
+export async function startJiraPlanning(
+  task: Pick<Task, "id" | "version">,
+): Promise<JiraTaskContext> {
+  const data = await request<{ context: JiraTaskContext }>(
+    `/api/tasks/${encodeURIComponent(task.id)}/jira-planning`,
+    { method: "POST", body: JSON.stringify({ version: task.version }) },
+  );
+  return data.context;
+}
+
 export async function addJiraTaskLink(
   jiraTask: Pick<Task, "id" | "version">,
   taskId: string,

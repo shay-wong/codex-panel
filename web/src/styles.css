@@ -4530,30 +4530,50 @@ kbd {
   font-weight: 400;
 }
 
-.jira-simple-start-button {
+.jira-context-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 7px 7px 0;
+}
+
+.jira-simple-start-button,
+.jira-planning-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 28px;
   gap: 6px;
-  margin: 7px 7px 0;
   padding: 0 10px;
-  border: var(--border-hairline) solid var(--accent);
+  border: var(--border-hairline) solid var(--border-strong);
   border-radius: 5px;
-  background: var(--accent);
-  color: white;
+  background: var(--surface);
+  color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
 }
 
-.jira-simple-start-button:hover:not(:disabled) {
-  background: var(--accent-hover);
+.jira-simple-start-button {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
 }
 
-.jira-simple-start-button:disabled {
+.jira-simple-start-button:hover:not(:disabled),
+.jira-planning-button:hover:not(:disabled) {
+  filter: brightness(0.97);
+}
+
+.jira-simple-start-button:disabled,
+.jira-planning-button:disabled {
   border-color: var(--border);
   background: var(--surface-muted);
   color: var(--text-tertiary);
+}
+
+.jira-planning-button.needs-review {
+  border-color: color-mix(in srgb, var(--status-review) 52%, var(--border));
+  color: var(--status-review);
 }
 
 .jira-simple-start-button.is-complete {
@@ -4563,7 +4583,9 @@ kbd {
 }
 
 .jira-simple-start-button > svg,
-.jira-simple-start-button .ai-chat-spinner {
+.jira-simple-start-button .ai-chat-spinner,
+.jira-planning-button > svg,
+.jira-planning-button .ai-chat-spinner {
   width: 12px;
   height: 12px;
 }
@@ -4628,6 +4650,67 @@ kbd {
   border-radius: 5px;
   color: var(--text-tertiary);
   font-size: 10px;
+}
+
+.jira-plan-summary {
+  margin: 10px 7px 2px;
+  padding: 8px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-secondary);
+}
+
+.jira-plan-summary.needs-review {
+  border-color: color-mix(in srgb, var(--status-review) 45%, var(--border));
+}
+
+.jira-plan-summary > div:first-child {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+}
+
+.jira-plan-summary > div:first-child > span {
+  color: var(--text-tertiary);
+}
+
+.jira-plan-summary > div:first-child > strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jira-plan-summary > div:first-child > button,
+.jira-plan-summary > details > summary {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.jira-plan-summary > p {
+  margin: 7px 0 0;
+  color: var(--status-review);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.jira-plan-summary details {
+  margin-top: 7px;
+  border-top: var(--border-hairline) solid var(--border);
+  padding-top: 7px;
+  font-size: 10px;
+}
+
+.jira-plan-spec {
+  max-height: 280px;
+  margin-top: 7px;
+  overflow: auto;
+  color: var(--text-secondary);
 }
 
 .jira-sync-health strong {

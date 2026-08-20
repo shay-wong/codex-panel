@@ -740,6 +740,73 @@ function parseJiraSimpleStart(body) {
   return { version: parseVersion(body.version) };
 }
 
+function parseJiraPlanSpec(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "spec"]));
+  return {
+    version: parseVersion(body.version),
+    spec: stringField(body.spec, "spec", { required: true, maxLength: 200_000 }),
+  };
+}
+
+function parseJiraPlanPublish(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "items"]));
+  if (!Array.isArray(body.items) || body.items.length === 0 || body.items.length > 100) {
+    throw new ApiError(400, "INVALID_FIELD", "'items' must contain 1 to 100 tickets");
+  }
+  const items = body.items.map((item, index) => {
+    assertPlainObject(item);
+    assertAllowedKeys(item, new Set([
+      "key", "projectId", "title", "description", "priority", "labels", "blockedBy",
+    ]));
+    const blockedBy = item.blockedBy === undefined ? [] : item.blockedBy;
+    if (!Array.isArray(blockedBy) || blockedBy.length > 50) {
+      throw new ApiError(400, "INVALID_FIELD", `'items[${index}].blockedBy' must be an array`);
+    }
+    return {
+      key: stringField(item.key, `items[${index}].key`, { required: true, maxLength: 80 }),
+      projectId: validateProjectId(item.projectId),
+      title: stringField(item.title, `items[${index}].title`, { required: true, maxLength: 240 }),
+      description: stringField(item.description ?? "", `items[${index}].description`, { maxLength: 100_000 }),
+      priority: parsePriority(item.priority, "none"),
+      labels: item.labels === undefined ? [] : parseLabels(item.labels),
+      blockedBy: blockedBy.map((key, blockedIndex) => stringField(
+        key,
+        `items[${index}].blockedBy[${blockedIndex}]`,
+        { required: true, maxLength: 80 },
+      )),
+    };
+  });
+  const keys = new Set(items.map((item) => item.key));
+  if (keys.size !== items.length) {
+    throw new ApiError(400, "INVALID_FIELD", "Ticket keys must be unique");
+  }
+  for (const item of items) {
+    if (new Set(item.blockedBy).size !== item.blockedBy.length) {
+      throw new ApiError(400, "INVALID_FIELD", `Ticket '${item.key}' has duplicate blockers`);
+    }
+    if (item.blockedBy.includes(item.key) || item.blockedBy.some((key) => !keys.has(key))) {
+      throw new ApiError(400, "INVALID_FIELD", `Ticket '${item.key}' has an invalid blocker`);
+    }
+  }
+  const blockersByKey = new Map(items.map((item) => [item.key, item.blockedBy]));
+  const visiting = new Set();
+  const visited = new Set();
+  const visit = (key) => {
+    if (visiting.has(key)) {
+      throw new ApiError(400, "INVALID_FIELD", "Ticket blockers must not contain a cycle");
+    }
+    if (visited.has(key)) return;
+    visiting.add(key);
+    for (const blocker of blockersByKey.get(key)) visit(blocker);
+    visiting.delete(key);
+    visited.add(key);
+  };
+  for (const item of items) visit(item.key);
+  return { version: parseVersion(body.version), items };
+}
+
 function parseIssueRelationType(value) {
   if (!["parent", "blocks", "blocked_by", "related"].includes(value)) {
     throw new ApiError(
@@ -2016,6 +2083,152 @@ export function createPanelServer(options = {}) {
   });
   const pendingJiraSimpleStarts = new Map();
 
+  function jiraPlanningPrompt(jiraTask, projects, review, plan) {
+    const repositories = projects.length > 0
+      ? projects.map((project) => `- ${project.name} (${project.id})`).join("\n")
+      : "- 尚未关联仓库；可以先澄清需求，但发布 tickets 前必须让用户在 Jira 详情中关联仓库。";
+    const preservedItems = plan?.items.filter((item) => (
+      item.task && ["in_progress", "in_review", "blocked", "done"].includes(item.task.status)
+    )) ?? [];
+    const preservedWork = preservedItems.length > 0
+      ? preservedItems.map((item) => (
+        `- ${item.key}: ${item.task.identifier} [${item.task.status}] ${item.task.title}`
+      )).join("\n")
+      : "- 无";
+    return [
+      review ? "Jira 内容或关联仓库已经变化，请重新复核规划。" : "请规划下面这个 Jira 需求。",
+      "",
+      `Jira: ${jiraTask.externalKey ?? jiraTask.identifier}`,
+      `标题: ${jiraTask.title}`,
+      `优先级: ${jiraTask.priority}`,
+      "描述与需求链接:",
+      jiraTask.description || "（无描述）",
+      "",
+      "关联仓库:",
+      repositories,
+      "",
+      "必须保留并纳入新计划约束的已开始成果:",
+      preservedWork,
+      "",
+      "这是规划会话，不授权修改仓库代码或开始执行 Issue。先使用 grill-me 澄清需求；确认后使用 to-spec 生成本地 Spec，再使用 to-tickets 拆分 tracer-bullet tickets。",
+      `保存 Spec 与发布 tickets 时使用 manage-panel 中的 Jira planning 命令，Jira 标识固定为 ${jiraTask.id}。发布前必须让用户确认拆分结果，并确认每个 ticket 都选择了已关联仓库。`,
+    ].join("\n");
+  }
+
+  async function startJiraPlanning(jiraTaskId, version) {
+    const context = database.getJiraContext(jiraTaskId);
+    if (!context.jira) {
+      throw new ApiError(409, "JIRA_TASK_REQUIRED", "Only Jira issues can be planned");
+    }
+    if (context.jira.version !== version) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Jira issue changed since it was read");
+    }
+    const projectId = context.projects[0]?.id ?? DEFAULT_PROJECT_ID;
+    let thread = context.plan?.threadId
+      ? database.getAiChatThread(context.plan.threadId)
+      : null;
+    if (!thread) {
+      thread = await aiChat.createThread({
+        projectId,
+        title: `${context.jira.externalKey ?? context.jira.identifier} · Jira 规划`,
+        sandbox: "read-only",
+      });
+    }
+    const started = database.beginJiraPlanning(jiraTaskId, version, thread.id);
+    if (started.shouldPrompt) {
+      await aiChat.startTurn(thread.id, {
+        message: jiraPlanningPrompt(context.jira, context.projects, Boolean(context.plan), context.plan),
+        skillIds: ["grill-me", "to-spec", "to-tickets"],
+      });
+      database.markJiraPlanPrompted(jiraTaskId);
+    }
+    return { context: database.getJiraContext(jiraTaskId) };
+  }
+
+  function jiraPlanEdges(items) {
+    const byKey = new Map(items.map((item) => [item.key, item]));
+    return items.flatMap((item) => item.blockedBy.map((blockerKey) => [
+      byKey.get(blockerKey).taskId,
+      item.taskId,
+    ]));
+  }
+
+  function publishJiraPlan(jiraTaskId, version, manifest, actor) {
+    const started = database.beginJiraPlanPublish(jiraTaskId, version, manifest);
+    for (const item of started.items) {
+      let task = database.getTask(item.taskId);
+      if (!task) {
+        task = database.createTask({
+          id: item.taskId,
+          projectId: item.projectId,
+          title: item.title,
+          description: item.description,
+          status: "backlog",
+          priority: item.priority,
+          labels: item.labels,
+          actor,
+          assignee: actor,
+          workflowId: null,
+          developmentContext: null,
+          startDate: null,
+          dueDate: null,
+          recurrence: null,
+        });
+        events.emit("task.created", { task });
+      } else if (task.projectId !== item.projectId || task.source === "jira" || task.archivedAt !== null) {
+        throw new ApiError(
+          409,
+          "JIRA_PLAN_TASK_CONFLICT",
+          `Issue '${task.identifier}' is no longer available for planning`,
+        );
+      } else if (task.status === "backlog" || task.status === "todo") {
+        const changes = Object.fromEntries(Object.entries({
+          title: item.title,
+          description: item.description,
+          priority: item.priority,
+          labels: item.labels,
+        }).filter(([key, value]) => JSON.stringify(task[key]) !== JSON.stringify(value)));
+        if (Object.keys(changes).length > 0) {
+          task = database.updateTask(task.id, task.version, changes, undefined, undefined, actor);
+          events.emit("task.updated", { task });
+        }
+      }
+
+      const context = database.getJiraContext(jiraTaskId);
+      if (!context.issues.some((issue) => issue.id === task.id)) {
+        const linked = database.addJiraTaskLink(jiraTaskId, context.jira.version, task.id, actor);
+        events.emit("task.jira.updated", { taskId: task.id, task: linked.jira });
+      }
+    }
+
+    const currentTaskIds = new Set(started.items.map((item) => item.taskId));
+    for (const previous of started.previousItems) {
+      if (currentTaskIds.has(previous.taskId)) continue;
+      const task = database.getTask(previous.taskId);
+      if (!task || !["backlog", "todo"].includes(task.status)) continue;
+      const canceled = database.moveTask(
+        task.id,
+        task.version,
+        "canceled",
+        undefined,
+        undefined,
+        undefined,
+        actor,
+      );
+      events.emit("task.moved", { task: canceled });
+    }
+
+    database.replaceJiraPlanBlocks(
+      jiraTaskId,
+      started.plan.publication - 1,
+      started.plan.publication,
+      jiraPlanEdges(started.items),
+    );
+    const plan = database.finishJiraPlanPublish(jiraTaskId, started.plan.publication);
+    events.emit("task.jira.updated", { taskId: jiraTaskId, task: database.getTask(jiraTaskId) });
+    return { context: database.getJiraContext(jiraTaskId), plan };
+  }
+
   async function createAndStartSimpleJira(jiraTaskId, version, actor) {
     const started = database.beginJiraSimpleStart(jiraTaskId, version);
     if (started.operation.status === "complete") {
@@ -3097,6 +3310,39 @@ export function createPanelServer(options = {}) {
           200,
           await runSimpleJiraStart(jiraTaskId, version, actorFromRequest(request)),
         );
+      }
+
+      const jiraPlanSpecRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-planning\/spec$/);
+      if (jiraPlanSpecRoute) {
+        const jiraTaskId = decodeRouteSegment(jiraPlanSpecRoute[1], "Task id");
+        assertNoQuery(url.searchParams, "PUT /api/tasks/:id/jira-planning/spec");
+        if (request.method !== "PUT") return methodNotAllowed(response, ["PUT"]);
+        const { version, spec } = parseJiraPlanSpec(await readJson(request));
+        const plan = database.saveJiraPlanSpec(jiraTaskId, version, spec);
+        events.emit("task.jira.updated", { taskId: jiraTaskId, task: database.getTask(jiraTaskId) });
+        return sendJson(response, 200, { context: database.getJiraContext(jiraTaskId), plan });
+      }
+
+      const jiraPlanPublishRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-planning\/publish$/);
+      if (jiraPlanPublishRoute) {
+        const jiraTaskId = decodeRouteSegment(jiraPlanPublishRoute[1], "Task id");
+        assertNoQuery(url.searchParams, "POST /api/tasks/:id/jira-planning/publish");
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        const { version, items } = parseJiraPlanPublish(await readJson(request));
+        return sendJson(
+          response,
+          200,
+          publishJiraPlan(jiraTaskId, version, items, actorFromRequest(request)),
+        );
+      }
+
+      const jiraPlanningRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-planning$/);
+      if (jiraPlanningRoute) {
+        const jiraTaskId = decodeRouteSegment(jiraPlanningRoute[1], "Task id");
+        assertNoQuery(url.searchParams, "POST /api/tasks/:id/jira-planning");
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        const { version } = parseJiraSimpleStart(await readJson(request));
+        return sendJson(response, 200, await startJiraPlanning(jiraTaskId, version));
       }
 
       const jiraLinkRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-links\/([^/]+)$/);
