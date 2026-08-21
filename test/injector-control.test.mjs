@@ -15,21 +15,24 @@ import {
   stopManagedInjector,
 } from "../scripts/codex-injector-control.mjs";
 
-test("the injector control socket requires the manager token and stays user-only", {
-  skip: process.platform === "win32",
-}, async (context) => {
+test("the injector control endpoint requires the manager token and stays private", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-control-"));
   const runtimeFile = path.join(directory, "launcher-runtime.json");
-  const controlSocket = injectorControlSocketPath(runtimeFile);
   const startupToken = "manager-token";
+  const controlSocket = injectorControlSocketPath(runtimeFile, startupToken);
   let opened = 0;
   let stopped = 0;
+  const interrupted = [];
   const server = await startInjectorControlServer({
     controlSocket,
     startupToken,
     handlers: {
       status: async () => ({ ready: true }),
       open: async () => ({ opened: ++opened }),
+      "interrupt-thread": async (request) => {
+        interrupted.push([request.threadId, request.codexHostId]);
+        return { interrupted: true };
+      },
       shutdown: async () => ({ stopping: ++stopped }),
     },
   });
@@ -42,10 +45,12 @@ test("the injector control socket requires the manager token and stays user-only
     startupToken,
     transport: "pipe",
   });
-  const socketMode = (await stat(controlSocket)).mode & 0o777;
+  const socketMode = process.platform === "win32" ? null : (await stat(controlSocket)).mode & 0o777;
   const descriptorMode = (await stat(runtimeFile)).mode & 0o777;
-  assert.equal(socketMode, 0o600);
-  assert.equal(descriptorMode, 0o600);
+  if (process.platform !== "win32") {
+    assert.equal(socketMode, 0o600);
+    assert.equal(descriptorMode, 0o600);
+  }
   assert.deepEqual(await readInjectorRuntime(runtimeFile), {
     version: 2,
     pid: process.pid,
@@ -66,6 +71,7 @@ test("the injector control socket requires the manager token and stays user-only
     runtimeFile,
     startupToken,
     action: "status",
+    payload: { action: "shutdown", startupToken: "forged-token" },
     ownership,
   }), { ready: true });
   assert.deepEqual(await sendInjectorControlRequest({
@@ -74,6 +80,14 @@ test("the injector control socket requires the manager token and stays user-only
     action: "open",
     ownership,
   }), { opened: 1 });
+  assert.deepEqual(await sendInjectorControlRequest({
+    runtimeFile,
+    startupToken,
+    action: "interrupt-thread",
+    payload: { threadId: "thread-1", codexHostId: "local" },
+    ownership,
+  }), { interrupted: true });
+  assert.deepEqual(interrupted, [["thread-1", "local"]]);
   await assert.rejects(
     sendInjectorControlRequest({
       runtimeFile,
@@ -83,6 +97,57 @@ test("the injector control socket requires the manager token and stays user-only
     }),
     /startup token/i,
   );
+});
+
+test("Windows control endpoints are private named pipes derived from the runtime and token", () => {
+  const first = injectorControlSocketPath("C:\\Panel\\launcher-runtime.json", "manager-token", "win32");
+  assert.match(first, /^\\\\\.\\pipe\\codex-panel-[a-f0-9]{32}$/);
+  assert.equal(first, injectorControlSocketPath("C:\\Panel\\launcher-runtime.json", "manager-token", "win32"));
+  assert.notEqual(first, injectorControlSocketPath("C:\\Panel\\launcher-runtime.json", "other-token", "win32"));
+});
+
+test("the Windows named pipe action boundary only accepts native interruption", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cp-wa-"));
+  const runtimeFile = path.join(directory, "launcher-runtime.json");
+  const startupToken = "manager-token";
+  const controlSocket = injectorControlSocketPath(runtimeFile, startupToken);
+  const server = await startInjectorControlServer({
+    controlSocket,
+    startupToken,
+    actions: ["interrupt-thread"],
+    handlers: {
+      status: async () => ({ ready: true }),
+      "interrupt-thread": async () => ({ interrupted: true }),
+    },
+  });
+  context.after(async () => closeInjectorControlServer(server));
+  await publishInjectorRuntime(runtimeFile, {
+    pid: process.pid,
+    url: "http://127.0.0.1:47823",
+    controlSocket,
+    startupToken,
+    transport: "pipe",
+  });
+  const ownership = {
+    nodePath: process.execPath,
+    injectorPath: "/tmp/codex-injector.mjs",
+    readCommand: async () => (
+      `${process.execPath} /tmp/codex-injector.mjs --watch --cdp-pipe --startup-token manager-token`
+    ),
+  };
+
+  assert.deepEqual(await sendInjectorControlRequest({
+    runtimeFile,
+    startupToken,
+    action: "interrupt-thread",
+    ownership,
+  }), { interrupted: true });
+  await assert.rejects(sendInjectorControlRequest({
+    runtimeFile,
+    startupToken,
+    action: "status",
+    ownership,
+  }), /Unsupported Panel control action/);
 });
 
 test("the control client keeps the socket open for asynchronous handler replies", {
@@ -196,13 +261,14 @@ test("legacy runtime descriptors defer to exact resident cleanup during upgrade"
 test("a reused stale runtime PID is discarded without signaling the unrelated process", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-control-stale-pid-"));
   const runtimeFile = path.join(directory, "launcher-runtime.json");
-  const controlSocket = injectorControlSocketPath(runtimeFile);
+  const startupToken = "stale-manager-token";
+  const controlSocket = injectorControlSocketPath(runtimeFile, startupToken);
   const stalePID = 99_998;
   await publishInjectorRuntime(runtimeFile, {
     pid: stalePID,
     url: "http://127.0.0.1:47823",
     controlSocket,
-    startupToken: "stale-manager-token",
+    startupToken,
     transport: "tcp",
     port: 9_229,
   });

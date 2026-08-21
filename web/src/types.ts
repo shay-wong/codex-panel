@@ -464,6 +464,25 @@ export interface JiraTaskContext {
   availableJira: TaskRelationSummary[];
   simpleStart: JiraSimpleStartOperation | null;
   plan: JiraPlan | null;
+  lifecycle: JiraLifecycle | null;
+}
+
+export interface JiraLifecycle {
+  pending: {
+    kind: "waiting" | "ended" | "reopened" | "duplicate";
+    fromStatus: TaskStatus | null;
+    toStatus: TaskStatus | null;
+    suggestedAction: "pause" | "rework" | "migrate";
+    createdAt: string;
+  } | null;
+  pausedIssueIds: string[];
+  reopened: boolean;
+  duplicateOf: {
+    externalKey: string | null;
+    jiraTaskId: string | null;
+    accessible: boolean;
+  } | null;
+  version: number;
 }
 
 export interface JiraPlan {

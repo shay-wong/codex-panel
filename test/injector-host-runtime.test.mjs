@@ -5,6 +5,7 @@ import {
   findResidentInjectorPids,
   handleHostBindingPayload,
   injectionReadinessMatches,
+  interruptNativeCodexThread,
   managedInjectorCommandMatches,
   reconcileInjectionRuntime,
   residentInjectorCommandMatches,
@@ -29,6 +30,33 @@ const currentAutomationRequest = {
   model: "gpt-5.6-sol",
   reasoningEffort: "ultra",
 };
+
+test("native thread interruption targets only the active turn", async () => {
+  const calls = [];
+  const result = await interruptNativeCodexThread(
+    { threadId: "thread-1", codexHostId: "local" },
+    async (method, params) => {
+      calls.push([method, params]);
+      if (method === "thread/read") {
+        return {
+          thread: {
+            turns: [
+              { id: "turn-done", status: "completed" },
+              { id: "turn-active", status: "inProgress" },
+            ],
+          },
+        };
+      }
+      return {};
+    },
+  );
+
+  assert.deepEqual(result, { interrupted: true, turnId: "turn-active" });
+  assert.deepEqual(calls, [
+    ["thread/read", { threadId: "thread-1", includeTurns: true }],
+    ["turn/interrupt", { threadId: "thread-1", turnId: "turn-active" }],
+  ]);
+});
 
 test("a binding call from the wrong execution context cannot reach native actions", async () => {
   const calls = [];
@@ -456,6 +484,11 @@ test("managed injector ownership pins Node, the absolute injector, and watch mod
   const command = `${nodePath} ${injectorPath} --launch --watch --cdp-pipe --startup-token managed-token`;
 
   assert.equal(managedInjectorCommandMatches(command, {
+    nodePath,
+    injectorPath,
+    startupToken: "managed-token",
+  }), true);
+  assert.equal(managedInjectorCommandMatches(`"${nodePath}" "${injectorPath}" --launch --watch --cdp-pipe --startup-token managed-token`, {
     nodePath,
     injectorPath,
     startupToken: "managed-token",

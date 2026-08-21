@@ -429,6 +429,20 @@ export class AiChatService {
     return this.database.deleteAiChatThread(threadId);
   }
 
+  async discardThread(threadId) {
+    let thread = this.getThread(threadId);
+    if (thread.currentRun) {
+      const completion = this.completions.get(thread.currentRun.id);
+      await this.interrupt(thread.currentRun.id);
+      if (completion) await completion;
+      thread = this.getThread(threadId);
+    }
+    if (this.#threadIsActive(thread)) {
+      throw new ApiError(409, "THREAD_BUSY", `AI chat thread '${threadId}' is still running`);
+    }
+    return this.database.deleteAiChatThread(threadId);
+  }
+
   async startTurn(threadId, input) {
     let thread = this.getThread(threadId);
     if (this.#threadIsActive(thread)) {
@@ -518,6 +532,7 @@ export class AiChatService {
         },
         this.managePanelSkillPath,
       );
+      this.database.assertIssueExecutionAllowed(thread.origin.issueId);
       const run = this.database.createAiChatRun({ threadId });
       this.#emit(threadId, { type: "ai.run", run });
       const userEventData = {};
@@ -888,6 +903,7 @@ export class AiChatService {
         }
       }
 
+      this.database.assertIssueExecutionAllowed(thread.origin.issueId);
       const run = this.database.createAiChatRun({ threadId: thread.id });
       this.#emit(thread.id, { type: "ai.run", run });
       const agentDispatches = nodes.flatMap((node, nodeIndex) => {

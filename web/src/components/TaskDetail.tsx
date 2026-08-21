@@ -19,6 +19,7 @@ import {
   listComments,
   listTaskActivities,
   removeJiraTaskLink,
+  resolveJiraLifecycle,
   resolvePanelUrl,
   saveJiraTaskProjects,
   startJiraPlanning,
@@ -553,6 +554,9 @@ export function TaskDetail({
   const [jiraManagerOpen, setJiraManagerOpen] = useState(false);
   const [jiraSimpleStartSaving, setJiraSimpleStartSaving] = useState(false);
   const [jiraPlanningSaving, setJiraPlanningSaving] = useState(false);
+  const [jiraLifecycleSaving, setJiraLifecycleSaving] = useState<
+    "pause" | "keep" | "rework" | "replan" | "migrate" | null
+  >(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentsError, setAttachmentsError] = useState<TaskDetailError | null>(null);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
@@ -890,6 +894,24 @@ export function TaskDetail({
     }
   }
 
+  async function applyJiraLifecycle(action: "pause" | "keep" | "rework" | "replan" | "migrate") {
+    const lifecycle = jiraContext?.lifecycle;
+    if (!jiraContext?.jira || !lifecycle?.pending || jiraLifecycleSaving) return;
+    setJiraLifecycleSaving(action);
+    onError(null);
+    try {
+      const context = await resolveJiraLifecycle(jiraContext.jira.id, lifecycle.version, action);
+      setJiraContext(context);
+      if (context.jira) setCurrentTask(context.jira);
+    } catch (error) {
+      onError(issueMessageFor(error));
+      setJiraContext(await getJiraTaskContext(currentTask.id).catch(() => jiraContext));
+    } finally {
+      onAiChatThreadsRefresh();
+      setJiraLifecycleSaving(null);
+    }
+  }
+
   function handleTitleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -1199,11 +1221,14 @@ export function TaskDetail({
   const jiraProjectsChanged = addedJiraProjects.length > 0 || removedJiraProjects.length > 0;
   const jiraSimpleStartCreating = jiraContext?.simpleStart?.status === "creating";
   const jiraSimpleStartComplete = jiraContext?.simpleStart?.status === "complete";
+  const jiraLifecyclePending = jiraContext?.lifecycle?.pending ?? null;
   const jiraSimpleStartEnabled = jiraSimpleStartCreating || (
     currentTask.status === "todo"
     && (jiraContext?.projects.length ?? 0) > 0
     && !jiraProjectsChanged
     && !jiraContext?.plan
+    && !jiraContext?.lifecycle?.duplicateOf
+    && !jiraLifecyclePending
   );
   const jiraSimpleStartLabel = jiraSimpleStartSaving
     ? text("创建中…", "Creating…")
@@ -1211,9 +1236,11 @@ export function TaskDetail({
       ? text("已创建并开始", "Created and started")
       : jiraSimpleStartCreating
         ? text("继续创建", "Continue creating")
-        : jiraProjectsChanged
+      : jiraProjectsChanged
           ? text("先保存仓库变更", "Save repository changes first")
-          : jiraContext?.plan
+        : jiraLifecyclePending
+          ? text("先处理生命周期提醒", "Resolve lifecycle notice first")
+        : jiraContext?.plan
             ? text("已选择 AI 规划", "AI planning selected")
           : currentTask.status !== "todo"
             ? text("仅待认领可开始", "Only waiting Jira can start")
@@ -2135,11 +2162,72 @@ export function TaskDetail({
                   <b>{text("管理关联", "Manage")}</b>
                   <LinearIcon name="chevronRight" />
                 </button>
+                {jiraLifecyclePending && (
+                  <div className="jira-lifecycle-alert" role="alert">
+                    <p>{jiraLifecyclePending.kind === "waiting"
+                      ? text("Jira 已回到待认领。建议暂停关联 Issue，等待再次授权。", "Jira returned to waiting. Pause linked issues until it is authorized again.")
+                      : jiraLifecyclePending.kind === "ended"
+                        ? text("Jira 已提前结束，但仍有关联 Issue 未完成。建议暂停并保留现有成果。", "Jira ended before its linked issues. Pause them and keep the existing work.")
+                        : jiraLifecyclePending.kind === "reopened"
+                          ? text("Jira 已重新打开。旧 Issue 和对话会保留为历史，请创建新的返工 Issue。", "Jira reopened. Keep the old issues and conversations as history, then create new rework issues.")
+                          : jiraContext?.lifecycle?.duplicateOf?.externalKey
+                            ? text(`此 Jira 是 ${jiraContext.lifecycle.duplicateOf.externalKey} 的重复任务。`, `This Jira duplicates ${jiraContext.lifecycle.duplicateOf.externalKey}.`)
+                            : text("Jira 标记为重复任务，但 canonical Jira 不可用。原关联会保持不变。", "Jira is marked duplicate, but its canonical issue is unavailable. Existing links will stay unchanged.")}</p>
+                    <div>
+                      {(jiraLifecyclePending.kind !== "reopened" || jiraContext?.plan) && (
+                        <button
+                          className="button secondary"
+                          type="button"
+                          disabled={jiraLifecycleSaving !== null}
+                          onClick={() => void applyJiraLifecycle(
+                            jiraLifecyclePending.kind === "reopened" ? "rework" : "keep"
+                          )}
+                        >{jiraLifecycleSaving === (jiraLifecyclePending.kind === "reopened" ? "rework" : "keep")
+                            ? text("处理中…", "Applying…")
+                            : jiraLifecyclePending.kind === "reopened"
+                              ? text("创建返工 Issue", "Create rework issues")
+                            : jiraLifecyclePending.kind === "duplicate"
+                              ? text("保留原关联", "Keep existing links")
+                              : text("保持现状", "Keep current state")}</button>
+                      )}
+                      <button
+                        className="button primary"
+                        type="button"
+                        disabled={jiraLifecycleSaving !== null || (
+                          jiraLifecyclePending.kind === "duplicate"
+                          && !jiraContext?.lifecycle?.duplicateOf?.accessible
+                        )}
+                        aria-busy={jiraLifecycleSaving !== null}
+                        onClick={() => void applyJiraLifecycle(
+                          jiraLifecyclePending.kind === "reopened"
+                            ? jiraContext?.plan ? "replan" : "rework"
+                            : jiraLifecyclePending.kind === "duplicate"
+                              ? "migrate"
+                              : "pause"
+                        )}
+                      >{jiraLifecycleSaving
+                          ? <><span className="ai-chat-spinner" aria-hidden="true" />{text("处理中…", "Applying…")}</>
+                          : jiraLifecyclePending.kind === "reopened"
+                            ? jiraContext?.plan
+                              ? text("重新规划", "Plan again")
+                              : text("创建返工 Issue", "Create rework issues")
+                            : jiraLifecyclePending.kind === "duplicate"
+                              ? text("迁移到 canonical Jira", "Move to canonical Jira")
+                              : text("暂停关联 Issue", "Pause linked issues")}</button>
+                    </div>
+                  </div>
+                )}
                 <div className="jira-context-actions">
                   <button
                     className={`jira-planning-button${jiraContext?.plan?.needsReview ? " needs-review" : ""}`}
                     type="button"
-                    disabled={jiraContextLoading || jiraPlanningSaving || Boolean(jiraContext?.simpleStart)}
+                    disabled={
+                      jiraContextLoading
+                      || jiraPlanningSaving
+                      || Boolean(jiraContext?.simpleStart)
+                      || Boolean(jiraContext?.lifecycle?.duplicateOf)
+                      || Boolean(jiraLifecyclePending)
+                    }
                     aria-busy={jiraPlanningSaving}
                     onClick={() => void createOrContinueJiraPlanning()}
                   >

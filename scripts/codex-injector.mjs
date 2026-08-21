@@ -20,6 +20,7 @@ import {
   findResidentInjectorPids,
   handleHostBindingPayload,
   injectionReadinessMatches,
+  interruptNativeCodexThread,
   reconcileInjectionRuntime,
   residentInjectorCommandMatches,
   restartResidentInjector,
@@ -2372,10 +2373,11 @@ async function main() {
       console.log(JSON.stringify({ openPanelSignalReady: true }));
     }
     if (panelRuntimeFile && options.startupToken) {
-      const controlSocket = injectorControlSocketPath(panelRuntimeFile);
-      controlServer = process.platform === "win32" ? null : await startInjectorControlServer({
+      const controlSocket = injectorControlSocketPath(panelRuntimeFile, options.startupToken);
+      controlServer = await startInjectorControlServer({
         controlSocket,
         startupToken: options.startupToken,
+        actions: process.platform === "win32" ? ["interrupt-thread"] : undefined,
         handlers: {
           status: async () => {
             if (!cdpRuntime) throw new Error("Panel renderer injection is waiting for Codex");
@@ -2404,6 +2406,26 @@ async function main() {
               throw new Error("Managed Panel renderer did not confirm page visibility");
             }
             return { opened: true, ...readiness };
+          },
+          "interrupt-thread": async (request) => {
+            const threadId = typeof request.threadId === "string" ? request.threadId.trim() : "";
+            const codexHostId = typeof request.codexHostId === "string" ? request.codexHostId.trim() : "";
+            if (!threadId || threadId.length > 256 || !codexHostId || codexHostId.length > 256) {
+              throw new Error("Native Codex thread binding is invalid");
+            }
+            const cdp = [...injectedTargets.values()].find((connection) => !connection.closed);
+            if (!cdp) throw new Error("Panel renderer injection is waiting for Codex");
+            return interruptNativeCodexThread(
+              { threadId, codexHostId },
+              (method, params) => requestCodexAppServerViaCdp(
+                cdp,
+                undefined,
+                codexHostId,
+                method,
+                params,
+                10_000,
+              ),
+            );
           },
           shutdown: async () => {
             setImmediate(requestStop);
@@ -2502,7 +2524,7 @@ async function main() {
           await publishInjectorRuntime(panelRuntimeFile, {
             pid: process.pid,
             url: panelBaseUrl,
-            controlSocket: injectorControlSocketPath(panelRuntimeFile),
+            controlSocket: injectorControlSocketPath(panelRuntimeFile, options.startupToken),
             startupToken: options.startupToken,
             transport: options.cdpPipe ? "pipe" : "tcp",
             ...(!options.cdpPipe ? { port: options.port } : {}),

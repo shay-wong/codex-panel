@@ -4537,6 +4537,40 @@ kbd {
   margin: 7px 7px 0;
 }
 
+.jira-lifecycle-alert {
+  margin: 7px;
+  padding: 8px 9px;
+  border: var(--border-hairline) solid color-mix(in srgb, var(--status-review) 45%, var(--border));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--status-review) 7%, var(--surface));
+}
+
+.jira-lifecycle-alert p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.jira-lifecycle-alert > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.jira-lifecycle-alert .button {
+  min-height: 26px;
+  gap: 5px;
+  padding: 0 9px;
+  font-size: 10px;
+}
+
+.jira-lifecycle-alert .ai-chat-spinner {
+  width: 11px;
+  height: 11px;
+}
+
 .jira-simple-start-button,
 .jira-planning-button {
   display: inline-flex;

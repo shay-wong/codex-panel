@@ -35,6 +35,7 @@ import { ApiError, PanelDatabase } from "./database.mjs";
 import { createJiraConfigStore } from "./jira-config.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
+import { sendInjectorControlRequest } from "../scripts/codex-injector-control.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -738,6 +739,15 @@ function parseJiraSimpleStart(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set(["version"]));
   return { version: parseVersion(body.version) };
+}
+
+function parseJiraLifecycle(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "action"]));
+  if (!["pause", "keep", "rework", "replan", "migrate"].includes(body.action)) {
+    throw new ApiError(400, "INVALID_FIELD", "Unsupported Jira lifecycle action");
+  }
+  return { version: parseVersion(body.version), action: body.action };
 }
 
 function parseJiraPlanSpec(body) {
@@ -1931,6 +1941,22 @@ export function createPanelServer(options = {}) {
     database,
     fetch: options.jiraFetch ?? globalThis.fetch,
   });
+  const interruptNativeThread = options.interruptNativeThread ?? (async (binding) => (
+    sendInjectorControlRequest({
+      runtimeFile: process.env.CODEX_PANEL_RUNTIME_FILE
+        ?? process.env.CODEX_TASKBOARD_RUNTIME_FILE
+        ?? path.join(resolved.dataDirectory, "launcher-runtime.json"),
+      action: "interrupt-thread",
+      payload: {
+        threadId: binding.threadId,
+        codexHostId: binding.codexHostId,
+      },
+      ownership: {
+        nodePath: process.execPath,
+        injectorPath: path.join(PROJECT_ROOT, "scripts", "codex-injector.mjs"),
+      },
+    })
+  ));
   let hostRuntime = null;
   function currentHostThreadBinding(threadId) {
     if (
@@ -2082,6 +2108,8 @@ export function createPanelServer(options = {}) {
     resolveContext: resolveAiChatContext,
   });
   const pendingJiraSimpleStarts = new Map();
+  // ponytail: one in-process reservation per Jira is enough while this server owns all local mutations.
+  const pendingJiraReopenActions = new Map();
 
   function jiraPlanningPrompt(jiraTask, projects, review, plan) {
     const repositories = projects.length > 0
@@ -2123,6 +2151,9 @@ export function createPanelServer(options = {}) {
     if (context.jira.version !== version) {
       throw new ApiError(409, "VERSION_CONFLICT", "Jira issue changed since it was read");
     }
+    if (context.lifecycle?.pending?.kind === "reopened") {
+      throw new ApiError(409, "JIRA_REPLAN_REQUIRED", "Choose how to handle the reopened Jira issue first");
+    }
     const projectId = context.projects[0]?.id ?? DEFAULT_PROJECT_ID;
     let thread = context.plan?.threadId
       ? database.getAiChatThread(context.plan.threadId)
@@ -2143,6 +2174,48 @@ export function createPanelServer(options = {}) {
       database.markJiraPlanPrompted(jiraTaskId);
     }
     return { context: database.getJiraContext(jiraTaskId) };
+  }
+
+  async function createJiraReplan(jiraTaskId, version, reservation) {
+    const context = database.beginJiraReplan(jiraTaskId, version, reservation);
+    const projectId = context.projects[0]?.id ?? DEFAULT_PROJECT_ID;
+    let thread;
+    let run;
+    try {
+      thread = await aiChat.createThread({
+        projectId,
+        title: `${context.jira.externalKey ?? context.jira.identifier} · Jira 重新规划`,
+        sandbox: "read-only",
+      });
+      run = await aiChat.startTurn(thread.id, {
+        message: jiraPlanningPrompt(context.jira, context.projects, true, context.plan),
+        skillIds: ["grill-me", "to-spec", "to-tickets"],
+      });
+      return {
+        context: database.completeJiraReplan(
+          jiraTaskId,
+          context.jira.version,
+          version,
+          context.plan.version,
+          thread.id,
+          reservation,
+        ),
+      };
+    } catch (error) {
+      if (thread) {
+        try {
+          await aiChat.discardThread(thread.id);
+        } catch (cleanupError) {
+          throw new ApiError(
+            500,
+            "JIRA_REPLAN_CLEANUP_FAILED",
+            `Jira replanning failed and its new conversation could not be removed: ${cleanupError.message}`,
+            { cause: error.message },
+          );
+        }
+      }
+      throw error;
+    }
   }
 
   function jiraPlanEdges(items) {
@@ -2342,6 +2415,96 @@ export function createPanelServer(options = {}) {
       .finally(() => pendingJiraSimpleStarts.delete(jiraTaskId));
     pendingJiraSimpleStarts.set(jiraTaskId, operation);
     return operation;
+  }
+
+  async function createJiraRework(jiraTaskId, version, actor, reservation) {
+    const started = database.beginJiraRework(jiraTaskId, version, reservation);
+    for (const item of started.items) {
+      let task = database.getTask(item.taskId);
+      if (!task) {
+        task = database.createTask({
+          id: item.taskId,
+          projectId: item.projectId,
+          title: `返工：${started.jira.title}`,
+          description: started.jira.description,
+          status: started.jira.status === "in_progress" ? "todo" : "backlog",
+          priority: started.jira.priority,
+          labels: started.jira.labels,
+          actor,
+          assignee: CODEX_AGENT_ACTOR,
+          workflowId: null,
+          developmentContext: null,
+          startDate: null,
+          dueDate: null,
+          recurrence: null,
+        });
+        events.emit("task.created", { task });
+      }
+      let context = database.getJiraContext(jiraTaskId);
+      if (!context.issues.some((issue) => issue.id === task.id)) {
+        context = database.addJiraTaskLink(
+          jiraTaskId,
+          context.jira.version,
+          task.id,
+          actor,
+          reservation,
+        );
+        events.emit("task.jira.updated", { taskId: task.id, task: context.jira });
+      }
+      if (!database.getAiChatThread(item.threadId)) {
+        await aiChat.createThread({
+          id: item.threadId,
+          projectId: task.projectId,
+          issueId: task.id,
+          title: `${task.identifier} · ${started.jira.externalKey ?? started.jira.identifier} · 返工`,
+        });
+      }
+    }
+    return { context: database.completeJiraReopen(jiraTaskId, version, reservation) };
+  }
+
+  function runJiraRework(jiraTaskId, version, actor) {
+    return runJiraReopenAction(jiraTaskId, version, "rework", (reservation) => (
+      createJiraRework(jiraTaskId, version, actor, reservation)
+    ));
+  }
+
+  function runJiraReplan(jiraTaskId, version) {
+    return runJiraReopenAction(
+      jiraTaskId,
+      version,
+      "replan",
+      (reservation) => createJiraReplan(jiraTaskId, version, reservation),
+    );
+  }
+
+  function runJiraReopenAction(jiraTaskId, version, action, execute) {
+    const current = pendingJiraReopenActions.get(jiraTaskId);
+    if (current) {
+      if (current.action === action) return current.operation;
+      throw new ApiError(
+        409,
+        "JIRA_REOPEN_ACTION_IN_PROGRESS",
+        "Another reopened Jira action is already being applied",
+      );
+    }
+    const entry = { action, operation: null };
+    entry.operation = Promise.resolve()
+      .then(async () => {
+        const reservation = database.beginJiraReopenAction(jiraTaskId, version, action);
+        try {
+          return await execute(reservation);
+        } finally {
+          database.finishJiraReopenAction(jiraTaskId, reservation);
+        }
+      })
+      .finally(() => {
+        if (pendingJiraReopenActions.get(jiraTaskId) === entry) {
+          pendingJiraReopenActions.delete(jiraTaskId);
+        }
+      });
+    pendingJiraReopenActions.set(jiraTaskId, entry);
+    return entry.operation;
   }
   const projectSummary = new ProjectSummaryService({
     database,
@@ -3290,6 +3453,74 @@ export function createPanelServer(options = {}) {
           return sendJson(response, 200, { context });
         }
         return methodNotAllowed(response, ["GET", "PUT"]);
+      }
+
+      const jiraLifecycleRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-lifecycle$/);
+      if (jiraLifecycleRoute) {
+        const jiraTaskId = decodeRouteSegment(jiraLifecycleRoute[1], "Task id");
+        assertNoQuery(url.searchParams, "POST /api/tasks/:id/jira-lifecycle");
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        const { version, action } = parseJiraLifecycle(await readJson(request));
+        if (action === "rework") {
+          return sendJson(
+            response,
+            200,
+            await runJiraRework(jiraTaskId, version, actorFromRequest(request)),
+          );
+        }
+        if (action === "replan") {
+          return sendJson(response, 200, await runJiraReplan(jiraTaskId, version));
+        }
+        let targets = null;
+        let result;
+        let interruptFailures = [];
+        try {
+          if (action === "pause") {
+            targets = database.beginJiraLifecyclePause(jiraTaskId, version);
+            const linkedIssues = database.getJiraContext(jiraTaskId).issues
+              .map((task) => database.getTask(task.id))
+              .filter(Boolean);
+            const affected = new Set(linkedIssues.map((task) => task.id));
+            const runIds = aiChat.listThreads().flatMap((thread) => (
+              thread.origin.issueId && affected.has(thread.origin.issueId) && thread.currentRun
+                ? [thread.currentRun.id]
+                : []
+            ));
+            const bindings = [...new Map(linkedIssues.flatMap((task) => (
+              task.threadBinding
+                ? [[`${task.threadBinding.codexHostId}:${task.threadBinding.threadId}`, task.threadBinding]]
+                : []
+            ))).values()];
+            const interruptions = await Promise.allSettled([
+              ...bindings.map((binding) => interruptNativeThread(binding)),
+              ...runIds.map((runId) => aiChat.interrupt(runId)),
+            ]);
+            interruptFailures = interruptions
+              .filter((interruption) => interruption.status === "rejected")
+              .map((interruption) => (
+                interruption.reason instanceof Error
+                  ? interruption.reason.message
+                  : String(interruption.reason)
+              ));
+          }
+          result = database.resolveJiraLifecycle(jiraTaskId, version, action, targets);
+        } finally {
+          if (targets) database.finishJiraLifecyclePause(jiraTaskId, targets);
+        }
+        if (action === "pause" && result.affectedTaskIds.length > 0) {
+          for (const taskId of result.affectedTaskIds) {
+            events.emit("task.moved", { task: database.getTask(taskId) });
+          }
+        }
+        events.emit("task.jira.updated", { taskId: jiraTaskId, task: result.context.jira });
+        if (interruptFailures.length > 0) {
+          throw new ApiError(
+            502,
+            "CODEX_INTERRUPT_PARTIAL_FAILURE",
+            `关联 Issue 已暂停，但有 ${interruptFailures.length} 个 Codex 任务未能中断：${interruptFailures.join("；")}`,
+          );
+        }
+        return sendJson(response, 200, { context: result.context });
       }
 
       const jiraSimpleStartRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-simple-start$/);
