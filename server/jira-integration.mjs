@@ -13,6 +13,8 @@ const JIRA_FIELDS = [
   "assignee",
   "reporter",
   "project",
+  "resolution",
+  "issuelinks",
   "created",
   "updated",
 ];
@@ -79,6 +81,22 @@ function actorFromJira(user, fallback) {
 
 function jiraAccountId(user) {
   return limitedString(user?.accountId ?? user?.key ?? user?.name, "", 254);
+}
+
+function duplicateOfFromJira(fields) {
+  const duplicateResolution = includesAny(fields.resolution?.name, ["duplicate", "重复"]);
+  const link = Array.isArray(fields.issuelinks)
+    ? fields.issuelinks.find((candidate) => (
+      candidate?.outwardIssue?.key
+      && includesAny(candidate?.type?.outward, ["duplicate", "重复"])
+    ))
+    : null;
+  if (!duplicateResolution && !link) return null;
+  return {
+    externalKey: typeof link?.outwardIssue?.key === "string"
+      ? link.outwardIssue.key.trim().slice(0, 128) || null
+      : null,
+  };
 }
 
 function accountFromJira(user, fallback) {
@@ -151,6 +169,7 @@ function normalizeIssue(issue, config, index = 0) {
     externalKey,
     externalUrl: `${config.baseUrl}/browse/${encodeURIComponent(externalKey)}`,
     externalStatus: limitedString(fields.status?.name, "Unknown", 128),
+    duplicateOf: duplicateOfFromJira(fields),
     createdAt: typeof fields.created === "string" ? fields.created : new Date().toISOString(),
     updatedAt: typeof fields.updated === "string" ? fields.updated : new Date().toISOString(),
   };
@@ -332,6 +351,31 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
           id: task.id,
           message: `同步状态未知：无法确认 ${task.externalKey} 的当前状态。${error instanceof Error ? error.message : String(error)}`.slice(0, 1000),
         });
+      }
+    }
+    const knownKeys = new Set(normalized.map((issue) => issue.externalKey));
+    const accessibleCanonicalKeys = new Set(knownKeys);
+    const canonicalKeys = [...new Set(normalized.flatMap((issue) => (
+      issue.duplicateOf?.externalKey && !knownKeys.has(issue.duplicateOf.externalKey)
+        ? [issue.duplicateOf.externalKey]
+        : []
+    )))];
+    for (const issueKey of canonicalKeys) {
+      try {
+        const issue = await fetchIssue(config, issueKey);
+        const scope = issueScopeState(issue, config);
+        accessibleCanonicalKeys.add(issueKey);
+        normalized.push({
+          ...normalizeIssue(issue, config, normalized.length),
+          archived: archiveMissing && scope !== "inside",
+        });
+      } catch (error) {
+        if (error?.code === "JIRA_AUTH_FAILED") throw error;
+      }
+    }
+    for (const issue of normalized) {
+      if (issue.duplicateOf) {
+        issue.duplicateOf.accessible = accessibleCanonicalKeys.has(issue.duplicateOf.externalKey);
       }
     }
     return { issues: normalized, issueCount: assignedIssues.length, unknownTasks };

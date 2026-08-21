@@ -449,6 +449,9 @@ function projectPrefix(project) {
 }
 
 export class PanelDatabase {
+  #jiraPauseResolutions = new Map();
+  #jiraReopenActions = new Map();
+
   constructor(filename) {
     mkdirSync(path.dirname(filename), { recursive: true });
     this.database = new DatabaseSync(filename);
@@ -846,6 +849,31 @@ export class PanelDatabase {
       CREATE INDEX IF NOT EXISTS jira_task_links_jira
         ON jira_task_links(jira_task_id, created_at);
 
+      CREATE TABLE IF NOT EXISTS jira_lifecycles (
+        jira_task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+        pending_kind TEXT CHECK (pending_kind IN ('waiting', 'ended', 'reopened', 'duplicate')),
+        pending_from_status TEXT,
+        pending_to_status TEXT,
+        pending_created_at TEXT,
+        paused_task_ids TEXT NOT NULL DEFAULT '[]',
+        reopened INTEGER NOT NULL DEFAULT 0 CHECK (reopened IN (0, 1)),
+        is_duplicate INTEGER NOT NULL DEFAULT 0 CHECK (is_duplicate IN (0, 1)),
+        duplicate_of_key TEXT,
+        duplicate_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS jira_rework_items (
+        jira_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        cycle INTEGER NOT NULL CHECK (cycle > 0),
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+        task_id TEXT NOT NULL UNIQUE,
+        thread_id TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (jira_task_id, cycle, project_id)
+      );
+
       CREATE TABLE IF NOT EXISTS jira_simple_start_operations (
         id TEXT PRIMARY KEY,
         jira_task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
@@ -1163,6 +1191,13 @@ export class PanelDatabase {
     unknownTasks = [],
     syncedAt = now(),
   } = {}) {
+    // ponytail: one short global sync lock is enough until multiple Jira providers are supported.
+    if (this.#jiraPauseResolutions.size > 0) {
+      throw new ApiError(409, "JIRA_PAUSE_IN_PROGRESS", "Jira sync is waiting for a lifecycle pause to finish");
+    }
+    if (this.#jiraReopenActions.size > 0) {
+      throw new ApiError(409, "JIRA_REOPEN_ACTION_IN_PROGRESS", "Jira sync is waiting for a reopened action to finish");
+    }
     const timestamp = syncedAt;
     const seenTaskIds = new Set();
     const projectLabels = JSON.stringify([
@@ -1229,7 +1264,7 @@ export class PanelDatabase {
           NULL, ?, NULL, NULL,
           'jira', ?, ?, ?, ?,
           ?, ?, NULL,
-          NULL, 1, ?, ?
+          ?, 1, ?, ?
         )
       `);
       const updateTask = this.database.prepare(`
@@ -1274,11 +1309,18 @@ export class PanelDatabase {
             issue.externalUrl,
             issue.externalStatus,
             syncedAt,
+            issue.archived ? timestamp : null,
             issue.createdAt,
             issue.updatedAt,
           );
           continue;
         }
+
+        this.#syncJiraLifecycle(existing, issue.status, timestamp);
+        const lifecycle = this.getJiraLifecycle(existing.id);
+        const archived = Boolean(issue.archived)
+          && lifecycle.pending?.kind !== "ended"
+          && !this.#jiraDuplicateNeedsDecision(existing.id, issue.duplicateOf, lifecycle);
 
         const changed = existing.identifier !== issue.identifier
           || existing.title !== issue.title
@@ -1302,7 +1344,7 @@ export class PanelDatabase {
           || existing.external_url !== issue.externalUrl
           || existing.external_status !== issue.externalStatus
           || existing.external_sync_error !== null
-          || Boolean(existing.archived_at) !== Boolean(issue.archived);
+          || Boolean(existing.archived_at) !== archived;
         if (!changed) {
           this.database.prepare(`
             UPDATE tasks
@@ -1334,10 +1376,15 @@ export class PanelDatabase {
           issue.externalUrl,
           issue.externalStatus,
           syncedAt,
-          issue.archived ? timestamp : null,
+          archived ? timestamp : null,
           issue.updatedAt,
           existing.id,
         );
+      }
+
+      for (const issue of issues) {
+        const task = findExisting.get(issue.externalOrigin, issue.externalId);
+        if (task) this.#syncJiraDuplicate(task, issue.duplicateOf, timestamp);
       }
 
       if (archiveMissing) {
@@ -1492,6 +1539,7 @@ export class PanelDatabase {
         availableJira,
         simpleStart: null,
         plan: null,
+        lifecycle: null,
       };
     }
     const projects = this.database.prepare(`
@@ -1529,7 +1577,528 @@ export class PanelDatabase {
       availableJira: [],
       simpleStart: this.getJiraSimpleStartOperation(jiraTask.id),
       plan: this.getJiraPlan(jiraTask.id),
+      lifecycle: this.getJiraLifecycle(jiraTask.id),
     };
+  }
+
+  getJiraLifecycle(jiraTaskId) {
+    const row = this.database.prepare(`
+      SELECT * FROM jira_lifecycles WHERE jira_task_id = ?
+    `).get(jiraTaskId);
+    if (!row) {
+      return {
+        pending: null,
+        pausedIssueIds: [],
+        reopened: false,
+        duplicateOf: null,
+        version: 0,
+      };
+    }
+    return {
+      pending: row.pending_kind
+        ? {
+          kind: row.pending_kind,
+          fromStatus: row.pending_from_status,
+          toStatus: row.pending_to_status,
+          suggestedAction: row.pending_kind === "reopened"
+            ? "rework"
+            : row.pending_kind === "duplicate"
+              ? "migrate"
+              : "pause",
+          createdAt: row.pending_created_at,
+        }
+        : null,
+      pausedIssueIds: JSON.parse(row.paused_task_ids),
+      reopened: Boolean(row.reopened),
+      duplicateOf: row.is_duplicate
+        ? {
+          externalKey: row.duplicate_of_key,
+          jiraTaskId: row.duplicate_task_id,
+          accessible: row.duplicate_task_id !== null,
+        }
+        : null,
+      version: row.version,
+    };
+  }
+
+  resolveJiraLifecycle(jiraTaskId, version, action, pauseTargets = null) {
+    const jiraTask = this.#requireTask(jiraTaskId);
+    this.#assertJiraMutationUnlocked(jiraTask.id, null, pauseTargets);
+    if (jiraTask.source !== "jira") {
+      throw new ApiError(409, "JIRA_TASK_REQUIRED", "Only Jira issues have lifecycle decisions");
+    }
+    const lifecycle = this.getJiraLifecycle(jiraTask.id);
+    if (!lifecycle.pending) {
+      throw new ApiError(409, "JIRA_LIFECYCLE_NOT_PENDING", "This Jira issue has no pending lifecycle decision");
+    }
+    if (lifecycle.version !== version) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Jira lifecycle changed since it was read");
+    }
+    if (lifecycle.pending.kind === "reopened") {
+      throw new ApiError(409, "JIRA_REOPENED_ACTION_REQUIRED", "Choose rework or planning for a reopened Jira issue");
+    }
+    if (lifecycle.pending.kind === "duplicate" && action !== "keep" && action !== "migrate") {
+      throw new ApiError(409, "JIRA_DUPLICATE_ACTION_REQUIRED", "Choose whether to migrate duplicate Jira links");
+    }
+    if (lifecycle.pending.kind !== "duplicate" && action !== "pause" && action !== "keep") {
+      throw new ApiError(409, "JIRA_LIFECYCLE_ACTION_INVALID", "This action does not match the pending decision");
+    }
+    const activePause = this.#jiraPauseResolutions.get(jiraTask.id);
+    if (activePause && (action !== "pause" || activePause !== pauseTargets)) {
+      throw new ApiError(409, "JIRA_PAUSE_IN_PROGRESS", "This Jira lifecycle pause is already being applied");
+    }
+
+    const timestamp = now();
+    const affectedTaskIds = [];
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (action === "migrate") {
+        if (!lifecycle.duplicateOf?.jiraTaskId) {
+          throw new ApiError(
+            409,
+            "JIRA_DUPLICATE_CANONICAL_UNAVAILABLE",
+            "The canonical Jira issue is not accessible; existing links were preserved",
+          );
+        }
+        const linked = this.database.prepare(`
+          SELECT task_id FROM jira_task_links WHERE jira_task_id = ?
+        `).all(jiraTask.id);
+        this.database.prepare(`
+          INSERT OR IGNORE INTO jira_task_projects (jira_task_id, project_id, created_at)
+          SELECT ?, project_id, ? FROM jira_task_projects WHERE jira_task_id = ?
+        `).run(lifecycle.duplicateOf.jiraTaskId, timestamp, jiraTask.id);
+        this.database.prepare(`
+          UPDATE jira_task_links SET jira_task_id = ? WHERE jira_task_id = ?
+        `).run(lifecycle.duplicateOf.jiraTaskId, jiraTask.id);
+        this.database.prepare("DELETE FROM jira_task_projects WHERE jira_task_id = ?").run(jiraTask.id);
+        this.database.prepare(`
+          UPDATE tasks SET version = version + 1, updated_at = ? WHERE id IN (?, ?)
+        `).run(timestamp, jiraTask.id, lifecycle.duplicateOf.jiraTaskId);
+        affectedTaskIds.push(...linked.map((link) => link.task_id));
+      } else if (action === "pause") {
+        const linked = this.#jiraPauseTargets(jiraTask.id);
+        if (
+          pauseTargets
+          && JSON.stringify(linked.map(({ id, status }) => ({ id, status })))
+            !== JSON.stringify(pauseTargets.map(({ id, status }) => ({ id, status })))
+        ) {
+          throw new ApiError(
+            409,
+            "JIRA_PAUSE_TARGETS_CHANGED",
+            "Linked issues changed while pause was being prepared; review and try again",
+          );
+        }
+        const update = this.database.prepare(`
+          UPDATE tasks
+          SET status = ?, version = version + 1, updated_at = ?
+          WHERE id = ? AND status = ?
+        `);
+        for (const task of linked) {
+          const status = task.status === "todo" ? "backlog" : "blocked";
+          if (update.run(status, timestamp, task.id, task.status).changes === 1) {
+            affectedTaskIds.push(task.id);
+          }
+        }
+      }
+      const resolved = this.database.prepare(`
+        UPDATE jira_lifecycles
+        SET pending_kind = NULL,
+            pending_from_status = NULL,
+            pending_to_status = NULL,
+            pending_created_at = NULL,
+            paused_task_ids = ?,
+            version = version + 1,
+            updated_at = ?
+        WHERE jira_task_id = ? AND version = ?
+      `).run(
+        JSON.stringify(action === "pause" ? affectedTaskIds : lifecycle.pausedIssueIds),
+        timestamp,
+        jiraTask.id,
+        version,
+      );
+      if (resolved.changes !== 1) {
+        throw new ApiError(409, "VERSION_CONFLICT", "Jira lifecycle changed while the decision was applied");
+      }
+      if (lifecycle.pending.kind === "ended") {
+        this.database.prepare(`
+          UPDATE tasks
+          SET archived_at = ?, version = version + 1, updated_at = ?
+          WHERE id = ? AND archived_at IS NULL
+        `).run(timestamp, timestamp, jiraTask.id);
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return { context: this.getJiraContext(jiraTask.id), affectedTaskIds };
+  }
+
+  beginJiraLifecyclePause(jiraTaskId, version) {
+    const jiraTask = this.#requireTask(jiraTaskId);
+    this.#assertJiraMutationUnlocked(jiraTask.id);
+    const lifecycle = this.getJiraLifecycle(jiraTask.id);
+    if (jiraTask.source !== "jira" || lifecycle.pending?.suggestedAction !== "pause") {
+      throw new ApiError(409, "JIRA_PAUSE_UNAVAILABLE", "This Jira issue is not waiting for pause confirmation");
+    }
+    if (lifecycle.version !== version) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Jira lifecycle changed since it was read");
+    }
+    if (this.#jiraPauseResolutions.has(jiraTask.id)) {
+      throw new ApiError(409, "JIRA_PAUSE_IN_PROGRESS", "This Jira lifecycle pause is already being applied");
+    }
+    const targets = this.#jiraPauseTargets(jiraTask.id).map((task) => this.getTask(task.id));
+    this.#jiraPauseResolutions.set(jiraTask.id, targets);
+    return targets;
+  }
+
+  finishJiraLifecyclePause(jiraTaskId, targets) {
+    if (this.#jiraPauseResolutions.get(jiraTaskId) === targets) {
+      this.#jiraPauseResolutions.delete(jiraTaskId);
+    }
+  }
+
+  beginJiraReopenAction(jiraTaskId, version, action) {
+    const jiraTask = this.#requireTask(jiraTaskId);
+    const lifecycle = this.getJiraLifecycle(jiraTask.id);
+    if (jiraTask.source !== "jira" || lifecycle.pending?.kind !== "reopened") {
+      throw new ApiError(409, "JIRA_REOPEN_ACTION_UNAVAILABLE", "This Jira issue is not waiting for a reopened action");
+    }
+    if (lifecycle.version !== version) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Jira lifecycle changed since it was read");
+    }
+    this.#assertJiraMutationUnlocked(jiraTask.id);
+    const reservation = { action };
+    this.#jiraReopenActions.set(jiraTask.id, reservation);
+    return reservation;
+  }
+
+  finishJiraReopenAction(jiraTaskId, reservation) {
+    if (this.#jiraReopenActions.get(jiraTaskId) === reservation) {
+      this.#jiraReopenActions.delete(jiraTaskId);
+    }
+  }
+
+  beginJiraRework(jiraTaskId, version, reservation) {
+    const jiraTask = this.#requireTask(jiraTaskId);
+    this.#assertJiraMutationUnlocked(jiraTask.id, reservation);
+    const lifecycle = this.getJiraLifecycle(jiraTask.id);
+    if (lifecycle.version !== version) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Jira lifecycle changed since it was read");
+    }
+    if (lifecycle.pending?.kind !== "reopened") {
+      throw new ApiError(409, "JIRA_REWORK_UNAVAILABLE", "Rework is only available for a reopened Jira issue");
+    }
+    const projects = this.database.prepare(`
+      SELECT project_id
+      FROM jira_task_projects
+      WHERE jira_task_id = ?
+      UNION
+      SELECT tasks.project_id
+      FROM jira_task_links
+      JOIN tasks ON tasks.id = jira_task_links.task_id
+      WHERE jira_task_links.jira_task_id = ?
+      ORDER BY project_id
+    `).all(jiraTask.id, jiraTask.id);
+    if (projects.length === 0) {
+      throw new ApiError(409, "JIRA_REWORK_PROJECT_REQUIRED", "Link a repository before creating rework");
+    }
+    const timestamp = now();
+    const insert = this.database.prepare(`
+      INSERT OR IGNORE INTO jira_rework_items (
+        jira_task_id, cycle, project_id, task_id, thread_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    for (const project of projects) {
+      insert.run(jiraTask.id, version, project.project_id, randomUUID(), randomUUID(), timestamp);
+    }
+    return {
+      jira: jiraTask,
+      items: this.database.prepare(`
+        SELECT project_id AS projectId, task_id AS taskId, thread_id AS threadId
+        FROM jira_rework_items
+        WHERE jira_task_id = ? AND cycle = ?
+        ORDER BY project_id
+      `).all(jiraTask.id, version),
+    };
+  }
+
+  beginJiraReplan(jiraTaskId, version, reservation) {
+    const jiraTask = this.#requireTask(jiraTaskId);
+    this.#assertJiraMutationUnlocked(jiraTask.id, reservation);
+    const lifecycle = this.getJiraLifecycle(jiraTask.id);
+    if (lifecycle.version !== version) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Jira lifecycle changed since it was read");
+    }
+    if (lifecycle.pending?.kind !== "reopened" || !this.getJiraPlan(jiraTask.id)) {
+      throw new ApiError(409, "JIRA_REPLAN_UNAVAILABLE", "Planning again requires a reopened planned Jira issue");
+    }
+    return this.getJiraContext(jiraTask.id);
+  }
+
+  completeJiraReopen(jiraTaskId, version, reservation) {
+    this.#assertJiraMutationUnlocked(jiraTaskId, reservation);
+    const timestamp = now();
+    const result = this.database.prepare(`
+      UPDATE jira_lifecycles
+      SET pending_kind = NULL,
+          pending_from_status = NULL,
+          pending_to_status = NULL,
+          pending_created_at = NULL,
+          reopened = 0,
+          version = version + 1,
+          updated_at = ?
+      WHERE jira_task_id = ? AND version = ? AND pending_kind = 'reopened'
+    `).run(timestamp, jiraTaskId, version);
+    if (result.changes !== 1) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Jira lifecycle changed since rework started");
+    }
+    return this.getJiraContext(jiraTaskId);
+  }
+
+  completeJiraReplan(jiraTaskId, taskVersion, lifecycleVersion, planVersion, threadId, reservation) {
+    const jiraTask = this.#requireTask(jiraTaskId);
+    this.#assertJiraMutationUnlocked(jiraTask.id, reservation);
+    this.#requireVersion(jiraTask, taskVersion);
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const plan = this.database.prepare(`
+        UPDATE jira_plans
+        SET thread_id = ?, status = 'planning', source_snapshot = ?, prompted_at = ?,
+            version = version + 1, updated_at = ?
+        WHERE jira_task_id = ? AND version = ?
+      `).run(
+        threadId,
+        this.#jiraPlanSourceSnapshot(jiraTask),
+        timestamp,
+        timestamp,
+        jiraTask.id,
+        planVersion,
+      );
+      if (plan.changes !== 1) {
+        throw new ApiError(409, "VERSION_CONFLICT", "Jira plan changed since replanning started");
+      }
+      const lifecycle = this.database.prepare(`
+        UPDATE jira_lifecycles
+        SET pending_kind = NULL,
+            pending_from_status = NULL,
+            pending_to_status = NULL,
+            pending_created_at = NULL,
+            reopened = 0,
+            version = version + 1,
+            updated_at = ?
+        WHERE jira_task_id = ? AND version = ? AND pending_kind = 'reopened'
+      `).run(timestamp, jiraTask.id, lifecycleVersion);
+      if (lifecycle.changes !== 1) {
+        throw new ApiError(409, "VERSION_CONFLICT", "Jira lifecycle changed since replanning started");
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getJiraContext(jiraTask.id);
+  }
+
+  #syncJiraLifecycle(existing, nextStatus, timestamp) {
+    const lifecycle = this.getJiraLifecycle(existing.id);
+    const currentTerminal = existing.status === "done" || existing.status === "canceled";
+    const nextTerminal = nextStatus === "done" || nextStatus === "canceled";
+    const linkedUnfinished = Boolean(this.database.prepare(`
+      SELECT 1
+      FROM jira_task_links
+      JOIN tasks ON tasks.id = jira_task_links.task_id
+      WHERE jira_task_links.jira_task_id = ?
+        AND tasks.archived_at IS NULL
+        AND tasks.status NOT IN ('done', 'canceled')
+      LIMIT 1
+    `).get(existing.id));
+
+    if (existing.status !== nextStatus && currentTerminal && !nextTerminal) {
+      this.#setJiraLifecyclePending(existing.id, "reopened", existing.status, nextStatus, timestamp, true);
+      return;
+    }
+
+    if (nextStatus === "in_progress") {
+      if (lifecycle.reopened) return;
+      const plan = this.getJiraPlan(existing.id);
+      const remainingPausedIds = plan?.needsReview
+        ? lifecycle.pausedIssueIds
+        : this.#releaseJiraFrontier(existing.id, lifecycle.pausedIssueIds, timestamp);
+      if (lifecycle.version > 0 && (
+        lifecycle.pending
+        || JSON.stringify(remainingPausedIds) !== JSON.stringify(lifecycle.pausedIssueIds)
+      )) {
+        this.database.prepare(`
+          UPDATE jira_lifecycles
+          SET pending_kind = NULL,
+              pending_from_status = NULL,
+              pending_to_status = NULL,
+              pending_created_at = NULL,
+              paused_task_ids = ?,
+              version = version + 1,
+              updated_at = ?
+          WHERE jira_task_id = ?
+        `).run(JSON.stringify(remainingPausedIds), timestamp, existing.id);
+      }
+      return;
+    }
+
+    if (existing.status === nextStatus || !linkedUnfinished) return;
+    if (nextTerminal) {
+      this.#setJiraLifecyclePending(existing.id, "ended", existing.status, nextStatus, timestamp);
+      return;
+    }
+    if (
+      (nextStatus === "todo" || nextStatus === "backlog")
+      && !["todo", "backlog"].includes(existing.status)
+    ) {
+      this.#setJiraLifecyclePending(existing.id, "waiting", existing.status, nextStatus, timestamp);
+    }
+  }
+
+  #jiraPauseTargets(jiraTaskId) {
+    return this.database.prepare(`
+      SELECT tasks.id, tasks.status, tasks.version
+      FROM jira_task_links
+      JOIN tasks ON tasks.id = jira_task_links.task_id
+      WHERE jira_task_links.jira_task_id = ?
+        AND tasks.archived_at IS NULL
+        AND tasks.status IN ('todo', 'in_progress')
+      ORDER BY tasks.project_id, tasks.sort_order, tasks.created_at, tasks.id
+    `).all(jiraTaskId);
+  }
+
+  #syncJiraDuplicate(jiraTask, duplicateOf, timestamp) {
+    const lifecycle = this.getJiraLifecycle(jiraTask.id);
+    if (!duplicateOf) {
+      if (!lifecycle.duplicateOf) return;
+      this.database.prepare(`
+        UPDATE jira_lifecycles
+        SET is_duplicate = 0,
+            duplicate_of_key = NULL,
+            duplicate_task_id = NULL,
+            pending_kind = CASE WHEN pending_kind = 'duplicate' THEN NULL ELSE pending_kind END,
+            pending_from_status = CASE WHEN pending_kind = 'duplicate' THEN NULL ELSE pending_from_status END,
+            pending_to_status = CASE WHEN pending_kind = 'duplicate' THEN NULL ELSE pending_to_status END,
+            pending_created_at = CASE WHEN pending_kind = 'duplicate' THEN NULL ELSE pending_created_at END,
+            version = version + 1,
+            updated_at = ?
+        WHERE jira_task_id = ?
+      `).run(timestamp, jiraTask.id);
+      return;
+    }
+
+    const canonical = duplicateOf.accessible && duplicateOf.externalKey
+      ? this.database.prepare(`
+        SELECT id
+        FROM tasks
+        WHERE external_source = 'jira'
+          AND external_origin = ?
+          AND external_key = ?
+          AND external_sync_error IS NULL
+        LIMIT 1
+      `).get(jiraTask.external_origin, duplicateOf.externalKey)
+      : null;
+    const pendingKind = this.#jiraDuplicateNeedsDecision(jiraTask.id, duplicateOf, lifecycle)
+      ? "duplicate"
+      : lifecycle.pending?.kind ?? null;
+    if (
+      lifecycle.duplicateOf?.externalKey === (duplicateOf.externalKey ?? null)
+      && lifecycle.duplicateOf?.jiraTaskId === (canonical?.id ?? null)
+      && lifecycle.pending?.kind === pendingKind
+    ) return;
+    this.database.prepare(`
+      INSERT INTO jira_lifecycles (
+        jira_task_id, pending_kind, pending_from_status, pending_to_status,
+        pending_created_at, paused_task_ids, reopened, is_duplicate,
+        duplicate_of_key, duplicate_task_id, version, updated_at
+      ) VALUES (?, ?, NULL, NULL, ?, '[]', 0, 1, ?, ?, 1, ?)
+      ON CONFLICT(jira_task_id) DO UPDATE SET
+        pending_kind = excluded.pending_kind,
+        pending_from_status = CASE WHEN excluded.pending_kind = 'duplicate' THEN NULL ELSE jira_lifecycles.pending_from_status END,
+        pending_to_status = CASE WHEN excluded.pending_kind = 'duplicate' THEN NULL ELSE jira_lifecycles.pending_to_status END,
+        pending_created_at = CASE WHEN excluded.pending_kind = 'duplicate' THEN excluded.pending_created_at ELSE jira_lifecycles.pending_created_at END,
+        is_duplicate = 1,
+        duplicate_of_key = excluded.duplicate_of_key,
+        duplicate_task_id = excluded.duplicate_task_id,
+        version = jira_lifecycles.version + 1,
+        updated_at = excluded.updated_at
+    `).run(
+      jiraTask.id,
+      pendingKind,
+      pendingKind === "duplicate" ? timestamp : null,
+      duplicateOf.externalKey ?? null,
+      canonical?.id ?? null,
+      timestamp,
+    );
+  }
+
+  #jiraDuplicateNeedsDecision(jiraTaskId, duplicateOf, lifecycle = this.getJiraLifecycle(jiraTaskId)) {
+    if (!duplicateOf) return false;
+    const hasLinks = Boolean(this.database.prepare(`
+      SELECT 1 FROM jira_task_links WHERE jira_task_id = ? LIMIT 1
+    `).get(jiraTaskId));
+    return hasLinks && (
+      lifecycle.pending?.kind === "duplicate"
+      || lifecycle.duplicateOf?.externalKey !== (duplicateOf.externalKey ?? null)
+    );
+  }
+
+  #setJiraLifecyclePending(jiraTaskId, kind, fromStatus, toStatus, timestamp, reopened = false) {
+    this.database.prepare(`
+      INSERT INTO jira_lifecycles (
+        jira_task_id, pending_kind, pending_from_status, pending_to_status,
+        pending_created_at, paused_task_ids, reopened, version, updated_at
+      ) VALUES (?, ?, ?, ?, ?, '[]', ?, 1, ?)
+      ON CONFLICT(jira_task_id) DO UPDATE SET
+        pending_kind = excluded.pending_kind,
+        pending_from_status = excluded.pending_from_status,
+        pending_to_status = excluded.pending_to_status,
+        pending_created_at = excluded.pending_created_at,
+        reopened = MAX(jira_lifecycles.reopened, excluded.reopened),
+        version = jira_lifecycles.version + 1,
+        updated_at = excluded.updated_at
+    `).run(jiraTaskId, kind, fromStatus, toStatus, timestamp, reopened ? 1 : 0, timestamp);
+  }
+
+  #releaseJiraFrontier(jiraTaskId, pausedTaskIds, timestamp) {
+    const paused = new Set(pausedTaskIds);
+    const linked = this.database.prepare(`
+      SELECT tasks.id, tasks.status
+      FROM jira_task_links
+      JOIN tasks ON tasks.id = jira_task_links.task_id
+      WHERE jira_task_links.jira_task_id = ?
+        AND tasks.archived_at IS NULL
+        AND tasks.status IN ('backlog', 'blocked')
+      ORDER BY tasks.project_id, tasks.sort_order, tasks.created_at, tasks.id
+    `).all(jiraTaskId);
+    const blocked = this.database.prepare(`
+      SELECT 1
+      FROM task_relations
+      JOIN tasks AS prerequisite ON prerequisite.id = task_relations.source_task_id
+      WHERE task_relations.relation_type = 'blocks'
+        AND task_relations.target_task_id = ?
+        AND prerequisite.status NOT IN ('done', 'canceled')
+      LIMIT 1
+    `);
+    const release = this.database.prepare(`
+      UPDATE tasks
+      SET status = 'todo', version = version + 1, updated_at = ?
+      WHERE id = ? AND status = ?
+    `);
+    for (const task of linked) {
+      if (task.status === "blocked" && !paused.has(task.id)) continue;
+      if (blocked.get(task.id)) continue;
+      release.run(timestamp, task.id, task.status);
+      paused.delete(task.id);
+    }
+    for (const taskId of [...paused]) {
+      const task = this.database.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId);
+      if (!task || task.status !== "blocked") paused.delete(taskId);
+    }
+    return [...paused];
   }
 
   #jiraPlanSourceSnapshot(jiraTask) {
@@ -1590,9 +2159,17 @@ export class PanelDatabase {
 
   beginJiraPlanning(jiraTaskId, taskVersion, threadId) {
     const jiraTask = this.#requireTask(jiraTaskId);
+    this.#assertJiraMutationUnlocked(jiraTask.id);
     this.#requireVersion(jiraTask, taskVersion);
     if (jiraTask.source !== "jira" || jiraTask.archivedAt !== null) {
       throw new ApiError(409, "JIRA_PLANNING_UNAVAILABLE", "Only active Jira issues can be planned");
+    }
+    const lifecycle = this.getJiraLifecycle(jiraTask.id);
+    if (lifecycle.pending?.kind === "reopened") {
+      throw new ApiError(409, "JIRA_REPLAN_REQUIRED", "Choose how to handle the reopened Jira issue first");
+    }
+    if (lifecycle.duplicateOf) {
+      throw new ApiError(409, "JIRA_DUPLICATE", "Use the canonical Jira issue instead of planning a duplicate");
     }
     if (this.getJiraSimpleStartOperation(jiraTask.id)) {
       throw new ApiError(
@@ -1637,6 +2214,7 @@ export class PanelDatabase {
   }
 
   markJiraPlanPrompted(jiraTaskId) {
+    this.#assertJiraMutationUnlocked(jiraTaskId);
     const timestamp = now();
     this.database.prepare(`
       UPDATE jira_plans
@@ -1647,6 +2225,7 @@ export class PanelDatabase {
   }
 
   saveJiraPlanSpec(jiraTaskId, version, spec) {
+    this.#assertJiraMutationUnlocked(jiraTaskId);
     const plan = this.database.prepare(`
       SELECT * FROM jira_plans WHERE jira_task_id = ?
     `).get(jiraTaskId);
@@ -1670,6 +2249,7 @@ export class PanelDatabase {
 
   beginJiraPlanPublish(jiraTaskId, version, items) {
     const jiraTask = this.#requireTask(jiraTaskId);
+    this.#assertJiraMutationUnlocked(jiraTask.id);
     const plan = this.database.prepare(`
       SELECT * FROM jira_plans WHERE jira_task_id = ?
     `).get(jiraTaskId);
@@ -1843,6 +2423,7 @@ export class PanelDatabase {
   }
 
   finishJiraPlanPublish(jiraTaskId, publication) {
+    this.#assertJiraMutationUnlocked(jiraTaskId);
     const timestamp = now();
     const result = this.database.prepare(`
       UPDATE jira_plans
@@ -1855,8 +2436,52 @@ export class PanelDatabase {
     return this.getJiraPlan(jiraTaskId);
   }
 
+  assertIssueExecutionAllowed(taskId) {
+    if (!taskId) return;
+    const link = this.database.prepare(`
+      SELECT jira_task_id FROM jira_task_links WHERE task_id = ?
+    `).get(taskId);
+    if (link && this.getJiraLifecycle(link.jira_task_id).pending?.suggestedAction === "pause") {
+      throw new ApiError(
+        409,
+        "JIRA_LIFECYCLE_PAUSE_PENDING",
+        "Resolve the linked Jira lifecycle notice before starting or continuing this issue",
+      );
+    }
+  }
+
+  #assertJiraMutationUnlocked(taskId, reservation = null, pauseTargets = null) {
+    for (const [jiraTaskId, active] of this.#jiraPauseResolutions) {
+      if (active === pauseTargets) continue;
+      const linked = jiraTaskId !== taskId && this.database.prepare(`
+        SELECT 1 FROM jira_task_links WHERE jira_task_id = ? AND task_id = ?
+      `).get(jiraTaskId, taskId);
+      if (jiraTaskId === taskId || linked) {
+        throw new ApiError(
+          409,
+          "JIRA_PAUSE_IN_PROGRESS",
+          "This issue cannot change while its Jira lifecycle pause is being applied",
+        );
+      }
+    }
+    for (const [jiraTaskId, active] of this.#jiraReopenActions) {
+      if (active === reservation) continue;
+      const linked = jiraTaskId !== taskId && this.database.prepare(`
+        SELECT 1 FROM jira_task_links WHERE jira_task_id = ? AND task_id = ?
+      `).get(jiraTaskId, taskId);
+      if (jiraTaskId === taskId || linked) {
+        throw new ApiError(
+          409,
+          "JIRA_REOPEN_ACTION_IN_PROGRESS",
+          "This issue cannot change while its reopened Jira action is being applied",
+        );
+      }
+    }
+  }
+
   #assertJiraPlanAllowsExecution(taskId, status) {
     if (status !== "in_progress") return;
+    this.assertIssueExecutionAllowed(taskId);
     const link = this.database.prepare(`
       SELECT jira_task_id FROM jira_task_links WHERE task_id = ?
     `).get(taskId);
@@ -1900,6 +2525,7 @@ export class PanelDatabase {
 
   beginJiraSimpleStart(jiraTaskId, version) {
     const jiraTask = this.#requireTask(jiraTaskId);
+    this.#assertJiraMutationUnlocked(jiraTask.id);
     const existing = this.getJiraSimpleStartOperation(jiraTask.id);
     if (existing) {
       return { jira: jiraTask, operation: existing, items: this.listJiraSimpleStartItems(jiraTask.id) };
@@ -1914,6 +2540,17 @@ export class PanelDatabase {
     this.#requireVersion(jiraTask, version);
     if (jiraTask.source !== "jira" || jiraTask.archivedAt !== null) {
       throw new ApiError(409, "JIRA_SIMPLE_START_UNAVAILABLE", "Only active Jira issues can be started");
+    }
+    const lifecycle = this.getJiraLifecycle(jiraTask.id);
+    if (lifecycle.pending) {
+      throw new ApiError(
+        409,
+        "JIRA_LIFECYCLE_PENDING",
+        "Resolve the Jira lifecycle notice before starting this issue",
+      );
+    }
+    if (lifecycle.duplicateOf) {
+      throw new ApiError(409, "JIRA_DUPLICATE", "Use the canonical Jira issue instead of starting a duplicate");
     }
     if (jiraTask.status !== "todo") {
       throw new ApiError(409, "JIRA_SIMPLE_START_STATUS", "只有待认领的 Jira 可以创建并开始");
@@ -2013,6 +2650,7 @@ export class PanelDatabase {
   setJiraProjects(id, version, projectIds, actor) {
     const jiraTask = this.#requireTask(id);
     this.#requireVersion(jiraTask, version);
+    this.#assertJiraMutationUnlocked(jiraTask.id);
     if (jiraTask.source !== "jira") {
       throw new ApiError(409, "JIRA_TASK_REQUIRED", "Only Jira issues can link repositories");
     }
@@ -2078,7 +2716,7 @@ export class PanelDatabase {
     return this.getJiraContext(jiraTask.id);
   }
 
-  addJiraTaskLink(jiraId, version, taskId, actor) {
+  addJiraTaskLink(jiraId, version, taskId, actor, reservation = null) {
     const jiraTask = this.#requireTask(jiraId);
     const task = this.#requireTask(taskId);
     this.#requireVersion(jiraTask, version);
@@ -2087,6 +2725,14 @@ export class PanelDatabase {
     }
     if (task.archivedAt !== null) {
       throw new ApiError(409, "TASK_ARCHIVED", "Archived issues cannot be linked to Jira");
+    }
+    this.#assertJiraMutationUnlocked(jiraTask.id, reservation);
+    if (this.getJiraLifecycle(jiraTask.id).pending?.suggestedAction === "pause") {
+      throw new ApiError(
+        409,
+        "JIRA_LIFECYCLE_PAUSE_PENDING",
+        "Resolve the Jira lifecycle notice before linking another issue",
+      );
     }
     const linkedProject = this.database.prepare(`
       SELECT 1 FROM jira_task_projects WHERE jira_task_id = ? AND project_id = ?
@@ -2127,13 +2773,14 @@ export class PanelDatabase {
     return this.getJiraContext(jiraTask.id);
   }
 
-  removeJiraTaskLink(jiraId, version, taskId, actor) {
+  removeJiraTaskLink(jiraId, version, taskId, actor, reservation = null) {
     const jiraTask = this.#requireTask(jiraId);
     const task = this.#requireTask(taskId);
     this.#requireVersion(jiraTask, version);
     if (jiraTask.source !== "jira" || task.source === "jira") {
       throw new ApiError(409, "JIRA_LINK_INVALID", "Link one Jira issue to one Panel issue");
     }
+    this.#assertJiraMutationUnlocked(jiraTask.id, reservation);
     const timestamp = now();
     this.database.exec("BEGIN IMMEDIATE");
     try {
@@ -2774,6 +3421,7 @@ export class PanelDatabase {
   updateTask(id, version, changes, threadId, threadBinding, actor) {
     const current = this.#requireTask(id);
     this.#requireVersion(current, version);
+    this.#assertJiraMutationUnlocked(current.id);
     if (Object.hasOwn(changes, "status") && changes.status !== current.status) {
       this.#assertJiraPlanAllowsExecution(current.id, changes.status);
     }
@@ -2907,6 +3555,9 @@ export class PanelDatabase {
 
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      if (current.source === "jira" && Object.hasOwn(changes, "status") && changes.status !== current.status) {
+        this.#syncJiraLifecycle(current, changes.status, timestamp);
+      }
       const result = this.database.prepare(`
         UPDATE tasks SET ${assignments.join(", ")} WHERE id = ? AND version = ?
       `).run(...values);
@@ -2942,10 +3593,13 @@ export class PanelDatabase {
   moveTask(id, version, status, sortOrder, threadId, threadBinding, actor) {
     const current = this.#requireTask(id);
     this.#requireVersion(current, version);
+    this.#assertJiraMutationUnlocked(current.id);
     if (current.archivedAt !== null) {
       throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot be moved");
     }
-    if (status !== current.status) this.#assertJiraPlanAllowsExecution(current.id, status);
+    if (status !== current.status) {
+      this.#assertJiraPlanAllowsExecution(current.id, status);
+    }
     if (status !== current.status && sortOrder === undefined) {
       const row = this.database.prepare(`
         SELECT MIN(sort_order) AS minimum
@@ -2970,6 +3624,9 @@ export class PanelDatabase {
       : "";
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      if (current.source === "jira" && status !== current.status) {
+        this.#syncJiraLifecycle(current, status, timestamp);
+      }
       const result = this.database.prepare(`
         UPDATE tasks
         SET status = ?, sort_order = ?, ${threadAssignment} version = version + 1, updated_at = ?
@@ -2995,6 +3652,7 @@ export class PanelDatabase {
   archiveTask(id, version, threadId, threadBinding, actor) {
     const current = this.#requireTask(id);
     this.#requireVersion(current, version);
+    this.#assertJiraMutationUnlocked(current.id);
     const timestamp = now();
     const storedBinding = storedThreadBinding(threadBinding, threadId);
     const threadAssignment = storedBinding
@@ -3028,6 +3686,7 @@ export class PanelDatabase {
   restoreTask(id, version, threadId, threadBinding, actor) {
     const current = this.#requireTask(id);
     this.#requireVersion(current, version);
+    this.#assertJiraMutationUnlocked(current.id);
     if (current.archivedAt === null) {
       throw new ApiError(409, "TASK_NOT_ARCHIVED", "Only archived tasks can be restored");
     }
@@ -3066,6 +3725,7 @@ export class PanelDatabase {
     try {
       const current = this.#requireTask(id);
       this.#requireVersion(current, version);
+      this.#assertJiraMutationUnlocked(current.id);
       if (current.archivedAt === null) {
         throw new ApiError(409, "TASK_NOT_ARCHIVED", "Only archived tasks can be deleted");
       }

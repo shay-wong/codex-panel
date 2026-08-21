@@ -6,6 +6,8 @@
 
 面板支持概览、列表、甘特图和归档 Issue 工作流。横向列表沿用议题看板的分栏与卡片层级，竖向列表保持紧凑；同步自 Jira 的 Issue 会优先显示外部 Key。Issue 可以设置开始与截止日期，也可以从详情页移动到其他项目并保留关联对话。本地 Jira 连接会把分配给当前 Jira 登录用户的未完成任务同步到固定 Jira 项目。每个 Jira 需求可以选择一个或多个仓库项目，并关联这些仓库中已有的执行 Issue；每个执行 Issue 最多属于一个 Jira 需求，Jira 刷新不会覆盖本地工作内容。执行 Issue 上的关联 Jira 卡片会返回 Panel 内的需求详情，外部 Jira 入口仍保留在该详情页。已保存仓库关联的待认领 Jira 可以一键切换到进行中，为每个仓库创建一个执行 Issue 和一个独立的空闲 AI 对话，并在所有仓库就绪后再统一把 Issue 释放到待认领；部分失败后重试会继续原操作，不会重复创建。复杂需求则可以打开只读 AI 规划对话，使用 `grill-me`、`to-spec` 和 `to-tickets`，把 Spec 保存在 Jira 需求上，再将已确认仓库的 tickets 发布为带依赖关系的已关联 backlog Issue。Jira 内容或仓库变化后必须重新复核才能再次发布，未开始 Issue 在此期间不能进入执行，重新规划只会取消被替代且尚未开始的工作；已开始成果会作为新计划约束继续显示。打开 Jira 项目时最多每分钟刷新一次，也可以手动同步。只有全部 Jira 搜索分页成功后才会应用刷新；Jira 不可用时仍显示缓存任务，切换到其他 Jira 登录账号前必须确认。Jira 顶部和设置中会显示最后尝试、最后成功、未完成与状态未知数量，以及可执行的失败原因。修改已同步 Jira Issue 的标题、描述、优先级、标签、截止日期或状态时，Panel 会直接回写 Jira。连接支持账号密码或 Jira Cloud 邮箱与 API Token 的 Basic Auth，也支持 Jira Data Center 或 Server Personal Access Token 的 Bearer Auth。凭据保存在 Panel 本地数据目录中，云端模式不可用；除非 Jira 位于受信任的内网，否则应使用 HTTPS。
 
+Jira 状态与规划分开控制执行授权。Jira 进入进行中时，Panel 只把依赖 frontier 中符合条件的 backlog Issue 释放到待认领。Jira 回到待认领或在关联工作未完成时提前结束，会先要求确认是否暂停；暂停会把待认领 Issue 移回 backlog、把进行中 Issue 设为阻塞并尝试中断其活动 Codex turn，但不会删除代码、对话或 worktree。个别 turn 中断失败不会撤销 Issue 暂停，Panel 会显示仍需处理的失败数量。Jira 再次进入进行中后会恢复符合条件的暂停 Issue。已完成 Jira 重新打开时会保留历史 Issue 和对话，并可创建新的返工 Issue 或开启新的规划会话；新规划启动失败时仍保留旧计划供重试，重开操作完成前会拒绝同一 Jira 的同步和关系修改。重复 Jira 会记录 canonical Jira，迁移已有关系前必须确认。即使 canonical 未分配给当前用户，Panel 也会按 Key 探测；只有当前 Jira 账号无法读取时才保留原关系。
+
 ## 环境要求
 
 - Node.js 22.5 或更高版本
@@ -85,7 +87,7 @@ open "$HOME/Applications/Codex Panel.app"
 
 App bundle 内包含 Panel runtime、`panelctl`、两个 Panel Skills，以及用于运行它们的官方签名 Node.js runtime。macOS 安装器优先使用 `CODEX_PANEL_CODESIGN_IDENTITY`，其次使用可复用的本机 Apple Development 身份；两者都不可用时回退到 ad-hoc 签名。Windows 正式发行要求配置 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT`，并生成带 Authenticode 签名的 NSIS 安装包。
 
-连接前，应用会先校验自身 App 签名和打包 runtime，再按 OpenAI 的 Identifier 和 Team ID 校验官方 `ChatGPT.app` 及其内置 Codex 可执行文件，拒绝符号链接，并从子进程环境中移除 Node、shell 和动态加载器注入变量。Windows 还会在执行前校验 launcher 的 Authenticode 证书，以及编译进签名 launcher、覆盖 Node 和全部 Panel runtime 文件的 SHA-256 清单。Panel 服务通过启动器持有的监听器和私有实例 token 仅绑定回环地址。如果正在运行的 Codex 已暴露有效 CDP，包括旧 Swift 启动器留下的端口，新 injector 会接管真实端口；否则通过 macOS LaunchServices 使用随机私有 CDP 端口启动官方应用。已经在无 CDP 模式下运行的 Codex 仍需完全退出后才能重新以 CDP 启动。运行状态、打开和停止请求在 macOS 使用受启动 token 保护且仅当前用户可访问的 Unix socket，在 Windows 使用启动器持有的子进程控制管道。停止或退出 Tauri 只会等待自己负责的 injector 和 Panel 服务退出，官方 ChatGPT/Codex 应用继续运行。应用不会修改 `ChatGPT.app` 或 `app.asar`。
+连接前，应用会先校验自身 App 签名和打包 runtime，再按 OpenAI 的 Identifier 和 Team ID 校验官方 `ChatGPT.app` 及其内置 Codex 可执行文件，拒绝符号链接，并从子进程环境中移除 Node、shell 和动态加载器注入变量。Windows 还会在执行前校验 launcher 的 Authenticode 证书，以及编译进签名 launcher、覆盖 Node 和全部 Panel runtime 文件的 SHA-256 清单。Panel 服务通过启动器持有的监听器和私有实例 token 仅绑定回环地址。如果正在运行的 Codex 已暴露有效 CDP，包括旧 Swift 启动器留下的端口，新 injector 会接管真实端口；否则通过 macOS LaunchServices 使用随机私有 CDP 端口启动官方应用。已经在无 CDP 模式下运行的 Codex 仍需完全退出后才能重新以 CDP 启动。运行状态、打开和停止请求在 macOS 使用受启动 token 保护且仅当前用户可访问的 Unix socket，在 Windows 使用启动器持有的子进程控制管道；Windows 上的 Panel 生命周期操作通过受启动 token 认证的 named pipe 中断 native Codex turn。停止或退出 Tauri 只会等待自己负责的 injector 和 Panel 服务退出，官方 ChatGPT/Codex 应用继续运行。应用不会修改 `ChatGPT.app` 或 `app.asar`。
 
 更新仓库代码或替换 Node.js 后，请重新运行 `npm run codex:install`。OpenAI 正常签名的 `ChatGPT.app` 更新无需重新安装 Panel。`npm run launcher:install` 仍作为兼容别名保留。最近一次管理器日志位于 `~/Library/Logs/Codex Panel.log`。
 

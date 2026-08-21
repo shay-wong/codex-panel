@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmod,
   lstat,
@@ -14,7 +14,7 @@ import path from "node:path";
 
 import { managedInjectorCommandMatches } from "./codex-injector-runtime.mjs";
 
-const allowedActions = new Set(["status", "open", "shutdown"]);
+const allowedActions = new Set(["status", "open", "interrupt-thread", "shutdown"]);
 const maximumMessageBytes = 64 * 1024;
 const requestTimeoutMs = 3_000;
 
@@ -22,7 +22,15 @@ function isMissing(error) {
   return error?.code === "ENOENT";
 }
 
-export function injectorControlSocketPath(runtimeFile) {
+export function injectorControlSocketPath(runtimeFile, startupToken = null, platform = process.platform) {
+  if (platform === "win32") {
+    assertIdentifier(startupToken, "Panel startup token");
+    const identifier = createHash("sha256")
+      .update(`${path.resolve(runtimeFile)}\0${startupToken}`)
+      .digest("hex")
+      .slice(0, 32);
+    return `\\\\.\\pipe\\codex-panel-${identifier}`;
+  }
   return path.join(path.dirname(path.resolve(runtimeFile)), ".codex-panel.sock");
 }
 
@@ -59,8 +67,8 @@ async function assertPrivateRegularFile(filePath) {
 
 export async function publishInjectorRuntime(runtimeFile, descriptor) {
   const resolvedRuntimeFile = path.resolve(runtimeFile);
-  const controlSocket = injectorControlSocketPath(resolvedRuntimeFile);
-  if (path.resolve(descriptor.controlSocket) !== controlSocket) {
+  const controlSocket = injectorControlSocketPath(resolvedRuntimeFile, descriptor.startupToken);
+  if (descriptor.controlSocket !== controlSocket) {
     throw new Error("Panel control socket path does not match the runtime descriptor");
   }
   if (!Number.isSafeInteger(descriptor.pid) || descriptor.pid <= 0) {
@@ -111,7 +119,7 @@ async function readInjectorRuntimeDescriptor(runtimeFile, { allowLegacy = false 
   if (descriptor.transport !== "pipe" && descriptor.transport !== "tcp") {
     throw new Error("Panel runtime descriptor has an invalid transport");
   }
-  if (path.resolve(descriptor.controlSocket || "") !== injectorControlSocketPath(resolvedRuntimeFile)) {
+  if (descriptor.controlSocket !== injectorControlSocketPath(resolvedRuntimeFile, descriptor.startupToken)) {
     throw new Error("Panel control socket path is not launcher-managed");
   }
   return descriptor;
@@ -122,7 +130,20 @@ export async function readInjectorRuntime(runtimeFile) {
 }
 
 export function readProcessCommand(pid) {
-  const result = spawnSync("/bin/ps", ["-ww", "-p", String(pid), "-o", "command="], {
+  const command = process.platform === "win32"
+    ? path.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    : "/bin/ps";
+  const args = process.platform === "win32"
+    ? [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "(Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $args[0])).CommandLine",
+      String(pid),
+    ]
+    : ["-ww", "-p", String(pid), "-o", "command="];
+  const result = spawnSync(command, args, {
     encoding: "utf8",
     maxBuffer: 1024 * 1024,
   });
@@ -152,7 +173,7 @@ async function signalManagedInjector(descriptor, ownership, signal) {
   killProcess(descriptor.pid, signal);
 }
 
-function exchangeControlMessage(controlSocket, request) {
+function exchangeControlMessage(controlSocket, request, timeoutMs = requestTimeoutMs) {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ path: controlSocket });
     let settled = false;
@@ -167,7 +188,7 @@ function exchangeControlMessage(controlSocket, request) {
     };
     const timeout = setTimeout(() => {
       finish(new Error("Panel injector control request timed out"));
-    }, requestTimeoutMs);
+    }, timeoutMs);
     socket.setEncoding("utf8");
     socket.once("error", (error) => finish(error));
     socket.on("data", (chunk) => {
@@ -199,6 +220,7 @@ export async function sendInjectorControlRequest({
   runtimeFile,
   startupToken = null,
   action,
+  payload = {},
   ownership,
 }) {
   if (!allowedActions.has(action)) throw new Error(`Unsupported Panel control action: ${action}`);
@@ -208,9 +230,10 @@ export async function sendInjectorControlRequest({
   }
   await assertManagedRuntimeOwnership(descriptor, ownership);
   return exchangeControlMessage(descriptor.controlSocket, {
+    ...payload,
     action,
     startupToken: startupToken || descriptor.startupToken,
-  });
+  }, action === "interrupt-thread" ? 15_000 : requestTimeoutMs);
 }
 
 function processIsRunning(pid, killProcess = process.kill) {
@@ -284,6 +307,7 @@ export async function stopManagedInjector({
 }
 
 async function removeStaleSocket(controlSocket) {
+  if (process.platform === "win32") return;
   try {
     const details = await lstat(controlSocket);
     if (!details.isSocket() || details.isSymbolicLink()) {
@@ -298,10 +322,21 @@ async function removeStaleSocket(controlSocket) {
   }
 }
 
-export async function startInjectorControlServer({ controlSocket, startupToken, handlers }) {
-  const resolvedControlSocket = path.resolve(controlSocket);
+export async function startInjectorControlServer({
+  controlSocket,
+  startupToken,
+  handlers,
+  actions = allowedActions,
+}) {
+  const resolvedControlSocket = process.platform === "win32" ? controlSocket : path.resolve(controlSocket);
   assertIdentifier(startupToken, "Panel startup token");
-  await mkdir(path.dirname(resolvedControlSocket), { recursive: true, mode: 0o700 });
+  const acceptedActions = new Set(actions);
+  if ([...acceptedActions].some((action) => !allowedActions.has(action))) {
+    throw new Error("Unsupported Panel control action");
+  }
+  if (process.platform !== "win32") {
+    await mkdir(path.dirname(resolvedControlSocket), { recursive: true, mode: 0o700 });
+  }
   await removeStaleSocket(resolvedControlSocket);
   const sockets = new Set();
   const server = net.createServer((socket) => {
@@ -325,10 +360,10 @@ export async function startInjectorControlServer({ controlSocket, startupToken, 
         if (request?.startupToken !== startupToken) {
           throw new Error("Panel startup token was rejected");
         }
-        if (!allowedActions.has(request.action) || typeof handlers?.[request.action] !== "function") {
+        if (!acceptedActions.has(request.action) || typeof handlers?.[request.action] !== "function") {
           throw new Error("Unsupported Panel control action");
         }
-        reply({ ok: true, result: await handlers[request.action]() });
+        reply({ ok: true, result: await handlers[request.action](request) });
       } catch (error) {
         reply({ ok: false, error: error instanceof Error ? error.message : String(error) });
       }
@@ -340,7 +375,7 @@ export async function startInjectorControlServer({ controlSocket, startupToken, 
     server.once("error", reject);
     server.listen(resolvedControlSocket, resolve);
   });
-  await chmod(resolvedControlSocket, 0o600);
+  if (process.platform !== "win32") await chmod(resolvedControlSocket, 0o600);
   return { server, sockets, controlSocket: resolvedControlSocket };
 }
 
@@ -348,10 +383,12 @@ export async function closeInjectorControlServer(control) {
   if (!control) return;
   for (const socket of control.sockets) socket.destroy();
   await new Promise((resolve) => control.server.close(resolve));
-  try {
-    await unlink(control.controlSocket);
-  } catch (error) {
-    if (!isMissing(error)) throw error;
+  if (process.platform !== "win32") {
+    try {
+      await unlink(control.controlSocket);
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+    }
   }
 }
 

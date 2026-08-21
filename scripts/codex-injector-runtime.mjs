@@ -176,6 +176,19 @@ export async function handleHostBindingPayload(params, handlers) {
   return { responded: true, accepted: true };
 }
 
+export async function interruptNativeCodexThread(binding, request) {
+  const result = await request("thread/read", {
+    threadId: binding.threadId,
+    includeTurns: true,
+  });
+  const turn = Array.isArray(result?.thread?.turns)
+    ? result.thread.turns.findLast((candidate) => candidate?.status === "inProgress")
+    : null;
+  if (!turn?.id) return { interrupted: false };
+  await request("turn/interrupt", { threadId: binding.threadId, turnId: turn.id });
+  return { interrupted: true, turnId: turn.id };
+}
+
 export async function reconcileInjectionRuntime({
   currentStatus,
   source,
@@ -230,9 +243,8 @@ export function residentInjectorCommandMatches(
   port = null,
   defaultPort = 9229,
 ) {
-  const absoluteScript = new RegExp(
-    `(?:^|\\s)${escapeRegExp(injectorPath)}(?=\\s|$)`,
-  );
+  const escapedPath = escapeRegExp(injectorPath);
+  const absoluteScript = new RegExp(`(?:^|\\s)(?:${escapedPath}|"${escapedPath}")(?=\\s|$)`);
   return absoluteScript.test(command)
     && /(?:^|\s)--watch(?=\s|$)/.test(command)
     && (port === null || commandPort(command, defaultPort) === port);
@@ -246,7 +258,7 @@ export function managedInjectorCommandMatches(command, {
   defaultPort = 9229,
 } = {}) {
   if (typeof command !== "string" || !nodePath || !injectorPath) return false;
-  const absoluteNode = new RegExp(`^${escapeRegExp(nodePath)}(?=\\s|$)`);
+  const absoluteNode = new RegExp(`^(?:${escapeRegExp(nodePath)}|"${escapeRegExp(nodePath)}")(?=\\s|$)`);
   return absoluteNode.test(command)
     && residentInjectorCommandMatches(command, injectorPath, port, defaultPort)
     && (

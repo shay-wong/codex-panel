@@ -566,6 +566,18 @@ export async function saveJiraTaskProjects(
   return data.context;
 }
 
+export async function resolveJiraLifecycle(
+  taskId: string,
+  version: number,
+  action: "pause" | "keep" | "rework" | "replan" | "migrate",
+): Promise<JiraTaskContext> {
+  const data = await request<{ context: JiraTaskContext }>(
+    `/api/tasks/${encodeURIComponent(taskId)}/jira-lifecycle`,
+    { method: "POST", body: JSON.stringify({ version, action }) },
+  );
+  return data.context;
+}
+
 export async function startSimpleJiraTask(
   task: Pick<Task, "id" | "version">,
 ): Promise<JiraTaskContext> {

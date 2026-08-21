@@ -1775,7 +1775,7 @@ fn start_launcher_locked(
     #[cfg(target_os = "macos")]
     command.arg(&injector_path);
     #[cfg(target_os = "windows")]
-    command.arg(r"scripts\codex-injector.mjs");
+    command.arg(&injector_path);
     #[cfg(target_os = "macos")]
     command.args([
         "--launch",
