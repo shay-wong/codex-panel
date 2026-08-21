@@ -69,6 +69,8 @@ Make the smallest root-cause change. Do not add unrelated refactors, abstraction
 
 - Keep the issue `in_progress` during implementation.
 - Verify the direct user path. For changes on a UI surface, use the real browser/App surface. Capture visual evidence when the result has visual impact; this evidence supports review and does not by itself require a separate user UI confirmation.
+- Before creating or updating a PR, run the relevant checks in an isolated clean environment without relying on the developer machine's Codex installation, state, credentials, or other local configuration. Exercise affected platform-specific contracts, especially Windows path, named-pipe, and startup-token behavior, before the first PR CI run. The first PR CI run is verification, not preflight.
+- When reporting CI, match the run event, head SHA, job, and failing step. Historical failures from older commits remain visible and must not be reported as the current PR state.
 - Report changed files, commit, exact head SHA, direct verification, PR, CI state, review complexity decision, review result, and remaining limitations in the issue.
 - Show ongoing status in the Panel opened through the injected Codex App.
 - Execution conversations do not merge, release, mark `done`, or claim user acceptance.
