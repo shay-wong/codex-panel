@@ -261,13 +261,14 @@ test("legacy runtime descriptors defer to exact resident cleanup during upgrade"
 test("a reused stale runtime PID is discarded without signaling the unrelated process", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-control-stale-pid-"));
   const runtimeFile = path.join(directory, "launcher-runtime.json");
-  const controlSocket = injectorControlSocketPath(runtimeFile);
+  const startupToken = "stale-manager-token";
+  const controlSocket = injectorControlSocketPath(runtimeFile, startupToken);
   const stalePID = 99_998;
   await publishInjectorRuntime(runtimeFile, {
     pid: stalePID,
     url: "http://127.0.0.1:47823",
     controlSocket,
-    startupToken: "stale-manager-token",
+    startupToken,
     transport: "tcp",
     port: 9_229,
   });

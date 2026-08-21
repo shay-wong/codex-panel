@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -28,11 +28,28 @@ async function api(baseUrl, pathname, method = "GET", body) {
 
 test("Jira lifecycle authorizes, pauses, and resumes dependency-frontier issues", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "jira-lifecycle-"));
+  const codexExecutable = path.join(directory, "fake-codex.mjs");
+  await writeFile(codexExecutable, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "debug") {
+  process.stdout.write('{"models":[{"slug":"gpt-test","display_name":"GPT Test","description":"","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"}],"service_tiers":[]}]}');
+} else if (args[0] === "app-server") {
+  process.stdin.setEncoding("utf8"); let buffer = "";
+  process.stdin.on("data", chunk => { buffer += chunk; let index;
+    while ((index = buffer.indexOf("\\n")) >= 0) { const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
+      if (!line.trim()) continue; const message = JSON.parse(line);
+      if (message.id === 1) process.stdout.write('{"id":1,"result":{}}\\n');
+      if (message.id === 2) process.stdout.write('{"id":2,"result":{"data":[{"skills":[]}]}}\\n');
+    }
+  });
+}
+`);
+  await chmod(codexExecutable, 0o755);
   let jiraStatus = { name: "To Do", statusCategory: { key: "new" } };
   let duplicateOf = null;
-    let canonicalAvailable = true;
-    let onNativeInterrupt = null;
-    let failingNativeThreadId = null;
+  let canonicalAvailable = true;
+  let onNativeInterrupt = null;
+  let failingNativeThreadId = null;
   const interruptedNativeThreads = [];
   const jiraConfig = {
     version: 3,
@@ -46,6 +63,7 @@ test("Jira lifecycle authorizes, pauses, and resumes dependency-frontier issues"
   };
   const app = createPanelServer({
     dataDirectory: directory,
+    codexExecutable,
     jiraConfigStore: {
       read: async () => jiraConfig,
       save: async (config) => config,
