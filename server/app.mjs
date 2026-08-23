@@ -22,8 +22,13 @@ import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
 import { withoutPanelLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { executableCommand } from "../shared/executable-command.mjs";
 import { normalizeWorkflowSnapshot } from "../shared/workflow-control-flow.mjs";
+import {
+  isAutomationModel,
+  isSupportedModelEffort,
+} from "../shared/panel-automation-options.mjs";
 import { AiChatService } from "./ai-chat.mjs";
 import { resolveAiWorkspace, resolveMappedAiWorkspace } from "./ai-chat-catalog.mjs";
+import { ClaimQueueService } from "./claim-queue.mjs";
 import { decodeComposerReferenceKey } from "./composer-reference.mjs";
 import { createCloudConfigStore } from "./cloud-config.mjs";
 import {
@@ -1463,6 +1468,33 @@ function parseComposerTurn(body) {
   };
 }
 
+function parseProjectAutomationPolicy(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set([
+    "enabledByUser",
+    "paused",
+    "intervalMinutes",
+    "model",
+    "reasoningEffort",
+  ]));
+  if (typeof body.enabledByUser !== "boolean" || typeof body.paused !== "boolean") {
+    throw new ApiError(400, "INVALID_FIELD", "Automation switches must be boolean");
+  }
+  if (![5, 10, 15, 30, 60].includes(body.intervalMinutes)) {
+    throw new ApiError(400, "INVALID_FIELD", "'intervalMinutes' must be 5, 10, 15, 30, or 60");
+  }
+  if (!isAutomationModel(body.model) || !isSupportedModelEffort(body.model, body.reasoningEffort)) {
+    throw new ApiError(400, "INVALID_FIELD", "Automation model and reasoning effort are incompatible");
+  }
+  return {
+    enabledByUser: body.enabledByUser,
+    paused: body.paused,
+    intervalMinutes: body.intervalMinutes,
+    model: body.model,
+    reasoningEffort: body.reasoningEffort,
+  };
+}
+
 class EventHub {
   constructor() {
     this.clients = new Set();
@@ -2107,6 +2139,21 @@ export function createPanelServer(options = {}) {
     processEnv: codexProcessEnvironment,
     resolveContext: resolveAiChatContext,
   });
+  const claimQueue = new ClaimQueueService({
+    database,
+    aiChat,
+    onTaskChanged: (task) => events.emit("task.moved", { task }),
+    onCommentCreated: ({ comment, task }) => events.emit("comment.created", { comment, task }),
+    onQueueChanged: (claim) => events.emit("claim.updated", {
+      projectId: claim.projectId,
+      taskId: claim.taskId,
+      claim,
+    }),
+    onPolicyChanged: (policy) => events.emit("automation.updated", {
+      projectId: policy.projectId,
+      policy,
+    }),
+  });
   const pendingJiraSimpleStarts = new Map();
   // ponytail: one in-process reservation per Jira is enough while this server owns all local mutations.
   const pendingJiraReopenActions = new Map();
@@ -2386,6 +2433,11 @@ export function createPanelServer(options = {}) {
         actor,
       );
       events.emit("task.moved", { task: moved });
+    }
+
+    for (const item of database.listJiraSimpleStartItems(jiraTaskId)) {
+      const task = database.getTask(item.taskId);
+      if (task.status === "todo") claimQueue.enqueue(task.id, "manual");
     }
 
     const currentJira = database.getTask(jiraTaskId);
@@ -3076,6 +3128,7 @@ export function createPanelServer(options = {}) {
             "AI chat turn body cannot exceed 25 MiB",
           )),
         );
+        claimQueue.resumeAfterUserTurn(threadId, run.id);
         return sendJson(response, 202, { run });
       }
 
@@ -3126,6 +3179,34 @@ export function createPanelServer(options = {}) {
         return sendJson(response, 200, {
           workspaces: await readCodexProjectWorkspaces(resolved.codexStatePath),
         });
+      }
+
+      const projectAutomationRoute = pathname.match(/^\/api\/local\/projects\/([^/]+)\/automation$/);
+      if (projectAutomationRoute) {
+        assertNoQuery(url.searchParams, "/api/local/projects/:id/automation");
+        const projectId = validateProjectId(
+          decodeRouteSegment(projectAutomationRoute[1], "Project id"),
+        );
+        if (request.method === "GET") {
+          return sendJson(response, 200, { policy: claimQueue.getProjectPolicy(projectId) });
+        }
+        if (request.method === "PUT") {
+          const policy = claimQueue.saveProjectPolicy(
+            projectId,
+            parseProjectAutomationPolicy(await readJson(request)),
+          );
+          return sendJson(response, 200, { policy });
+        }
+        return methodNotAllowed(response, ["GET", "PUT"]);
+      }
+
+      const taskClaimRoute = pathname.match(/^\/api\/local\/tasks\/([^/]+)\/claim$/);
+      if (taskClaimRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "POST /api/local/tasks/:id/claim");
+        await assertEmptyRequestBody(request, "POST /api/local/tasks/:id/claim");
+        const taskId = decodeRouteSegment(taskClaimRoute[1], "Task id");
+        return sendJson(response, 202, claimQueue.enqueue(taskId));
       }
 
       if (pathname === "/api/workflow-capabilities") {
@@ -3639,12 +3720,14 @@ export function createPanelServer(options = {}) {
           return sendJson(response, 200, { comments: database.listComments(taskId) });
         }
         if (request.method === "POST") {
+          const actor = actorFromRequest(request);
           const comment = database.createComment(taskId, {
             ...resolveInputThreadBinding(parseCommentCreate(await readJson(request))),
-            actor: actorFromRequest(request),
+            actor,
           });
           const task = database.getTask(taskId);
           events.emit("comment.created", { comment, task });
+          if (actor.type === "user") claimQueue.resumeFromUserComment(taskId);
           return sendJson(response, 201, { comment });
         }
         return methodNotAllowed(response, ["GET", "POST"]);
@@ -4039,6 +4122,7 @@ export function createPanelServer(options = {}) {
   return {
     database,
     aiChat,
+    claimQueue,
     server,
     options: resolved,
     async listen({ host = "127.0.0.1", port = resolvePort(), fd = null } = {}) {
@@ -4063,9 +4147,11 @@ export function createPanelServer(options = {}) {
         else server.listen({ fd });
       });
       listening = true;
+      claimQueue.start();
       return server.address();
     },
     async close() {
+      claimQueue.close();
       const serverClosed = listening
         ? new Promise((resolve, reject) => {
             server.close((error) => error ? reject(error) : resolve());

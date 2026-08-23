@@ -1379,25 +1379,27 @@ kbd {
 
 .project-automation-note,
 .project-automation-error,
-.project-automation-quota {
+.project-automation-queue {
   margin: 9px 0 0;
   font-size: 11px;
   line-height: 16px;
 }
 
-.project-automation-quota {
+.project-automation-queue {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
   padding: 8px 10px;
   border-radius: 6px;
   background: var(--surface);
   color: var(--text-tertiary);
+  text-align: center;
 }
 
-.project-automation-quota.is-available {
-  color: var(--success);
-}
-
-.project-automation-quota.is-blocked {
-  color: var(--warning);
+.project-automation-queue strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: 12px;
 }
 
 .project-automation-note {
@@ -4361,6 +4363,7 @@ kbd {
 }
 
 .detail-open-thread-action,
+.detail-run-action,
 .detail-copy-action {
   display: flex;
   align-items: center;
@@ -4382,24 +4385,35 @@ kbd {
   grid-column: 1 / -1;
 }
 
+.detail-run-action {
+  grid-column: 1 / -1;
+  justify-content: center;
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  color: var(--accent);
+}
+
 .detail-open-thread-action:hover:not(:disabled),
+.detail-run-action:hover:not(:disabled),
 .detail-copy-action:hover {
   border-color: var(--border-strong);
   background: var(--surface-hover);
 }
 
 .detail-open-thread-action:focus-visible,
+.detail-run-action:focus-visible,
 .detail-copy-action:focus-visible {
   outline: 0;
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
-.detail-open-thread-action:disabled {
+.detail-open-thread-action:disabled,
+.detail-run-action:disabled {
   cursor: default;
   opacity: 0.55;
 }
 
-.detail-open-thread-action svg {
+.detail-open-thread-action svg,
+.detail-run-action svg {
   width: 16px;
   height: 16px;
 }

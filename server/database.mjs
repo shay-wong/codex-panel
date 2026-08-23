@@ -6,6 +6,10 @@ import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_LABEL_NAMES, JIRA_PROJECT_ID } from "../shared/domain.mjs";
 
 const DEFAULT_PROJECT_LABELS_JSON = JSON.stringify(DEFAULT_LABEL_NAMES);
+const CLAIM_SOURCE_RANK = Object.freeze({ manual: 0, resume: 1, jira: 2, scan: 2 });
+const CLAIM_SOURCE_RANK_SQL = Object.entries(CLAIM_SOURCE_RANK)
+  .map(([source, rank]) => `WHEN '${source}' THEN ${rank}`)
+  .join(" ");
 const JIRA_SIMPLE_START_ITEMS_TABLE = `
   CREATE TABLE jira_simple_start_items (
     operation_id TEXT NOT NULL REFERENCES jira_simple_start_operations(id) ON DELETE CASCADE,
@@ -437,6 +441,38 @@ function aiChatEventFromRow(row) {
   };
 }
 
+function claimQueueItemFromRow(row) {
+  if (!row) return null;
+  return {
+    taskId: row.task_id,
+    projectId: row.project_id,
+    threadId: row.thread_id,
+    source: row.source,
+    state: row.state,
+    resumeRequested: Boolean(row.resume_requested),
+    attemptCount: row.attempt_count,
+    availableAt: row.available_at,
+    enqueuedAt: row.enqueued_at,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    lastError: row.last_error,
+    updatedAt: row.updated_at,
+  };
+}
+
+function claimAttemptFromRow(row) {
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    threadId: row.thread_id,
+    runId: row.run_id,
+    status: row.status,
+    error: row.error,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+  };
+}
+
 function projectPrefix(project) {
   const idPrefix = project.id.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 12) || "TASK";
   const existingPrefix = project.first_identifier?.replace(/-\d+$/, "");
@@ -650,6 +686,55 @@ export class PanelDatabase {
 
       CREATE INDEX IF NOT EXISTS ai_chat_events_thread_created
         ON ai_chat_events(thread_id, created_at, id);
+
+      CREATE TABLE IF NOT EXISTS project_automation_policies (
+        project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        enabled_by_user INTEGER NOT NULL DEFAULT 0 CHECK (enabled_by_user IN (0, 1)),
+        paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0, 1)),
+        interval_minutes INTEGER NOT NULL DEFAULT 5 CHECK (interval_minutes IN (5, 10, 15, 30, 60)),
+        model TEXT NOT NULL DEFAULT 'gpt-5.5',
+        reasoning_effort TEXT NOT NULL DEFAULT 'high',
+        next_scan_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS issue_claim_queue (
+        task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        thread_id TEXT UNIQUE REFERENCES ai_chat_threads(id) ON DELETE SET NULL,
+        source TEXT NOT NULL CHECK (source IN ('manual', 'resume', 'jira', 'scan')),
+        state TEXT NOT NULL CHECK (state IN (
+          'queued', 'running', 'retry_wait', 'blocked', 'failed', 'completed', 'canceled'
+        )),
+        resume_requested INTEGER NOT NULL DEFAULT 0 CHECK (resume_requested IN (0, 1)),
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+        available_at TEXT NOT NULL,
+        enqueued_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        last_error TEXT,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS issue_claim_queue_dispatch
+        ON issue_claim_queue(state, available_at, enqueued_at);
+
+      CREATE TABLE IF NOT EXISTS issue_claim_attempts (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        thread_id TEXT NOT NULL REFERENCES ai_chat_threads(id) ON DELETE CASCADE,
+        run_id TEXT UNIQUE REFERENCES ai_chat_runs(id) ON DELETE SET NULL,
+        status TEXT NOT NULL CHECK (status IN (
+          'running', 'completed', 'failed', 'interrupted', 'blocked'
+        )),
+        error TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS issue_claim_attempts_task_started
+        ON issue_claim_attempts(task_id, started_at, id);
 
     `);
 
@@ -2830,6 +2915,74 @@ export class PanelDatabase {
     return row ? projectFromRow(row) : null;
   }
 
+  getProjectAutomationPolicy(projectId) {
+    const project = this.getProject(projectId);
+    if (!project) {
+      throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+    }
+    const row = this.database.prepare(`
+      SELECT * FROM project_automation_policies WHERE project_id = ?
+    `).get(projectId);
+    const counts = Object.fromEntries(this.database.prepare(`
+      SELECT state, COUNT(*) AS count
+      FROM issue_claim_queue
+      WHERE project_id = ?
+      GROUP BY state
+    `).all(projectId).map((item) => [item.state, Number(item.count)]));
+    return {
+      projectId,
+      status: row?.enabled_by_user && !row.paused ? "ACTIVE" : "PAUSED",
+      enabledByUser: Boolean(row?.enabled_by_user),
+      paused: Boolean(row?.paused),
+      intervalMinutes: row?.interval_minutes ?? 5,
+      model: row?.model ?? "gpt-5.5",
+      reasoningEffort: row?.reasoning_effort ?? "high",
+      nextScanAt: row?.next_scan_at ?? null,
+      queue: {
+        queued: (counts.queued ?? 0) + (counts.retry_wait ?? 0),
+        running: counts.running ?? 0,
+        blocked: counts.blocked ?? 0,
+        failed: counts.failed ?? 0,
+      },
+      updatedAt: row?.updated_at ?? null,
+    };
+  }
+
+  saveProjectAutomationPolicy(projectId, input) {
+    const current = this.getProjectAutomationPolicy(projectId);
+    const timestamp = now();
+    const startsOrResumes = input.enabledByUser && !input.paused && (
+      !current.enabledByUser
+      || current.paused
+      || current.intervalMinutes !== input.intervalMinutes
+    );
+    this.database.prepare(`
+      INSERT INTO project_automation_policies (
+        project_id, enabled_by_user, paused, interval_minutes, model,
+        reasoning_effort, next_scan_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id) DO UPDATE SET
+        enabled_by_user = excluded.enabled_by_user,
+        paused = excluded.paused,
+        interval_minutes = excluded.interval_minutes,
+        model = excluded.model,
+        reasoning_effort = excluded.reasoning_effort,
+        next_scan_at = excluded.next_scan_at,
+        updated_at = excluded.updated_at
+    `).run(
+      projectId,
+      input.enabledByUser ? 1 : 0,
+      input.paused ? 1 : 0,
+      input.intervalMinutes,
+      input.model,
+      input.reasoningEffort,
+      startsOrResumes ? timestamp : current.nextScanAt,
+      current.updatedAt ?? timestamp,
+      timestamp,
+    );
+    return this.getProjectAutomationPolicy(projectId);
+  }
+
   addProjectLabel(projectId, label) {
     const project = this.database.prepare("SELECT labels FROM projects WHERE id = ?").get(projectId);
     if (!project) {
@@ -3228,6 +3381,328 @@ export class PanelDatabase {
       WHERE thread_id = ?
       ORDER BY created_at, rowid
     `).all(threadId).map(aiChatEventFromRow);
+  }
+
+  getClaimQueueItem(taskId) {
+    return claimQueueItemFromRow(this.database.prepare(`
+      SELECT * FROM issue_claim_queue WHERE task_id = ?
+    `).get(taskId));
+  }
+
+  listClaimAttempts(taskId) {
+    return this.database.prepare(`
+      SELECT * FROM issue_claim_attempts
+      WHERE task_id = ?
+      ORDER BY started_at, id
+    `).all(taskId).map(claimAttemptFromRow);
+  }
+
+  enqueueClaim(taskId, source, availableAt = now()) {
+    const task = this.#requireTask(taskId);
+    if (task.source === "jira" || task.archivedAt !== null) {
+      throw new ApiError(409, "CLAIM_TASK_UNAVAILABLE", "Only active Panel issues can be queued");
+    }
+    if (!["todo", "blocked"].includes(task.status)) {
+      const current = this.getClaimQueueItem(task.id);
+      if (current?.state === "running") return current;
+      throw new ApiError(409, "CLAIM_TASK_STATUS", "Only waiting or blocked issues can be queued");
+    }
+    if (!Object.hasOwn(CLAIM_SOURCE_RANK, source)) {
+      throw new ApiError(400, "INVALID_CLAIM_SOURCE", `Unknown claim source '${source}'`);
+    }
+    const current = this.getClaimQueueItem(task.id);
+    if (current?.state === "running") return current;
+    const timestamp = now();
+    const effectiveSource = current && ["queued", "retry_wait"].includes(current.state)
+      && CLAIM_SOURCE_RANK[current.source] <= CLAIM_SOURCE_RANK[source]
+      ? current.source
+      : source;
+    const enqueuedAt = current && ["queued", "retry_wait"].includes(current.state)
+      ? current.enqueuedAt
+      : timestamp;
+    this.database.prepare(`
+      INSERT INTO issue_claim_queue (
+        task_id, project_id, thread_id, source, state, resume_requested, attempt_count,
+        available_at, enqueued_at, started_at, finished_at, last_error, updated_at
+      ) VALUES (?, ?, NULL, ?, 'queued', 0, 0, ?, ?, NULL, NULL, NULL, ?)
+      ON CONFLICT(task_id) DO UPDATE SET
+        project_id = excluded.project_id,
+        source = excluded.source,
+        state = 'queued',
+        resume_requested = 0,
+        attempt_count = CASE
+          WHEN issue_claim_queue.state IN ('failed', 'completed', 'canceled') THEN 0
+          ELSE issue_claim_queue.attempt_count
+        END,
+        available_at = excluded.available_at,
+        enqueued_at = excluded.enqueued_at,
+        started_at = NULL,
+        finished_at = NULL,
+        last_error = NULL,
+        updated_at = excluded.updated_at
+    `).run(task.id, task.projectId, effectiveSource, availableAt, enqueuedAt, timestamp);
+    return this.getClaimQueueItem(task.id);
+  }
+
+  enqueueAuthorizedJiraClaims() {
+    const candidates = this.database.prepare(`
+      SELECT linked.task_id
+      FROM jira_task_links AS linked
+      JOIN tasks AS issues ON issues.id = linked.task_id
+      JOIN tasks AS jira ON jira.id = linked.jira_task_id
+      JOIN project_automation_policies AS policy ON policy.project_id = issues.project_id
+      LEFT JOIN jira_lifecycles AS lifecycle ON lifecycle.jira_task_id = jira.id
+      WHERE issues.archived_at IS NULL
+        AND issues.status = 'todo'
+        AND jira.status = 'in_progress'
+        AND policy.enabled_by_user = 1
+        AND lifecycle.pending_kind IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM issue_claim_queue AS queued
+          WHERE queued.task_id = issues.id
+            AND queued.state IN ('queued', 'running', 'retry_wait')
+        )
+      ORDER BY issues.project_id, issues.sort_order, issues.created_at, issues.id
+    `).all();
+    return candidates.map(({ task_id: taskId }) => this.enqueueClaim(taskId, "jira"));
+  }
+
+  enqueueDueProjectScans(at = now()) {
+    const due = this.database.prepare(`
+      SELECT * FROM project_automation_policies
+      WHERE enabled_by_user = 1
+        AND paused = 0
+        AND (next_scan_at IS NULL OR next_scan_at <= ?)
+      ORDER BY COALESCE(next_scan_at, created_at), project_id
+    `).all(at);
+    const queued = [];
+    for (const policy of due) {
+      const tasks = this.database.prepare(`
+        SELECT tasks.id
+        FROM tasks
+        WHERE tasks.project_id = ?
+          AND tasks.archived_at IS NULL
+          AND tasks.status = 'todo'
+          AND tasks.external_source IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM jira_task_links WHERE jira_task_links.task_id = tasks.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM issue_claim_queue AS queued
+            WHERE queued.task_id = tasks.id
+              AND queued.state IN ('queued', 'running', 'retry_wait')
+          )
+        ORDER BY tasks.sort_order, tasks.created_at, tasks.id
+      `).all(policy.project_id);
+      for (const task of tasks) queued.push(this.enqueueClaim(task.id, "scan", at));
+      const nextScanAt = new Date(
+        new Date(at).getTime() + Number(policy.interval_minutes) * 60_000,
+      ).toISOString();
+      this.database.prepare(`
+        UPDATE project_automation_policies
+        SET next_scan_at = ?, updated_at = ?
+        WHERE project_id = ?
+      `).run(nextScanAt, at, policy.project_id);
+    }
+    return queued;
+  }
+
+  reconcileClaimQueue() {
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE issue_claim_queue
+      SET state = CASE
+            WHEN tasks.status IN ('in_review', 'done') THEN 'completed'
+            WHEN tasks.status = 'blocked' THEN 'blocked'
+            ELSE 'canceled'
+          END,
+          finished_at = COALESCE(finished_at, ?),
+          updated_at = ?
+      FROM tasks
+      WHERE tasks.id = issue_claim_queue.task_id
+        AND issue_claim_queue.state IN ('queued', 'retry_wait')
+        AND (
+          tasks.archived_at IS NOT NULL
+          OR tasks.status NOT IN ('todo', 'in_progress')
+        )
+    `).run(timestamp, timestamp);
+  }
+
+  nextClaim(at = now()) {
+    const row = this.database.prepare(`
+      SELECT queue.task_id
+      FROM issue_claim_queue AS queue
+      JOIN tasks ON tasks.id = queue.task_id
+      LEFT JOIN project_automation_policies AS policy ON policy.project_id = queue.project_id
+      WHERE queue.state IN ('queued', 'retry_wait')
+        AND queue.available_at <= ?
+        AND tasks.archived_at IS NULL
+        AND tasks.status = 'todo'
+        AND COALESCE(policy.paused, 0) = 0
+      ORDER BY
+        CASE queue.source
+          ${CLAIM_SOURCE_RANK_SQL}
+          ELSE 3
+        END,
+        CASE tasks.priority
+          WHEN 'urgent' THEN 0
+          WHEN 'high' THEN 1
+          WHEN 'medium' THEN 2
+          WHEN 'low' THEN 3
+          ELSE 4
+        END,
+        tasks.sort_order,
+        queue.enqueued_at,
+        tasks.created_at,
+        tasks.id
+      LIMIT 1
+    `).get(at);
+    if (!row) return null;
+    const task = this.getTask(row.task_id);
+    return {
+      task,
+      claim: this.getClaimQueueItem(row.task_id),
+      policy: this.getProjectAutomationPolicy(task.projectId),
+    };
+  }
+
+  setClaimThread(taskId, threadId) {
+    const timestamp = now();
+    const result = this.database.prepare(`
+      UPDATE issue_claim_queue SET thread_id = ?, updated_at = ? WHERE task_id = ?
+    `).run(threadId, timestamp, taskId);
+    if (result.changes !== 1) {
+      throw new ApiError(404, "CLAIM_NOT_FOUND", `Claim queue item '${taskId}' does not exist`);
+    }
+    return this.getClaimQueueItem(taskId);
+  }
+
+  markClaimRunning(taskId) {
+    const timestamp = now();
+    const result = this.database.prepare(`
+      UPDATE issue_claim_queue
+      SET state = 'running', attempt_count = attempt_count + 1,
+          resume_requested = 0, started_at = ?, finished_at = NULL,
+          last_error = NULL, updated_at = ?
+      WHERE task_id = ? AND state IN ('queued', 'retry_wait')
+    `).run(timestamp, timestamp, taskId);
+    if (result.changes !== 1) {
+      throw new ApiError(409, "CLAIM_NOT_READY", `Claim queue item '${taskId}' is not ready`);
+    }
+    return this.getClaimQueueItem(taskId);
+  }
+
+  requestClaimResume(taskId) {
+    const timestamp = now();
+    const result = this.database.prepare(`
+      UPDATE issue_claim_queue
+      SET resume_requested = 1, updated_at = ?
+      WHERE task_id = ? AND state = 'running'
+    `).run(timestamp, taskId);
+    if (result.changes !== 1) return null;
+    return this.getClaimQueueItem(taskId);
+  }
+
+  createClaimAttempt(input) {
+    const id = input.id ?? randomUUID();
+    this.database.prepare(`
+      INSERT INTO issue_claim_attempts (
+        id, task_id, thread_id, run_id, status, error, started_at, finished_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      input.taskId,
+      input.threadId,
+      input.runId ?? null,
+      input.status ?? "running",
+      input.error ?? null,
+      input.startedAt ?? now(),
+      input.finishedAt ?? null,
+    );
+    return claimAttemptFromRow(this.database.prepare(`
+      SELECT * FROM issue_claim_attempts WHERE id = ?
+    `).get(id));
+  }
+
+  attachClaimAttemptRun(id, runId) {
+    this.database.prepare(`
+      UPDATE issue_claim_attempts SET run_id = ? WHERE id = ? AND status = 'running'
+    `).run(runId, id);
+    return claimAttemptFromRow(this.database.prepare(`
+      SELECT * FROM issue_claim_attempts WHERE id = ?
+    `).get(id));
+  }
+
+  finishClaimAttempt(id, status, error = null) {
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE issue_claim_attempts
+      SET status = ?, error = ?, finished_at = ?
+      WHERE id = ? AND status = 'running'
+    `).run(status, error, timestamp, id);
+    return claimAttemptFromRow(this.database.prepare(`
+      SELECT * FROM issue_claim_attempts WHERE id = ?
+    `).get(id));
+  }
+
+  scheduleClaimRetry(taskId, error, availableAt) {
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE issue_claim_queue
+      SET state = 'retry_wait', source = 'resume', available_at = ?,
+          finished_at = NULL, last_error = ?, updated_at = ?
+      WHERE task_id = ?
+    `).run(availableAt, error, timestamp, taskId);
+    return this.getClaimQueueItem(taskId);
+  }
+
+  finishClaim(taskId, state, error = null) {
+    if (!["blocked", "failed", "completed", "canceled"].includes(state)) {
+      throw new ApiError(400, "INVALID_CLAIM_STATE", `Cannot finish claim as '${state}'`);
+    }
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE issue_claim_queue
+      SET state = ?, finished_at = ?, last_error = ?, updated_at = ?
+      WHERE task_id = ?
+    `).run(state, timestamp, error, timestamp, taskId);
+    return this.getClaimQueueItem(taskId);
+  }
+
+  recoverInterruptedClaims() {
+    const timestamp = now();
+    const taskIds = this.database.prepare(`
+      SELECT task_id FROM issue_claim_queue WHERE state = 'running'
+      ORDER BY started_at, task_id
+    `).all().map((row) => row.task_id);
+    this.database.prepare(`
+      UPDATE issue_claim_attempts
+      SET status = 'interrupted', error = COALESCE(error, 'Panel service restarted'),
+          finished_at = COALESCE(finished_at, ?)
+      WHERE status = 'running'
+    `).run(timestamp);
+    this.database.prepare(`
+      UPDATE issue_claim_queue
+      SET state = 'queued', source = 'resume', available_at = ?,
+          finished_at = NULL,
+          last_error = 'Panel service restarted', updated_at = ?
+      WHERE state = 'running'
+    `).run(timestamp, timestamp);
+    return taskIds;
+  }
+
+  suggestedExecutionThreadId(taskId) {
+    return this.getClaimQueueItem(taskId)?.threadId
+      ?? this.database.prepare(`
+        SELECT thread_id FROM jira_simple_start_items WHERE task_id = ? LIMIT 1
+      `).get(taskId)?.thread_id
+      ?? this.database.prepare(`
+        SELECT id FROM ai_chat_threads
+        WHERE origin_issue_id = ?
+        ORDER BY created_at, id
+        LIMIT 1
+      `).get(taskId)?.id
+      ?? null;
   }
 
   interruptAbandonedAiChatRuns() {
@@ -4137,6 +4612,7 @@ export class PanelDatabase {
       blocks: blocks.map(taskRelationSummaryFromRow),
       related: related.map(taskRelationSummaryFromRow),
     };
+    task.claim = this.getClaimQueueItem(task.id);
     return task;
   }
 

@@ -7,32 +7,21 @@ import {
   type AutomationModel,
   type AutomationReasoningEffort,
 } from "../../../shared/panel-automation-options.mjs";
+import type {
+  ProjectAutomationOptions,
+  ProjectAutomationPolicy,
+} from "../types";
 import { PanelIcon } from "./PanelIcon";
 
-type AutomationStatus = "ACTIVE" | "PAUSED";
-type AutomationQuotaState = "available" | "blocked" | "unknown" | "unavailable";
 type IntervalMinutes = 5 | 10 | 15 | 30 | 60;
 
-interface AutomationOptions {
-  enabledByUser: boolean;
-  quotaAware: boolean;
-  intervalMinutes: IntervalMinutes;
+type AutomationOptions = ProjectAutomationOptions & {
   model: AutomationModel;
   reasoningEffort: AutomationReasoningEffort;
-}
-
-interface AutomationState extends AutomationOptions {
-  status: AutomationStatus;
-  quota?: {
-    state: AutomationQuotaState;
-    checkedAt: number;
-    resetsAt?: number;
-    reason?: "api-key";
-  };
-}
+};
 
 interface ProjectAutomationMenuProps {
-  automation?: Partial<AutomationState>;
+  automation: ProjectAutomationPolicy | null;
   pending: boolean;
   error: string | null;
   unavailableReason: string | null;
@@ -42,7 +31,7 @@ interface ProjectAutomationMenuProps {
 
 const DEFAULT_OPTIONS: AutomationOptions = {
   enabledByUser: false,
-  quotaAware: false,
+  paused: false,
   intervalMinutes: 5,
   model: "gpt-5.5",
   reasoningEffort: "high",
@@ -72,18 +61,11 @@ export function ProjectAutomationMenu({
   const [position, setPosition] = useState({ left: 0, top: 0, ready: false });
   const [draft, setDraft] = useState<AutomationOptions>(DEFAULT_OPTIONS);
   const status = automation?.status ?? "PAUSED";
-  const quota = automation?.quota;
   const stateLabel = !automation?.enabledByUser
-    ? "已暂停"
-    : automation.quotaAware && quota?.state === "blocked"
-      ? "额度暂停"
-      : automation.quotaAware && quota?.state === "unavailable"
-        ? "额度不可用"
-        : automation.quotaAware && (!quota || quota.state === "unknown")
-          ? "额度未知"
-          : status === "ACTIVE"
-            ? "运行中"
-            : "已暂停";
+    ? "已关闭"
+    : automation.paused
+      ? "项目暂停"
+      : "运行中";
   const disabled = pending || Boolean(unavailableReason);
 
   useEffect(() => {
@@ -174,39 +156,29 @@ export function ProjectAutomationMenu({
         </button>
       </div>
       <div className="project-automation-switch">
-        <span>根据额度启用/关闭</span>
+        <span>暂停当前项目</span>
         <button
           type="button"
-          className={`board-setting-switch${draft.quotaAware ? " is-on" : ""}`}
+          className={`board-setting-switch${draft.paused ? " is-on" : ""}`}
           role="switch"
-          aria-checked={draft.quotaAware}
+          aria-checked={draft.paused}
           disabled={disabled}
           onClick={() => submitChange({
             ...draft,
-            quotaAware: !draft.quotaAware,
+            paused: !draft.paused,
           })}
         >
           <span aria-hidden="true" />
         </button>
       </div>
-      {draft.quotaAware && (
-        <div className={`project-automation-quota is-${quota?.state ?? "unknown"}`}>
-          {quota?.state === "available" && "当前额度可用"}
-          {quota?.state === "blocked" && (
-            quota.resetsAt
-              ? `额度已用尽，预计 ${formatResetTime(quota.resetsAt)} 恢复`
-              : "额度已用尽，自动认领已暂停"
-          )}
-          {quota?.state === "unavailable" && (
-            quota.reason === "api-key"
-              ? "API Key 模式不支持读取 Codex App 额度"
-              : "当前账户无法读取额度"
-          )}
-          {(!quota || quota.state === "unknown") && "额度状态未知，自动认领已暂停"}
-        </div>
-      )}
+      <div className="project-automation-queue" aria-label="自动执行队列状态">
+        <span>排队 <strong>{automation?.queue.queued ?? 0}</strong></span>
+        <span>运行 <strong>{automation?.queue.running ?? 0}</strong></span>
+        <span>阻塞 <strong>{automation?.queue.blocked ?? 0}</strong></span>
+        <span>失败 <strong>{automation?.queue.failed ?? 0}</strong></span>
+      </div>
       <label className="project-automation-field">
-        <span>间隔</span>
+        <span>扫描间隔</span>
         <select
           value={draft.intervalMinutes}
           disabled={disabled}
@@ -270,19 +242,12 @@ export function ProjectAutomationMenu({
           setOpen((current) => !current);
         }}
       >
-        <PanelIcon name={status === "ACTIVE" ? "automationPause" : "automationPlay"} />
+        {pending
+          ? <span className="ai-chat-spinner" aria-hidden="true" />
+          : <PanelIcon name={status === "ACTIVE" ? "automationPause" : "automationPlay"} />}
         <span>{status === "ACTIVE" ? "自动认领中" : "自动化"}</span>
       </button>
       {menu}
     </>
   );
-}
-
-function formatResetTime(value: number) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value * 1_000));
 }

@@ -15,6 +15,52 @@ export type ActorType = "user" | "agent";
 export type AssigneeTarget = "current-user" | "codex-agent";
 export type IssueRelationType = "parent" | "blocks" | "blocked_by" | "related";
 
+export type ClaimState =
+  | "queued"
+  | "running"
+  | "retry_wait"
+  | "blocked"
+  | "failed"
+  | "completed"
+  | "canceled";
+
+export interface IssueClaim {
+  taskId: string;
+  projectId: string;
+  threadId: string | null;
+  source: "manual" | "resume" | "jira" | "scan";
+  state: ClaimState;
+  resumeRequested: boolean;
+  attemptCount: number;
+  availableAt: string;
+  enqueuedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  lastError: string | null;
+  updatedAt: string;
+}
+
+export interface ProjectAutomationOptions {
+  enabledByUser: boolean;
+  paused: boolean;
+  intervalMinutes: 5 | 10 | 15 | 30 | 60;
+  model: AutomationModel;
+  reasoningEffort: AutomationReasoningEffort;
+}
+
+export interface ProjectAutomationPolicy extends ProjectAutomationOptions {
+  projectId: string;
+  status: "ACTIVE" | "PAUSED";
+  nextScanAt: string | null;
+  queue: {
+    queued: number;
+    running: number;
+    blocked: number;
+    failed: number;
+  };
+  updatedAt: string | null;
+}
+
 export interface ActorIdentity {
   type: ActorType;
   id: string;
@@ -450,6 +496,7 @@ export interface Task {
   externalSyncedAt?: string | null;
   externalSyncError?: string | null;
   archivedAt: string | null;
+  claim: IssueClaim | null;
   relations: TaskRelations;
   version: number;
   createdAt: string;
@@ -633,3 +680,7 @@ export interface TaskEvent {
   project?: Project;
   at: string;
 }
+import type {
+  AutomationModel,
+  AutomationReasoningEffort,
+} from "../../shared/panel-automation-options.mjs";

@@ -244,6 +244,10 @@ export class AiChatService {
     return run;
   }
 
+  waitForRun(runId) {
+    return this.completions.get(runId) ?? Promise.resolve(this.getRun(runId));
+  }
+
   subscribe(threadId, listener) {
     let listeners = this.listeners.get(threadId);
     if (!listeners) {
