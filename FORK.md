@@ -193,6 +193,18 @@
 - 移除条件：上游提供等价的跨仓库 Jira 需求关联、双向详情维护、同步隔离和生命周期约束后同步移除。
 - 针对性验证：运行 `node --test test/jira-integration.test.mjs test/jira-lifecycle.test.mjs test/jira-planning.test.mjs test/server.test.mjs`、`npm run typecheck` 和 `npm run build:web`；在 Jira 详情选择多个仓库、保存并关联执行 Issue，确认双方详情可打开和解除关系，仓库差异不会在保存前生效，普通 Issue 详情保持紧凑。使用本地 Jira 响应端让第二个仓库首次失败并重试，确认 Jira 只转换一次、每仓库只有一个 Issue 和一个对话，而且首次失败时没有 Issue 提前进入待认领。在隔离预览中验证 Jira 规划会话、Spec、生命周期提醒和 390px 关联弹窗；确认 Jira 回退后的暂停会中断活动 turn 并保留本地状态，再次进行中只释放依赖 frontier，重新打开可创建返工 Issue 或新的规划会话，重复任务迁移前要求确认且 canonical 不可访问时保留原关联。
 
+### Panel 持久化自动执行队列
+
+- 生命周期：`等待上游吸收`
+- 原始目的：由 Panel 自己保存自动认领策略、执行队列和尝试记录，统一承接普通 Issue、Jira 授权 Issue 与手动立即执行，不再让 Codex Scheduled Task 充当执行核心。
+- 行为不变量：仓库项目的自动化策略必须持久化保存开关、项目暂停、5/10/15/30/60 分钟扫描间隔、模型和推理强度，并展示排队、运行、阻塞和失败数量；Jira 项目和 Cloud 模式不可配置。周期扫描只纳入未关联 Jira 的本地 `todo` Issue；Jira 关联 Issue 只有在 Jira 为进行中且没有待处理生命周期决定时才可进入队列。关闭自动认领只阻止新的自动入队，已有队列继续调度；详情页“立即执行”和 Jira 简单一键创建使用 `manual` 来源，即使自动扫描关闭也可入队，但项目暂停仍阻止全部调度。队列先处理手动与恢复来源，Jira 与扫描来源再按 Issue 优先级、看板顺序和入队时间调度；每个 Issue 必须复用已有执行对话或只创建一个新对话，并用 `implement` 启动。临时启动或连接失败最多按 30 秒、2 分钟重试两次；其他失败将 Issue 和队列移入阻塞并记录 Agent 评论。用户评论或用户对话完成后恢复阻塞执行；如果评论早于运行 turn 完全收尾，恢复请求必须先持久化并在收尾时消费，不能丢失。服务重启必须记录中断尝试，把运行中的 Issue 恢复为待认领，并复用原队列和对话。本期只允许一个自动执行同时运行，项目并行和 worktree 隔离留给后续能力。迁移旧自动化时只能暂停 Panel 本地记录的具体 automation ID，不得枚举或修改用户自建 Scheduled Task。
+- 代码和测试路径：`server/ai-chat.mjs`、`server/app.mjs`、`server/database.mjs`、`server/claim-queue.mjs`、`web/src/App.tsx`、`web/src/api.ts`、`web/src/components/ProjectAutomationMenu.tsx`、`web/src/components/TaskDetail.tsx`、`web/src/styles.css`、`web/src/types.ts`、`test/claim-queue.test.mjs` 和 `test/project-automation-settings.test.mjs`。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：当前 Panel 持久化自动执行能力；提交后可用 `git log -S'issue_claim_queue' -- server/database.mjs` 定位。
+- 合并指引：上游调整项目自动化、AI 对话或 Jira 放行路径时，保留“Panel 持久化策略与队列、四类来源稳定排序、单 Issue 单执行对话、有限重试与重启恢复、用户输入恢复、项目暂停总闸、只处理已知旧 automation ID”的边界；不得恢复由 Scheduled Task prompt 查询和认领 Issue，也不得触碰用户自建定时任务。
+- 移除条件：上游提供等价的 Panel 持久化队列、手动与 Jira 入队、对话复用、有限重试、阻塞恢复、重启恢复和安全旧自动化迁移后同步移除。
+- 针对性验证：运行 `node --test test/claim-queue.test.mjs test/project-automation-settings.test.mjs`、`npm run typecheck`、`npm run build:web` 和 `npm test`；在全新隔离数据目录中确认“立即执行”入队、自动化菜单队列计数、项目暂停、Jira 一键创建复用对话，以及桌面和窄视口无溢出。
+
 ### 本地化交付审查
 
 - 生命周期：`长期保留`

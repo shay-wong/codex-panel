@@ -11,6 +11,7 @@ import {
   ApiError,
   addJiraTaskLink,
   attachmentDownloadUrl,
+  claimTask,
   createComment,
   deleteAttachment,
   deleteComment,
@@ -557,6 +558,7 @@ export function TaskDetail({
   const [jiraLifecycleSaving, setJiraLifecycleSaving] = useState<
     "pause" | "keep" | "rework" | "replan" | "migrate" | null
   >(null);
+  const [claiming, setClaiming] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentsError, setAttachmentsError] = useState<TaskDetailError | null>(null);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
@@ -891,6 +893,19 @@ export function TaskDetail({
       setJiraContext(await getJiraTaskContext(currentTask.id).catch(() => jiraContext));
     } finally {
       setJiraPlanningSaving(false);
+    }
+  }
+
+  async function executeNow() {
+    if (claiming) return;
+    setClaiming(true);
+    onError(null);
+    try {
+      setCurrentTask(await claimTask(currentTask.id));
+    } catch (error) {
+      onError(messageFor(error));
+    } finally {
+      setClaiming(false);
     }
   }
 
@@ -1270,6 +1285,26 @@ export function TaskDetail({
       : jiraContext?.plan
         ? text("继续规划", "Continue planning")
         : text("AI 规划", "Plan with AI");
+  const claimState = currentTask.claim?.state;
+  const claimActive = claimState === "queued" || claimState === "retry_wait" || claimState === "running";
+  const claimEnabled = currentTask.source === "local" && currentTask.status === "todo" && !claimActive;
+  const claimLabel = claiming
+    ? text("正在加入队列…", "Adding to queue…")
+    : claimState === "running"
+      ? text("自动执行中", "Running automatically")
+      : claimState === "queued"
+        ? text("已加入执行队列", "Queued for execution")
+        : claimState === "retry_wait"
+          ? text("等待自动重试", "Waiting to retry")
+          : claimState === "blocked"
+            ? text("等待你的回复", "Waiting for your reply")
+            : claimState === "failed"
+              ? text("自动执行已停止", "Automatic execution stopped")
+              : claimState === "completed"
+                ? text("自动执行已完成", "Automatic execution completed")
+                : currentTask.status === "todo"
+                  ? text("立即执行", "Run now")
+                  : text("仅待认领可执行", "Available only while waiting");
   const repositoryProjects = projects.filter((project) => (
     project.source !== "jira" && Boolean(project.workspacePath)
   ));
@@ -1901,6 +1936,20 @@ export function TaskDetail({
 
           <aside className="issue-properties" aria-label={text("议题属性", "Issue properties")}>
             <div className="detail-primary-actions">
+              {currentTask.source === "local" && (
+                <button
+                  className="detail-run-action"
+                  type="button"
+                  disabled={!claimEnabled || claiming}
+                  aria-busy={claiming || claimState === "running"}
+                  onClick={() => void executeNow()}
+                >
+                  {claiming || claimState === "running"
+                    ? <span className="ai-chat-spinner" aria-hidden="true" />
+                    : <LinearIcon name={claimState === "completed" ? "check" : "play"} />}
+                  <span>{claimLabel}</span>
+                </button>
+              )}
               <button
                 className="detail-open-thread-action"
                 type="button"

@@ -20,6 +20,8 @@ import type {
   JiraConnection,
   JiraTaskContext,
   Project,
+  ProjectAutomationOptions,
+  ProjectAutomationPolicy,
   ProjectSummary,
   Task,
   TaskChangeActivity,
@@ -501,6 +503,28 @@ export async function deleteProject(projectId: string): Promise<void> {
   });
 }
 
+export async function getProjectAutomationPolicy(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<ProjectAutomationPolicy> {
+  const data = await request<{ policy: ProjectAutomationPolicy }>(
+    `/api/local/projects/${encodeURIComponent(projectId)}/automation`,
+    { signal },
+  );
+  return data.policy;
+}
+
+export async function saveProjectAutomationPolicy(
+  projectId: string,
+  options: ProjectAutomationOptions,
+): Promise<ProjectAutomationPolicy> {
+  const data = await request<{ policy: ProjectAutomationPolicy }>(
+    `/api/local/projects/${encodeURIComponent(projectId)}/automation`,
+    { method: "PUT", body: JSON.stringify(options) },
+  );
+  return data.policy;
+}
+
 export async function listDevelopmentContexts(
   projectId: string,
   codexProjectId?: string,
@@ -537,6 +561,14 @@ export async function getTask(taskId: string, signal?: AbortSignal): Promise<Tas
   const data = await request<{ task: Task }>(
     `/api/tasks/${encodeURIComponent(taskId)}`,
     { signal },
+  );
+  return data.task;
+}
+
+export async function claimTask(taskId: string): Promise<Task> {
+  const data = await request<{ task: Task }>(
+    `/api/local/tasks/${encodeURIComponent(taskId)}/claim`,
+    { method: "POST" },
   );
   return data.task;
 }
