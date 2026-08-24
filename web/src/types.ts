@@ -493,6 +493,7 @@ export interface Task {
   externalKey?: string | null;
   externalUrl: string | null;
   externalStatus?: string | null;
+  externalUpdatedAt?: string | null;
   externalSyncedAt?: string | null;
   externalSyncError?: string | null;
   archivedAt: string | null;
@@ -512,6 +513,20 @@ export interface JiraTaskContext {
   simpleStart: JiraSimpleStartOperation | null;
   plan: JiraPlan | null;
   lifecycle: JiraLifecycle | null;
+  autoCompletion: JiraAutoCompletion | null;
+}
+
+export interface JiraAutoCompletion {
+  state: "queued" | "running" | "retry_wait" | "conflict" | "failed" | "completed" | "dismissed";
+  expectedUpdatedAt: string | null;
+  remoteUpdatedAt: string | null;
+  remoteStatus: string | null;
+  remoteTaskStatus: TaskStatus | null;
+  attemptCount: number;
+  availableAt: string;
+  error: { code: string; message: string } | null;
+  completedAt: string | null;
+  updatedAt: string;
 }
 
 export interface JiraLifecycle {
@@ -584,6 +599,7 @@ export interface JiraConnection {
   syncedIssueCount: number;
   unknownIssueCount: number;
   syncError: { code: string; message: string } | null;
+  autoCompleteEnabled: boolean;
   insecureHttp: boolean;
 }
 

@@ -4585,6 +4585,84 @@ kbd {
   height: 11px;
 }
 
+.jira-auto-completion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 7px;
+  padding: 8px 9px;
+  border: var(--border-hairline) solid color-mix(in srgb, var(--accent) 36%, var(--border));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+
+.jira-auto-completion.is-conflict,
+.jira-auto-completion.is-failed {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+  background: color-mix(in srgb, var(--danger) 6%, var(--surface));
+}
+
+.jira-auto-completion > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.jira-auto-completion strong {
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.jira-auto-completion small {
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.jira-auto-completion > div:last-child {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.jira-auto-completion .button {
+  min-height: 26px;
+  gap: 5px;
+  padding: 0 9px;
+  font-size: 10px;
+}
+
+.jira-auto-completion .ai-chat-spinner {
+  width: 11px;
+  height: 11px;
+}
+
+.jira-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+}
+
+.jira-setting-row > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.jira-setting-row strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.jira-setting-row small {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .jira-simple-start-button,
 .jira-planning-button {
   display: inline-flex;

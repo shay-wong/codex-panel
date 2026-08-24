@@ -169,13 +169,14 @@ function normalizeIssue(issue, config, index = 0) {
     externalKey,
     externalUrl: `${config.baseUrl}/browse/${encodeURIComponent(externalKey)}`,
     externalStatus: limitedString(fields.status?.name, "Unknown", 128),
+    externalUpdatedAt: typeof fields.updated === "string" ? fields.updated : null,
     duplicateOf: duplicateOfFromJira(fields),
     createdAt: typeof fields.created === "string" ? fields.created : new Date().toISOString(),
     updatedAt: typeof fields.updated === "string" ? fields.updated : new Date().toISOString(),
   };
 }
 
-function safeConfig(config, syncState) {
+function safeConfig(config, syncState, settings) {
   const state = syncState ?? {
     lastAttemptedAt: null,
     lastSuccessfulAt: null,
@@ -194,6 +195,7 @@ function safeConfig(config, syncState) {
       projectId: JIRA_PROJECT_ID,
       lastSyncedAt: state.lastSuccessfulAt,
       ...state,
+      autoCompleteEnabled: settings.autoCompleteEnabled,
       insecureHttp: config.baseUrl.startsWith("http:"),
     }
     : {
@@ -206,12 +208,17 @@ function safeConfig(config, syncState) {
       projectId: JIRA_PROJECT_ID,
       lastSyncedAt: null,
       ...state,
+      autoCompleteEnabled: settings.autoCompleteEnabled,
       insecureHttp: false,
     };
 }
 
 export function createJiraIntegration({ configStore, database, fetch: fetchImplementation = globalThis.fetch }) {
   let pendingSync = null;
+
+  function settings() {
+    return database.getJiraSettings?.() ?? { autoCompleteEnabled: false };
+  }
 
   async function request(config, pathname, init = {}) {
     const controller = new AbortController();
@@ -258,6 +265,9 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
     }
     if (response.status === 404) {
       throw new ApiError(404, "JIRA_RESOURCE_NOT_FOUND", "Jira 资源不存在或当前账号无法查看");
+    }
+    if (response.status === 429) {
+      throw new ApiError(502, "JIRA_RATE_LIMITED", "Jira 请求过于频繁，Panel 将稍后重试");
     }
     if (response.status >= 300 && response.status < 400) {
       throw new ApiError(400, "JIRA_REDIRECT", "Jira 地址发生重定向，请填写最终访问地址");
@@ -443,7 +453,7 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
         issueCount: sync.issueCount,
         unknownIssueCount: sync.unknownTasks.length,
       });
-      return safeConfig(config, database.getJiraSyncState());
+      return safeConfig(config, database.getJiraSyncState(), settings());
     } catch (error) {
       database.markJiraSyncError(
         error instanceof Error ? error.message : String(error),
@@ -457,13 +467,13 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
   async function sync({ force = false, acceptAccountChange = false } = {}) {
     const config = await configStore.read();
     const state = database.getJiraSyncState();
-    if (!config) return safeConfig(null, state);
+    if (!config) return safeConfig(null, state, settings());
     if (
       !force
       && state.lastSuccessfulAt
       && Date.now() - new Date(state.lastSuccessfulAt).getTime() < SYNC_INTERVAL_MS
     ) {
-      return safeConfig(config, state);
+      return safeConfig(config, state, settings());
     }
     if (pendingSync) return pendingSync;
     pendingSync = syncWithConfig(config, { acceptAccountChange })
@@ -525,6 +535,14 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
     await applyTransition(config, issueKey, transition);
   }
 
+  function liveIssueState(issue) {
+    return {
+      updatedAt: typeof issue?.fields?.updated === "string" ? issue.fields.updated : null,
+      statusName: limitedString(issue?.fields?.status?.name, "Unknown", 128),
+      taskStatus: taskStatusFromJira(issue?.fields?.status),
+    };
+  }
+
   async function resolveJiraPriority(config, targetPriority) {
     if (targetPriority === "none") return null;
     const priorities = await request(config, "/rest/api/2/priority");
@@ -543,7 +561,11 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
 
   return {
     async status() {
-      return safeConfig(await configStore.read(), database.getJiraSyncState());
+      return safeConfig(
+        await configStore.read(),
+        database.getJiraSyncState(),
+        settings(),
+      );
     },
     async configure(input) {
       const current = await configStore.read();
@@ -605,7 +627,7 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
           issueCount: syncResult.issueCount,
           unknownIssueCount: syncResult.unknownTasks.length,
         });
-        return safeConfig(savedConfig, database.getJiraSyncState());
+        return safeConfig(savedConfig, database.getJiraSyncState(), settings());
       } catch (error) {
         database.markJiraSyncError(
           error instanceof Error ? error.message : String(error),
@@ -684,6 +706,47 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       }
       await assertLiveOrigin(config);
       await applyTaskTransition(config, task.externalKey, status);
+    },
+    async completeTask(task, expectedUpdatedAt) {
+      const config = await configStore.read();
+      if (!config) throw new ApiError(409, "JIRA_NOT_CONFIGURED", "Jira 尚未配置");
+      if (task.externalOrigin !== config.originId || !task.externalKey) {
+        throw new ApiError(
+          409,
+          "JIRA_ORIGIN_MISMATCH",
+          "此任务不属于当前 Jira 连接，请重新同步后再操作",
+        );
+      }
+      await assertLiveOrigin(config);
+      let remote = liveIssueState(await fetchIssue(config, task.externalKey));
+      if (remote.taskStatus === "done") return remote;
+      if (expectedUpdatedAt && remote.updatedAt !== expectedUpdatedAt) {
+        throw new ApiError(
+          409,
+          "JIRA_AUTO_COMPLETE_CONFLICT",
+          `${task.externalKey} 在 Panel 上次同步后已被修改，请确认远端状态后重试`,
+          { remote },
+        );
+      }
+      const transition = await resolveTransition(config, task.externalKey, "done");
+      if (!database.isJiraAutoCompletionEligible(task.id)) {
+        throw new ApiError(
+          409,
+          "JIRA_AUTO_COMPLETE_NOT_ELIGIBLE",
+          "关联 Issue 已变化，Jira 不再满足自动完成条件",
+        );
+      }
+      await applyTransition(config, task.externalKey, transition);
+      remote = liveIssueState(await fetchIssue(config, task.externalKey));
+      if (remote.taskStatus !== "done") {
+        throw new ApiError(
+          502,
+          "JIRA_TRANSITION_NOT_CONFIRMED",
+          `Jira 未确认 ${task.externalKey} 已进入完成状态`,
+          { remote },
+        );
+      }
+      return remote;
     },
   };
 }

@@ -46,6 +46,7 @@ import {
   setApiText,
   setCurrentUserActor,
   syncJiraConnection,
+  saveJiraSettings,
   uploadAttachment,
   updateTask as updateTaskRequest,
   saveProjectAutomationPolicy,
@@ -2834,6 +2835,7 @@ export function App() {
     username: string;
     password: string;
     projects: string[];
+    autoCompleteEnabled: boolean;
   }) {
     if (jiraSaving) return;
     setJiraSaving(true);
@@ -2841,14 +2843,20 @@ export function App() {
     try {
       let connection: JiraConnection;
       try {
-        connection = await configureJiraConnection(input);
+        const { autoCompleteEnabled, ...connectionInput } = input;
+        connection = await configureJiraConnection(connectionInput);
+        await saveJiraSettings(autoCompleteEnabled);
+        connection = { ...connection, autoCompleteEnabled };
       } catch (error) {
         if (
           !(error instanceof ApiError)
           || error.code !== "JIRA_ACCOUNT_CHANGED"
           || !window.confirm(`${error.message}\n\n${text("确认切换账号并继续同步？", "Switch accounts and continue syncing?")}`)
         ) throw error;
-        connection = await configureJiraConnection({ ...input, acceptAccountChange: true });
+        const { autoCompleteEnabled, ...connectionInput } = input;
+        connection = await configureJiraConnection({ ...connectionInput, acceptAccountChange: true });
+        await saveJiraSettings(autoCompleteEnabled);
+        connection = { ...connection, autoCompleteEnabled };
       }
       const nextProjects = await listProjects();
       setJiraConnection(connection);
