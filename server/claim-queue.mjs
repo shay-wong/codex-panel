@@ -40,6 +40,8 @@ export class ClaimQueueService {
     this.onCommentCreated = options.onCommentCreated ?? (() => {});
     this.onQueueChanged = options.onQueueChanged ?? (() => {});
     this.onPolicyChanged = options.onPolicyChanged ?? (() => {});
+    this.prepareExecution = options.prepareExecution ?? (async (task) => ({ task, workspacePath: null }));
+    this.cleanupExecution = options.cleanupExecution ?? (async () => null);
     this.tickMs = options.tickMs ?? 1_000;
     this.retryDelaysMs = options.retryDelaysMs ?? RETRY_DELAYS_MS;
     this.timer = null;
@@ -47,7 +49,7 @@ export class ClaimQueueService {
     this.wakeRequested = false;
     this.started = false;
     this.closed = false;
-    this.automaticRunId = null;
+    this.activeExecutions = new Map();
     this.#recoverInterruptedClaims();
   }
 
@@ -118,10 +120,41 @@ export class ClaimQueueService {
     await this.#tick(false);
   }
 
+  async cleanupCompletedTask(task) {
+    return await this.cleanupExecution(task);
+  }
+
   #recoverInterruptedClaims() {
     for (const taskId of this.database.recoverInterruptedClaims()) {
       const task = this.database.getTask(taskId);
       const claim = this.database.getClaimQueueItem(taskId);
+      const previousAttempt = this.database.listClaimAttempts(taskId).at(-1);
+      let thread = null;
+      if (claim?.threadId) {
+        try {
+          thread = this.aiChat.getThread(claim.threadId);
+        } catch {}
+      }
+      const consistent = Boolean(
+        task
+        && claim?.threadId
+        && previousAttempt?.runId
+        && previousAttempt.threadId === claim.threadId
+        && task.developmentContext?.type === "worktree"
+        && thread?.origin.issueId === task.id
+        && thread.origin.projectId === task.projectId
+        && thread.origin.workspacePath === task.developmentContext.path,
+      );
+      if (!consistent) {
+        if (task && ["in_progress", "todo"].includes(task.status)) this.#moveTask(task, "blocked");
+        const blocked = this.database.finishClaim(
+          taskId,
+          "blocked",
+          "Interrupted execution context could not be verified after Panel restarted",
+        );
+        this.onQueueChanged(blocked);
+        continue;
+      }
       if (task?.status === "blocked" && claim?.resumeRequested) {
         this.enqueue(taskId, "resume");
         continue;
@@ -164,9 +197,35 @@ export class ClaimQueueService {
       const scanClaims = this.database.enqueueDueProjectScans();
       this.database.reconcileClaimQueue();
       for (const claim of [...jiraClaims, ...scanClaims]) this.onQueueChanged(claim);
-      if (!this.automaticRunId) {
-        const next = this.database.nextClaim();
-        if (next) await this.#startClaim(next);
+      const runningByProject = new Map();
+      const activeWorkspaces = new Set();
+      for (const execution of this.activeExecutions.values()) {
+        runningByProject.set(
+          execution.projectId,
+          (runningByProject.get(execution.projectId) ?? 0) + 1,
+        );
+        activeWorkspaces.add(execution.workspacePath);
+      }
+      for (const next of this.database.listReadyClaims()) {
+        const running = runningByProject.get(next.task.projectId) ?? 0;
+        if (running >= next.policy.parallelism) continue;
+        let prepared;
+        try {
+          prepared = await this.prepareExecution(next.task);
+        } catch (error) {
+          await this.#handleFailure(next.task.id, null, error);
+          continue;
+        }
+        const workspaceKey = prepared.workspaceKey ?? prepared.workspacePath;
+        if (workspaceKey && activeWorkspaces.has(workspaceKey)) continue;
+        const started = await this.#startClaim(
+          { ...next, task: prepared.task },
+          prepared.workspacePath,
+          workspaceKey,
+        );
+        if (!started) continue;
+        runningByProject.set(next.task.projectId, running + 1);
+        if (workspaceKey) activeWorkspaces.add(workspaceKey);
       }
     } finally {
       this.ticking = false;
@@ -178,13 +237,11 @@ export class ClaimQueueService {
     }
   }
 
-  async #startClaim({ task, policy }) {
+  async #startClaim({ task, policy }, workspacePath, workspaceKey) {
     let attempt = null;
     try {
-      task = this.#moveTask(task, "in_progress");
       let claim = this.database.markClaimRunning(task.id);
       this.onQueueChanged(claim);
-
       let threadId = this.database.suggestedExecutionThreadId(task.id);
       let thread = null;
       if (threadId) {
@@ -213,6 +270,22 @@ export class ClaimQueueService {
           `Conversation '${thread.id}' does not belong to '${task.identifier}'`,
         );
       }
+      if (workspacePath && thread.origin.workspacePath !== workspacePath) {
+        throw new ApiError(
+          409,
+          "CLAIM_WORKSPACE_CONFLICT",
+          `Conversation '${thread.id}' does not use the development context for '${task.identifier}'`,
+        );
+      }
+      const previousAttempt = this.database.listClaimAttempts(task.id).at(-1);
+      if (previousAttempt && previousAttempt.threadId !== thread.id) {
+        throw new ApiError(
+          409,
+          "CLAIM_ATTEMPT_CONFLICT",
+          `Execution history for '${task.identifier}' belongs to another conversation`,
+        );
+      }
+      task = this.#moveTask(task, "in_progress");
       claim = this.database.setClaimThread(task.id, thread.id);
       attempt = this.database.createClaimAttempt({ taskId: task.id, threadId: thread.id });
       const run = await this.aiChat.startTurn(thread.id, {
@@ -220,19 +293,25 @@ export class ClaimQueueService {
         skillIds: ["implement"],
       });
       this.database.attachClaimAttemptRun(attempt.id, run.id);
-      this.automaticRunId = run.id;
+      this.activeExecutions.set(task.id, {
+        runId: run.id,
+        projectId: task.projectId,
+        workspacePath: workspaceKey,
+      });
       void this.aiChat.waitForRun(run.id).then(
         (finished) => this.#finishRun(task.id, attempt.id, finished),
         (error) => this.#handleFailure(task.id, attempt.id, error),
       );
+      return true;
     } catch (error) {
       await this.#handleFailure(task.id, attempt?.id ?? null, error);
+      return false;
     }
   }
 
   async #finishRun(taskId, attemptId, run) {
     if (this.closed) return;
-    this.automaticRunId = null;
+    this.activeExecutions.delete(taskId);
     const task = this.database.getTask(taskId);
     if (run.status === "completed" && ["in_review", "done"].includes(task?.status)) {
       this.database.finishClaimAttempt(attemptId, "completed");
@@ -254,7 +333,7 @@ export class ClaimQueueService {
 
   async #handleFailure(taskId, attemptId, error) {
     if (this.closed) return;
-    this.automaticRunId = null;
+    this.activeExecutions.delete(taskId);
     const message = errorText(error);
     if (attemptId) this.database.finishClaimAttempt(attemptId, "failed", message);
     let task = this.database.getTask(taskId);

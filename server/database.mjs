@@ -695,6 +695,13 @@ export class PanelDatabase {
       CREATE INDEX IF NOT EXISTS ai_chat_events_thread_created
         ON ai_chat_events(thread_id, created_at, id);
 
+      CREATE TABLE IF NOT EXISTS automation_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        default_project_parallelism INTEGER NOT NULL DEFAULT 3
+          CHECK (default_project_parallelism BETWEEN 1 AND 8),
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS project_automation_policies (
         project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
         enabled_by_user INTEGER NOT NULL DEFAULT 0 CHECK (enabled_by_user IN (0, 1)),
@@ -702,6 +709,7 @@ export class PanelDatabase {
         interval_minutes INTEGER NOT NULL DEFAULT 5 CHECK (interval_minutes IN (5, 10, 15, 30, 60)),
         model TEXT NOT NULL DEFAULT 'gpt-5.5',
         reasoning_effort TEXT NOT NULL DEFAULT 'high',
+        parallelism_override INTEGER CHECK (parallelism_override BETWEEN 1 AND 8),
         next_scan_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -749,6 +757,16 @@ export class PanelDatabase {
     const projectColumns = this.database.prepare("PRAGMA table_info(projects)").all();
     if (!projectColumns.some((column) => column.name === "workspace_path")) {
       this.database.exec("ALTER TABLE projects ADD COLUMN workspace_path TEXT");
+    }
+
+    const automationPolicyColumns = this.database.prepare(
+      "PRAGMA table_info(project_automation_policies)",
+    ).all();
+    if (!automationPolicyColumns.some((column) => column.name === "parallelism_override")) {
+      this.database.exec(`
+        ALTER TABLE project_automation_policies
+        ADD COLUMN parallelism_override INTEGER CHECK (parallelism_override BETWEEN 1 AND 8)
+      `);
     }
 
     const taskColumns = this.database.prepare("PRAGMA table_info(tasks)").all();
@@ -3318,6 +3336,8 @@ export class PanelDatabase {
       WHERE project_id = ?
       GROUP BY state
     `).all(projectId).map((item) => [item.state, Number(item.count)]));
+    const settings = this.getAutomationSettings();
+    const parallelismOverride = row?.parallelism_override ?? null;
     return {
       projectId,
       status: row?.enabled_by_user && !row.paused ? "ACTIVE" : "PAUSED",
@@ -3326,6 +3346,9 @@ export class PanelDatabase {
       intervalMinutes: row?.interval_minutes ?? 5,
       model: row?.model ?? "gpt-5.5",
       reasoningEffort: row?.reasoning_effort ?? "high",
+      defaultParallelism: settings.defaultProjectParallelism,
+      parallelismOverride,
+      parallelism: parallelismOverride ?? settings.defaultProjectParallelism,
       nextScanAt: row?.next_scan_at ?? null,
       queue: {
         queued: (counts.queued ?? 0) + (counts.retry_wait ?? 0),
@@ -3340,6 +3363,11 @@ export class PanelDatabase {
   saveProjectAutomationPolicy(projectId, input) {
     const current = this.getProjectAutomationPolicy(projectId);
     const timestamp = now();
+    const defaultParallelism = input.defaultParallelism ?? current.defaultParallelism;
+    const parallelismOverride = input.parallelismOverride === undefined
+      ? current.parallelismOverride
+      : input.parallelismOverride;
+    this.saveAutomationSettings(defaultParallelism, timestamp);
     const startsOrResumes = input.enabledByUser && !input.paused && (
       !current.enabledByUser
       || current.paused
@@ -3348,14 +3376,15 @@ export class PanelDatabase {
     this.database.prepare(`
       INSERT INTO project_automation_policies (
         project_id, enabled_by_user, paused, interval_minutes, model,
-        reasoning_effort, next_scan_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        reasoning_effort, parallelism_override, next_scan_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(project_id) DO UPDATE SET
         enabled_by_user = excluded.enabled_by_user,
         paused = excluded.paused,
         interval_minutes = excluded.interval_minutes,
         model = excluded.model,
         reasoning_effort = excluded.reasoning_effort,
+        parallelism_override = excluded.parallelism_override,
         next_scan_at = excluded.next_scan_at,
         updated_at = excluded.updated_at
     `).run(
@@ -3365,11 +3394,30 @@ export class PanelDatabase {
       input.intervalMinutes,
       input.model,
       input.reasoningEffort,
+      parallelismOverride,
       startsOrResumes ? timestamp : current.nextScanAt,
       current.updatedAt ?? timestamp,
       timestamp,
     );
     return this.getProjectAutomationPolicy(projectId);
+  }
+
+  getAutomationSettings() {
+    const row = this.database.prepare(`
+      SELECT default_project_parallelism FROM automation_settings WHERE id = 1
+    `).get();
+    return { defaultProjectParallelism: row?.default_project_parallelism ?? 3 };
+  }
+
+  saveAutomationSettings(defaultProjectParallelism, timestamp = now()) {
+    this.database.prepare(`
+      INSERT INTO automation_settings (id, default_project_parallelism, updated_at)
+      VALUES (1, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        default_project_parallelism = excluded.default_project_parallelism,
+        updated_at = excluded.updated_at
+    `).run(defaultProjectParallelism, timestamp);
+    return this.getAutomationSettings();
   }
 
   addProjectLabel(projectId, label) {
@@ -3917,8 +3965,8 @@ export class PanelDatabase {
     `).run(timestamp, timestamp);
   }
 
-  nextClaim(at = now()) {
-    const row = this.database.prepare(`
+  listReadyClaims(at = now()) {
+    return this.database.prepare(`
       SELECT queue.task_id
       FROM issue_claim_queue AS queue
       JOIN tasks ON tasks.id = queue.task_id
@@ -3944,15 +3992,18 @@ export class PanelDatabase {
         queue.enqueued_at,
         tasks.created_at,
         tasks.id
-      LIMIT 1
-    `).get(at);
-    if (!row) return null;
-    const task = this.getTask(row.task_id);
-    return {
-      task,
-      claim: this.getClaimQueueItem(row.task_id),
-      policy: this.getProjectAutomationPolicy(task.projectId),
-    };
+    `).all(at).map((row) => {
+      const task = this.getTask(row.task_id);
+      return {
+        task,
+        claim: this.getClaimQueueItem(row.task_id),
+        policy: this.getProjectAutomationPolicy(task.projectId),
+      };
+    });
+  }
+
+  nextClaim(at = now()) {
+    return this.listReadyClaims(at)[0] ?? null;
   }
 
   setClaimThread(taskId, threadId) {

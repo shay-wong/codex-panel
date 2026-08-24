@@ -46,11 +46,14 @@ export interface ProjectAutomationOptions {
   intervalMinutes: 5 | 10 | 15 | 30 | 60;
   model: AutomationModel;
   reasoningEffort: AutomationReasoningEffort;
+  defaultParallelism: number;
+  parallelismOverride: number | null;
 }
 
 export interface ProjectAutomationPolicy extends ProjectAutomationOptions {
   projectId: string;
   status: "ACTIVE" | "PAUSED";
+  parallelism: number;
   nextScanAt: string | null;
   queue: {
     queued: number;
