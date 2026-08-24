@@ -48,6 +48,19 @@ const EFFORT_LABELS: Record<AutomationReasoningEffort, string> = {
   ultra: "极高 (ultra)",
 };
 
+function toAutomationOptions(policy: ProjectAutomationPolicy | null): AutomationOptions {
+  const options = policy ?? DEFAULT_OPTIONS;
+  return {
+    enabledByUser: options.enabledByUser,
+    paused: options.paused,
+    intervalMinutes: options.intervalMinutes,
+    model: options.model,
+    reasoningEffort: options.reasoningEffort,
+    defaultParallelism: options.defaultParallelism,
+    parallelismOverride: options.parallelismOverride,
+  };
+}
+
 export function ProjectAutomationMenu({
   automation,
   pending,
@@ -72,12 +85,12 @@ export function ProjectAutomationMenu({
 
   useEffect(() => {
     if (!open) return;
-    setDraft({ ...DEFAULT_OPTIONS, ...automation });
+    setDraft(toAutomationOptions(automation));
   }, [open]);
 
   useEffect(() => {
     if (wasPendingRef.current && !pending) {
-      setDraft({ ...DEFAULT_OPTIONS, ...automation });
+      setDraft(toAutomationOptions(automation));
     }
     wasPendingRef.current = pending;
   }, [automation, pending]);
