@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { promisify } from "node:util";
 
 import { createPanelServer } from "../server/index.mjs";
 import { ClaimQueueService } from "../server/claim-queue.mjs";
@@ -15,6 +17,17 @@ const actor = {
   name: "Claim Test User",
   avatarUrl: null,
 };
+const execFileAsync = promisify(execFile);
+
+async function waitFor(predicate, timeout = 4_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const value = predicate();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("Timed out waiting for condition");
+}
 
 async function fixture() {
   const directory = await mkdtemp(path.join(os.tmpdir(), "panel-claim-queue-"));
@@ -134,6 +147,325 @@ test("claim queue persists source order, priority, retry delay, and restart reco
     assert.equal(item.database.nextClaim().task.id, retryTask.id);
   } finally {
     await item.close();
+  }
+});
+
+test("claim queue applies project capacity and workspace locks independently", async () => {
+  const item = await fixture();
+  const otherWorkspace = path.join(item.directory, "other-workspace");
+  await mkdir(otherWorkspace);
+  item.database.createProject({
+    id: "other-project",
+    name: "Other Project",
+    workspacePath: otherWorkspace,
+  });
+  item.database.saveProjectAutomationPolicy("claim-project", {
+    enabledByUser: true,
+    paused: false,
+    intervalMinutes: 5,
+    model: "gpt-5.5",
+    reasoningEffort: "high",
+    defaultParallelism: 3,
+    parallelismOverride: null,
+  });
+  item.database.saveProjectAutomationPolicy("other-project", {
+    enabledByUser: true,
+    paused: false,
+    intervalMinutes: 5,
+    model: "gpt-5.5",
+    reasoningEffort: "high",
+    defaultParallelism: 3,
+    parallelismOverride: 2,
+  });
+
+  const createTask = (projectId, title, priority = "none") => item.database.createTask({
+    projectId,
+    title,
+    description: "",
+    status: "todo",
+    priority,
+    labels: [],
+    threadId: null,
+    actor,
+    assignee: actor,
+    workflowId: null,
+    developmentContext: null,
+    startDate: null,
+    dueDate: null,
+    recurrence: null,
+  });
+  const first = createTask("claim-project", "First shared workspace", "urgent");
+  const second = createTask("claim-project", "Second shared workspace", "urgent");
+  const isolatedFirst = createTask("claim-project", "First isolated workspace");
+  const isolatedSecond = createTask("claim-project", "Second isolated workspace");
+  const isolatedThird = createTask("claim-project", "Third isolated workspace");
+  const otherFirst = createTask("other-project", "Other project first");
+  const otherSecond = createTask("other-project", "Other project second");
+  const otherThird = createTask("other-project", "Other project third");
+  const isolatedTasks = [isolatedFirst, isolatedSecond, isolatedThird];
+  const otherTasks = [otherFirst, otherSecond, otherThird];
+  const workspaces = new Map([
+    [first.id, path.join(item.directory, "shared")],
+    [second.id, path.join(item.directory, "shared")],
+    [isolatedFirst.id, path.join(item.directory, "isolated-first")],
+    [isolatedSecond.id, path.join(item.directory, "isolated-second")],
+    [isolatedThird.id, path.join(item.directory, "isolated-third")],
+    [otherFirst.id, path.join(otherWorkspace, "first")],
+    [otherSecond.id, path.join(otherWorkspace, "second")],
+    [otherThird.id, path.join(otherWorkspace, "third")],
+  ]);
+  const completions = new Map();
+  const aiChat = {
+    async createThread(input) {
+      return item.database.createAiChatThread({
+        title: input.title,
+        origin: {
+          projectId: input.projectId,
+          projectName: item.database.getProject(input.projectId).name,
+          workspacePath: workspaces.get(input.issueId),
+          issueId: input.issueId,
+          issueIdentifier: item.database.getTask(input.issueId).identifier,
+        },
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+        sandbox: input.sandbox,
+      });
+    },
+    getThread(threadId) {
+      return item.database.getAiChatThread(threadId);
+    },
+    async startTurn(threadId) {
+      const thread = item.database.getAiChatThread(threadId);
+      const run = item.database.createAiChatRun({
+        id: `run-${thread.origin.issueId}`,
+        threadId,
+      });
+      let finish;
+      const completion = new Promise((resolve) => { finish = resolve; });
+      completions.set(run.id, { completion, finish });
+      return run;
+    },
+    waitForRun(runId) {
+      return completions.get(runId).completion;
+    },
+  };
+  const queue = new ClaimQueueService({
+    database: item.database,
+    aiChat,
+    prepareExecution: async (task) => ({
+      task,
+      workspacePath: workspaces.get(task.id),
+      workspaceKey: workspaces.get(task.id),
+    }),
+  });
+  try {
+    const tasks = [
+      first,
+      second,
+      ...isolatedTasks,
+      ...otherTasks,
+    ];
+    for (const task of tasks) {
+      queue.enqueue(task.id);
+    }
+    await queue.runOnce();
+
+    const sharedRunning = [first, second].find(
+      (task) => item.database.getClaimQueueItem(task.id).state === "running",
+    );
+    const sharedQueued = [first, second].find((task) => task.id !== sharedRunning?.id);
+    assert.ok(sharedRunning);
+    assert.equal(item.database.getClaimQueueItem(sharedQueued.id).state, "queued");
+    assert.equal(
+      isolatedTasks.filter((task) => item.database.getClaimQueueItem(task.id).state === "running").length,
+      2,
+    );
+    assert.equal(
+      isolatedTasks.filter((task) => item.database.getClaimQueueItem(task.id).state === "queued").length,
+      1,
+    );
+    assert.equal(
+      otherTasks.filter((task) => item.database.getClaimQueueItem(task.id).state === "running").length,
+      2,
+    );
+    assert.equal(
+      otherTasks.filter((task) => item.database.getClaimQueueItem(task.id).state === "queued").length,
+      1,
+    );
+    assert.equal(
+      tasks.filter((task) => item.database.getClaimQueueItem(task.id).state === "running").length,
+      5,
+    );
+
+    const runningFirst = item.database.getTask(sharedRunning.id);
+    item.database.moveTask(
+      sharedRunning.id,
+      runningFirst.version,
+      "in_review",
+      undefined,
+      undefined,
+      undefined,
+      actor,
+    );
+    const firstRunId = `run-${sharedRunning.id}`;
+    completions.get(firstRunId).finish({ id: firstRunId, status: "completed", error: null });
+    await waitFor(() => item.database.getClaimQueueItem(sharedRunning.id).state === "completed");
+    await queue.runOnce();
+
+    assert.equal(item.database.getClaimQueueItem(sharedQueued.id).state, "running");
+    assert.equal(
+      isolatedTasks.filter((task) => item.database.getClaimQueueItem(task.id).state === "running").length,
+      2,
+    );
+    assert.equal(
+      otherTasks.filter((task) => item.database.getClaimQueueItem(task.id).state === "running").length,
+      2,
+    );
+  } finally {
+    queue.close();
+    await item.close();
+  }
+});
+
+test("Panel creates isolated Git worktrees and retains them through review", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "panel-automatic-worktrees-"));
+  const repository = path.join(directory, "repository");
+  const dataDirectory = path.join(directory, "data");
+  const codexStatePath = path.join(directory, "codex-state.json");
+  await mkdir(repository);
+  await execFileAsync("git", ["init", "-b", "main", repository]);
+  await writeFile(path.join(repository, "README.md"), "# Fixture\n");
+  await execFileAsync("git", ["-C", repository, "add", "README.md"]);
+  await execFileAsync("git", [
+    "-C", repository,
+    "-c", "user.name=Panel Test",
+    "-c", "user.email=panel@example.test",
+    "commit", "-m", "fixture",
+  ]);
+  await writeFile(codexStatePath, JSON.stringify({
+    "local-projects": { repository: { rootPaths: [repository] } },
+  }));
+  const app = createPanelServer({
+    dataDirectory,
+    codexExecutable: process.execPath,
+    codexStatePath,
+    skillPath: "/skills/manage-panel/SKILL.md",
+  });
+  const createTask = (title) => app.database.createTask({
+    projectId: "repository",
+    title,
+    description: "",
+    status: "todo",
+    priority: "none",
+    labels: [],
+    threadId: null,
+    actor,
+    assignee: actor,
+    workflowId: null,
+    developmentContext: null,
+    startDate: null,
+    dueDate: null,
+    recurrence: null,
+  });
+  try {
+    app.database.createProject({
+      id: "repository",
+      name: "Repository",
+      workspacePath: repository,
+    });
+    const first = createTask("First worktree");
+    const second = createTask("Second worktree");
+    const completions = new Map();
+    app.claimQueue.aiChat = {
+      async createThread(input) {
+        const task = app.database.getTask(input.issueId);
+        return app.database.createAiChatThread({
+          title: input.title,
+          origin: {
+            projectId: input.projectId,
+            projectName: "Repository",
+            workspacePath: task.developmentContext.path,
+            issueId: task.id,
+            issueIdentifier: task.identifier,
+          },
+          model: input.model,
+          reasoningEffort: input.reasoningEffort,
+          sandbox: input.sandbox,
+        });
+      },
+      getThread(threadId) {
+        return app.database.getAiChatThread(threadId);
+      },
+      async startTurn(threadId) {
+        const run = app.database.createAiChatRun({ threadId });
+        let finish;
+        const completion = new Promise((resolve) => { finish = resolve; });
+        completions.set(run.id, { completion, finish });
+        return run;
+      },
+      waitForRun(runId) {
+        return completions.get(runId).completion;
+      },
+    };
+    app.claimQueue.enqueue(first.id);
+    app.claimQueue.enqueue(second.id);
+    await app.claimQueue.runOnce();
+
+    const runningFirst = app.database.getTask(first.id);
+    const runningSecond = app.database.getTask(second.id);
+    const firstClaim = app.database.getClaimQueueItem(first.id);
+    const secondClaim = app.database.getClaimQueueItem(second.id);
+    assert.equal(firstClaim.state, "running");
+    assert.equal(secondClaim.state, "running");
+    assert.equal(runningFirst.developmentContext.type, "worktree");
+    assert.equal(runningSecond.developmentContext.type, "worktree");
+    assert.notEqual(runningFirst.developmentContext.path, runningSecond.developmentContext.path);
+    assert.notEqual(firstClaim.threadId, secondClaim.threadId);
+    assert.equal(
+      app.database.getAiChatThread(firstClaim.threadId).origin.workspacePath,
+      runningFirst.developmentContext.path,
+    );
+    assert.equal(
+      app.database.getAiChatThread(secondClaim.threadId).origin.workspacePath,
+      runningSecond.developmentContext.path,
+    );
+    for (const task of [runningFirst, runningSecond]) {
+      const { stdout: root } = await execFileAsync(
+        "git",
+        ["-C", task.developmentContext.path, "rev-parse", "--show-toplevel"],
+      );
+      const { stdout: branch } = await execFileAsync(
+        "git",
+        ["-C", task.developmentContext.path, "branch", "--show-current"],
+      );
+      assert.equal(await realpath(root.trim()), await realpath(task.developmentContext.path));
+      assert.equal(branch.trim(), task.developmentContext.branch);
+    }
+
+    const reviewTasks = [runningFirst, runningSecond].map((task) => app.database.moveTask(
+      task.id,
+      task.version,
+      "in_review",
+      undefined,
+      undefined,
+      undefined,
+      actor,
+    ));
+    for (const task of reviewTasks) {
+      const run = app.database.listClaimAttempts(task.id).at(-1);
+      completions.get(run.runId).finish({ id: run.runId, status: "completed", error: null });
+    }
+    await waitFor(() => reviewTasks.every(
+      (task) => app.database.getClaimQueueItem(task.id).state === "completed",
+    ));
+    for (const task of reviewTasks) {
+      const retained = await app.claimQueue.cleanupCompletedTask(task);
+      assert.equal(retained.developmentContext.path, task.developmentContext.path);
+      await access(task.developmentContext.path);
+    }
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
