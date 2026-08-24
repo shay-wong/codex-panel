@@ -192,7 +192,7 @@
 - 来源：当前 Jira 外部需求关联、AI 规划与生命周期控制能力；提交后可用 `git log -S'jira_lifecycles' -- server/database.mjs` 定位生命周期扩展。
 - 合并指引：上游调整 Jira 同步、任务 schema、项目移动或详情侧栏时，保留外部需求与本地执行单元的边界、Jira 对执行 Issue 的一对多关系、执行 Issue 对 Jira 的至多一关系、仓库约束和显式保存，以及一键创建的幂等重试、规划的只读与显式发布、依赖 frontier 授权、非破坏性暂停和恢复、重新打开后的历史保留与新工作、重复任务 canonical 确认迁移、默认关闭且带远端版本检查的自动完成行为；不得把专用关系退化为同项目 Issue 关系、让规划隐式授权执行、让 Jira 回退删除本地状态，或让同步写入执行 Issue。
 - 移除条件：上游提供等价的跨仓库 Jira 需求关联、双向详情维护、同步隔离和生命周期约束后同步移除。
-- 针对性验证：运行 `node --test test/jira-auto-complete.test.mjs test/jira-integration.test.mjs test/jira-lifecycle.test.mjs test/jira-planning.test.mjs test/server.test.mjs`、`npm run typecheck` 和 `npm run build:web`；在 Jira 详情选择多个仓库、保存并关联执行 Issue，确认双方详情可打开和解除关系，仓库差异不会在保存前生效，普通 Issue 详情保持紧凑。使用本地 Jira 响应端让第二个仓库首次失败并重试，确认 Jira 只转换一次、每仓库只有一个 Issue 和一个对话，而且首次失败时没有 Issue 提前进入待认领。在隔离预览中验证 Jira 规划会话、Spec、生命周期提醒和 390px 关联弹窗；确认 Jira 回退后的暂停会中断活动 turn并保留本地状态，再次进行中只释放依赖 frontier，重新打开可创建返工 Issue 或新的规划会话，重复任务迁移前要求确认且 canonical 不可访问时保留原关联。开启 Jira 自动完成后，验证全部关联 Issue 为 `done` 才触发唯一完成 transition，远端变化显示接受远端与仍然完成，失败保留本地 `done` 和重试入口。
+- 针对性验证：运行 `node --test test/jira-auto-complete.test.mjs test/jira-integration.test.mjs test/jira-lifecycle.test.mjs test/jira-planning.test.mjs test/server.test.mjs`、`npm run typecheck` 和 `npm run build:web`；在 Jira 详情选择多个仓库、保存并关联执行 Issue，确认双方详情可打开和解除关系，仓库差异不会在保存前生效，普通 Issue 详情保持紧凑。使用本地 Jira 响应端让第二个仓库首次失败并重试，确认 Jira 只转换一次、每仓库只有一个 Issue 和一个对话，而且首次失败时没有 Issue 提前进入待认领。在隔离预览中验证 Jira 规划会话、Spec、生命周期提醒和 390px 关联弹窗；确认 Jira 回退后的暂停会中断活动 turn 并保留本地状态，再次进行中只释放依赖 frontier，重新打开可创建返工 Issue 或新的规划会话，重复任务迁移前要求确认且 canonical 不可访问时保留原关联。开启 Jira 自动完成后，验证全部关联 Issue 为 `done` 才触发唯一完成 transition，远端变化显示接受远端与仍然完成，失败保留本地 `done` 和重试入口。整体验收使用全新隔离 Panel 数据、Codex 状态、临时仓库和进程内 Jira fake，实测一个待认领 Jira 一次创建两个仓库 Issue 和两个不同对话，暂停与恢复保留关联 worktree，重复 Jira 禁止规划与执行，自动完成冲突保留本地完成状态并显示远端/Panel 版本；在 `1280x720` 深浅主题和 `390x844` 窄视口确认关键状态、操作和提示无横向溢出。
 
 ### Panel 持久化自动执行队列
 
@@ -204,7 +204,7 @@
 - 来源：当前 Panel 持久化自动执行能力；提交后可用 `git log -S'default_project_parallelism' -- server/database.mjs` 定位本次项目并行扩展。
 - 合并指引：上游调整项目自动化、AI 对话、开发上下文或 Jira 放行路径时，保留“Panel 持久化策略与队列、四类来源稳定排序、默认与项目覆盖容量、无跨项目总上限、规范化 workspace 锁、自动 worktree 与安全串行降级、单 Issue 单执行对话、保守重启、有限重试、用户输入恢复、项目暂停总闸、只处理已知旧 automation ID”的边界；不得恢复由 Scheduled Task prompt 查询和认领 Issue，也不得触碰或宣称限制用户自建任务。
 - 移除条件：上游提供等价的 Panel 持久化队列、项目容量、workspace/worktree 隔离、手动与 Jira 入队、对话复用、保守重启、有限重试、阻塞恢复和安全旧自动化迁移后同步移除。
-- 针对性验证：运行 `node --test test/claim-queue.test.mjs test/project-automation-settings.test.mjs`、`npm run typecheck`、`npm run build:web` 和 `npm test`；在全新隔离数据目录和临时仓库中确认不同项目并行、项目覆盖容量、同 workspace 串行、自动 worktree 与对话路径一致、等待槽位保持 `todo`，并确认 `in_review` 保留 worktree、`done` 仅清理干净且已合并的 worktree，以及桌面和窄视口无溢出。
+- 针对性验证：运行 `node --test test/claim-queue.test.mjs test/project-automation-settings.test.mjs`、`npm run typecheck`、`npm run build:web` 和 `npm test`；`test/claim-queue.test.mjs` 必须同时证明默认项目并行数和项目覆盖独立生效、不同项目不共享总上限、同 workspace 只启动一个执行、槽位释放后等待项继续运行，以及 Panel 在临时 Git 仓库中创建不同自动 worktree 并在 `in_review` 保留它们。在全新隔离数据目录和临时仓库中确认自动 worktree 与对话路径一致、等待槽位保持 `todo`，并确认 `done` 仅清理干净且已合并的 worktree，以及桌面和窄视口无溢出。
 
 ### 本地化交付审查
 
