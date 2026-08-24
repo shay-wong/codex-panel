@@ -20,6 +20,7 @@ import {
   listComments,
   listTaskActivities,
   removeJiraTaskLink,
+  resolveJiraAutoCompletion,
   resolveJiraLifecycle,
   resolvePanelUrl,
   saveJiraTaskProjects,
@@ -558,6 +559,9 @@ export function TaskDetail({
   const [jiraLifecycleSaving, setJiraLifecycleSaving] = useState<
     "pause" | "keep" | "rework" | "replan" | "migrate" | null
   >(null);
+  const [jiraAutoCompletionSaving, setJiraAutoCompletionSaving] = useState<
+    "retry" | "accept_remote" | null
+  >(null);
   const [claiming, setClaiming] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentsError, setAttachmentsError] = useState<TaskDetailError | null>(null);
@@ -924,6 +928,22 @@ export function TaskDetail({
     } finally {
       onAiChatThreadsRefresh();
       setJiraLifecycleSaving(null);
+    }
+  }
+
+  async function applyJiraAutoCompletion(action: "retry" | "accept_remote") {
+    if (!jiraContext?.jira || jiraAutoCompletionSaving) return;
+    setJiraAutoCompletionSaving(action);
+    onError(null);
+    try {
+      const context = await resolveJiraAutoCompletion(jiraContext.jira.id, action);
+      setJiraContext(context);
+      if (context.jira) setCurrentTask(context.jira);
+    } catch (error) {
+      onError(issueMessageFor(error));
+      setJiraContext(await getJiraTaskContext(currentTask.id).catch(() => jiraContext));
+    } finally {
+      setJiraAutoCompletionSaving(null);
     }
   }
 
@@ -2264,6 +2284,67 @@ export function TaskDetail({
                               ? text("迁移到 canonical Jira", "Move to canonical Jira")
                               : text("暂停关联 Issue", "Pause linked issues")}</button>
                     </div>
+                  </div>
+                )}
+                {jiraContext?.autoCompletion && jiraContext.autoCompletion.state !== "dismissed" && (
+                  <div className={`jira-auto-completion is-${jiraContext.autoCompletion.state}`} role="status">
+                    <div>
+                      <strong>{jiraContext.autoCompletion.state === "completed"
+                        ? text("Jira 已自动完成", "Jira completed automatically")
+                        : jiraContext.autoCompletion.state === "conflict"
+                          ? text("Jira 已在远端变化", "Jira changed remotely")
+                          : jiraContext.autoCompletion.state === "failed"
+                            ? text("Jira 自动完成失败", "Jira automatic completion failed")
+                            : jiraContext.autoCompletion.state === "retry_wait"
+                              ? text("等待重试 Jira", "Waiting to retry Jira")
+                              : text("正在完成 Jira", "Completing Jira")}</strong>
+                      <small>{jiraContext.autoCompletion.state === "conflict"
+                        ? <>{text(
+                            `远端当前为“${jiraContext.autoCompletion.remoteStatus ?? "未知"}”。`,
+                            `The remote status is “${jiraContext.autoCompletion.remoteStatus ?? "Unknown"}”.`,
+                          )}<br />{text(
+                            `Panel 版本：${jiraContext.autoCompletion.expectedUpdatedAt
+                              ? exactTime(jiraContext.autoCompletion.expectedUpdatedAt, locale)
+                              : "未知"} → Jira 版本：${jiraContext.autoCompletion.remoteUpdatedAt
+                              ? exactTime(jiraContext.autoCompletion.remoteUpdatedAt, locale)
+                              : "未知"}。请选择接受远端或仍然完成。`,
+                            `Panel version: ${jiraContext.autoCompletion.expectedUpdatedAt
+                              ? exactTime(jiraContext.autoCompletion.expectedUpdatedAt, locale)
+                              : "Unknown"} → Jira version: ${jiraContext.autoCompletion.remoteUpdatedAt
+                              ? exactTime(jiraContext.autoCompletion.remoteUpdatedAt, locale)
+                              : "Unknown"}. Accept it or complete Jira anyway.`,
+                          )}</>
+                        : jiraContext.autoCompletion.error?.message
+                          ?? text(
+                            "所有关联 Issue 均已完成，Panel 正在通过 Jira REST API 确认结果。",
+                            "Every linked issue is done. Panel is confirming the result through the Jira REST API.",
+                          )}</small>
+                    </div>
+                    {(jiraContext.autoCompletion.state === "conflict" || jiraContext.autoCompletion.state === "failed") && (
+                      <div>
+                        {jiraContext.autoCompletion.state === "conflict" && (
+                          <button
+                            className="button secondary"
+                            type="button"
+                            disabled={jiraAutoCompletionSaving !== null}
+                            onClick={() => void applyJiraAutoCompletion("accept_remote")}
+                          >{jiraAutoCompletionSaving === "accept_remote"
+                              ? text("处理中…", "Applying…")
+                              : text("接受远端", "Accept remote")}</button>
+                        )}
+                        <button
+                          className="button primary"
+                          type="button"
+                          disabled={jiraAutoCompletionSaving !== null}
+                          aria-busy={jiraAutoCompletionSaving === "retry"}
+                          onClick={() => void applyJiraAutoCompletion("retry")}
+                        >{jiraAutoCompletionSaving === "retry"
+                            ? <><span className="ai-chat-spinner" aria-hidden="true" />{text("重试中…", "Retrying…")}</>
+                            : jiraContext.autoCompletion.state === "conflict"
+                              ? text("仍然完成", "Complete anyway")
+                              : text("重试", "Retry")}</button>
+                      </div>
+                    )}
                   </div>
                 )}
                 <div className="jira-context-actions">

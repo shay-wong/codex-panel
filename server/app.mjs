@@ -38,6 +38,7 @@ import {
 } from "./cloud-proxy.mjs";
 import { ApiError, PanelDatabase } from "./database.mjs";
 import { createJiraConfigStore } from "./jira-config.mjs";
+import { JiraAutoCompleteService } from "./jira-auto-complete.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
 import { sendInjectorControlRequest } from "../scripts/codex-injector-control.mjs";
@@ -1973,6 +1974,13 @@ export function createPanelServer(options = {}) {
     database,
     fetch: options.jiraFetch ?? globalThis.fetch,
   });
+  const jiraAutoComplete = new JiraAutoCompleteService({
+    database,
+    jira,
+    onChanged: (context) => {
+      events.emit("task.jira.updated", { taskId: context.jira.id, task: context.jira });
+    },
+  });
   const interruptNativeThread = options.interruptNativeThread ?? (async (binding) => (
     sendInjectorControlRequest({
       runtimeFile: process.env.CODEX_PANEL_RUNTIME_FILE
@@ -2965,6 +2973,25 @@ export function createPanelServer(options = {}) {
         return methodNotAllowed(response, ["GET", "PUT"]);
       }
 
+      if (pathname === "/api/local/jira-settings") {
+        assertNoQuery(url.searchParams, "Jira settings routes");
+        if (request.method === "GET") {
+          return sendJson(response, 200, { settings: database.getJiraSettings() });
+        }
+        if (request.method === "PUT") {
+          const body = await readJson(request);
+          assertPlainObject(body);
+          assertAllowedKeys(body, new Set(["autoCompleteEnabled"]));
+          if (typeof body.autoCompleteEnabled !== "boolean") {
+            throw new ApiError(400, "INVALID_FIELD", "'autoCompleteEnabled' must be a boolean");
+          }
+          const settings = database.saveJiraSettings(body);
+          if (settings.autoCompleteEnabled) jiraAutoComplete.queueAllEligible();
+          return sendJson(response, 200, { settings });
+        }
+        return methodNotAllowed(response, ["GET", "PUT"]);
+      }
+
       if (pathname === "/api/local/jira-connection/sync") {
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
         if ([...url.searchParams.keys()].length > 0) {
@@ -3536,6 +3563,29 @@ export function createPanelServer(options = {}) {
         return methodNotAllowed(response, ["GET", "PUT"]);
       }
 
+      const jiraAutoCompleteRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-auto-complete$/);
+      if (jiraAutoCompleteRoute) {
+        const jiraTaskId = decodeRouteSegment(jiraAutoCompleteRoute[1], "Task id");
+        assertNoQuery(url.searchParams, "POST /api/tasks/:id/jira-auto-complete");
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        const body = await readJson(request);
+        assertPlainObject(body);
+        assertAllowedKeys(body, new Set(["action"]));
+        if (body.action === "retry") {
+          jiraAutoComplete.retry(jiraTaskId);
+        } else if (body.action === "accept_remote") {
+          await jira.reconcile();
+          const context = database.dismissJiraAutoCompletionConflict(jiraTaskId);
+          events.emit("task.jira.updated", { taskId: jiraTaskId, task: context.jira });
+          return sendJson(response, 200, { context });
+        } else {
+          throw new ApiError(400, "INVALID_FIELD", "Unsupported Jira automatic completion action");
+        }
+        const context = database.getJiraContext(jiraTaskId);
+        events.emit("task.jira.updated", { taskId: jiraTaskId, task: context.jira });
+        return sendJson(response, 200, { context });
+      }
+
       const jiraLifecycleRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-lifecycle$/);
       if (jiraLifecycleRoute) {
         const jiraTaskId = decodeRouteSegment(jiraLifecycleRoute[1], "Task id");
@@ -3672,12 +3722,14 @@ export function createPanelServer(options = {}) {
         }
         const { version } = parseArchive(await readJson(request));
         const actor = actorFromRequest(request);
-        const context = request.method === "POST"
+        let context = request.method === "POST"
           ? database.addJiraTaskLink(jiraTaskId, version, taskId, actor)
           : request.method === "DELETE"
             ? database.removeJiraTaskLink(jiraTaskId, version, taskId, actor)
             : null;
         if (!context) return methodNotAllowed(response, ["POST", "DELETE"]);
+        jiraAutoComplete.reconcile(jiraTaskId);
+        context = database.getJiraContext(jiraTaskId);
         events.emit("task.jira.updated", { taskId, task: context.jira });
         return sendJson(response, 200, { context });
       }
@@ -4005,6 +4057,7 @@ export function createPanelServer(options = {}) {
             throw error;
           }
           events.emit("task.updated", { task });
+          if (current.source !== "jira") jiraAutoComplete.queueForTask(task.id);
           return sendJson(response, 200, { task });
         }
         if (!action && request.method === "DELETE") {
@@ -4050,6 +4103,7 @@ export function createPanelServer(options = {}) {
             actorFromRequest(request),
           );
           events.emit("task.moved", { task });
+          if (current.source !== "jira") jiraAutoComplete.queueForTask(task.id);
           return sendJson(response, 200, { task });
         }
         if (action === "archive" && request.method === "POST") {
@@ -4068,6 +4122,7 @@ export function createPanelServer(options = {}) {
             actorFromRequest(request),
           );
           events.emit("task.archived", { task });
+          if (current?.source !== "jira") jiraAutoComplete.queueForTask(task.id);
           return sendJson(response, 200, { task });
         }
         if (action === "restore" && request.method === "POST") {
@@ -4086,6 +4141,7 @@ export function createPanelServer(options = {}) {
             actorFromRequest(request),
           );
           events.emit("task.restored", { task });
+          if (current?.source !== "jira") jiraAutoComplete.queueForTask(task.id);
           return sendJson(response, 200, { task });
         }
         return methodNotAllowed(response, action ? ["POST"] : ["GET", "PATCH", "DELETE"]);
@@ -4123,6 +4179,7 @@ export function createPanelServer(options = {}) {
     database,
     aiChat,
     claimQueue,
+    jiraAutoComplete,
     server,
     options: resolved,
     async listen({ host = "127.0.0.1", port = resolvePort(), fd = null } = {}) {
@@ -4148,10 +4205,12 @@ export function createPanelServer(options = {}) {
       });
       listening = true;
       claimQueue.start();
+      jiraAutoComplete.start();
       return server.address();
     },
     async close() {
       claimQueue.close();
+      await jiraAutoComplete.close();
       const serverClosed = listening
         ? new Promise((resolve, reject) => {
             server.close((error) => error ? reject(error) : resolve());

@@ -271,6 +271,7 @@ function taskFromRow(row) {
     externalKey: row.external_key ?? null,
     externalUrl: row.external_url ?? null,
     externalStatus: row.external_status ?? null,
+    externalUpdatedAt: row.external_updated_at ?? null,
     externalSyncedAt: row.external_synced_at ?? null,
     externalSyncError: row.external_sync_error ?? null,
     archivedAt: row.archived_at,
@@ -547,6 +548,7 @@ export class PanelDatabase {
         external_key TEXT,
         external_url TEXT,
         external_status TEXT,
+        external_updated_at TEXT,
         external_synced_at TEXT,
         external_sync_error TEXT,
         archived_at TEXT,
@@ -630,6 +632,12 @@ export class PanelDatabase {
         unknown_issue_count INTEGER NOT NULL DEFAULT 0,
         error_code TEXT,
         error_message TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS jira_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        auto_complete_enabled INTEGER NOT NULL DEFAULT 0 CHECK (auto_complete_enabled IN (0, 1)),
+        updated_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS ai_chat_threads (
@@ -822,6 +830,12 @@ export class PanelDatabase {
     if (!migratedTaskColumns.some((column) => column.name === "external_status")) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN external_status TEXT");
     }
+    if (!migratedTaskColumns.some((column) => column.name === "external_updated_at")) {
+      this.database.exec("ALTER TABLE tasks ADD COLUMN external_updated_at TEXT");
+      this.database.exec(`
+        UPDATE tasks SET external_updated_at = updated_at WHERE external_source = 'jira'
+      `);
+    }
     if (!migratedTaskColumns.some((column) => column.name === "external_synced_at")) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN external_synced_at TEXT");
     }
@@ -948,6 +962,26 @@ export class PanelDatabase {
         version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS jira_auto_completions (
+        jira_task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+        state TEXT NOT NULL CHECK (state IN (
+          'queued', 'running', 'retry_wait', 'conflict', 'failed', 'completed', 'dismissed'
+        )),
+        expected_updated_at TEXT,
+        remote_updated_at TEXT,
+        remote_status TEXT,
+        remote_task_status TEXT,
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+        available_at TEXT NOT NULL,
+        error_code TEXT,
+        error_message TEXT,
+        completed_at TEXT,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS jira_auto_completions_dispatch
+        ON jira_auto_completions(state, available_at, updated_at);
 
       CREATE TABLE IF NOT EXISTS jira_rework_items (
         jira_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -1338,7 +1372,7 @@ export class PanelDatabase {
           workflow_id, git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
           external_source, external_origin, external_id, external_key, external_url,
-          external_status, external_synced_at, external_sync_error,
+          external_status, external_updated_at, external_synced_at, external_sync_error,
           archived_at, version, created_at, updated_at
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?,
@@ -1348,7 +1382,7 @@ export class PanelDatabase {
           NULL, NULL, NULL, NULL,
           NULL, ?, NULL, NULL,
           'jira', ?, ?, ?, ?,
-          ?, ?, NULL,
+          ?, ?, ?, NULL,
           ?, 1, ?, ?
         )
       `);
@@ -1358,7 +1392,7 @@ export class PanelDatabase {
           sort_order = ?, creator_type = ?, creator_id = ?, creator_name = ?, creator_avatar_url = ?,
           assignee_type = ?, assignee_id = ?, assignee_name = ?, assignee_avatar_url = ?,
           due_date = ?, external_origin = ?, external_id = ?, external_key = ?, external_url = ?,
-          external_status = ?, external_synced_at = ?, external_sync_error = NULL,
+          external_status = ?, external_updated_at = ?, external_synced_at = ?, external_sync_error = NULL,
           archived_at = ?,
           version = version + 1, updated_at = ?
         WHERE id = ?
@@ -1368,6 +1402,7 @@ export class PanelDatabase {
         const existing = findExisting.get(issue.externalOrigin, issue.externalId);
         seenTaskIds.add(existing?.id ?? issue.id);
         const labels = JSON.stringify(issue.labels);
+        const externalUpdatedAt = issue.externalUpdatedAt ?? issue.updatedAt ?? null;
         if (!existing) {
           insertTask.run(
             issue.id,
@@ -1393,6 +1428,7 @@ export class PanelDatabase {
             issue.externalKey,
             issue.externalUrl,
             issue.externalStatus,
+            externalUpdatedAt,
             syncedAt,
             issue.archived ? timestamp : null,
             issue.createdAt,
@@ -1428,6 +1464,7 @@ export class PanelDatabase {
           || existing.external_key !== issue.externalKey
           || existing.external_url !== issue.externalUrl
           || existing.external_status !== issue.externalStatus
+          || existing.external_updated_at !== externalUpdatedAt
           || existing.external_sync_error !== null
           || Boolean(existing.archived_at) !== archived;
         if (!changed) {
@@ -1460,6 +1497,7 @@ export class PanelDatabase {
           issue.externalKey,
           issue.externalUrl,
           issue.externalStatus,
+          externalUpdatedAt,
           syncedAt,
           archived ? timestamp : null,
           issue.updatedAt,
@@ -1554,6 +1592,39 @@ export class PanelDatabase {
     };
   }
 
+  getJiraSettings() {
+    const row = this.database.prepare(
+      "SELECT auto_complete_enabled FROM jira_settings WHERE id = 1",
+    ).get();
+    return { autoCompleteEnabled: Boolean(row?.auto_complete_enabled) };
+  }
+
+  saveJiraSettings({ autoCompleteEnabled }) {
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        INSERT INTO jira_settings (id, auto_complete_enabled, updated_at)
+        VALUES (1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          auto_complete_enabled = excluded.auto_complete_enabled,
+          updated_at = excluded.updated_at
+      `).run(autoCompleteEnabled ? 1 : 0, timestamp);
+      if (!autoCompleteEnabled) {
+        this.database.prepare(`
+          UPDATE jira_auto_completions
+          SET state = 'dismissed', error_code = NULL, error_message = NULL, updated_at = ?
+          WHERE state IN ('queued', 'retry_wait')
+        `).run(timestamp);
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getJiraSettings();
+  }
+
   recordJiraSyncAttempt(attemptedAt = now()) {
     this.database.prepare(`
       INSERT INTO jira_sync_state (id, attempted_at)
@@ -1625,6 +1696,7 @@ export class PanelDatabase {
         simpleStart: null,
         plan: null,
         lifecycle: null,
+        autoCompletion: null,
       };
     }
     const projects = this.database.prepare(`
@@ -1663,7 +1735,324 @@ export class PanelDatabase {
       simpleStart: this.getJiraSimpleStartOperation(jiraTask.id),
       plan: this.getJiraPlan(jiraTask.id),
       lifecycle: this.getJiraLifecycle(jiraTask.id),
+      autoCompletion: this.getJiraAutoCompletion(jiraTask.id),
     };
+  }
+
+  getJiraAutoCompletion(jiraTaskId) {
+    const row = this.database.prepare(`
+      SELECT * FROM jira_auto_completions WHERE jira_task_id = ?
+    `).get(jiraTaskId);
+    if (!row) return null;
+    return {
+      state: row.state,
+      expectedUpdatedAt: row.expected_updated_at,
+      remoteUpdatedAt: row.remote_updated_at,
+      remoteStatus: row.remote_status,
+      remoteTaskStatus: row.remote_task_status,
+      attemptCount: row.attempt_count,
+      availableAt: row.available_at,
+      error: row.error_message
+        ? { code: row.error_code ?? "JIRA_AUTO_COMPLETE_FAILED", message: row.error_message }
+        : null,
+      completedAt: row.completed_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  queueEligibleJiraAutoCompletion(taskId) {
+    if (!this.getJiraSettings().autoCompleteEnabled) return null;
+    const linkedJira = this.database.prepare(`
+      SELECT jira.id
+      FROM jira_task_links AS link
+      JOIN tasks AS jira ON jira.id = link.jira_task_id
+      WHERE link.task_id = ?
+      LIMIT 1
+    `).get(taskId);
+    if (!linkedJira) return null;
+    return this.reconcileJiraAutoCompletion(linkedJira.id);
+  }
+
+  reconcileJiraAutoCompletion(jiraTaskId) {
+    if (!this.getJiraSettings().autoCompleteEnabled) {
+      this.dismissPendingJiraAutoCompletion(jiraTaskId);
+      return null;
+    }
+    const jira = this.database.prepare(`
+      SELECT jira.id, jira.external_updated_at
+      FROM tasks AS jira
+      WHERE jira.id = ?
+        AND jira.external_source = 'jira'
+        AND jira.archived_at IS NULL
+        AND jira.status NOT IN ('done', 'canceled')
+        AND EXISTS (SELECT 1 FROM jira_task_links WHERE jira_task_id = jira.id)
+        AND NOT EXISTS (
+          SELECT 1 FROM jira_lifecycles
+          WHERE jira_task_id = jira.id AND (pending_kind IS NOT NULL OR is_duplicate = 1)
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jira_task_links AS candidate_link
+          JOIN tasks AS candidate ON candidate.id = candidate_link.task_id
+          WHERE candidate_link.jira_task_id = jira.id
+            AND (candidate.archived_at IS NOT NULL OR candidate.status != 'done')
+        )
+    `).get(jiraTaskId);
+    if (!jira) {
+      this.dismissPendingJiraAutoCompletion(jiraTaskId);
+      return null;
+    }
+    this.#queueJiraAutoCompletion(jira);
+    return jira.id;
+  }
+
+  queueEligibleJiraAutoCompletions() {
+    if (!this.getJiraSettings().autoCompleteEnabled) return [];
+    const candidates = this.database.prepare(`
+      SELECT jira.id, jira.external_updated_at
+      FROM tasks AS jira
+      WHERE jira.external_source = 'jira'
+        AND jira.archived_at IS NULL
+        AND jira.status NOT IN ('done', 'canceled')
+        AND NOT EXISTS (
+          SELECT 1 FROM jira_lifecycles
+          WHERE jira_task_id = jira.id AND (pending_kind IS NOT NULL OR is_duplicate = 1)
+        )
+        AND EXISTS (SELECT 1 FROM jira_task_links WHERE jira_task_id = jira.id)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jira_task_links AS candidate_link
+          JOIN tasks AS candidate ON candidate.id = candidate_link.task_id
+          WHERE candidate_link.jira_task_id = jira.id
+            AND (candidate.archived_at IS NOT NULL OR candidate.status != 'done')
+        )
+      ORDER BY jira.sort_order, jira.created_at, jira.id
+    `).all();
+    for (const jira of candidates) this.#queueJiraAutoCompletion(jira);
+    return candidates.map((jira) => jira.id);
+  }
+
+  #queueJiraAutoCompletion(jira) {
+    const timestamp = now();
+    const changed = this.database.prepare(`
+      INSERT INTO jira_auto_completions (
+        jira_task_id, state, expected_updated_at, attempt_count, available_at, updated_at
+      ) VALUES (?, 'queued', ?, 0, ?, ?)
+      ON CONFLICT(jira_task_id) DO UPDATE SET
+        state = 'queued',
+        expected_updated_at = excluded.expected_updated_at,
+        remote_updated_at = NULL,
+        remote_status = NULL,
+        remote_task_status = NULL,
+        attempt_count = 0,
+        available_at = excluded.available_at,
+        error_code = NULL,
+        error_message = NULL,
+        completed_at = NULL,
+        updated_at = excluded.updated_at
+      WHERE jira_auto_completions.state = 'dismissed'
+    `).run(jira.id, jira.external_updated_at, timestamp, timestamp);
+    if (changed.changes === 1) this.#touchJiraAutoCompletionTask(jira.id, timestamp);
+  }
+
+  dismissPendingJiraAutoCompletion(jiraTaskId) {
+    const timestamp = now();
+    const result = this.database.prepare(`
+      UPDATE jira_auto_completions
+      SET state = 'dismissed', error_code = NULL, error_message = NULL, updated_at = ?
+      WHERE jira_task_id = ? AND state IN ('queued', 'retry_wait')
+    `).run(timestamp, jiraTaskId);
+    if (result.changes === 1) this.#touchJiraAutoCompletionTask(jiraTaskId, timestamp);
+  }
+
+  queueJiraAutoCompletionRetry(jiraTaskId) {
+    if (!this.getJiraSettings().autoCompleteEnabled) {
+      throw new ApiError(409, "JIRA_AUTO_COMPLETE_DISABLED", "Enable Jira automatic completion before retrying");
+    }
+    const jira = this.#requireTask(jiraTaskId);
+    if (jira.source !== "jira") {
+      throw new ApiError(409, "JIRA_TASK_REQUIRED", "Only Jira issues can retry automatic completion");
+    }
+    const current = this.getJiraAutoCompletion(jira.id);
+    if (!current || !["conflict", "failed", "dismissed"].includes(current.state)) {
+      throw new ApiError(409, "JIRA_AUTO_COMPLETE_NOT_RETRYABLE", "Jira automatic completion is not waiting for retry");
+    }
+    const eligible = this.database.prepare(`
+      SELECT 1
+      FROM jira_task_links
+      WHERE jira_task_id = ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jira_task_links AS candidate_link
+          JOIN tasks AS candidate ON candidate.id = candidate_link.task_id
+          WHERE candidate_link.jira_task_id = ?
+            AND (candidate.archived_at IS NOT NULL OR candidate.status != 'done')
+        )
+      LIMIT 1
+    `).get(jira.id, jira.id);
+    if (!eligible) {
+      this.dismissPendingJiraAutoCompletion(jira.id);
+      throw new ApiError(
+        409,
+        "JIRA_AUTO_COMPLETE_NOT_ELIGIBLE",
+        "Every linked issue must still be done before retrying Jira completion",
+      );
+    }
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE jira_auto_completions
+      SET state = 'queued',
+          expected_updated_at = COALESCE(remote_updated_at, ?),
+          attempt_count = 0,
+          available_at = ?,
+          error_code = NULL,
+          error_message = NULL,
+          completed_at = NULL,
+          updated_at = ?
+      WHERE jira_task_id = ?
+    `).run(jira.externalUpdatedAt, timestamp, timestamp, jira.id);
+    this.#touchJiraAutoCompletionTask(jira.id, timestamp);
+    return this.getJiraAutoCompletion(jira.id);
+  }
+
+  dismissJiraAutoCompletionConflict(jiraTaskId) {
+    const current = this.getJiraAutoCompletion(jiraTaskId);
+    if (!current || current.state !== "conflict") {
+      throw new ApiError(409, "JIRA_AUTO_COMPLETE_NOT_CONFLICTED", "Jira automatic completion has no remote conflict to accept");
+    }
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE jira_auto_completions
+      SET state = 'dismissed', error_code = NULL, error_message = NULL, updated_at = ?
+      WHERE jira_task_id = ?
+    `).run(timestamp, jiraTaskId);
+    this.#touchJiraAutoCompletionTask(jiraTaskId, timestamp);
+    return this.getJiraContext(jiraTaskId);
+  }
+
+  takeNextJiraAutoCompletion() {
+    const timestamp = now();
+    const row = this.database.prepare(`
+      SELECT completion.jira_task_id
+      FROM jira_auto_completions AS completion
+      JOIN tasks AS jira ON jira.id = completion.jira_task_id
+      WHERE completion.state IN ('queued', 'retry_wait')
+        AND completion.available_at <= ?
+        AND jira.status NOT IN ('done', 'canceled')
+        AND NOT EXISTS (
+          SELECT 1 FROM jira_lifecycles
+          WHERE jira_task_id = jira.id AND (pending_kind IS NOT NULL OR is_duplicate = 1)
+        )
+        AND EXISTS (SELECT 1 FROM jira_task_links WHERE jira_task_id = jira.id)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jira_task_links AS candidate_link
+          JOIN tasks AS candidate ON candidate.id = candidate_link.task_id
+          WHERE candidate_link.jira_task_id = jira.id
+            AND (candidate.archived_at IS NOT NULL OR candidate.status != 'done')
+        )
+      ORDER BY completion.available_at, completion.updated_at, completion.jira_task_id
+      LIMIT 1
+    `).get(timestamp);
+    if (!row) return null;
+    const changed = this.database.prepare(`
+      UPDATE jira_auto_completions
+      SET state = 'running', attempt_count = attempt_count + 1, updated_at = ?
+      WHERE jira_task_id = ? AND state IN ('queued', 'retry_wait')
+    `).run(timestamp, row.jira_task_id);
+    if (changed.changes !== 1) return null;
+    this.#touchJiraAutoCompletionTask(row.jira_task_id, timestamp);
+    const jira = this.getTask(row.jira_task_id);
+    return jira ? { jira, completion: this.getJiraAutoCompletion(jira.id) } : null;
+  }
+
+  isJiraAutoCompletionEligible(jiraTaskId) {
+    if (!this.getJiraSettings().autoCompleteEnabled) return false;
+    return Boolean(this.database.prepare(`
+      SELECT 1
+      FROM tasks AS jira
+      WHERE jira.id = ?
+        AND jira.external_source = 'jira'
+        AND jira.archived_at IS NULL
+        AND jira.status NOT IN ('done', 'canceled')
+        AND NOT EXISTS (
+          SELECT 1 FROM jira_lifecycles
+          WHERE jira_task_id = jira.id AND (pending_kind IS NOT NULL OR is_duplicate = 1)
+        )
+        AND EXISTS (SELECT 1 FROM jira_task_links WHERE jira_task_id = jira.id)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jira_task_links AS candidate_link
+          JOIN tasks AS candidate ON candidate.id = candidate_link.task_id
+          WHERE candidate_link.jira_task_id = jira.id
+            AND (candidate.archived_at IS NOT NULL OR candidate.status != 'done')
+        )
+    `).get(jiraTaskId));
+  }
+
+  finishJiraAutoCompletion(jiraTaskId, result) {
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        UPDATE tasks
+        SET status = 'done', external_status = ?, external_updated_at = ?, external_synced_at = ?,
+            external_sync_error = NULL, archived_at = NULL, version = version + 1, updated_at = ?
+        WHERE id = ?
+      `).run(result.statusName, result.updatedAt, timestamp, timestamp, jiraTaskId);
+      this.database.prepare(`
+        UPDATE jira_auto_completions
+        SET state = 'completed', remote_updated_at = ?, remote_status = ?, remote_task_status = 'done',
+            error_code = NULL, error_message = NULL, completed_at = ?, updated_at = ?
+        WHERE jira_task_id = ?
+      `).run(result.updatedAt, result.statusName, timestamp, timestamp, jiraTaskId);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getJiraContext(jiraTaskId);
+  }
+
+  failJiraAutoCompletion(jiraTaskId, error, { retryAt = null, remote = null } = {}) {
+    const timestamp = now();
+    const state = error.code === "JIRA_AUTO_COMPLETE_CONFLICT"
+      ? "conflict"
+      : error.code === "JIRA_AUTO_COMPLETE_NOT_ELIGIBLE" ? "dismissed"
+      : retryAt ? "retry_wait" : "failed";
+    this.database.prepare(`
+      UPDATE jira_auto_completions
+      SET state = ?, available_at = COALESCE(?, available_at), remote_updated_at = ?,
+          remote_status = ?, remote_task_status = ?, error_code = ?, error_message = ?, updated_at = ?
+      WHERE jira_task_id = ?
+    `).run(
+      state,
+      retryAt,
+      remote?.updatedAt ?? null,
+      remote?.statusName ?? null,
+      remote?.taskStatus ?? null,
+      state === "dismissed" ? null : String(error.code ?? "JIRA_AUTO_COMPLETE_FAILED").slice(0, 120),
+      state === "dismissed" ? null : String(error.message ?? error).slice(0, 1000),
+      timestamp,
+      jiraTaskId,
+    );
+    this.#touchJiraAutoCompletionTask(jiraTaskId, timestamp);
+    return this.getJiraAutoCompletion(jiraTaskId);
+  }
+
+  recoverJiraAutoCompletions() {
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE jira_auto_completions
+      SET state = 'queued', available_at = ?, updated_at = ?
+      WHERE state = 'running'
+    `).run(timestamp, timestamp);
+  }
+
+  #touchJiraAutoCompletionTask(jiraTaskId, timestamp) {
+    this.database.prepare(`
+      UPDATE tasks SET version = version + 1, updated_at = ? WHERE id = ?
+    `).run(timestamp, jiraTaskId);
   }
 
   getJiraLifecycle(jiraTaskId) {

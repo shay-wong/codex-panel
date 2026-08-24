@@ -14,6 +14,7 @@ interface JiraConnectionDialogProps {
     username: string;
     password: string;
     projects: string[];
+    autoCompleteEnabled: boolean;
   }) => Promise<void>;
 }
 
@@ -32,6 +33,9 @@ export function JiraConnectionDialog({
   const [username, setUsername] = useState(connection?.username ?? "");
   const [password, setPassword] = useState("");
   const [projectsText, setProjectsText] = useState(connection?.projects.join(", ") ?? "");
+  const [autoCompleteEnabled, setAutoCompleteEnabled] = useState(
+    connection?.autoCompleteEnabled ?? false,
+  );
 
   useEffect(() => {
     setBaseUrl(connection?.baseUrl ?? "http://");
@@ -39,6 +43,7 @@ export function JiraConnectionDialog({
     setUsername(connection?.username ?? "");
     setPassword("");
     setProjectsText(connection?.projects.join(", ") ?? "");
+    setAutoCompleteEnabled(connection?.autoCompleteEnabled ?? false);
   }, [connection]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -52,6 +57,7 @@ export function JiraConnectionDialog({
         .split(/[,，\n]+/)
         .map((project) => project.trim())
         .filter(Boolean),
+      autoCompleteEnabled,
     });
   }
 
@@ -159,6 +165,26 @@ export function JiraConnectionDialog({
         {connection?.configured && connection.displayName && (
           <p>{text("当前账号：", "Current account: ")}{connection.displayName}</p>
         )}
+        <div className="jira-setting-row">
+          <span>
+            <strong>{text("自动完成 Jira", "Automatically complete Jira")}</strong>
+            <small>{text(
+              "所有关联 Issue 都完成后，通过 Jira REST API 自动完成需求。默认关闭。",
+              "Complete Jira through its REST API after every linked issue is done. Off by default.",
+            )}</small>
+          </span>
+          <button
+            className={`board-setting-switch${autoCompleteEnabled ? " is-on" : ""}`}
+            type="button"
+            role="switch"
+            aria-checked={autoCompleteEnabled}
+            aria-label={text("自动完成 Jira", "Automatically complete Jira")}
+            disabled={saving}
+            onClick={() => setAutoCompleteEnabled((current) => !current)}
+          >
+            <span />
+          </button>
+        </div>
         {connection?.configured && (
           <dl className={`jira-sync-summary${connection.syncError ? " is-error" : ""}`}>
             <div>

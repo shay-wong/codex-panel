@@ -145,6 +145,7 @@ export async function getJiraConnection(signal?: AbortSignal): Promise<JiraConne
         syncedIssueCount: 0,
         unknownIssueCount: 0,
         syncError: null,
+        autoCompleteEnabled: false,
         insecureHttp: false,
       };
     }
@@ -175,6 +176,14 @@ export async function syncJiraConnection(acceptAccountChange = false): Promise<J
       : {}),
   });
   return data.connection;
+}
+
+export async function saveJiraSettings(autoCompleteEnabled: boolean): Promise<{ autoCompleteEnabled: boolean }> {
+  const data = await request<{ settings: { autoCompleteEnabled: boolean } }>("/api/local/jira-settings", {
+    method: "PUT",
+    body: JSON.stringify({ autoCompleteEnabled }),
+  });
+  return data.settings;
 }
 
 export async function getProjectSummary(
@@ -606,6 +615,17 @@ export async function resolveJiraLifecycle(
   const data = await request<{ context: JiraTaskContext }>(
     `/api/tasks/${encodeURIComponent(taskId)}/jira-lifecycle`,
     { method: "POST", body: JSON.stringify({ version, action }) },
+  );
+  return data.context;
+}
+
+export async function resolveJiraAutoCompletion(
+  taskId: string,
+  action: "retry" | "accept_remote",
+): Promise<JiraTaskContext> {
+  const data = await request<{ context: JiraTaskContext }>(
+    `/api/tasks/${encodeURIComponent(taskId)}/jira-auto-complete`,
+    { method: "POST", body: JSON.stringify({ action }) },
   );
   return data.context;
 }
