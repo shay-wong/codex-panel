@@ -1,4 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   AUTOMATION_MODELS,
@@ -11,7 +16,9 @@ import type {
   ProjectAutomationOptions,
   ProjectAutomationPolicy,
 } from "../types";
+import { LinearIcon } from "./LinearIcon";
 import { PanelIcon } from "./PanelIcon";
+import { TaskPropertyPicker } from "./TaskPropertyPicker";
 
 type IntervalMinutes = 5 | 10 | 15 | 30 | 60;
 
@@ -73,6 +80,7 @@ export function ProjectAutomationMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const wasPendingRef = useRef(pending);
   const [open, setOpen] = useState(false);
+  const [openPicker, setOpenPicker] = useState<string | null>(null);
   const [position, setPosition] = useState({ left: 0, top: 0, ready: false });
   const [draft, setDraft] = useState<AutomationOptions>(DEFAULT_OPTIONS);
   const status = automation?.status ?? "PAUSED";
@@ -82,10 +90,22 @@ export function ProjectAutomationMenu({
       ? "项目暂停"
       : "运行中";
   const disabled = pending || Boolean(unavailableReason);
+  const parallelismOptions = Array.from({ length: 8 }, (_, index) => String(index + 1));
+  const currentParallelismValue = draft.parallelismOverride === null
+    ? "default"
+    : String(draft.parallelismOverride);
+  const currentParallelismLabel = draft.parallelismOverride === null
+    ? `跟随默认（${draft.defaultParallelism}）`
+    : String(draft.parallelismOverride);
+  const modelLabel = getAutomationModel(draft.model).label;
 
   useEffect(() => {
     if (!open) return;
     setDraft(toAutomationOptions(automation));
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) setOpenPicker(null);
   }, [open]);
 
   useEffect(() => {
@@ -149,17 +169,18 @@ export function ProjectAutomationMenu({
       style={{ left: position.left, top: position.top, visibility: position.ready ? "visible" : "hidden" }}
     >
       <div className="project-automation-menu-heading">
-        <strong>自动认领待办</strong>
-        <span className={status === "ACTIVE" ? "is-active" : "is-paused"}>
-          {stateLabel}
-        </span>
-      </div>
-      <div className="project-automation-switch">
-        <span>自动认领开关</span>
+        <div className="project-automation-heading-copy">
+          <strong>自动化</strong>
+          <span className={status === "ACTIVE" ? "is-active" : "is-paused"}>
+            <i aria-hidden="true" />
+            {stateLabel}
+          </span>
+        </div>
         <button
           type="button"
           className={`board-setting-switch${draft.enabledByUser ? " is-on" : ""}`}
           role="switch"
+          aria-label="自动认领开关"
           aria-checked={draft.enabledByUser}
           disabled={disabled}
           onClick={() => submitChange({
@@ -170,101 +191,146 @@ export function ProjectAutomationMenu({
           <span aria-hidden="true" />
         </button>
       </div>
-      <div className="project-automation-switch">
-        <span>暂停当前项目</span>
-        <button
-          type="button"
-          className={`board-setting-switch${draft.paused ? " is-on" : ""}`}
-          role="switch"
-          aria-checked={draft.paused}
-          disabled={disabled}
-          onClick={() => submitChange({
-            ...draft,
-            paused: !draft.paused,
-          })}
-        >
-          <span aria-hidden="true" />
-        </button>
-      </div>
-      <div className="project-automation-queue" aria-label="自动执行队列状态">
-        <span>排队 <strong>{automation?.queue.queued ?? 0}</strong></span>
-        <span>运行 <strong>{automation?.queue.running ?? 0}/{automation?.parallelism ?? draft.defaultParallelism}</strong></span>
-        <span>阻塞 <strong>{automation?.queue.blocked ?? 0}</strong></span>
-        <span>失败 <strong>{automation?.queue.failed ?? 0}</strong></span>
-      </div>
-      <label className="project-automation-field">
-        <span>默认项目并行数</span>
-        <select
-          value={draft.defaultParallelism}
-          disabled={disabled}
-          onChange={(event) => submitChange({
-            ...draft,
-            defaultParallelism: Number(event.target.value),
-          })}
-        >
-          {Array.from({ length: 8 }, (_, index) => index + 1).map((count) => (
-            <option key={count} value={count}>{count}</option>
-          ))}
-        </select>
-      </label>
-      <label className="project-automation-field">
-        <span>当前项目并行数</span>
-        <select
-          value={draft.parallelismOverride ?? "default"}
-          disabled={disabled}
-          onChange={(event) => submitChange({
-            ...draft,
-            parallelismOverride: event.target.value === "default"
-              ? null
-              : Number(event.target.value),
-          })}
-        >
-          <option value="default">跟随默认（{draft.defaultParallelism}）</option>
-          {Array.from({ length: 8 }, (_, index) => index + 1).map((count) => (
-            <option key={count} value={count}>{count}</option>
-          ))}
-        </select>
-      </label>
-      <label className="project-automation-field">
-        <span>扫描间隔</span>
-        <select
-          value={draft.intervalMinutes}
-          disabled={disabled}
-          onChange={(event) => submitChange({
-            ...draft,
-            intervalMinutes: Number(event.target.value) as IntervalMinutes,
-          })}
-        >
-          {[5, 10, 15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分钟</option>)}
-        </select>
-      </label>
-      <label className="project-automation-field">
-        <span>模型</span>
-        <select
-          value={draft.model}
-          disabled={disabled}
-          onChange={(event) => submitChange(withAutomationModel(draft, event.target.value as AutomationModel))}
-        >
-          {AUTOMATION_MODELS.map((model) => (
-            <option key={model.slug} value={model.slug}>{model.label}</option>
-          ))}
-        </select>
-      </label>
-      <label className="project-automation-field">
-        <span>推理强度</span>
-        <select
-          value={draft.reasoningEffort}
-          disabled={disabled}
-          onChange={(event) => submitChange({
-            ...draft,
-            reasoningEffort: event.target.value as AutomationReasoningEffort,
-          })}
-        >
-          {getAutomationModel(draft.model).efforts.map((effort) => (
-            <option key={effort} value={effort}>{EFFORT_LABELS[effort]}</option>
-          ))}
-        </select>
-      </label>
+      <section className="project-automation-section">
+        <span className="project-automation-section-heading">执行</span>
+        <div className="project-automation-queue" aria-label="自动执行队列状态">
+          <div className="project-automation-capacity">
+            <span>运行</span>
+            <strong>
+              {automation?.queue.running ?? 0}
+              <small> / {automation?.parallelism ?? draft.defaultParallelism}</small>
+            </strong>
+          </div>
+          <div className="project-automation-queue-breakdown">
+            <span><strong>{automation?.queue.queued ?? 0}</strong> 排队</span>
+            <span><strong>{automation?.queue.blocked ?? 0}</strong> 阻塞</span>
+            <span><strong>{automation?.queue.failed ?? 0}</strong> 失败</span>
+          </div>
+        </div>
+        <label className="project-automation-field">
+          <span>当前项目并行数</span>
+          <TaskPropertyPicker
+            value={currentParallelismValue}
+            options={[
+              { value: "default", label: `跟随默认（${draft.defaultParallelism}）`, icon: null },
+              ...parallelismOptions.map((value) => ({ value, label: value, icon: null })),
+            ]}
+            open={openPicker === "current-parallelism"}
+            disabled={disabled}
+            className="project-automation-picker"
+            triggerClassName="project-automation-picker-trigger"
+            triggerContent={<><span>{currentParallelismLabel}</span><LinearIcon name="chevronDown" /></>}
+            ariaLabel="当前项目并行数"
+            onOpenChange={(nextOpen) => setOpenPicker(nextOpen ? "current-parallelism" : null)}
+            onChange={(value) => submitChange({
+              ...draft,
+              parallelismOverride: value === "default"
+                ? null
+                : Number(value),
+            })}
+          />
+        </label>
+        <label className="project-automation-field">
+          <span>默认项目并行数</span>
+          <TaskPropertyPicker
+            value={String(draft.defaultParallelism)}
+            options={parallelismOptions.map((value) => ({ value, label: value, icon: null }))}
+            open={openPicker === "default-parallelism"}
+            disabled={disabled}
+            className="project-automation-picker"
+            triggerClassName="project-automation-picker-trigger"
+            triggerContent={<><span>{draft.defaultParallelism}</span><LinearIcon name="chevronDown" /></>}
+            ariaLabel="默认项目并行数"
+            onOpenChange={(nextOpen) => setOpenPicker(nextOpen ? "default-parallelism" : null)}
+            onChange={(value) => submitChange({
+              ...draft,
+              defaultParallelism: Number(value),
+            })}
+          />
+        </label>
+        <label className="project-automation-field">
+          <span>扫描间隔</span>
+          <TaskPropertyPicker
+            value={String(draft.intervalMinutes)}
+            options={[5, 10, 15, 30, 60].map((minutes) => ({
+              value: String(minutes),
+              label: `${minutes} 分钟`,
+              icon: null,
+            }))}
+            open={openPicker === "interval"}
+            disabled={disabled}
+            className="project-automation-picker"
+            triggerClassName="project-automation-picker-trigger"
+            triggerContent={<><span>{draft.intervalMinutes} 分钟</span><LinearIcon name="chevronDown" /></>}
+            ariaLabel="扫描间隔"
+            onOpenChange={(nextOpen) => setOpenPicker(nextOpen ? "interval" : null)}
+            onChange={(value) => submitChange({
+              ...draft,
+              intervalMinutes: Number(value) as IntervalMinutes,
+            })}
+          />
+        </label>
+        <div className="project-automation-switch">
+          <span>暂停当前项目</span>
+          <button
+            type="button"
+            className={`board-setting-switch${draft.paused ? " is-on" : ""}`}
+            role="switch"
+            aria-checked={draft.paused}
+            disabled={disabled}
+            onClick={() => submitChange({
+              ...draft,
+              paused: !draft.paused,
+            })}
+          >
+            <span aria-hidden="true" />
+          </button>
+        </div>
+      </section>
+      <section className="project-automation-section">
+        <span className="project-automation-section-heading">模型</span>
+        <label className="project-automation-field">
+          <span>模型</span>
+          <TaskPropertyPicker
+            value={draft.model}
+            options={AUTOMATION_MODELS.map((model) => ({
+              value: model.slug,
+              label: model.label,
+              icon: null,
+            }))}
+            open={openPicker === "model"}
+            disabled={disabled}
+            className="project-automation-picker"
+            triggerClassName="project-automation-picker-trigger"
+            triggerContent={<><span>{modelLabel}</span><LinearIcon name="chevronDown" /></>}
+            ariaLabel="模型"
+            onOpenChange={(nextOpen) => setOpenPicker(nextOpen ? "model" : null)}
+            onChange={(value) => submitChange(withAutomationModel(draft, value as AutomationModel))}
+          />
+        </label>
+        <label className="project-automation-field">
+          <span>推理强度</span>
+          <TaskPropertyPicker
+            value={draft.reasoningEffort}
+            options={getAutomationModel(draft.model).efforts.map((effort) => ({
+              value: effort,
+              label: EFFORT_LABELS[effort],
+              icon: null,
+            }))}
+            open={openPicker === "reasoning"}
+            disabled={disabled}
+            className="project-automation-picker"
+            triggerClassName="project-automation-picker-trigger"
+            triggerContent={<><span>{EFFORT_LABELS[draft.reasoningEffort]}</span><LinearIcon name="chevronDown" /></>}
+            ariaLabel="推理强度"
+            onOpenChange={(nextOpen) => setOpenPicker(nextOpen ? "reasoning" : null)}
+            onChange={(value) => submitChange({
+              ...draft,
+              reasoningEffort: value as AutomationReasoningEffort,
+            })}
+          />
+        </label>
+      </section>
       {unavailableReason && <p className="project-automation-note">{unavailableReason}</p>}
       {error && error !== unavailableReason && <p className="project-automation-error" role="alert">{error}</p>}
     </div>,
