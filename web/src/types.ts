@@ -344,6 +344,7 @@ export interface AiChatThread {
   model: string;
   reasoningEffort: string;
   sandbox: AiChatSandbox;
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
   currentRun?: AiChatRun | null;

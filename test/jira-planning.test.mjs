@@ -525,7 +525,37 @@ if (args[0] === "debug") {
     result = await replanResponse.json();
     assert.equal(result.context.lifecycle.pending, null);
     assert.notEqual(result.context.plan.threadId, previousPlanningThreadId);
-    assert.ok(app.database.getAiChatThread(previousPlanningThreadId));
+    const nextPlanningThreadId = result.context.plan.threadId;
+    assert.equal(app.database.getAiChatThread(previousPlanningThreadId).archivedAt, null);
+    await waitFor(() => app.database.getAiChatThread(nextPlanningThreadId).currentRun === null);
+    for (const issue of result.context.issues) {
+      const task = app.database.getTask(issue.id);
+      if (task?.status !== "done") {
+        app.database.moveTask(
+          task.id,
+          task.version,
+          "done",
+          undefined,
+          undefined,
+          undefined,
+          AGENT,
+        );
+      }
+    }
+    const completedAgainAt = new Date(Date.now() + 3_000).toISOString();
+    app.database.syncJiraTasks([jiraIssue("done", completedAgainAt)], {
+      originId: "test",
+      projectName: "Jira",
+      syncedAt: completedAgainAt,
+    });
+    assert.ok(app.database.getAiChatThread(previousPlanningThreadId).archivedAt);
+    assert.ok(app.database.getAiChatThread(nextPlanningThreadId).archivedAt);
+    assert.equal(
+      app.database.listAiChatThreads().some((thread) => (
+        thread.id === previousPlanningThreadId || thread.id === nextPlanningThreadId
+      )),
+      false,
+    );
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });

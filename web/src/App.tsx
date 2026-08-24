@@ -490,6 +490,7 @@ interface LocalRealtimeSyncProps {
   setConnection: Dispatch<SetStateAction<ConnectionState>>;
   setCommentsRevision: Dispatch<SetStateAction<number>>;
   setAttachmentsRevision: Dispatch<SetStateAction<number>>;
+  setAiThreadsRevision: Dispatch<SetStateAction<number>>;
 }
 
 function LocalRealtimeSync({
@@ -502,6 +503,7 @@ function LocalRealtimeSync({
   setConnection,
   setCommentsRevision,
   setAttachmentsRevision,
+  setAiThreadsRevision,
 }: LocalRealtimeSyncProps) {
   useEffect(() => {
     const source = new EventSource(resolvePanelUrl("/api/events"));
@@ -543,10 +545,12 @@ function LocalRealtimeSync({
         return;
       }
       if (event.type === "project.labels.updated") {
+        setAiThreadsRevision((current) => current + 1);
         scheduleRefresh({ projects: true, tasks: affectsSelectedProject });
         return;
       }
       if (event.type.startsWith("task.")) {
+        setAiThreadsRevision((current) => current + 1);
         scheduleRefresh({ projects: true, tasks: affectsSelectedProject });
         return;
       }
@@ -602,6 +606,7 @@ function LocalRealtimeSync({
     refreshWorkflowOptions,
     selectedProjectId,
     setAttachmentsRevision,
+    setAiThreadsRevision,
     setCommentsRevision,
     setConnection,
   ]);
@@ -3026,6 +3031,7 @@ export function App() {
           setConnection={setConnection}
           setCommentsRevision={setCommentsRevision}
           setAttachmentsRevision={setAttachmentsRevision}
+          setAiThreadsRevision={setAiThreadsRevision}
         />
       )}
       {!embedded && (

@@ -395,6 +395,7 @@ function aiChatThreadFromRow(row) {
     model: row.model,
     reasoningEffort: row.reasoning_effort,
     sandbox: row.sandbox,
+    archivedAt: row.archived_at,
     currentRun: null,
     latestTodo: null,
     createdAt: row.created_at,
@@ -655,6 +656,7 @@ export class PanelDatabase {
         sandbox TEXT NOT NULL CHECK (sandbox IN (
           'read-only', 'workspace-write', 'danger-full-access'
         )),
+        archived_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -767,6 +769,11 @@ export class PanelDatabase {
         ALTER TABLE project_automation_policies
         ADD COLUMN parallelism_override INTEGER CHECK (parallelism_override BETWEEN 1 AND 8)
       `);
+    }
+
+    const aiChatThreadColumns = this.database.prepare("PRAGMA table_info(ai_chat_threads)").all();
+    if (!aiChatThreadColumns.some((column) => column.name === "archived_at")) {
+      this.database.exec("ALTER TABLE ai_chat_threads ADD COLUMN archived_at TEXT");
     }
 
     const taskColumns = this.database.prepare("PRAGMA table_info(tasks)").all();
@@ -1037,6 +1044,13 @@ export class PanelDatabase {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS jira_plan_threads (
+        jira_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        thread_id TEXT NOT NULL UNIQUE REFERENCES ai_chat_threads(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (jira_task_id, thread_id)
+      );
+
       CREATE TABLE IF NOT EXISTS jira_plan_items (
         jira_task_id TEXT NOT NULL REFERENCES jira_plans(jira_task_id) ON DELETE CASCADE,
         publication INTEGER NOT NULL CHECK (publication > 0),
@@ -1065,6 +1079,12 @@ export class PanelDatabase {
         PRIMARY KEY (jira_task_id, publication, source_task_id, target_task_id),
         CHECK (source_task_id <> target_task_id)
       );
+    `);
+    this.database.exec(`
+      INSERT OR IGNORE INTO jira_plan_threads (jira_task_id, thread_id, created_at)
+      SELECT jira_task_id, thread_id, created_at
+      FROM jira_plans
+      WHERE thread_id IS NOT NULL
     `);
 
     const commentColumns = this.database.prepare("PRAGMA table_info(comments)").all();
@@ -1554,6 +1574,7 @@ export class PanelDatabase {
         WHERE id = ? AND external_source = 'jira' AND archived_at IS NULL
       `);
       for (const task of unknownTasks) markUnknown.run(task.message, task.id);
+      this.#archiveCompletedJiraThreads(timestamp);
       this.database.prepare("UPDATE projects SET updated_at = ? WHERE id = ?")
         .run(timestamp, JIRA_PROJECT_ID);
       this.database.exec("COMMIT");
@@ -2024,6 +2045,7 @@ export class PanelDatabase {
             error_code = NULL, error_message = NULL, completed_at = ?, updated_at = ?
         WHERE jira_task_id = ?
       `).run(result.updatedAt, result.statusName, timestamp, timestamp, jiraTaskId);
+      this.#archiveCompletedJiraThreads(timestamp, jiraTaskId);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -2371,6 +2393,10 @@ export class PanelDatabase {
       if (plan.changes !== 1) {
         throw new ApiError(409, "VERSION_CONFLICT", "Jira plan changed since replanning started");
       }
+      this.database.prepare(`
+        INSERT OR IGNORE INTO jira_plan_threads (jira_task_id, thread_id, created_at)
+        VALUES (?, ?, ?)
+      `).run(jiraTask.id, threadId, timestamp);
       const lifecycle = this.database.prepare(`
         UPDATE jira_lifecycles
         SET pending_kind = NULL,
@@ -2685,6 +2711,10 @@ export class PanelDatabase {
           publication, version, published_at, created_at, updated_at
         ) VALUES (?, ?, 'planning', '', ?, NULL, 0, 1, NULL, ?, ?)
       `).run(jiraTask.id, threadId, sourceSnapshot, timestamp, timestamp);
+      this.database.prepare(`
+        INSERT OR IGNORE INTO jira_plan_threads (jira_task_id, thread_id, created_at)
+        VALUES (?, ?, ?)
+      `).run(jiraTask.id, threadId, timestamp);
       return { plan: this.getJiraPlan(jiraTask.id), shouldPrompt: true };
     }
     const nextThreadId = threadId ?? existing.thread_id;
@@ -2700,6 +2730,10 @@ export class PanelDatabase {
             version = version + 1, updated_at = ?
         WHERE jira_task_id = ?
       `).run(nextThreadId, sourceSnapshot, timestamp, jiraTask.id);
+      this.database.prepare(`
+        INSERT OR IGNORE INTO jira_plan_threads (jira_task_id, thread_id, created_at)
+        VALUES (?, ?, ?)
+      `).run(jiraTask.id, nextThreadId, timestamp);
     }
     const plan = this.getJiraPlan(jiraTask.id);
     return { plan, shouldPrompt: shouldRefresh || plan.promptedAt === null };
@@ -3200,6 +3234,7 @@ export class PanelDatabase {
         after: nextProjectIds,
       }], timestamp);
       this.#touchTask(jiraTask.id, version, null, null, timestamp);
+      this.#archiveCompletedJiraThreads(timestamp, jiraTask.id);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -3257,6 +3292,7 @@ export class PanelDatabase {
         after: relationActivityValue("jira", task),
       }], timestamp);
       this.#touchTask(jiraTask.id, version, null, null, timestamp);
+      this.#archiveCompletedJiraThreads(timestamp, jiraTask.id);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -3288,6 +3324,7 @@ export class PanelDatabase {
         after: null,
       }], timestamp);
       this.#touchTask(jiraTask.id, version, null, null, timestamp);
+      this.#archiveCompletedJiraThreads(timestamp, jiraTask.id);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -3577,7 +3614,7 @@ export class PanelDatabase {
 
   listAiChatThreads() {
     const rows = this.database.prepare(`
-      SELECT * FROM ai_chat_threads
+      SELECT * FROM ai_chat_threads WHERE archived_at IS NULL OR status = 'running'
       ORDER BY updated_at DESC, id
     `).all();
     if (rows.length === 0) return [];
@@ -3712,6 +3749,9 @@ export class PanelDatabase {
   }
 
   createAiChatRun(input) {
+    if (this.getAiChatThread(input.threadId)?.archivedAt) {
+      throw new ApiError(409, "AI_CHAT_THREAD_ARCHIVED", "Cannot continue an archived conversation");
+    }
     const id = input.id ?? randomUUID();
     const timestamp = input.startedAt ?? now();
     this.database.exec("BEGIN IMMEDIATE");
@@ -4138,11 +4178,57 @@ export class PanelDatabase {
       `).get(taskId)?.thread_id
       ?? this.database.prepare(`
         SELECT id FROM ai_chat_threads
-        WHERE origin_issue_id = ?
+        WHERE origin_issue_id = ? AND archived_at IS NULL
         ORDER BY created_at, id
         LIMIT 1
       `).get(taskId)?.id
       ?? null;
+  }
+
+  #archiveCompletedJiraThreads(timestamp, jiraTaskId = null) {
+    const candidates = this.database.prepare(`
+      SELECT jira.id
+      FROM tasks AS jira
+      WHERE jira.external_source = 'jira'
+        AND jira.status = 'done'
+        AND (? IS NULL OR jira.id = ?)
+        AND EXISTS (SELECT 1 FROM jira_task_links WHERE jira_task_id = jira.id)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jira_task_links AS links
+          JOIN tasks AS issues ON issues.id = links.task_id
+          WHERE links.jira_task_id = jira.id
+            AND (issues.archived_at IS NOT NULL OR issues.status != 'done')
+        )
+    `).all(jiraTaskId, jiraTaskId);
+    const archive = this.database.prepare(`
+      UPDATE ai_chat_threads
+      SET archived_at = ?, updated_at = ?
+      WHERE archived_at IS NULL
+        AND id IN (
+          SELECT thread_id FROM jira_plan_threads WHERE jira_task_id = ?
+          UNION
+          SELECT items.thread_id
+          FROM jira_simple_start_operations AS operations
+          JOIN jira_simple_start_items AS items ON items.operation_id = operations.id
+          WHERE operations.jira_task_id = ?
+          UNION
+          SELECT queue.thread_id
+          FROM jira_task_links AS links
+          JOIN issue_claim_queue AS queue ON queue.task_id = links.task_id
+          WHERE links.jira_task_id = ? AND queue.thread_id IS NOT NULL
+          UNION
+          SELECT attempts.thread_id
+          FROM jira_task_links AS links
+          JOIN issue_claim_attempts AS attempts ON attempts.task_id = links.task_id
+          WHERE links.jira_task_id = ?
+          UNION
+          SELECT thread_id FROM jira_rework_items WHERE jira_task_id = ?
+        )
+    `);
+    for (const candidate of candidates) {
+      archive.run(timestamp, timestamp, ...Array(5).fill(candidate.id));
+    }
   }
 
   interruptAbandonedAiChatRuns() {
@@ -4497,6 +4583,12 @@ export class PanelDatabase {
         `).run(JSON.stringify(mergedLabels), timestamp, destinationProjectId);
       }
       this.#recordTaskActivity(current.id, actor, activityChanges, timestamp);
+      if (current.source !== "jira" && changes.status === "done") {
+        const link = this.database.prepare(`
+          SELECT jira_task_id FROM jira_task_links WHERE task_id = ?
+        `).get(current.id);
+        if (link) this.#archiveCompletedJiraThreads(timestamp, link.jira_task_id);
+      }
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -4556,6 +4648,12 @@ export class PanelDatabase {
         taskFieldChanges(current, { status }),
         timestamp,
       );
+      if (current.source !== "jira" && status === "done") {
+        const link = this.database.prepare(`
+          SELECT jira_task_id FROM jira_task_links WHERE task_id = ?
+        `).get(current.id);
+        if (link) this.#archiveCompletedJiraThreads(timestamp, link.jira_task_id);
+      }
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -4627,6 +4725,10 @@ export class PanelDatabase {
         [{ field: "archivedAt", before: current.archivedAt, after: null }],
         timestamp,
       );
+      const link = this.database.prepare(`
+        SELECT jira_task_id FROM jira_task_links WHERE task_id = ?
+      `).get(current.id);
+      if (link) this.#archiveCompletedJiraThreads(timestamp, link.jira_task_id);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");

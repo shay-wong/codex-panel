@@ -449,6 +449,9 @@ export class AiChatService {
 
   async startTurn(threadId, input) {
     let thread = this.getThread(threadId);
+    if (thread.archivedAt) {
+      throw new ApiError(409, "AI_CHAT_THREAD_ARCHIVED", "Cannot continue an archived conversation");
+    }
     if (this.#threadIsActive(thread)) {
       throw new ApiError(
         409,
@@ -477,6 +480,9 @@ export class AiChatService {
     const catalog = await this.getCatalog(thread.origin.projectId, resolved);
 
     thread = this.getThread(threadId);
+    if (thread.archivedAt) {
+      throw new ApiError(409, "AI_CHAT_THREAD_ARCHIVED", "Cannot continue an archived conversation");
+    }
     if (this.#threadIsActive(thread)) {
       throw new ApiError(
         409,

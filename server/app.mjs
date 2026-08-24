@@ -2438,6 +2438,7 @@ export function createPanelServer(options = {}) {
     let thread = context.plan?.threadId
       ? database.getAiChatThread(context.plan.threadId)
       : null;
+    if (thread?.archivedAt) thread = null;
     if (!thread) {
       thread = await aiChat.createThread({
         projectId,
