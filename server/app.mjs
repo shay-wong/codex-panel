@@ -1,6 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { chmod, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { isIP } from "node:net";
@@ -1477,6 +1477,8 @@ function parseProjectAutomationPolicy(body) {
     "intervalMinutes",
     "model",
     "reasoningEffort",
+    "defaultParallelism",
+    "parallelismOverride",
   ]));
   if (typeof body.enabledByUser !== "boolean" || typeof body.paused !== "boolean") {
     throw new ApiError(400, "INVALID_FIELD", "Automation switches must be boolean");
@@ -1487,12 +1489,25 @@ function parseProjectAutomationPolicy(body) {
   if (!isAutomationModel(body.model) || !isSupportedModelEffort(body.model, body.reasoningEffort)) {
     throw new ApiError(400, "INVALID_FIELD", "Automation model and reasoning effort are incompatible");
   }
+  if (!Number.isInteger(body.defaultParallelism) || body.defaultParallelism < 1 || body.defaultParallelism > 8) {
+    throw new ApiError(400, "INVALID_FIELD", "'defaultParallelism' must be an integer from 1 through 8");
+  }
+  if (
+    body.parallelismOverride !== null
+    && (!Number.isInteger(body.parallelismOverride)
+      || body.parallelismOverride < 1
+      || body.parallelismOverride > 8)
+  ) {
+    throw new ApiError(400, "INVALID_FIELD", "'parallelismOverride' must be null or an integer from 1 through 8");
+  }
   return {
     enabledByUser: body.enabledByUser,
     paused: body.paused,
     intervalMinutes: body.intervalMinutes,
     model: body.model,
     reasoningEffort: body.reasoningEffort,
+    defaultParallelism: body.defaultParallelism,
+    parallelismOverride: body.parallelismOverride,
   };
 }
 
@@ -2103,7 +2118,13 @@ export function createPanelServer(options = {}) {
           );
         }
       }
-      return { ...resolvedWorkspace, issue };
+      return {
+        ...resolvedWorkspace,
+        workspacePath: issue?.developmentContext?.type === "worktree"
+          ? issue.developmentContext.path
+          : resolvedWorkspace.workspacePath,
+        issue,
+      };
     }
 
     const projectPayload = await readCloudJson("/api/projects");
@@ -2147,9 +2168,213 @@ export function createPanelServer(options = {}) {
     processEnv: codexProcessEnvironment,
     resolveContext: resolveAiChatContext,
   });
+  const failedAutomaticWorktrees = new Set();
+
+  async function canonicalWorkspace(workspacePath) {
+    try {
+      return await realpath(workspacePath);
+    } catch {
+      return path.resolve(workspacePath);
+    }
+  }
+
+  function automaticWorktreeBranch(task) {
+    const slug = task.identifier.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    return `panel/${slug || "issue"}-${task.id.slice(0, 8)}`;
+  }
+
+  async function prepareClaimExecution(task) {
+    if (options.prepareClaimExecution) return await options.prepareClaimExecution(task);
+    let current = database.getTask(task.id) ?? task;
+    let context = await resolveAiChatContext(current.projectId, current.id);
+    if (current.developmentContext?.type === "worktree") {
+      return {
+        task: current,
+        workspacePath: context.workspacePath,
+        workspaceKey: await canonicalWorkspace(context.workspacePath),
+      };
+    }
+
+    const sharedWorkspace = context.workspacePath;
+    const sharedWorkspaceKey = await canonicalWorkspace(sharedWorkspace);
+    if (current.developmentContext || failedAutomaticWorktrees.has(current.id)) {
+      return { task: current, workspacePath: sharedWorkspace, workspaceKey: sharedWorkspaceKey };
+    }
+    const existingThreadId = database.suggestedExecutionThreadId(current.id);
+    const existingThread = existingThreadId ? database.getAiChatThread(existingThreadId) : null;
+    if (existingThread) {
+      return {
+        task: current,
+        workspacePath: existingThread.origin.workspacePath,
+        workspaceKey: await canonicalWorkspace(existingThread.origin.workspacePath),
+      };
+    }
+
+    let repositoryRoot;
+    let worktreePath;
+    let branch;
+    try {
+      const rootResult = await execFileAsync(
+        "git",
+        ["-C", sharedWorkspace, "rev-parse", "--show-toplevel"],
+        { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
+      );
+      repositoryRoot = await canonicalWorkspace(rootResult.stdout.trim());
+      worktreePath = path.join(resolved.dataDirectory, "worktrees", current.id);
+      branch = automaticWorktreeBranch(current);
+      await mkdir(path.dirname(worktreePath), { recursive: true });
+      let baseRef = "refs/heads/main";
+      try {
+        await execFileAsync(
+          "git",
+          ["-C", repositoryRoot, "show-ref", "--verify", "refs/remotes/origin/main"],
+          { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
+        );
+        baseRef = "refs/remotes/origin/main";
+      } catch {
+        await execFileAsync(
+          "git",
+          ["-C", repositoryRoot, "show-ref", "--verify", "refs/heads/main"],
+          { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
+        );
+      }
+
+      let existing = false;
+      if (existsSync(worktreePath)) {
+        try {
+          await execFileAsync(
+            "git",
+            ["-C", worktreePath, "rev-parse", "--show-toplevel"],
+            { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
+          );
+          existing = true;
+        } catch {}
+      }
+      if (!existing) {
+        try {
+          await execFileAsync(
+            "git",
+            ["-C", repositoryRoot, "worktree", "add", "-b", branch, worktreePath, baseRef],
+            { env: codexProcessEnvironment, timeout: 30_000, maxBuffer: 4 * 1024 * 1024 },
+          );
+        } catch (createError) {
+          try {
+            await execFileAsync(
+              "git",
+              ["-C", repositoryRoot, "show-ref", "--verify", `refs/heads/${branch}`],
+              { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
+            );
+            await execFileAsync(
+              "git",
+              ["-C", repositoryRoot, "worktree", "add", worktreePath, branch],
+              { env: codexProcessEnvironment, timeout: 30_000, maxBuffer: 4 * 1024 * 1024 },
+            );
+          } catch {
+            throw createError;
+          }
+        }
+      }
+    } catch {
+      // ponytail: retry worktree creation after a service restart; this process uses safe shared-workspace serialism.
+      failedAutomaticWorktrees.add(current.id);
+      return { task: current, workspacePath: sharedWorkspace, workspaceKey: sharedWorkspaceKey };
+    }
+
+    current = database.getTask(current.id) ?? current;
+    if (!current.developmentContext) {
+      current = database.updateTask(
+        current.id,
+        current.version,
+        { developmentContext: { type: "worktree", path: worktreePath, branch } },
+        undefined,
+        undefined,
+        CODEX_AGENT_ACTOR,
+      );
+      events.emit("task.updated", { task: current });
+    }
+    context = await resolveAiChatContext(current.projectId, current.id);
+    return {
+      task: current,
+      workspacePath: context.workspacePath,
+      workspaceKey: await canonicalWorkspace(context.workspacePath),
+    };
+  }
+
+  async function cleanupClaimExecution(task) {
+    if (options.cleanupClaimExecution) return await options.cleanupClaimExecution(task);
+    if (task.status !== "done" || task.developmentContext?.type !== "worktree") return task;
+    const worktreePath = await canonicalWorkspace(task.developmentContext.path);
+    const branch = task.developmentContext.branch;
+    const automaticWorktreeRoot = await canonicalWorkspace(path.join(resolved.dataDirectory, "worktrees"));
+    if (
+      !branch?.startsWith("panel/")
+      || path.dirname(worktreePath) !== automaticWorktreeRoot
+      || path.basename(worktreePath) !== task.id
+    ) return task;
+    try {
+      const statusResult = await execFileAsync(
+        "git",
+        ["-C", worktreePath, "status", "--porcelain"],
+        { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 },
+      );
+      if (statusResult.stdout.trim()) return task;
+      const listResult = await execFileAsync(
+        "git",
+        ["-C", worktreePath, "worktree", "list", "--porcelain"],
+        { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 },
+      );
+      const repositoryRoot = parseWorktrees(listResult.stdout)[0]?.path;
+      if (!repositoryRoot) return task;
+      let merged = false;
+      for (const target of ["refs/remotes/origin/main", "refs/heads/main"]) {
+        try {
+          await execFileAsync(
+            "git",
+            ["-C", repositoryRoot, "show-ref", "--verify", target],
+            { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
+          );
+          await execFileAsync(
+            "git",
+            ["-C", repositoryRoot, "merge-base", "--is-ancestor", branch, target],
+            { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
+          );
+          merged = true;
+          break;
+        } catch {}
+      }
+      if (!merged) return task;
+      await execFileAsync(
+        "git",
+        ["-C", repositoryRoot, "worktree", "remove", worktreePath],
+        { env: codexProcessEnvironment, timeout: 30_000, maxBuffer: 4 * 1024 * 1024 },
+      );
+    } catch {
+      return task;
+    }
+
+    const current = database.getTask(task.id);
+    if (
+      !current
+      || current.status !== "done"
+      || current.developmentContext?.type !== "worktree"
+      || current.developmentContext.path !== task.developmentContext.path
+    ) return current ?? task;
+    const cleaned = database.updateTask(
+      current.id,
+      current.version,
+      { developmentContext: null },
+      undefined,
+      undefined,
+      CODEX_AGENT_ACTOR,
+    );
+    return cleaned;
+  }
+
   const claimQueue = new ClaimQueueService({
     database,
     aiChat,
+    prepareExecution: prepareClaimExecution,
+    cleanupExecution: cleanupClaimExecution,
     onTaskChanged: (task) => events.emit("task.moved", { task }),
     onCommentCreated: ({ comment, task }) => events.emit("comment.created", { comment, task }),
     onQueueChanged: (claim) => events.emit("claim.updated", {
@@ -2412,6 +2637,8 @@ export function createPanelServer(options = {}) {
 
       let thread = database.getAiChatThread(item.threadId);
       if (!thread) {
+        const prepared = await prepareClaimExecution(task);
+        task = prepared.task;
         thread = await aiChat.createThread({
           id: item.threadId,
           projectId: task.projectId,
@@ -4056,6 +4283,9 @@ export function createPanelServer(options = {}) {
             }
             throw error;
           }
+          if (current.source !== "jira" && task.status === "done") {
+            task = await claimQueue.cleanupCompletedTask(task);
+          }
           events.emit("task.updated", { task });
           if (current.source !== "jira") jiraAutoComplete.queueForTask(task.id);
           return sendJson(response, 200, { task });
@@ -4093,7 +4323,7 @@ export function createPanelServer(options = {}) {
             }
             await jira.moveTask(current, move.status);
           }
-          const task = database.moveTask(
+          let task = database.moveTask(
             id,
             move.version,
             move.status,
@@ -4102,6 +4332,9 @@ export function createPanelServer(options = {}) {
             move.threadBinding,
             actorFromRequest(request),
           );
+          if (current.source !== "jira" && task.status === "done") {
+            task = await claimQueue.cleanupCompletedTask(task);
+          }
           events.emit("task.moved", { task });
           if (current.source !== "jira") jiraAutoComplete.queueForTask(task.id);
           return sendJson(response, 200, { task });

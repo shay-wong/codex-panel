@@ -59,6 +59,9 @@ test("the automation menu exposes execution policy and queue state", () => {
   assert.match(menuSource, /automation\?\.queue\.running/);
   assert.match(menuSource, /automation\?\.queue\.blocked/);
   assert.match(menuSource, /automation\?\.queue\.failed/);
+  assert.match(menuSource, /默认项目并行数/);
+  assert.match(menuSource, /当前项目并行数/);
+  assert.match(menuSource, /Array\.from\(\{ length: 8 \}/);
   assert.match(menuSource, /createPortal/);
   assert.match(menuSource, /aria-busy=\{pending\}/);
   assert.match(styles, /\.project-automation-queue\s*\{/);
@@ -79,7 +82,7 @@ test("issue details expose one persistent immediate-execution action", () => {
   assert.match(detailSource, /await claimTask\(currentTask\.id\)/);
   assert.match(detailSource, /currentTask\.status === "todo"/);
   assert.match(detailSource, /正在加入队列/);
-  assert.match(detailSource, /已加入执行队列/);
+  assert.match(detailSource, /等待执行槽位/);
   assert.match(detailSource, /自动执行中/);
   assert.match(detailSource, /等待你的回复/);
   assert.match(detailSource, /aria-busy=\{claiming \|\| claimState === "running"\}/);

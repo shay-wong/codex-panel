@@ -337,11 +337,19 @@ test("a reply received before restart resumes the interrupted claim", async () =
       reasoningEffort: "high",
       sandbox: "workspace-write",
     });
+    item.database.updateTask(task.id, task.version, {
+      developmentContext: { type: "worktree", path: item.directory, branch: "panel/reply-restart" },
+    }, undefined, undefined, actor);
     item.database.setClaimThread(task.id, "reply-restart-thread");
-    item.database.createClaimAttempt({
+    const attempt = item.database.createClaimAttempt({
       taskId: task.id,
       threadId: "reply-restart-thread",
     });
+    const run = item.database.createAiChatRun({
+      id: "reply-restart-run",
+      threadId: "reply-restart-thread",
+    });
+    item.database.attachClaimAttemptRun(attempt.id, run.id);
     const running = item.database.getTask(task.id);
     item.database.moveTask(
       task.id,
@@ -358,7 +366,11 @@ test("a reply received before restart resumes the interrupted claim", async () =
     item.database = new PanelDatabase(item.filename);
     const queue = new ClaimQueueService({
       database: item.database,
-      aiChat: {},
+      aiChat: {
+        getThread(threadId) {
+          return item.database.getAiChatThread(threadId);
+        },
+      },
     });
     try {
       assert.equal(item.database.getTask(task.id).status, "todo");
@@ -366,6 +378,68 @@ test("a reply received before restart resumes the interrupted claim", async () =
       assert.equal(item.database.getClaimQueueItem(task.id).source, "resume");
       assert.equal(item.database.getClaimQueueItem(task.id).resumeRequested, false);
       assert.equal(item.database.listClaimAttempts(task.id)[0].status, "interrupted");
+    } finally {
+      queue.close();
+    }
+  } finally {
+    await item.close();
+  }
+});
+
+test("restart blocks an interrupted claim whose development context cannot be verified", async () => {
+  const item = await fixture();
+  const task = item.createTask("Unverifiable restart");
+  try {
+    item.database.enqueueClaim(task.id, "manual");
+    item.database.markClaimRunning(task.id);
+    item.database.createAiChatThread({
+      id: "unverifiable-thread",
+      title: "Claim execution",
+      origin: {
+        projectId: task.projectId,
+        projectName: "Claim Project",
+        workspacePath: item.directory,
+        issueId: task.id,
+        issueIdentifier: task.identifier,
+      },
+      model: "gpt-5.5",
+      reasoningEffort: "high",
+      sandbox: "workspace-write",
+    });
+    item.database.setClaimThread(task.id, "unverifiable-thread");
+    const attempt = item.database.createClaimAttempt({
+      taskId: task.id,
+      threadId: "unverifiable-thread",
+    });
+    const run = item.database.createAiChatRun({
+      id: "unverifiable-run",
+      threadId: "unverifiable-thread",
+    });
+    item.database.attachClaimAttemptRun(attempt.id, run.id);
+    item.database.moveTask(
+      task.id,
+      item.database.getTask(task.id).version,
+      "in_progress",
+      undefined,
+      undefined,
+      undefined,
+      actor,
+    );
+
+    item.database.close();
+    item.database = new PanelDatabase(item.filename);
+    const queue = new ClaimQueueService({
+      database: item.database,
+      aiChat: {
+        getThread(threadId) {
+          return item.database.getAiChatThread(threadId);
+        },
+      },
+    });
+    try {
+      assert.equal(item.database.getTask(task.id).status, "blocked");
+      assert.equal(item.database.getClaimQueueItem(task.id).state, "blocked");
+      assert.match(item.database.getClaimQueueItem(task.id).lastError, /could not be verified/);
     } finally {
       queue.close();
     }

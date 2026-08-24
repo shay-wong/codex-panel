@@ -1313,7 +1313,7 @@ export function TaskDetail({
     : claimState === "running"
       ? text("自动执行中", "Running automatically")
       : claimState === "queued"
-        ? text("已加入执行队列", "Queued for execution")
+        ? text("等待执行槽位", "Waiting for an execution slot")
         : claimState === "retry_wait"
           ? text("等待自动重试", "Waiting to retry")
           : claimState === "blocked"

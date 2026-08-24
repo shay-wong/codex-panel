@@ -35,6 +35,8 @@ const DEFAULT_OPTIONS: AutomationOptions = {
   intervalMinutes: 5,
   model: "gpt-5.5",
   reasoningEffort: "high",
+  defaultParallelism: 3,
+  parallelismOverride: null,
 };
 
 const EFFORT_LABELS: Record<AutomationReasoningEffort, string> = {
@@ -173,10 +175,43 @@ export function ProjectAutomationMenu({
       </div>
       <div className="project-automation-queue" aria-label="自动执行队列状态">
         <span>排队 <strong>{automation?.queue.queued ?? 0}</strong></span>
-        <span>运行 <strong>{automation?.queue.running ?? 0}</strong></span>
+        <span>运行 <strong>{automation?.queue.running ?? 0}/{automation?.parallelism ?? draft.defaultParallelism}</strong></span>
         <span>阻塞 <strong>{automation?.queue.blocked ?? 0}</strong></span>
         <span>失败 <strong>{automation?.queue.failed ?? 0}</strong></span>
       </div>
+      <label className="project-automation-field">
+        <span>默认项目并行数</span>
+        <select
+          value={draft.defaultParallelism}
+          disabled={disabled}
+          onChange={(event) => submitChange({
+            ...draft,
+            defaultParallelism: Number(event.target.value),
+          })}
+        >
+          {Array.from({ length: 8 }, (_, index) => index + 1).map((count) => (
+            <option key={count} value={count}>{count}</option>
+          ))}
+        </select>
+      </label>
+      <label className="project-automation-field">
+        <span>当前项目并行数</span>
+        <select
+          value={draft.parallelismOverride ?? "default"}
+          disabled={disabled}
+          onChange={(event) => submitChange({
+            ...draft,
+            parallelismOverride: event.target.value === "default"
+              ? null
+              : Number(event.target.value),
+          })}
+        >
+          <option value="default">跟随默认（{draft.defaultParallelism}）</option>
+          {Array.from({ length: 8 }, (_, index) => index + 1).map((count) => (
+            <option key={count} value={count}>{count}</option>
+          ))}
+        </select>
+      </label>
       <label className="project-automation-field">
         <span>扫描间隔</span>
         <select
