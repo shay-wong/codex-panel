@@ -23,6 +23,7 @@ interface TaskPropertyPickerProps<Value extends string> {
   open: boolean;
   disabled?: boolean;
   className?: string;
+  popoverClassName?: string;
   triggerClassName: string;
   triggerContent?: ReactNode;
   ariaLabel: string;
@@ -37,6 +38,7 @@ export function TaskPropertyPicker<Value extends string>({
   open,
   disabled = false,
   className = "",
+  popoverClassName = "",
   triggerClassName,
   triggerContent,
   ariaLabel,
@@ -156,7 +158,7 @@ export function TaskPropertyPicker<Value extends string>({
   const menu = open ? createPortal(
     <div
       ref={menuRef}
-      className="composer-popover task-property-popover"
+      className={`composer-popover task-property-popover${popoverClassName ? ` ${popoverClassName}` : ""}`}
       role="listbox"
       aria-label={ariaLabel}
       style={{ position: "fixed", left: position.left, top: position.top }}

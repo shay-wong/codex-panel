@@ -29,6 +29,7 @@ const INLINE_ATTACHMENT_TYPES = new Set([
 const REALTIME_HUB_NAME = "global";
 const SESSION_COOKIE_NAME = "__Host-panel_session";
 const SESSION_MAX_AGE_SECONDS = 24 * 60 * 60;
+const TASK_TREE_MAX_NODES = 1_000;
 
 export class RealtimeHub extends DurableObject {
   async fetch(request) {
@@ -913,6 +914,22 @@ function taskRelationSummaryFromRow(row) {
   };
 }
 
+function taskTreeNode(row, parentId, depth, path) {
+  return {
+    id: row.id,
+    parentId,
+    depth,
+    path,
+    summary: {
+      identifier: row.identifier,
+      title: row.title,
+      status: row.status,
+      priority: row.priority,
+      archivedAt: row.archived_at,
+    },
+  };
+}
+
 function commentFromRow(row, attachments = []) {
   return {
     id: row.id,
@@ -1134,6 +1151,72 @@ async function hydrateTask(env, row, activityComments = null, activityChanges = 
 async function getTask(env, id) {
   const row = await taskRow(env, id);
   return row ? hydrateTask(env, row) : null;
+}
+
+async function getTaskTree(env, id, direction, depth) {
+  const root = await requireTaskRow(env, id);
+  const nodes = [taskTreeNode(root, null, 0, [root.id])];
+  const seen = new Set([root.id]);
+  let frontier = [nodes[0]];
+  const relationJoin = direction === "descendants"
+    ? `
+      FROM task_relations
+      JOIN tasks ON tasks.id = task_relations.target_task_id
+      WHERE task_relations.relation_type = 'parent'
+        AND task_relations.source_task_id IN (%PLACEHOLDERS%)
+    `
+    : `
+      FROM task_relations
+      JOIN tasks ON tasks.id = task_relations.source_task_id
+      WHERE task_relations.relation_type = 'parent'
+        AND task_relations.target_task_id IN (%PLACEHOLDERS%)
+    `;
+  const parentColumn = direction === "descendants"
+    ? "task_relations.source_task_id"
+    : "task_relations.target_task_id";
+
+  for (let level = 1; level <= depth && frontier.length > 0; level += 1) {
+    const batches = [];
+    for (let offset = 0; offset < frontier.length; offset += 80) {
+      const chunk = frontier.slice(offset, offset + 80);
+      const placeholders = chunk.map(() => "?").join(", ");
+      batches.push(all(env.DB.prepare(`
+        SELECT tasks.*, ${parentColumn} AS tree_parent_id
+        ${relationJoin.replace("%PLACEHOLDERS%", placeholders)}
+        ORDER BY tasks.sort_order, tasks.created_at, tasks.id
+      `).bind(...chunk.map((node) => node.id))));
+    }
+    const rowsByParent = new Map();
+    for (const rows of await Promise.all(batches)) {
+      for (const row of rows) {
+        const siblings = rowsByParent.get(row.tree_parent_id) ?? [];
+        siblings.push(row);
+        rowsByParent.set(row.tree_parent_id, siblings);
+      }
+    }
+    const next = [];
+    for (const parent of frontier) {
+      for (const row of rowsByParent.get(parent.id) ?? []) {
+        if (seen.has(row.id)) continue;
+        if (nodes.length >= TASK_TREE_MAX_NODES) {
+          throw new ApiError(413, "TREE_TOO_LARGE", `Task tree cannot exceed ${TASK_TREE_MAX_NODES} nodes`);
+        }
+        const node = taskTreeNode(row, parent.id, level, [...parent.path, row.id]);
+        nodes.push(node);
+        next.push(node);
+        seen.add(row.id);
+      }
+    }
+    frontier = next;
+  }
+
+  return {
+    rootId: root.id,
+    direction,
+    depth,
+    nodeCount: nodes.length,
+    nodes,
+  };
 }
 
 async function taskActivityComments(env, taskIds) {
@@ -1382,6 +1465,28 @@ function parseTaskFilters(searchParams) {
     );
   }
   return { projectId, status, archived };
+}
+
+function parseTaskTreeQuery(searchParams) {
+  const allowed = new Set(["direction", "depth"]);
+  for (const key of searchParams.keys()) {
+    if (!allowed.has(key)) {
+      throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", `Unknown query parameter: ${key}`);
+    }
+    if (searchParams.getAll(key).length !== 1) {
+      throw new ApiError(400, "INVALID_TREE_QUERY", `'${key}' cannot be repeated`);
+    }
+  }
+  const direction = searchParams.get("direction");
+  if (direction !== "descendants" && direction !== "ancestors") {
+    throw new ApiError(400, "INVALID_TREE_QUERY", "'direction' must be descendants or ancestors");
+  }
+  const rawDepth = searchParams.get("depth");
+  const depth = Number(rawDepth);
+  if (!/^\d+$/.test(rawDepth ?? "") || !Number.isSafeInteger(depth) || depth < 1 || depth > 25) {
+    throw new ApiError(400, "INVALID_TREE_QUERY", "'depth' must be an integer from 1 to 25");
+  }
+  return { direction, depth };
 }
 
 function parseAfterCursor(searchParams) {
@@ -3093,6 +3198,14 @@ async function routeApi(request, env, actor, url) {
       });
     }
     methodNotAllowed(["GET", "POST"]);
+  }
+
+  const taskTreeMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/tree$/);
+  if (taskTreeMatch) {
+    if (request.method !== "GET") methodNotAllowed(["GET"]);
+    const taskId = decodePathPart(taskTreeMatch[1], "Task id");
+    const { direction, depth } = parseTaskTreeQuery(url.searchParams);
+    return json(200, { tree: await getTaskTree(env, taskId, direction, depth) });
   }
 
   const relationMatch = pathname.match(

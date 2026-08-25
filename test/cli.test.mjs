@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import { main, parseArgs } from "../cli/panelctl.mjs";
@@ -98,6 +100,101 @@ test("the legacy service URL remains a fallback while CODEX_PANEL_URL takes prec
     "https://legacy.example.test/api/projects",
     "https://panel.example.test/api/projects",
   ]);
+});
+
+test("WSL panelctl discovers the Windows launcher runtime descriptor from Windows LOCALAPPDATA", async () => {
+  let requestedUrl;
+  const runtimeFile = path.join(
+    "/windows/users/R&D Müller/AppData/Local",
+    "Codex Panel",
+    "data",
+    "launcher-runtime.json",
+  );
+  const readPaths = [];
+  const result = await run(
+    ["project", "list"],
+    async (url) => {
+      requestedUrl = url;
+      return response({ projects: [] });
+    },
+    {
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      execFile: async (file, args, options) => {
+        if (file === "cmd.exe") {
+          assert.deepEqual(args, ["/d", "/u", "/s", "/c", "set LOCALAPPDATA"]);
+          assert.deepEqual(options, { encoding: "buffer" });
+          return {
+            stdout: Buffer.from(
+              "LOCALAPPDATA=C:\\Users\\R&D Müller\\AppData\\Local\r\n",
+              "utf16le",
+            ),
+            stderr: Buffer.alloc(0),
+          };
+        }
+        assert.equal(file, "wslpath");
+        assert.deepEqual(args, ["-u", "C:\\Users\\R&D Müller\\AppData\\Local"]);
+        assert.deepEqual(options, { encoding: "utf8" });
+        return { stdout: "/windows/users/R&D Müller/AppData/Local\n", stderr: "" };
+      },
+      readFile: async (filePath) => {
+        readPaths.push(filePath);
+        if (filePath === runtimeFile) {
+          return JSON.stringify({ version: 1, url: "http://127.0.0.1:51987/instance-token" });
+        }
+        const error = new Error("missing");
+        error.code = "ENOENT";
+        throw error;
+      },
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(requestedUrl.toString(), "http://127.0.0.1:51987/instance-token/api/projects");
+  assert.equal(readPaths.at(-1), runtimeFile);
+});
+
+test("CODEX_PANEL_WSL_RUNTIME_FILE overrides WSL automatic discovery", async () => {
+  const runtimeFile = "/runtime/panel.json";
+  let curlArgs;
+  const result = await run(
+    ["project", "list"],
+    undefined,
+    {
+      env: {
+        WSL_DISTRO_NAME: "Ubuntu",
+        CODEX_PANEL_WSL_RUNTIME_FILE: runtimeFile,
+      },
+      execFile: async () => {
+        assert.fail("automatic discovery must not run for an explicit WSL runtime file");
+      },
+      readFile: async (filePath) => {
+        assert.equal(filePath, runtimeFile);
+        return JSON.stringify({ version: 1, url: "http://127.0.0.1:51988/override-token" });
+      },
+      spawn: (file, args) => {
+        assert.equal(file, "curl.exe");
+        curlArgs = args;
+        const child = new EventEmitter();
+        child.stdin = new PassThrough();
+        child.stdout = new PassThrough();
+        child.stderr = new PassThrough();
+        queueMicrotask(() => {
+          child.stdout.end(JSON.stringify({ projects: [] }));
+          child.stderr.end("__CODEX_PANEL_CURL_RESPONSE__200\tapplication/json\t15");
+          child.emit("close", 0);
+        });
+        return child;
+      },
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(result.stdout.projects, []);
+  assert.deepEqual(curlArgs.slice(0, 3), ["--disable", "--noproxy", "*"]);
+  assert.equal(
+    curlArgs.at(-1),
+    "http://127.0.0.1:51988/override-token/api/projects",
+  );
 });
 
 test("project create sends id, name, and an absolute workspace path", async () => {
@@ -378,6 +475,32 @@ test("issue relation add and remove use typed relation endpoints", async () => {
     threadId: "thread-current",
     version: 5,
   });
+});
+
+test("issue tree uses the bounded directional tree endpoint", async () => {
+  let requestedUrl;
+  const result = await run(
+    ["issue", "tree", "TASK/1", "--direction", "ancestors", "--depth", "3", "--json"],
+    async (url, init) => {
+      requestedUrl = url;
+      assert.equal(init.method, "GET");
+      return response({ tree: { rootId: "TASK/1", direction: "ancestors", depth: 3, nodes: [] } });
+    },
+  );
+  assert.equal(result.exitCode, 0);
+  assert.equal(requestedUrl.pathname, "/api/tasks/TASK%2F1/tree");
+  assert.equal(requestedUrl.searchParams.get("direction"), "ancestors");
+  assert.equal(requestedUrl.searchParams.get("depth"), "3");
+
+  for (const argv of [
+    ["issue", "tree", "TASK-1", "--direction", "down", "--depth", "1"],
+    ["issue", "tree", "TASK-1", "--direction", "descendants", "--depth", "0"],
+    ["issue", "tree", "TASK-1", "--direction", "descendants"],
+  ]) {
+    const invalid = await run(argv, async () => assert.fail("fetch should not be called"));
+    assert.equal(invalid.exitCode, 2);
+    assert.equal(invalid.stderr.error.code, "USAGE_ERROR");
+  }
 });
 
 test("issue relation validates its action and relation type before fetching", async () => {

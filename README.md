@@ -172,7 +172,9 @@ npm ci
 npm run app:build:windows
 ```
 
-The installer is written to `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`. It installs a tray launcher, bundled Node runtime, local service, built web UI, `manage-panel` Skill, `panelctl.cmd`, and injection script. Panel data is stored in `%APPDATA%\Codex Panel`; logs are stored in `%LOCALAPPDATA%\Codex Panel\Logs`; the Skill is copied to `%USERPROFILE%\.agents\skills\manage-panel`.
+The installer is written to `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`. It installs a tray launcher, bundled Node runtime, local service, built web UI, `manage-panel` Skill, `panelctl.cmd`, and injection script. Panel data is stored in `%LOCALAPPDATA%\Codex Panel\data`; logs are stored in `%LOCALAPPDATA%\Codex Panel\Logs`; the Skill is copied to `%USERPROFILE%\.agents\skills\manage-panel`.
+
+When `panelctl` runs inside WSL, it automatically finds the Windows launcher descriptor under `%LOCALAPPDATA%\Codex Panel\data` and sends requests through Windows `curl.exe`, so it can use the running Windows desktop app. Set `CODEX_PANEL_WSL_RUNTIME_FILE` to a WSL path only when the descriptor must be overridden explicitly.
 
 Windows builds do not auto-update. Official installers must pass the Authenticode and packaged-runtime verification described above. See [Windows uninstall](docs/windows-uninstall.md) for retained-data behavior.
 
@@ -207,12 +209,16 @@ To use a different UI origin, set `window.__CODEX_PANEL_URL__` before the user s
 | `CODEX_PANEL_HOME` | `~/Library/Application Support/Codex Panel` on macOS | Installed runtime and default data root |
 | `CODEX_PANEL_DATA_DIR` | `$CODEX_PANEL_HOME/data` | SQLite data directory |
 | `CODEX_PANEL_URL` | `http://127.0.0.1:47823` | CLI API origin |
+| `CODEX_PANEL_WSL_RUNTIME_FILE` | auto-discovered from Windows `LOCALAPPDATA` | WSL path to a Windows launcher descriptor |
 | `CODEX_PANEL_CODESIGN_IDENTITY` | Matching local Apple Development identity, otherwise `-` | Explicit identity or certificate hash for signing `Codex Panel.app` |
 | `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` | none | Required Authenticode certificate thumbprint for official Windows builds |
+| `CODEX_PANEL_TRUSTED_ORIGINS` | unset | Comma-separated exact HTTPS origins allowed through a loopback reverse tunnel |
 
 `npm start` prints both the local URL and the available LAN URLs. Teammates on the same trusted network can open one of those LAN URLs and use the same panel service. Task, comment, and attachment changes are broadcast to every open client through server-sent events; reconnecting clients perform a full refresh so changes made while disconnected are not missed. A teammate using `panelctl` can point it at the shared service with `CODEX_PANEL_URL=http://<host-ip>:47823`.
 
 LAN mode has no account authentication: anyone on the trusted local network who can reach the URL can read and write the panel. Public internet and cloud deployment require an authenticated deployment boundary.
+
+For a reverse tunnel that connects to the local listener, set `CODEX_PANEL_TRUSTED_ORIGINS` to the tunnel's public HTTPS origin, for example `https://board.example.test`. Multiple origins are comma-separated. The variable cannot be empty, and duplicate origins (including normalized forms such as a trailing slash or default HTTPS port) are rejected at startup. Entries must otherwise be exact HTTPS origins; paths, queries, fragments, credentials, and wildcards are rejected. A reverse proxy or tunnel must preserve a loopback socket connection, rewrite `Host` to a local/private host, preserve any `Origin` supplied by the browser, and add that exact public HTTPS origin only when the header is absent, including for `GET` and `HEAD`; forwarded headers are not used for this decision. Configured trusted origins can use ordinary Panel HTTP and realtime endpoints, but device-local capability routes remain unavailable even though the tunnel socket is loopback. Requests from direct local or private-LAN origins keep their existing behavior. The legacy `CODEX_TASKBOARD_TRUSTED_ORIGINS` name remains a fallback.
 
 ## Share through Cloudflare
 

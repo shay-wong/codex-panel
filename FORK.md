@@ -24,13 +24,15 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`44304ac5bbf97c7dfdcde6b52d8bb2403925ab79`
-- 精确已合并上游基线：`44304ac5bbf97c7dfdcde6b52d8bb2403925ab79`
-- 比较范围：`44304ac5bbf97c7dfdcde6b52d8bb2403925ab79..HEAD`
+- 本次合并的上游父提交：`7492f79ee62a8a6db47f7d0543f8d821f84a1f66`
+- 精确已合并上游基线：`7492f79ee62a8a6db47f7d0543f8d821f84a1f66`
+- 比较范围：`7492f79ee62a8a6db47f7d0543f8d821f84a1f66..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
 本次上游合并将基线更新到 `1.1.6`，吸收项目 README、全项目视图、Codex 接管与 Linux 桌面打包、编辑器和显示设置改进，以及等价的 Issue 跨项目移动。Fork 原有的 Jira CLI、多 provider 与 Scheduled Task 方案已由上游 Jira 模型替代，不再属于活跃 Fork 能力。桌面端继续采用上游 Tauri/Rust 基础并迁入 Fork 现有能力，产品名仍为 `Codex Panel`；自动 updater 安装、上游发布工作流和 `taskctl` 命名未纳入 Fork 产品入口。
+
+本轮继续吸收精确 HTTPS trusted-origin 边界、确定性的 Issue 树查询、Markdown 图片边界修复、Issue 详情控件改进，以及 WSL CLI 发现并访问 Windows launcher runtime 的能力；这些属于上游能力，不新增 Fork 能力条目。Fork 继续使用 `Codex Panel`、`panelctl` 和 `manage-panel` 主命名，并保留 Jira、桌面端、自动化和 Cloud 扩展的不变量。
 
 ## Fork 发布版本策略
 
@@ -50,7 +52,7 @@
 
 - 生命周期：`长期保留`
 - 原始目的：让浏览器标题、中英文仓库入口和 GitHub 仓库使用 Fork 项目名 `Codex Panel` / `codex-panel`，避免继续显示旧 Fork 名或上游通用名称。
-- 行为不变量：`web/index.html`、中英文 README、Skill、CLI、环境变量、注入协议、本地存储、SQLite 和尚未部署的 Cloudflare 资源统一使用 `Codex Panel` / `panel` / `manage-panel` / `panelctl` / `CODEX_PANEL_*`；Panel 自有的剪贴板 MIME 与 HTML data 属性使用 `panel` 命名，上游现有的 `taskboard://composer-reference` 持久化协议继续兼容。旧浏览器键、环境变量、自动任务名称及本仓库管理的旧链接必须自动迁移或兼容读取，不能因改名丢失本地状态。数据库只使用已完成改名的 `panel.sqlite`，不再保留旧数据库文件名迁移逻辑；用户级默认数据位置统一为固定支持目录，首次自包含安装只做一次在线快照且保留仓库源数据。
+- 行为不变量：`web/index.html`、中英文 README、Skill、CLI、环境变量、注入协议、本地存储、SQLite 和尚未部署的 Cloudflare 资源统一使用 `Codex Panel` / `panel` / `manage-panel` / `panelctl` / `CODEX_PANEL_*`，包括反向隧道使用 `CODEX_PANEL_TRUSTED_ORIGINS`，WSL 使用 `CODEX_PANEL_WSL_RUNTIME_FILE` 覆盖自动发现的 Windows runtime；Panel 自有的剪贴板 MIME 与 HTML data 属性使用 `panel` 命名，上游现有的 `taskboard://composer-reference` 持久化协议继续兼容。旧浏览器键、环境变量、自动任务名称及本仓库管理的旧链接必须自动迁移或兼容读取，不能因改名丢失本地状态。数据库只使用已完成改名的 `panel.sqlite`，不再保留旧数据库文件名迁移逻辑；用户级默认数据位置统一为固定支持目录，首次自包含安装只做一次在线快照且保留仓库源数据。
 - 代码和测试路径：`web/index.html`、`package.json`、`package-lock.json`、`skills/manage-panel`、`cli/panelctl.mjs`、`server/index.mjs`、`server/app.mjs`、`shared/panel-paths.mjs`、`web/src/storageMigration.ts`、`web/src/components/InlineMediaComposer.tsx`、`integrations/deepseek-harness`、`scripts/install-macos-launcher.mjs`、`scripts/managed-install.mjs`、`scripts/panel-supervisor.mjs`、`scripts/codex-rate-limits.mjs`、`scripts/verify-linux-packages.mjs`、`cloud/src/index.mjs`、`test/panel-supervisor.test.mjs` 和 `test/panel-naming.test.mjs`。
 - 用户文档：`README.md`、`README.zh-CN.md`、`docs/fork-capabilities.md` 和 `docs/cloud-collaboration.md`。
 - 来源：Fork 初始定制及本次改名；可用 `git log -S'<title>Codex Panel</title>' -- web/index.html` 定位。
@@ -89,7 +91,7 @@
 - 行为不变量：macOS 上只有显式 `npm run codex:install` 创建或刷新 `~/Applications/Codex Panel.app`，`npm ci` 不得写入用户应用或全局集成。产品名和 bundle id 固定为 `Codex Panel` 与 `com.shay.codex-panel`；SwiftPM 源码和构建脚本不再是产品路径。Tauri App 常驻菜单栏，提供运行状态、内嵌 Panel、根据服务进程状态切换的同一个启动/停止项、独立的重启服务、浏览器、日志、数据目录、开机自启动，以及默认开启的“启动时连接 Codex”和“连接后自动打开 Panel”；重启和浏览器项只在服务运行时启用。管理窗口必须用一个紧凑的顶部控制面组合当前状态、Panel 主操作、同一个启动/停止按钮、独立重启、浏览器入口，以及 Panel 服务、Codex 连接与内嵌面板状态，不得再重复单独的服务控制区；Codex 连接与 Panel 页面实际可见必须分开判断，打开请求在 renderer 切换期间保持排队，只有 injector 重新读取状态并确认 `pageVisible=true` 后才能完成；异步操作按钮必须至少显示 300ms loading，再短暂保留清晰的成功或失败状态，服务启动、停止和重启必须在阻塞线程池执行，不能冻结 WebView 或使 loading 无法绘制；浏览器入口只接受启动器写入的私有回环 URL，并必须保留其中的实例 token 路径，不能降级为裸 origin；旧管理器已有的位置操作、启动偏好依赖关系、可见的更新结果与 Release 入口，以及可展开的运行详情保留在下方。管理窗口和 macOS 应用/Dock 图标使用同一套带 `PANEL` 角标的官方 Codex 明暗资源，并随系统主题切换。bundle 必须携带 Rust launcher、官方签名 Node、Panel runtime、`panelctl` 和两个 Panel Skills；数据始终保存在 `~/Library/Application Support/Codex Panel/data`。安装器只能覆盖带 Codex Panel marker 的 App；从旧 Swift App 升级时，必须先通过私有 descriptor、启动 token 和精确命令验证并停止旧 injector，再停止旧 bundle 内精确匹配的 Panel server，不能遗留执行已删除路径的 PPID 1 进程。启动前必须验证当前 Codex Panel App 签名和打包 runtime，按 `Identifier=com.openai.codex`、`Identifier=codex` 和 `TeamIdentifier=2DC432GLL2` 校验官方 App 与内置 CLI，拒绝符号链接，并移除 Node、shell 与动态加载器注入变量；Windows 环境变量名必须按不区分大小写的语义过滤。Windows 正式发行必须通过 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` 指定证书并由 Tauri 生成 Authenticode 签名的 NSIS 包；launcher 启动 runtime 前必须验证自身签名证书指纹，并用编译进签名 launcher 的 SHA-256 清单验证 Node、Panel runtime、`panelctl` 和 Skills，拒绝篡改或未列出的 runtime 文件。Panel 监听器由 Rust 预占并仅绑定回环地址，服务使用私有实例 token 和 secret；macOS injector 使用权限仅限当前用户的 v2 descriptor 与 token-authenticated Unix socket，Windows 必须保留供 `panelctl` 发现服务的 runtime descriptor，但 open/status/stop 只使用启动器持有的子进程控制管道，不得尝试创建 Unix socket。Tauri 必须持有 injector 进程组，只有 renderer 的当前 source hash、启动 token、挂载点和新鲜心跳全部匹配时才显示运行正常。macOS TCP 路径必须以 `--attach-existing` 发现并复用当前 Codex 的真实 CDP 端口，包括旧 Swift 迁移现场；没有可用 CDP 时才通过 LaunchServices 用随机回环端口启动官方 App，已经无 CDP 运行的 Codex 仍需完全退出后重试。停止或退出只终止 Tauri 拥有的 injector 和 Panel server，不退出官方 ChatGPT/Codex，也不修改 `ChatGPT.app` 或 `app.asar`。意外退出按 2、5、15 秒恢复，60 秒内第四次失败后停止。更新检查最多每 24 小时自动执行一次并持久化缓存，普通失败只缓存 5 分钟，匿名 API 限流缓存到 GitHub 返回的重置时间，手动检查必须绕过缓存；优先使用本机已登录的 `gh` CLI，失败后回退匿名 GitHub API，并区分额度耗尽、网络失败、暂无 Release、当前版本和可用更新。只接受 `shay-wong/codex-panel` 下规范化 `vX.Y.Z-fork.N` 标签和精确 Release URL，只能打开页面，不得下载或安装更新。macOS 签名优先级为 `CODEX_PANEL_CODESIGN_IDENTITY`、可复用的本机 Apple Development 身份、最后 ad-hoc；发布前必须运行 bundle preflight 校验 App、Node 签名与 Node JIT entitlement。非 macOS 环境应成功跳过 macOS App 安装。
 - Windows 上的 Panel 生命周期中断使用由 runtime 路径和启动 token 派生、并再次校验启动 token 的 named pipe；它只承载需要响应的 native Codex turn 中断，不替代 Tauri 持有的 open/status/stop 子进程控制管道。
 - CI 触发约束：PR 分支通过 `pull_request` 运行完整 `Check`；`main` 的 `push` 先通过 GitHub REST 判断当前 SHA 是否为已合并 PR 的 `merge_commit_sha`，是则跳过已经在 PR 中完成的 Linux、macOS 和 Windows 检查，直接 push 则继续完整运行；来源判断失败必须使工作流失败，`workflow_dispatch` 继续完整手动重跑。
-- 代码和测试路径：`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`、`src-tauri/Entitlements.plist`、`src-tauri/release.json`、`src-tauri/src/main.rs`、`src-tauri/icons`、`src-tauri/ui`、`.codex/environments/environment.toml`、`.github/workflows/check.yml`、`scripts/prepare-tauri-app.mjs`、`scripts/preflight-macos-app.mjs`、`scripts/verify-packaged-taskctl.mjs`、`scripts/install-macos-launcher.mjs`、`scripts/codex-injector-control.mjs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-runtime.mjs`、`scripts/panel-supervisor.mjs`、`server/app.mjs`、`test/launcher-ui.test.mjs`、`test/injector-control.test.mjs`、`test/injector.test.mjs`、`test/injector-host-runtime.test.mjs` 和 `package.json`。
+- 代码和测试路径：`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`、`src-tauri/Entitlements.plist`、`src-tauri/release.json`、`src-tauri/src/main.rs`、`src-tauri/icons`、`src-tauri/ui`、`.codex/environments/environment.toml`、`.github/workflows/check.yml`、`cli/panelctl.mjs`、`scripts/prepare-tauri-app.mjs`、`scripts/preflight-macos-app.mjs`、`scripts/verify-packaged-taskctl.mjs`、`scripts/install-macos-launcher.mjs`、`scripts/codex-injector-control.mjs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-runtime.mjs`、`scripts/panel-supervisor.mjs`、`server/app.mjs`、`test/cli.test.mjs`、`test/launcher-ui.test.mjs`、`test/injector-control.test.mjs`、`test/injector.test.mjs`、`test/injector-host-runtime.test.mjs` 和 `package.json`。
 - 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
 - 来源：上游 Tauri/Rust 桌面基础与本次 Fork 能力迁移；提交后可用 `git log -S'panelManagedReady' -- src-tauri/src/main.rs scripts/codex-injector.mjs` 定位。
 - 合并指引：上游调整 Tauri、安装器或 injector 时，优先采用上游桌面基础，同时保留 `Codex Panel` 名称、固定数据目录、Panel/Jira/Skills/`panelctl` 打包、官方签名校验、净化环境、launcher-owned loopback listener、token-authenticated control、真实 renderer 就绪、现有 TCP CDP 接管、有限恢复和只打开可信 Release 页面。不得恢复 Swift 产品路径、自动 updater 安装、`taskctl` 主命名、外部可写 runtime 执行、仅凭 HTTP/CDP 可达报告正常，或在升级后遗留旧 bundle 进程。
@@ -235,5 +237,5 @@
 - 仅存在于上游的轻量标签 `pre-cloud-collaboration-2026-07-24` 不是 Fork 发布版本。
 - 不含有意 Fork 解决结果的纯上游合并、生成产物噪声、被忽略的本地状态，以及最终效果已被回退的行为都不属于 Fork 能力。
 - 尚未合并的上游独有工作属于待合并输入，不属于 Fork 能力。
-- 截至上游 `1.1.6`，Tauri/Rust 桌面基础、新版 AI Composer、Agent/Skill/命令补全、可搜索 Issue 关系选择器、富文本剪贴板、项目 README、全项目视图、Linux 桌面打包和 Issue 跨项目移动已经进入 Fork；自动 updater 安装、上游发布工作流、`taskctl` 主命名和与 Fork 发布策略冲突的打包入口仍明确排除。
+- 截至上游 `1.1.6`，Tauri/Rust 桌面基础、新版 AI Composer、Agent/Skill/命令补全、可搜索 Issue 关系选择器、富文本剪贴板、项目 README、全项目视图、Linux 桌面打包、WSL CLI 访问 Windows launcher 和 Issue 跨项目移动已经进入 Fork；自动 updater 安装、上游发布工作流、`taskctl` 主命名和与 Fork 发布策略冲突的打包入口仍明确排除。
 - 上游 `1.1.6` 的单连接 Jira REST 基础同步、直接回写、主题化 Issue 属性菜单和 Issue 跨项目移动已经等价吸收；Fork 仅继续维护本文记录的可靠同步、Bearer 认证和跨仓库关联扩展。

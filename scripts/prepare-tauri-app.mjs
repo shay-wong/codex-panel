@@ -359,7 +359,9 @@ set -u
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 RESOURCE_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
 export CODEX_PANEL_DATA_DIR="\${XDG_DATA_HOME:-$HOME/.local/share}/Codex Panel/data"
-export CODEX_PANEL_RUNTIME_FILE="$CODEX_PANEL_DATA_DIR/launcher-runtime.json"
+if [ -z "\${WSL_DISTRO_NAME-}" ] && [ -z "\${WSL_INTEROP-}" ] && [ -z "\${CODEX_PANEL_RUNTIME_FILE-}" ] && [ -z "\${CODEX_TASKBOARD_RUNTIME_FILE-}" ]; then
+  export CODEX_PANEL_RUNTIME_FILE="$CODEX_PANEL_DATA_DIR/launcher-runtime.json"
+fi
 exec "$RESOURCE_DIR/../../bin/codex-panel-node" "$RESOURCE_DIR/app/cli/panelctl.mjs" "$@"
 `;
     const panelctlPath = path.join(resourcesDirectory, "bin", "panelctl");

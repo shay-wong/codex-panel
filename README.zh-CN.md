@@ -166,7 +166,9 @@ npm ci
 npm run app:build:windows
 ```
 
-安装包位于 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`。它包含托盘启动器、内置 Node、本地服务、构建后的 Web UI、`manage-panel` Skill、`panelctl.cmd` 和注入脚本。Panel 数据存储在 `%APPDATA%\Codex Panel`，日志存储在 `%LOCALAPPDATA%\Codex Panel\Logs`，Skill 会复制到 `%USERPROFILE%\.agents\skills\manage-panel`。
+安装包位于 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`。它包含托盘启动器、内置 Node、本地服务、构建后的 Web UI、`manage-panel` Skill、`panelctl.cmd` 和注入脚本。Panel 数据存储在 `%LOCALAPPDATA%\Codex Panel\data`，日志存储在 `%LOCALAPPDATA%\Codex Panel\Logs`，Skill 会复制到 `%USERPROFILE%\.agents\skills\manage-panel`。
+
+在 WSL 中运行 `panelctl` 时，它会自动查找 `%LOCALAPPDATA%\Codex Panel\data` 下的 Windows launcher descriptor，并通过 Windows `curl.exe` 请求正在运行的 Windows 桌面端。只有需要显式覆盖 descriptor 时，才设置指向 WSL 路径的 `CODEX_PANEL_WSL_RUNTIME_FILE`。
 
 Windows 构建不支持自动更新。正式安装包必须配置 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT`，并通过前述 Authenticode 与打包 runtime 校验；未配置证书的正式构建会直接失败，不会发布未签名安装包。隐私说明见[隐私策略](PRIVACY.md)，保留数据的行为见 [Windows 卸载说明](docs/windows-uninstall.md)。
 
@@ -198,15 +200,19 @@ npm run codex:inject -- --port 9229 --open
 | --- | --- | --- |
 | `CODEX_PANEL_HOST` | `0.0.0.0` | HTTP 监听地址；使用 `127.0.0.1` 可禁用局域网访问 |
 | `CODEX_PANEL_PORT` | `47823` | 本地 HTTP 端口 |
+| `CODEX_PANEL_TRUSTED_ORIGINS` | 未设置 | 允许通过回环反向隧道访问的逗号分隔精确 HTTPS 来源 |
 | `CODEX_PANEL_HOME` | macOS 上为 `~/Library/Application Support/Codex Panel` | 已安装 runtime 和默认数据根目录 |
 | `CODEX_PANEL_DATA_DIR` | `$CODEX_PANEL_HOME/data` | SQLite 数据目录 |
 | `CODEX_PANEL_URL` | `http://127.0.0.1:47823` | CLI API 地址 |
+| `CODEX_PANEL_WSL_RUNTIME_FILE` | 从 Windows `LOCALAPPDATA` 自动发现 | Windows launcher descriptor 的 WSL 路径 |
 | `CODEX_PANEL_CODESIGN_IDENTITY` | 匹配的本机 Apple Development 身份，否则为 `-` | 签名 `Codex Panel.app` 时显式指定身份名称或证书哈希 |
 | `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` | 无 | Windows 正式构建所需的 Authenticode 证书指纹 |
 
 `npm start` 会输出本地 URL 和可用的局域网 URL。同一受信任网络中的协作者可以打开局域网 URL，共用同一个 Panel 服务。任务、评论和附件变更会通过服务器发送事件广播到所有已打开的客户端；重新连接的客户端会执行完整刷新，避免遗漏断线期间的变更。协作者可设置 `CODEX_PANEL_URL=http://<host-ip>:47823`，让 `panelctl` 连接共享服务。
 
 局域网模式没有账户认证：受信任局域网中任何能够访问该 URL 的人都可以读写 Panel。通过公网访问或部署到云端时，必须设置经过认证的访问边界。
+
+连接本地监听器的反向隧道必须把公网 HTTPS 来源配置到 `CODEX_PANEL_TRUSTED_ORIGINS`，例如 `https://board.example.test`；多个来源使用逗号分隔。每项必须是无路径、查询、片段、凭据或通配符的精确 HTTPS 来源，空值和规范化后重复的来源会在启动时被拒绝。代理或隧道必须保持回环 socket 连接、把 `Host` 改写为本地或私有地址，并保留浏览器提供的 `Origin`；只有请求没有该头时才能补入已配置的来源，且不能依赖 forwarded headers。可信来源可以访问普通 Panel HTTP 和实时接口，但不能获得设备本地能力。旧名称 `CODEX_TASKBOARD_TRUSTED_ORIGINS` 仅保留兼容读取。
 
 ## 通过 Cloudflare 共享
 

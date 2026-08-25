@@ -183,7 +183,13 @@ export function PlusIcon(props: BasicIconProps) {
 }
 
 export function DeleteIcon(props: BasicIconProps) {
-  return <SvgIcon {...props}><path fillRule="evenodd" d="M12.369 6.5a.5.5 0 0 1 .486.615l-1.492 6.343A2 2 0 0 1 9.416 15H6.584a2 2 0 0 1-1.947-1.542L3.145 7.115A.5.5 0 0 1 3.63 6.5zM8.5 1A2.5 2.5 0 0 1 11 3.5h2a1 1 0 0 1 1 1V5a.5.5 0 0 1-.5.5h-11A.5.5 0 0 1 2 5v-.5a1 1 0 0 1 1-1h2A2.5 2.5 0 0 1 7.5 1zm0 1.5h-1a1 1 0 0 0-1 1h3a1 1 0 0 0-1-1" clipRule="evenodd" /></SvgIcon>;
+  return (
+    <SvgIcon {...props}>
+      <path d="M12.7834 6.56006C12.7834 11.9061 13.5529 14.3226 8.37704 14.3226C3.20053 14.3226 3.98593 11.9061 3.98593 6.56006" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M13.767 4.51058H3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10.6667 4.51048C10.6667 4.51048 11.019 2 8.38285 2C5.74729 2 6.09967 4.51048 6.09967 4.51048" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </SvgIcon>
+  );
 }
 
 export function ProjectIcon(props: BasicIconProps) {
@@ -192,6 +198,14 @@ export function ProjectIcon(props: BasicIconProps) {
 
 export function ConversationIcon(props: Omit<MaskIconProps, "source">) {
   return <MaskIcon {...props} source={conversationSource} />;
+}
+
+export function NewConversationIcon(props: BasicIconProps) {
+  return (
+    <SvgIcon {...props}>
+      <path d="M5.7002 6.30005L6.7002 8.00005L5.7002 9.70005M8.59961 9.6001H10.7996M7.20215 1.93018C7.96231 1.93039 8.65815 2.20565 9.19629 2.66162L9.3877 2.82373L9.63379 2.77881C9.8134 2.74642 9.99778 2.72904 10.1836 2.729C11.8882 2.72952 13.2711 4.11205 13.2715 5.81689L13.2578 6.09326C13.2492 6.18462 13.237 6.27556 13.2207 6.36572L13.1758 6.61182L13.3379 6.80322C13.7943 7.34178 14.0702 8.03877 14.0703 8.79932C14.0699 10.1375 13.2176 11.2764 12.0254 11.7046L11.79 11.7896L11.7051 12.0249C11.2769 13.2172 10.138 14.0695 8.7998 14.0698C8.03929 14.0698 7.34241 13.7941 6.80371 13.3374L6.61328 13.1753L6.36719 13.2202C6.27684 13.2365 6.18551 13.2487 6.09375 13.2573L5.81738 13.271C4.11286 13.2707 2.73101 11.8881 2.73047 10.1831C2.73049 9.997 2.74782 9.81293 2.78027 9.6333L2.8252 9.38721L2.66309 9.1958C2.29195 8.7578 2.03996 8.21562 1.95898 7.61963L1.93555 7.36084L1.93066 7.20068C1.93084 5.86226 2.78273 4.7218 3.97461 4.29346L4.20996 4.2085L4.29492 3.97412C4.72324 2.78211 5.86353 1.93019 7.20215 1.93018Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </SvgIcon>
+  );
 }
 
 export function CodexResumeIcon({ color = "#5D5D5F", ...props }: BasicIconProps) {

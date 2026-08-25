@@ -602,7 +602,11 @@ export function TaskEditor({
                 triggerClassName="property-control property-project"
                 ariaLabel={text("项目", "Project")}
                 onOpenChange={(open) => setMenu(open ? "project" : null)}
-                onChange={(value) => onProjectChange?.(value || null)}
+                onChange={(value) => {
+                  const nextProjectId = value || null;
+                  if (nextProjectId !== projectId) setDevelopmentContext(null);
+                  onProjectChange?.(nextProjectId);
+                }}
               />
             )}
             <TaskPropertyPicker
@@ -681,6 +685,7 @@ export function TaskEditor({
               ]}
               open={menu === "development"}
               disabled={developmentScanLoading}
+              popoverClassName="development-context-popover"
               triggerClassName="property-control property-development"
               ariaLabel={text("代码分支或 Worktree", "Code branch or worktree")}
               title={developmentScan.workspacePath ?? undefined}
