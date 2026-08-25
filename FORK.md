@@ -70,6 +70,18 @@
 - 移除条件：上游横向列表提供等价的看板式分栏、Jira Key 层级和竖向布局隔离后同步移除。
 - 针对性验证：运行 `npm run typecheck` 和 `npm run build:web`；在横向与竖向列表分别确认 Jira Key、卡片层级、状态列滚动和紧凑行，并在窄视口确认页面无横向溢出。
 
+### Cloud 一次性迁移完整性
+
+- 生命周期：`等待上游吸收`
+- 原始目的：确保把现有本地 Panel 数据一次性迁移到 Cloudflare 时，不会在迁移成功的表象下丢失 Project README 内联图片或改变由 Issue mention 自动生成的关系语义。
+- 行为不变量：Cloud 迁移包必须完整包含项目 README、`project_readme_attachments` 元数据、普通附件和 README 附件字节、任务开始日期，以及 `task_relations.origin`；两类附件都必须写入并校验 R2，D1 计数必须覆盖 README 附件。缺少这些数据的 v2 包必须要求用户重新导出，不能静默导入不完整数据。
+- 代码和测试路径：`scripts/migrate-to-cloud.mjs`、`scripts/wrangler-cloud-adapter.mjs`、`test/cloud-migration.test.mjs`、`cloud/migrations/0010_project_readme_attachments.sql` 和 `cloud/migrations/0010_task_relation_origin.sql`。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/cloud-collaboration.md`。
+- 来源：本次上游合并后的完整性修复；提交后可用 `git log -S'project_readme_attachments' -- scripts/migrate-to-cloud.mjs` 定位。
+- 合并指引：上游调整本地或 Cloud schema、迁移包版本、D1 导入或 R2 附件存储时，必须以当前生产 schema 的用户数据表和语义字段为清单核对迁移覆盖；不能只验证行数而忽略附件字节、关系来源或新表。
+- 移除条件：上游迁移工具等价保留 Project README 附件、关系来源和对应完整性验证后同步删除。
+- 针对性验证：运行 `node --test test/cloud-migration.test.mjs`，确认隔离的真实 D1/R2 模拟迁移后可以下载 Project README 图片，mention 关系仍为 `origin='mention'`，且 v2 包被明确拒绝。
+
 ### Tauri/Rust Codex Panel 桌面管理器
 
 - 生命周期：`长期保留`

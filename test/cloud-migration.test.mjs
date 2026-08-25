@@ -66,6 +66,7 @@ async function createMigrationFixture({
       "attachment-a": Buffer.from("alpha issue attachment\n"),
       "attachment-a-comment": Buffer.from("alpha comment attachment\n"),
       "attachment-b": Buffer.from("beta attachment\n"),
+      "readme-attachment-a": Buffer.from("alpha readme attachment\n"),
     },
   };
   fixtures.push(fixture);
@@ -92,6 +93,15 @@ async function createMigrationFixture({
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE project_readme_attachments (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      filename TEXT NOT NULL,
+      content_type TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE tasks (
       id TEXT PRIMARY KEY,
       identifier TEXT NOT NULL UNIQUE,
@@ -114,6 +124,7 @@ async function createMigrationFixture({
       git_branch TEXT,
       worktree_path TEXT,
       worktree_branch TEXT,
+      start_date TEXT,
       due_date TEXT,
       recurrence_interval INTEGER,
       recurrence_unit TEXT,
@@ -152,6 +163,7 @@ async function createMigrationFixture({
       relation_type TEXT NOT NULL,
       source_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       target_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      origin TEXT NOT NULL DEFAULT 'manual',
       created_at TEXT NOT NULL,
       PRIMARY KEY (relation_type, source_task_id, target_task_id)
     );
@@ -184,6 +196,25 @@ async function createMigrationFixture({
         '${timestamp}'
       );
 
+    INSERT INTO project_readmes VALUES
+      (
+        'alpha',
+        '![diagram](/api/attachments/readme-attachment-a/content)',
+        1,
+        '${timestamp}',
+        '${timestamp}'
+      );
+
+    INSERT INTO project_readme_attachments VALUES
+      (
+        'readme-attachment-a',
+        'alpha',
+        'diagram.png',
+        'image/png',
+        ${fixture.attachmentContents["readme-attachment-a"].byteLength},
+        '${timestamp}'
+      );
+
     INSERT INTO tasks VALUES
       (
         'task-a1',
@@ -207,6 +238,7 @@ async function createMigrationFixture({
         NULL,
         '/Users/alice/source/alpha-worktree',
         'feature/cloud-share',
+        '2026-07-25',
         NULL,
         NULL,
         NULL,
@@ -241,6 +273,7 @@ async function createMigrationFixture({
         NULL,
         NULL,
         NULL,
+        NULL,
         1,
         '${timestamp}',
         '${timestamp}'
@@ -267,6 +300,7 @@ async function createMigrationFixture({
         NULL,
         '/Users/bob/source/beta-worktree',
         'feature/beta-worktree',
+        NULL,
         NULL,
         NULL,
         NULL,
@@ -337,7 +371,7 @@ async function createMigrationFixture({
       );
 
     INSERT INTO task_relations VALUES
-      ('parent', 'task-a1', 'task-a2', '${timestamp}');
+      ('parent', 'task-a1', 'task-a2', 'mention', '${timestamp}');
 
     INSERT INTO local_cloud_session VALUES
       ('cf-access-super-secret', '${timestamp}');
@@ -348,7 +382,7 @@ async function createMigrationFixture({
     database.exec(`
       PRAGMA foreign_keys = OFF;
       INSERT INTO task_relations VALUES
-        ('blocks', 'missing-task', 'task-a1', '${timestamp}');
+        ('blocks', 'missing-task', 'task-a1', 'manual', '${timestamp}');
       PRAGMA foreign_keys = ON;
     `);
   }
@@ -367,7 +401,8 @@ function expectedProjectCounts() {
   return {
     alpha: {
       projects: 1,
-      project_readmes: 0,
+      project_readmes: 1,
+      project_readme_attachments: 1,
       tasks: 2,
       comments: 1,
       attachments: 2,
@@ -376,6 +411,7 @@ function expectedProjectCounts() {
     beta: {
       projects: 1,
       project_readmes: 0,
+      project_readme_attachments: 0,
       tasks: 1,
       comments: 1,
       attachments: 1,
@@ -389,6 +425,7 @@ function expectedCloudBaselineCounts() {
     local: {
       projects: 1,
       project_readmes: 0,
+      project_readme_attachments: 0,
       tasks: 0,
       comments: 0,
       attachments: 0,
@@ -480,7 +517,7 @@ test("migration snapshots live WAL data, counts each project, and strips local e
     attachmentsDirectory: fixture.attachmentsDirectory,
   });
 
-  assert.equal(bundle.schemaVersion, 2);
+  assert.equal(bundle.schemaVersion, 3);
   assert.deepEqual(bundle.counts.byProject, expectedProjectCounts());
   assert.deepEqual(
     bundle.tables.projects.map((project) => project.id).sort(),
@@ -491,6 +528,7 @@ test("migration snapshots live WAL data, counts each project, and strips local e
   const alphaWorktreeTask = bundle.tables.tasks.find((task) => task.id === "task-a1");
   assert.equal(alphaWorktreeTask.worktree_path, null);
   assert.equal(alphaWorktreeTask.worktree_branch, "feature/cloud-share");
+  assert.equal(alphaWorktreeTask.start_date, "2026-07-25");
 
   const alphaBranchTask = bundle.tables.tasks.find((task) => task.id === "task-a2");
   assert.equal(alphaBranchTask.git_branch, "feature/plain-branch");
@@ -501,14 +539,14 @@ test("migration snapshots live WAL data, counts each project, and strips local e
   assert.equal(Object.hasOwn(bundle.tables, "local_cloud_session"), false);
 });
 
-test("migration records attachment bytes, SHA-256, and actual size", async () => {
+test("migration records task and project Readme attachment bytes, SHA-256, and actual size", async () => {
   const fixture = await createMigrationFixture();
   const bundle = await createCloudMigrationBundle({
     databasePath: fixture.databasePath,
     attachmentsDirectory: fixture.attachmentsDirectory,
   });
 
-  assert.equal(bundle.attachments.length, 3);
+  assert.equal(bundle.attachments.length, 4);
   for (const attachment of bundle.attachments) {
     const expectedContents = fixture.attachmentContents[attachment.id];
     assert.deepEqual(Buffer.from(attachment.body), expectedContents);
@@ -519,6 +557,11 @@ test("migration records attachment bytes, SHA-256, and actual size", async () =>
     );
     assert.equal(path.isAbsolute(attachment.objectKey), false);
   }
+  const readmeAttachment = bundle.attachments.find(
+    (attachment) => attachment.id === "readme-attachment-a",
+  );
+  assert.equal(readmeAttachment.projectId, "alpha");
+  assert.equal(readmeAttachment.sourceTable, "project_readme_attachments");
 });
 
 test("migration fails before import when an attachment referenced by SQLite is missing", async () => {
@@ -560,13 +603,14 @@ test("cloud import calls D1 and R2 adapters, then verifies project counts and ob
   assert.deepEqual(Object.keys(d1.calls[0]), [
     "projects",
     "project_readmes",
+    "project_readme_attachments",
     "tasks",
     "comments",
     "task_relations",
     "attachments",
   ]);
   assert.deepEqual(result.counts.byProject, expectedProjectCounts());
-  assert.equal(result.attachments.verified, 3);
+  assert.equal(result.attachments.verified, 4);
 
   for (const attachment of bundle.attachments) {
     const object = r2.objects.get(attachment.objectKey);
@@ -672,9 +716,12 @@ test("D1 binding import uses one JSON statement per table for 100+ rows", async 
   await adapters.d1.importTables(tables);
 
   assert.equal(batches.length, 1);
-  assert.equal(batches[0].length, 6);
-  for (const statement of batches[0]) assert.match(statement.sql, /json_each\(\?\)/);
-  assert.equal(JSON.parse(batches[0][2].values[0]).length, 125);
+  assert.equal(batches[0].length, 7);
+  assert.match(batches[0][1].sql, /INSERT INTO project_readmes/);
+  for (const [index, statement] of batches[0].entries()) {
+    if (index !== 1) assert.match(statement.sql, /json_each\(\?\)/);
+  }
+  assert.equal(JSON.parse(batches[0][3].values[0]).length, 125);
 });
 
 test("Wrangler D1 SQL chunks large tables below the remote statement byte limit", async () => {
@@ -727,6 +774,8 @@ test("real D1 batch atomically imports a bundle containing local and maps develo
   fixture.database.exec(`
     PRAGMA foreign_keys = OFF;
     UPDATE projects SET id = 'local' WHERE id = 'alpha';
+    UPDATE project_readmes SET project_id = 'local' WHERE project_id = 'alpha';
+    UPDATE project_readme_attachments SET project_id = 'local' WHERE project_id = 'alpha';
     UPDATE tasks SET project_id = 'local' WHERE project_id = 'alpha';
     PRAGMA foreign_keys = ON;
   `);
@@ -783,13 +832,14 @@ test("real D1 batch atomically imports a bundle containing local and maps develo
     );
     assert.deepEqual(
       await cloud.db.prepare(`
-        SELECT development_context_type, development_branch
+        SELECT development_context_type, development_branch, start_date
         FROM tasks
         WHERE id = 'task-a1'
       `).first(),
       {
         development_context_type: "worktree",
         development_branch: "feature/cloud-share",
+        start_date: "2026-07-25",
       },
     );
     assert.deepEqual(
@@ -803,6 +853,13 @@ test("real D1 batch atomically imports a bundle containing local and maps develo
         development_branch: "feature/plain-branch",
       },
     );
+    assert.deepEqual(
+      await cloud.db.prepare(`
+        SELECT origin FROM task_relations
+        WHERE source_task_id = 'task-a1' AND target_task_id = 'task-a2'
+      `).first(),
+      { origin: "mention" },
+    );
     const taskColumns = await cloud.db.prepare("PRAGMA table_info(tasks)").all();
     assert.equal(taskColumns.results.some((column) => column.name === "worktree_path"), false);
 
@@ -815,6 +872,19 @@ test("real D1 batch atomically imports a bundle containing local and maps develo
     );
     assert.equal(downloaded.response.status, 200);
     assert.equal(downloaded.body, fixture.attachmentContents[migratedAttachment.id].toString());
+
+    const migratedReadmeAttachment = bundle.attachments.find(
+      (attachment) => attachment.id === "readme-attachment-a",
+    );
+    const downloadedReadmeAttachment = await cloud.request(
+      `/api/attachments/${encodeURIComponent(migratedReadmeAttachment.id)}/content`,
+      { actorName: "Alice" },
+    );
+    assert.equal(downloadedReadmeAttachment.response.status, 200);
+    assert.equal(
+      downloadedReadmeAttachment.body,
+      fixture.attachmentContents[migratedReadmeAttachment.id].toString(),
+    );
 
     const deleted = await cloud.request(
       `/api/attachments/${encodeURIComponent(migratedAttachment.id)}`,
@@ -910,7 +980,7 @@ test("bundle validation binds attachment size and object key to SQLite metadata"
       d1: createD1Adapter(wrongProject),
       r2: createR2Adapter(),
     }),
-    /task project|project.*task/i,
+    /project.*metadata/i,
   );
 });
 
@@ -943,6 +1013,24 @@ test("versioned bundle round-trips through private manifest, data, and attachmen
   assert.deepEqual(
     restored.attachments.map(({ id, body }) => [id, Buffer.from(body)]),
     bundle.attachments.map(({ id, body }) => [id, Buffer.from(body)]),
+  );
+});
+
+test("schema version 2 bundles are rejected because they omit project Readme attachments", async () => {
+  const fixture = await createMigrationFixture();
+  const bundle = await createCloudMigrationBundle({
+    databasePath: fixture.databasePath,
+    attachmentsDirectory: fixture.attachmentsDirectory,
+  });
+  const legacyBundle = structuredClone(bundle);
+  legacyBundle.schemaVersion = 2;
+
+  await assert.rejects(
+    importCloudMigrationBundle(legacyBundle, {
+      d1: createD1Adapter(legacyBundle),
+      r2: createR2Adapter(),
+    }),
+    /version '2'.*project Readme attachments.*new bundle/i,
   );
 });
 
@@ -1083,6 +1171,8 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
   fixture.database.exec(`
     PRAGMA foreign_keys = OFF;
     UPDATE projects SET id = 'local' WHERE id = 'alpha';
+    UPDATE project_readmes SET project_id = 'local' WHERE project_id = 'alpha';
+    UPDATE project_readme_attachments SET project_id = 'local' WHERE project_id = 'alpha';
     UPDATE tasks SET project_id = 'local' WHERE project_id = 'alpha';
     PRAGMA foreign_keys = ON;
   `);
@@ -1091,7 +1181,7 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
     SELECT ?, ?, project_id, ?, ?, status, priority, labels, ?, thread_id,
       creator_type, creator_id, creator_name, creator_avatar_url,
       assignee_type, assignee_id, assignee_name, assignee_avatar_url,
-      git_branch, worktree_path, worktree_branch, due_date,
+      git_branch, worktree_path, worktree_branch, start_date, due_date,
       recurrence_interval, recurrence_unit, archived_at, version, created_at,
       updated_at
     FROM tasks WHERE id = 'task-a1'
@@ -1171,6 +1261,12 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
   });
   try {
     await miniflare.ready;
+    assert.deepEqual(
+      await (await miniflare.getD1Database("DB")).prepare(`
+        SELECT start_date FROM tasks WHERE id = 'task-a1'
+      `).first(),
+      { start_date: "2026-07-25" },
+    );
     const authorization = `Basic ${Buffer.from("Alice:migration-test-secret").toString("base64")}`;
     const attachment = bundle.attachments[0];
     const downloaded = await miniflare.dispatchFetch(

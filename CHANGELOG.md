@@ -4,6 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed the one-time Cloud migration so project README image metadata and bytes reach D1 and R2, task start dates and mention-created relation origins are retained, and incomplete v2 bundles require a fresh export instead of silently losing data.
 - Fixed Windows launcher startup so the injector keeps the runtime descriptor used by `panelctl` without attempting to create a Unix control socket; open, status, and stop continue through the launcher's owned child pipe.
 - Added Bearer token authentication for Jira Data Center and Server personal access tokens while retaining Basic authentication for account passwords and Jira Cloud email/API-token connections.
 - Added explicit Jira requirement links to one or more repository projects and their execution issues, with compact details on both sides and Jira refreshes kept separate from local execution work. Execution issues return to the linked requirement inside Panel, while the requirement detail retains the external Jira action. Waiting Jira requirements with saved repositories can create and start one execution issue and independent AI conversation per repository; partial failures resume without duplicates. Complex requirements can instead open a read-only AI planning conversation, keep the approved Spec on Jira, publish confirmed repository tickets as linked backlog issues with cross-repository dependencies, pause unstarted issues when the plan becomes stale, and replan without canceling work that has already started.

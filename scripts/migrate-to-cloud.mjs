@@ -17,12 +17,13 @@ import { DatabaseSync } from "node:sqlite";
 
 import { DEFAULT_LABEL_NAMES } from "../shared/domain.mjs";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const WRANGLER_D1_STATEMENT_MAX_BYTES = 90_000;
 const PROJECT_README_D1_CHUNK_CHARACTERS = 10_000;
 const TABLE_ORDER = [
   "projects",
   "project_readmes",
+  "project_readme_attachments",
   "tasks",
   "comments",
   "task_relations",
@@ -31,6 +32,7 @@ const TABLE_ORDER = [
 const SORT_FIELDS = {
   projects: ["id"],
   project_readmes: ["project_id"],
+  project_readme_attachments: ["project_id", "created_at", "id"],
   tasks: ["project_id", "identifier", "id"],
   comments: ["task_id", "created_at", "id"],
   task_relations: ["source_task_id", "target_task_id", "relation_type"],
@@ -81,6 +83,7 @@ function buildProjectCounts(tables) {
     counts[project.id] = {
       projects: 1,
       project_readmes: 0,
+      project_readme_attachments: 0,
       tasks: 0,
       comments: 0,
       attachments: 0,
@@ -93,6 +96,14 @@ function buildProjectCounts(tables) {
       throw new Error(`Project Readme references unknown project '${readme.project_id}'`);
     }
     counts[readme.project_id].project_readmes += 1;
+  }
+  for (const attachment of tables.project_readme_attachments) {
+    if (!counts[attachment.project_id]) {
+      throw new Error(
+        `Project Readme attachment '${attachment.id}' references unknown project '${attachment.project_id}'`,
+      );
+    }
+    counts[attachment.project_id].project_readme_attachments += 1;
   }
 
   const taskProjects = new Map();
@@ -151,7 +162,19 @@ async function readAttachmentPayloads(tables, attachmentsDirectory) {
   const taskProjects = new Map(tables.tasks.map((task) => [task.id, task.project_id]));
   const payloads = [];
 
-  for (const attachment of tables.attachments) {
+  const attachments = [
+    ...tables.attachments.map((attachment) => ({
+      ...attachment,
+      projectId: taskProjects.get(attachment.task_id),
+      sourceTable: "attachments",
+    })),
+    ...tables.project_readme_attachments.map((attachment) => ({
+      ...attachment,
+      projectId: attachment.project_id,
+      sourceTable: "project_readme_attachments",
+    })),
+  ];
+  for (const attachment of attachments) {
     assertSafeAttachmentId(attachment.id);
     const sourcePath = path.join(attachmentsDirectory, attachment.id);
     let file;
@@ -173,10 +196,10 @@ async function readAttachmentPayloads(tables, attachmentsDirectory) {
         `Attachment '${attachment.id}' size mismatch: SQLite=${attachment.size}, file=${body.byteLength}`,
       );
     }
-    const projectId = taskProjects.get(attachment.task_id);
     payloads.push({
       id: attachment.id,
-      projectId,
+      projectId: attachment.projectId,
+      sourceTable: attachment.sourceTable,
       objectKey: attachmentObjectKey(attachment.id),
       size: body.byteLength,
       sha256: createHash("sha256").update(body).digest("hex"),
@@ -269,6 +292,11 @@ function assertCountsMatch(expected, actual) {
 
 function validateBundle(bundle) {
   if (!bundle || bundle.schemaVersion !== SCHEMA_VERSION) {
+    if (bundle?.schemaVersion === 2) {
+      throw new Error(
+        "Cloud migration schema version '2' does not include project Readme attachments; create a new bundle",
+      );
+    }
     throw new Error(`Unsupported cloud migration schema version '${bundle?.schemaVersion}'`);
   }
   for (const table of TABLE_ORDER) {
@@ -282,12 +310,19 @@ function validateBundle(bundle) {
 
   const calculatedCounts = buildProjectCounts(bundle.tables);
   assertCountsMatch(calculatedCounts, bundle.counts?.byProject);
-  const attachmentRows = new Map(bundle.tables.attachments.map((row) => [row.id, row]));
+  const attachmentRows = new Map([
+    ...bundle.tables.attachments.map((row) => [row.id, { row, sourceTable: "attachments" }]),
+    ...bundle.tables.project_readme_attachments.map((row) => [
+      row.id,
+      { row, sourceTable: "project_readme_attachments" },
+    ]),
+  ]);
   const attachmentPayloads = new Map(
     bundle.attachments.map((attachment) => [attachment.id, attachment]),
   );
   if (
-    attachmentRows.size !== bundle.tables.attachments.length
+    attachmentRows.size
+      !== bundle.tables.attachments.length + bundle.tables.project_readme_attachments.length
     || attachmentPayloads.size !== bundle.attachments.length
     || attachmentRows.size !== attachmentPayloads.size
   ) {
@@ -296,7 +331,7 @@ function validateBundle(bundle) {
   const taskProjects = new Map(
     bundle.tables.tasks.map((task) => [task.id, task.project_id]),
   );
-  for (const row of attachmentRows.values()) {
+  for (const { row, sourceTable } of attachmentRows.values()) {
     const attachment = attachmentPayloads.get(row.id);
     if (!attachment) {
       throw new Error(`Attachment metadata '${row.id}' has no payload`);
@@ -312,14 +347,19 @@ function validateBundle(bundle) {
     if (Number(row.size) !== attachment.size) {
       throw new Error(`Attachment '${attachment.id}' metadata size does not match its payload`);
     }
-    const projectId = taskProjects.get(row.task_id);
+    const projectId = sourceTable === "attachments"
+      ? taskProjects.get(row.task_id)
+      : row.project_id;
     if (attachment.projectId !== projectId) {
       throw new Error(
-        `Attachment '${attachment.id}' project does not match its task project`,
+        `Attachment '${attachment.id}' project does not match its metadata project`,
       );
     }
     if (attachment.objectKey !== attachmentObjectKey(attachment.id)) {
       throw new Error(`Attachment '${attachment.id}' object key must match its id`);
+    }
+    if (attachment.sourceTable !== sourceTable) {
+      throw new Error(`Attachment '${attachment.id}' source table does not match its metadata`);
     }
     if (
       typeof attachment.objectKey !== "string"
@@ -361,13 +401,16 @@ const CLOUD_COLUMNS = {
     "id", "name", "workspace_path", "labels", "next_task_number", "created_at", "updated_at",
   ],
   project_readmes: ["project_id", "content", "version", "created_at", "updated_at"],
+  project_readme_attachments: [
+    "id", "project_id", "filename", "content_type", "size", "created_at",
+  ],
   tasks: [
     "id", "identifier", "project_id", "title", "description", "status", "priority", "labels",
     "sort_order", "thread_id", "thread_codex_project_id", "thread_codex_project_kind",
     "thread_codex_host_id", "thread_workspace_path", "creator_type", "creator_id", "creator_name",
     "creator_avatar_url", "assignee_type", "assignee_id", "assignee_name",
     "assignee_avatar_url", "development_context_type", "development_branch",
-    "due_date", "recurrence_interval", "recurrence_unit", "archived_at", "version",
+    "start_date", "due_date", "recurrence_interval", "recurrence_unit", "archived_at", "version",
     "created_at", "updated_at",
   ],
   comments: [
@@ -376,7 +419,9 @@ const CLOUD_COLUMNS = {
     "author_type", "author_id", "author_name",
     "author_avatar_url", "version", "created_at", "updated_at", "change_revision",
   ],
-  task_relations: ["relation_type", "source_task_id", "target_task_id", "created_at"],
+  task_relations: [
+    "relation_type", "source_task_id", "target_task_id", "origin", "created_at",
+  ],
   attachments: [
     "id", "task_id", "comment_id", "kind", "filename", "content_type", "size", "created_at",
     "change_revision",
@@ -493,6 +538,8 @@ export const CLOUD_PROJECT_COUNTS_SQL = `
   SELECT p.id AS project_id, 1 AS projects,
     (SELECT COUNT(*) FROM project_readmes r
       WHERE r.project_id = p.id) AS project_readmes,
+    (SELECT COUNT(*) FROM project_readme_attachments a
+      WHERE a.project_id = p.id) AS project_readme_attachments,
     (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id) AS tasks,
     (SELECT COUNT(*) FROM comments c JOIN tasks t ON t.id = c.task_id
       WHERE t.project_id = p.id) AS comments,
@@ -620,7 +667,10 @@ export async function importCloudMigrationBundle(bundle, { d1, r2 }) {
     }
   }
 
-  const attachmentRows = new Map(bundle.tables.attachments.map((row) => [row.id, row]));
+  const attachmentRows = new Map([
+    ...bundle.tables.attachments.map((row) => [row.id, row]),
+    ...bundle.tables.project_readme_attachments.map((row) => [row.id, row]),
+  ]);
   const uploadedKeys = [];
   let d1Committed = false;
   try {
@@ -706,6 +756,7 @@ export async function writeCloudMigrationBundle(bundle, outputDirectory) {
       attachmentFiles.push({
         id: attachment.id,
         projectId: attachment.projectId,
+        sourceTable: attachment.sourceTable,
         objectKey: attachment.objectKey,
         file: relativePath,
         size: attachment.size,
@@ -745,6 +796,11 @@ export async function readCloudMigrationBundle(inputDirectory) {
     "cloud migration manifest",
   );
   if (manifest.schemaVersion !== SCHEMA_VERSION) {
+    if (manifest.schemaVersion === 2) {
+      throw new Error(
+        "Cloud migration schema version '2' does not include project Readme attachments; create a new bundle",
+      );
+    }
     throw new Error(`Unsupported cloud migration schema version '${manifest.schemaVersion}'`);
   }
 
