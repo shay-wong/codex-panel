@@ -3,8 +3,8 @@ import { useState, type KeyboardEventHandler } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComposerCandidatesResponse, Task } from "../types";
 import {
-  createInlineMediaSegments,
   createInlineMediaSegmentsFromHtml,
+  createInlineMediaSegments,
   InlineMediaComposer,
   serializeInlineMedia,
   writeInlineMediaClipboard,

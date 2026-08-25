@@ -16,7 +16,7 @@ test("the project switcher merges live Codex projects with persisted Panel proje
   assert.match(appSource, /persistedById/);
   assert.match(appSource, /name: project\.id === GLOBAL_PROJECT_ID\s*\? text\("全局", "Global"\)\s*: persistedById\.get\(project\.id\)\?\.name \?\? project\.name/);
   assert.match(appSource, /for \(const project of projects\) \{[\s\S]*?inCodex: false,[\s\S]*?persisted: true/);
-  assert.match(appSource, /projectChoices\.map\(\(project\) => \(/);
+  assert.match(appSource, /projectMenuChoices\.map\(\(project\) => \(/);
   assert.match(appSource, /createProjectRequest/);
   assert.match(apiSource, /export async function createProject/);
 });
@@ -25,11 +25,10 @@ test("each device stores an independent workspace path for every project", () =>
   assert.match(appSource, /const DEVICE_WORKSPACE_PATHS_KEY = "panel\.deviceWorkspacePaths\.v1"/);
   assert.match(appSource, /function readDeviceWorkspacePaths\(\)/);
   assert.match(appSource, /rememberDeviceWorkspacePath/);
-  assert.match(appSource, /const \[nextProjects, metadata, workspaces\] = await Promise\.all\(\[/);
-  assert.match(appSource, /const nextJiraConnection = await getJiraConnection\(signal\)/);
-  assert.match(appSource, /listDeviceWorkspaces\(signal\)/);
+  assert.match(appSource, /const \[nextProjects, metadata, workspaces\] = await Promise\.all\(\[[\s\S]*?listDeviceWorkspaces\(signal\)/);
+  assert.match(appSource, /const \[nextJiraConnection, nextTemporaryTasks\] = await Promise\.all\(\[[\s\S]*?getJiraConnection\(signal\)[\s\S]*?listTasks\(GLOBAL_PROJECT_ID, signal\)/);
   assert.match(appSource, /const selectedDeviceWorkspacePath = selectedProjectId === GLOBAL_PROJECT_ID[\s\S]*?: deviceWorkspacePaths\[selectedProjectId\]/);
-  assert.match(appSource, /listDevelopmentContexts\([\s\S]*?controller\.signal,\s*selectedDeviceWorkspacePath,\s*\)/);
+  assert.match(appSource, /listDevelopmentContexts\([\s\S]*?controller\.signal,\s*workspacePath,\s*\)/);
   assert.match(apiSource, /query\.set\("workspacePath", workspacePath\)/);
   assert.match(apiSource, /\/api\/device-workspaces/);
 });
@@ -42,7 +41,7 @@ test("imported Codex projects persist their exact device identity", () => {
 
 test("project selection starts from the route or recent projects and updates the route", () => {
   assert.match(appSource, /const RECENT_PROJECT_IDS_KEY = "panel\.recentProjectIds\.v1"/);
-  assert.match(appSource, /const initialProjectId = query\.get\("project"\) \?\? recentProjectIds\[0\] \?\? GLOBAL_PROJECT_ID/);
+  assert.match(appSource, /const initialProjectId = query\.get\("project"\) \?\? recentProjectIds\[0\] \?\? ALL_PROJECTS_ID/);
   assert.match(appSource, /const rememberProjectOpen = useCallback/);
   assert.match(appSource, /panelStorage\.setItem\(RECENT_PROJECT_IDS_KEY, JSON\.stringify\(next\)\)/);
   assert.match(appSource, /function changeProject\(projectId: string\)/);
@@ -84,11 +83,11 @@ test("the issue composer includes Linear-style labels and scheduling", () => {
   assert.match(editorSource, /developmentScan\.contexts/);
 });
 
-test("the current project is shown in navigation and issue detail, not issue creation", () => {
-  assert.doesNotMatch(editorSource, /property-project|dialog-project-icon|project\?\.name/);
+test("issue creation selects a project from all projects and detail supports project moves", () => {
+  assert.match(editorSource, /\{!task && projectOptions && \([\s\S]*?ariaLabel=\{text\("项目", "Project"\)\}/);
   assert.match(detailSource, /value=\{currentTask\.projectId\}[\s\S]*?options=\{projects\.map/);
-  assert.doesNotMatch(styles, /\.property-project|\.dialog-project-icon|\.project-property-icon/);
-  assert.match(appSource, /createTaskRequest\(selectedProjectId, draft\)/);
+  assert.match(appSource, /projectOptions=\{!editor\.task && isAllProjects \? createTargetProjects : undefined\}/);
+  assert.match(appSource, /const targetProjectId = editorProjectId \?\? selectedProjectId;[\s\S]*?createTaskRequest\(targetProjectId, draft\)/);
   assert.match(appSource, /className="header-project-switcher"/);
 });
 
@@ -101,7 +100,7 @@ test("the project header exposes project, automation, and create controls", () =
 });
 
 test("the project header keeps detail navigation separate from the project switcher", () => {
-  assert.match(appSource, /const headerProjectName = selectedProject\?\.id === GLOBAL_PROJECT_ID\s*\? text\("全局", "Global"\)\s*: selectedProject\?\.name \?\? text\("任务面板", "Panel"\)/);
+  assert.match(appSource, /const headerProjectName = isAllProjects\s*\? text\("所有项目", "All projects"\)\s*: selectedProject\?\.id === GLOBAL_PROJECT_ID\s*\? text\("全局", "Global"\)\s*: selectedProject\?\.name \?\? text\("任务面板", "Panel"\)/);
   assert.match(appSource, /detailTask && \([\s\S]*?aria-label=\{text\("返回议题看板", "Back to issue board"\)\}[\s\S]*?<\/button>/);
   assert.match(appSource, /className="header-project-switcher"[\s\S]*?<span className="project-name">\{headerProjectName\}<\/span>/);
   assert.doesNotMatch(appSource, /className="issue-root-button"/);
@@ -129,8 +128,8 @@ test("the collapsed Codex sidebar can be expanded immediately left of the projec
   assert.match(styles, /\.codex-sidebar-expand-button \{[\s\S]*?width: 28px;[\s\S]*?height: 28px;/);
 });
 
-test("embedded mode omits the app navigation and keeps a draggable header region", () => {
-  assert.match(appSource, /!embedded && \([\s\S]*?<aside className="app-nav"/);
+test("the app omits the old navigation and keeps the embedded draggable header region", () => {
+  assert.doesNotMatch(appSource, /<aside className="app-nav"/);
   assert.match(appSource, /<header className="workspace-header">/);
   assert.match(appSource, /ref=\{dragRegionRef\} className="workspace-drag-region"/);
   assert.match(styles, /\.workspace-drag-region \{[\s\S]*?flex: 1;[\s\S]*?align-self: stretch/);

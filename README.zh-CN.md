@@ -131,6 +131,47 @@ CDP 可以访问后，启动器会等待最多 30 秒，让 Codex 创建主 rend
 
 Codex 自带的渲染器 CSP 会阻止任意 HTTP iframe。CDP CSP bypass 不会追溯改变已经加载的文档，因此启动器启用 bypass 后必须执行上面的 bootstrap 后受控重载，再打开 Panel。Chromium 151 还会对回环地址的子框架导航执行 Local Network Access 检查，因此启动器只关闭 `LocalNetworkAccessForSubframeNavigations`，并由受管 iframe 显式委派对应的本地网络权限；其他 Local Network Access 检查仍保持启用。接管或刷新已有 resident renderer 时也遵循同一个单次重载规则。同一台设备上的其他进程无需认证即可访问 CDP。由于关闭 Panel 后会按设计保留由管理器启动的 ChatGPT，因此在这个启用了 CDP 的 ChatGPT 实例整个运行期间，都只能运行可信的本地代码。
 
+### Linux App：Ubuntu 24.04 x64 软件包
+
+Linux 桌面版第一版仅支持 Ubuntu 24.04 LTS x64。请先安装官方 ChatGPT 桌面版 `.deb`，并确认运行 `chatgpt` 可以打开它。然后从 Fork 的 [GitHub Releases](https://github.com/shay-wong/codex-panel/releases/latest) 下载 Codex Panel `.deb` 或 `.AppImage`。请将以下命令中的 `<file>` 替换为下载的文件名。
+
+安装 `.deb` 软件包：
+
+```bash
+sudo apt install ./<file>.deb
+```
+
+或者运行 AppImage：
+
+```bash
+chmod +x ./<file>.AppImage
+./<file>.AppImage
+```
+
+如需在 Ubuntu 24.04 x64 上构建这两种软件包，请运行：
+
+```bash
+npm ci
+npm run app:build:linux:x64
+```
+
+第一版不支持 ARM64、Fedora、RPM 软件包或其他 Linux 发行版。
+
+### Windows App：托盘启动器与内置 Panel
+
+先从 Microsoft Store 安装官方 Codex App。在 Windows x64 上运行以下命令构建当前用户级 NSIS 安装包：
+
+```powershell
+npm ci
+npm run app:build:windows
+```
+
+安装包位于 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`。它包含托盘启动器、内置 Node、本地服务、构建后的 Web UI、`manage-panel` Skill、`panelctl.cmd` 和注入脚本。Panel 数据存储在 `%APPDATA%\Codex Panel`，日志存储在 `%LOCALAPPDATA%\Codex Panel\Logs`，Skill 会复制到 `%USERPROFILE%\.agents\skills\manage-panel`。
+
+Windows 构建不支持自动更新。正式安装包必须配置 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT`，并通过前述 Authenticode 与打包 runtime 校验；未配置证书的正式构建会直接失败，不会发布未签名安装包。隐私说明见[隐私策略](PRIVACY.md)，保留数据的行为见 [Windows 卸载说明](docs/windows-uninstall.md)。
+
+Codex 26.715.52143 的渲染器 CSP 会阻止任意 HTTP iframe。因此，启动器会启用 CDP CSP 绕过，重新加载该渲染器一次，安装文档启动脚本，并等待 Panel OOPIF 实际加载。同一台机器上的其他进程访问 CDP 时不需要身份验证，因此启动器运行时只能运行受信任的本地代码。
+
 如果 Codex 已通过其他方式启用了 CDP，可运行：
 
 ```bash
@@ -161,6 +202,7 @@ npm run codex:inject -- --port 9229 --open
 | `CODEX_PANEL_DATA_DIR` | `$CODEX_PANEL_HOME/data` | SQLite 数据目录 |
 | `CODEX_PANEL_URL` | `http://127.0.0.1:47823` | CLI API 地址 |
 | `CODEX_PANEL_CODESIGN_IDENTITY` | 匹配的本机 Apple Development 身份，否则为 `-` | 签名 `Codex Panel.app` 时显式指定身份名称或证书哈希 |
+| `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` | 无 | Windows 正式构建所需的 Authenticode 证书指纹 |
 
 `npm start` 会输出本地 URL 和可用的局域网 URL。同一受信任网络中的协作者可以打开局域网 URL，共用同一个 Panel 服务。任务、评论和附件变更会通过服务器发送事件广播到所有已打开的客户端；重新连接的客户端会执行完整刷新，避免遗漏断线期间的变更。协作者可设置 `CODEX_PANEL_URL=http://<host-ip>:47823`，让 `panelctl` 连接共享服务。
 

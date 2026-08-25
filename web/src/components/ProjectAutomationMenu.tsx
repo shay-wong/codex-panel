@@ -17,8 +17,8 @@ import type {
   ProjectAutomationPolicy,
 } from "../types";
 import { LinearIcon } from "./LinearIcon";
-import { PanelIcon } from "./PanelIcon";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
+import { TaskboardIcon } from "./TaskboardIcon";
 
 type IntervalMinutes = 5 | 10 | 15 | 30 | 60;
 
@@ -358,7 +358,7 @@ export function ProjectAutomationMenu({
       >
         {pending
           ? <span className="ai-chat-spinner" aria-hidden="true" />
-          : <PanelIcon name={status === "ACTIVE" ? "automationPause" : "automationPlay"} />}
+          : <TaskboardIcon name={status === "ACTIVE" ? "automationPause" : "automationPlay"} />}
         <span>{status === "ACTIVE" ? "自动认领中" : "自动化"}</span>
       </button>
       {menu}

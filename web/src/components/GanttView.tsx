@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Gantt, type GanttStatic, type Task as GanttTask } from "dhtmlx-gantt";
-import "dhtmlx-gantt/codebase/dhtmlxgantt.css";
+import "../vendor/dhtmlxgantt.css";
+import { useTaskboardI18n } from "../i18n";
 import type { Task, TaskDraft } from "../types";
 import type { TaskCardPresentation } from "../taskConversations";
 import { LinearIcon } from "./LinearIcon";
-import { panelIconSource } from "./PanelIcon";
+import { DueDateIcon } from "./SemanticIcons";
+import { taskboardIconSource } from "./TaskboardIcon";
 
 type GanttZoom = "day" | "week" | "month";
 
 interface GanttGroupDefinition {
   id: string;
-  label: string;
+  chineseLabel: string;
+  englishLabel: string;
   statuses: Task["status"][];
   defaultOpen: boolean;
 }
@@ -41,12 +44,12 @@ interface GanttViewProps {
 let pendingDetailViewport: { projectId: string; x: number; y: number } | null = null;
 
 const GANTT_GROUPS: GanttGroupDefinition[] = [
-  { id: "in-progress", label: "处理中", statuses: ["in_progress"], defaultOpen: true },
-  { id: "in-review", label: "等你确认", statuses: ["in_review"], defaultOpen: true },
-  { id: "blocked", label: "遇到阻碍", statuses: ["blocked"], defaultOpen: true },
-  { id: "todo", label: "待处理", statuses: ["backlog", "todo"], defaultOpen: true },
-  { id: "done", label: "已完成", statuses: ["done"], defaultOpen: false },
-  { id: "canceled", label: "已取消", statuses: ["canceled"], defaultOpen: false },
+  { id: "in-progress", chineseLabel: "处理中", englishLabel: "In progress", statuses: ["in_progress"], defaultOpen: true },
+  { id: "in-review", chineseLabel: "等你确认", englishLabel: "In review", statuses: ["in_review"], defaultOpen: true },
+  { id: "blocked", chineseLabel: "遇到阻碍", englishLabel: "Blocked", statuses: ["blocked"], defaultOpen: true },
+  { id: "todo", chineseLabel: "待处理", englishLabel: "To do", statuses: ["backlog", "todo"], defaultOpen: true },
+  { id: "done", chineseLabel: "已完成", englishLabel: "Completed", statuses: ["done"], defaultOpen: false },
+  { id: "canceled", chineseLabel: "已取消", englishLabel: "Canceled", statuses: ["canceled"], defaultOpen: false },
 ];
 
 function localDate(value: string) {
@@ -96,6 +99,7 @@ function dateCellClass(date: Date) {
 }
 
 export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCompleted, todayRequest, onOpenTask, onUpdate }: GanttViewProps) {
+  const { text } = useTaskboardI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const ganttRef = useRef<GanttStatic | null>(null);
   const [gridCollapsed, setGridCollapsed] = useState(false);
@@ -153,7 +157,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
         },
       },
     ];
-    const dropdownIcon = panelIconSource("dropdown");
+    const dropdownIcon = taskboardIconSource("dropdown");
     instance.templates.grid_open = (item) => {
       const open = Boolean((item as GanttTask & { $open?: boolean }).$open);
       return `<div class="gantt_tree_icon gantt_${open ? "close" : "open"}"><img src="${dropdownIcon}" alt=""></div>`;
@@ -323,6 +327,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
     const data: PanelGanttTask[] = [];
 
     for (const group of GANTT_GROUPS) {
+      const groupLabel = text(group.chineseLabel, group.englishLabel);
       const groupTasks = visibleTasks
         .filter((task) => group.statuses.includes(task.status))
         .sort((left, right) => Number(Boolean(right.startDate && right.dueDate)) - Number(Boolean(left.startDate && left.dueDate)));
@@ -330,7 +335,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
       const progress = groupTasks.reduce((sum, task) => sum + taskProgress(task, presentations[task.id]), 0) / groupTasks.length;
       data.push({
         id: `gantt-group-${group.id}`,
-        text: group.label,
+        text: groupLabel,
         type: "project",
         open: group.defaultOpen,
         readonly: true,
@@ -339,7 +344,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
         unscheduled: true,
         progress,
         panelStatus: group.statuses[0],
-        panelTitle: group.label,
+        panelTitle: groupLabel,
         panelUnread: groupTasks.some((task) => presentations[task.id]?.unread),
         panelAssigneeType: null,
         panelAssigneeName: "",
@@ -412,7 +417,7 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
     }
     if (restoredViewport) pendingDetailViewport = null;
     hasParsedDataRef.current = true;
-  }, [presentations, visibleTasks]);
+  }, [presentations, text, visibleTasks]);
 
   useEffect(() => {
     ganttRef.current?.ext.zoom.setLevel(zoom);
@@ -448,15 +453,24 @@ export function GanttView({ tasks, presentations, hasActiveFilters, zoom, hideCo
           type="button"
           className={`gantt-grid-toggle${gridCollapsed ? " is-collapsed" : ""}`}
           style={{ left: gridCollapsed ? 14 : gridWidth }}
-          aria-label={gridCollapsed ? "展开标题区域" : "收起标题区域"}
+          aria-label={gridCollapsed
+            ? text("展开标题区域", "Expand title area")
+            : text("收起标题区域", "Collapse title area")}
           aria-expanded={!gridCollapsed}
-          title={gridCollapsed ? "展开标题区域" : "收起标题区域"}
+          title={gridCollapsed
+            ? text("展开标题区域", "Expand title area")
+            : text("收起标题区域", "Collapse title area")}
           onClick={toggleGrid}
         >
           <LinearIcon name={gridCollapsed ? "chevronRight" : "chevronLeft"} />
         </button>
         {!visibleTasks.length && (
-          <div className="gantt-empty-overlay"><LinearIcon name="calendar" /><span>{hasActiveFilters || hideCompleted ? "当前条件下没有议题" : "创建议题后，可在这里安排时间线"}</span></div>
+          <div className="gantt-empty-overlay">
+            <DueDateIcon color="currentColor" />
+            <span>{hasActiveFilters || hideCompleted
+              ? text("当前条件下没有议题", "No issues match the current conditions")
+              : text("创建议题后，可在这里安排时间线", "Create an issue to schedule it on the timeline")}</span>
+          </div>
         )}
       </div>
     </div>

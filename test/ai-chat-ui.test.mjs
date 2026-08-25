@@ -139,7 +139,7 @@ test("reasoning and raw JSONL events never enter the visible activity timeline",
 
 test("App wires the global panel outside project/detail branches and hides it without local capability", () => {
   assert.match(appSource, /const AiChat = lazy\(\(\) => import\("\.\/components\/AiChat"\)/);
-  assert.match(appSource, /localAiChatAvailable && \([\s\S]*?<Suspense fallback=\{null\}>[\s\S]*?<AiChat/);
+  assert.match(appSource, /localAiChatAvailable && !isAllProjects && \([\s\S]*?<Suspense fallback=\{null\}>[\s\S]*?<AiChat/);
   assert.doesNotMatch(appSource, /import \{ AiChat,/);
   assert.match(appSource, /<AiChat/);
   assert.match(appSource, /projectId=\{selectedProjectId \|\| null\}/);

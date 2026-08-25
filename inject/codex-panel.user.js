@@ -1065,6 +1065,7 @@
     const workspacePath = typeof payload?.workspacePath === "string"
       ? payload.workspacePath.trim()
       : "";
+    const projectless = payload?.projectless === true;
     const codexProjectKind = payload?.codexProjectKind === "remote" ? "remote" : "local";
     if (
       !taskId
@@ -1082,7 +1083,7 @@
         throw new Error("当前 Codex 版本没有提供原生对话导航能力");
       }
 
-      if (codexProjectKind === "remote") {
+      if (!projectless && codexProjectKind === "remote") {
         const requestedProjectId = typeof payload?.codexProjectId === "string"
           ? payload.codexProjectId.trim()
           : "";
@@ -1120,12 +1121,12 @@
         return;
       }
 
-      if (workspacePath) {
+      if (!projectless && workspacePath) {
         await bridge.sendMessageFromView({
           type: "electron-set-active-workspace-root",
           root: workspacePath,
         });
-      } else {
+      } else if (!projectless) {
         await ensureProjectRows();
         const snapshotProjectId = hostContextSnapshot?.projectId || "";
         const requestedProjectId = typeof payload.codexProjectId === "string"
@@ -1150,6 +1151,7 @@
         path: "/",
         state: {
           focusComposerNonce: Date.now(),
+          ...(projectless ? { project: null } : {}),
         },
       });
       const existingThreadIds = nativeThreadIds();
@@ -1160,7 +1162,7 @@
         skillPath,
       });
       const composer = await waitForPreparedComposer(identifier, skillPath);
-      const selectedProjectId = await selectedNativeProjectId();
+      const selectedProjectId = projectless ? "" : await selectedNativeProjectId();
       pendingThreadAssociation = {
         taskId,
         identifier,
@@ -1617,6 +1619,7 @@
     previousThreadId,
     codexHostId,
     targetRoot,
+    projectless = !targetRoot,
     instruction,
     title,
   }) {
@@ -1625,6 +1628,7 @@
       previousThreadId,
       codexHostId,
       targetRoot,
+      projectless,
       instruction,
       title,
     }, TASK_CONVERSATION_REQUEST_TIMEOUT_MS);

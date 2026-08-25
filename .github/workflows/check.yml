@@ -121,11 +121,59 @@ jobs:
       - run: npm ci
       - name: Run the Windows Node.js test suite
         run: npm test
-      - run: npm run app:prepare -- --target x86_64-pc-windows-msvc
-      - name: Compile the Windows launcher without producing an unsigned installer
+      - name: Build the unsigned NSIS installer
+        run: npm run app:build:windows:unsigned
+      - name: Preserve the unsigned NSIS installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-x64-nsis-${{ github.sha }}
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+  linux-launcher:
+    name: Ubuntu 24.04 x64 launcher
+    needs: source
+    if: needs.source.outputs.run_checks == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - name: Install Ubuntu build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+      - run: npm ci
+      - name: Build the Ubuntu 24.04 x64 packages
+        run: npm run app:build:linux:x64
+      - name: Verify the Ubuntu 24.04 x64 package contents
         run: >-
-          npm run tauri -- build
-          --target x86_64-pc-windows-msvc
-          --no-bundle
-          --no-sign
-          --ci
+          node scripts/verify-linux-packages.mjs
+          src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+          src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+      - name: Preserve the Ubuntu 24.04 x64 packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-x64-deb-appimage-${{ github.sha }}
+          path: |
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+          if-no-files-found: error

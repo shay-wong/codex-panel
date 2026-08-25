@@ -30,7 +30,7 @@
     "resources": {
       "resources/": ""
     },
-    "icon": ["icons/icon.png", "icons/icon.icns"],
+    "icon": ["../web/public/codex-app-icon.png", "icons/icon.icns"],
     "macOS": {
       "minimumSystemVersion": "11.0",
       "hardenedRuntime": true,

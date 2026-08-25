@@ -3,11 +3,7 @@ import type { DragEvent } from "react";
 import type { ActorIdentity, Task, TaskDraft, TaskStatus } from "../types";
 import type { TaskCardPresentation, TaskConversationItem } from "../taskConversations";
 import { TaskCard } from "./TaskCard";
-import {
-  PanelIcon,
-  panelIconSource,
-  type PanelIconName,
-} from "./PanelIcon";
+import { PlusIcon, StatusIcon } from "./SemanticIcons";
 
 export const STATUS_DETAILS: Record<
   TaskStatus,
@@ -21,45 +17,6 @@ export const STATUS_DETAILS: Record<
   done: { label: "完成", tone: "done" },
   canceled: { label: "取消", tone: "canceled" },
 };
-
-const STATUS_ICONS: Record<TaskStatus, PanelIconName> = {
-  backlog: "statusTodo",
-  todo: "statusTodo",
-  in_progress: "statusProgress",
-  in_review: "statusReview",
-  blocked: "statusBlocked",
-  done: "statusReview",
-  canceled: "statusBlocked",
-};
-
-const COLUMN_STATUS_ICONS: Record<TaskStatus, PanelIconName> = {
-  backlog: "statusTodo",
-  todo: "columnStatusTodo",
-  in_progress: "columnStatusProgress",
-  in_review: "columnStatusReview",
-  blocked: "columnStatusBlocked",
-  done: "statusReview",
-  canceled: "statusBlocked",
-};
-
-const COLUMN_ADD_ICONS: Partial<Record<TaskStatus, PanelIconName>> = {
-  todo: "columnAddTodo",
-  in_progress: "columnAddProgress",
-  in_review: "columnAddReview",
-  blocked: "columnAddBlocked",
-};
-
-export function statusIconSource(status: TaskStatus) {
-  return panelIconSource(STATUS_ICONS[status]);
-}
-
-export function StatusIcon({ status }: { status: TaskStatus }) {
-  return <PanelIcon name={STATUS_ICONS[status]} />;
-}
-
-export function ColumnStatusIcon({ status }: { status: TaskStatus }) {
-  return <PanelIcon name={COLUMN_STATUS_ICONS[status]} />;
-}
 
 interface BoardColumnProps {
   scrollRef?: (element: HTMLElement | null) => void;
@@ -75,11 +32,12 @@ interface BoardColumnProps {
   settlingTaskId: string | null;
   contextMenuTaskId: string | null;
   availableLabels: string[];
+  projectNames?: Record<string, string>;
   currentUser: ActorIdentity;
   showCover: boolean;
   showBody: boolean;
-  createEnabled: boolean;
-  onCreateLabel: (label: string) => Promise<void>;
+  createEnabled?: boolean;
+  onCreateLabel: (label: string, projectId?: string) => Promise<void>;
   onCreate: (status: TaskStatus) => void;
   onEdit: (task: Task) => void;
   onUpdate: (task: Task, changes: Partial<TaskDraft>) => Promise<Task>;
@@ -106,6 +64,7 @@ export function BoardColumn({
   settlingTaskId,
   contextMenuTaskId,
   availableLabels,
+  projectNames,
   currentUser,
   showCover,
   showBody,
@@ -187,9 +146,11 @@ export function BoardColumn({
       <header className="column-header">
         <div className="column-heading">
           <span className={`column-status-icon status-icon-${details.tone}`}>
-            <ColumnStatusIcon status={status} />
+            <StatusIcon status={status} color="var(--column-status-color)" size={14} />
           </span>
-          <h2 id={`column-${status}`}>{details.label}</h2>
+          <h2 id={`column-${status}`}>
+            {details.label}{tasks.length > 0 ? ` ${tasks.length}` : ""}
+          </h2>
         </div>
         {createEnabled && (
           <div className="column-actions">
@@ -200,7 +161,7 @@ export function BoardColumn({
               aria-label={`在${details.label}中新建议题`}
               title={`添加到${details.label}`}
             >
-              <PanelIcon name={COLUMN_ADD_ICONS[status] ?? "columnAdd"} />
+              <PlusIcon color="var(--column-status-color)" size={12} />
             </button>
           </div>
         )}
@@ -221,10 +182,11 @@ export function BoardColumn({
               isSettling={settlingTaskId === task.id}
               isContextMenuOpen={contextMenuTaskId === task.id}
               availableLabels={availableLabels}
+              projectName={projectNames?.[task.projectId]}
               currentUser={currentUser}
               showCover={showCover}
               showBody={showBody}
-              onCreateLabel={onCreateLabel}
+              onCreateLabel={(label) => onCreateLabel(label, task.projectId)}
               onEdit={onEdit}
               onUpdate={onUpdate}
               onComplete={onComplete}

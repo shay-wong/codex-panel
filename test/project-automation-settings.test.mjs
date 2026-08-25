@@ -38,6 +38,8 @@ test("project automation reads and writes the persistent Panel policy", () => {
   assert.match(appSource, /LEGACY_PROJECT_AUTOMATIONS_KEY/);
   assert.match(appSource, /operation: "pause"/);
   assert.doesNotMatch(appSource, /operation: "apply-policy"/);
+  assert.match(menuSource, /AUTOMATION_MODELS\.map/);
+  assert.match(menuSource, /withAutomationModel\(draft, value as AutomationModel\)/);
 });
 
 test("automation is local to repository projects", () => {
@@ -48,6 +50,12 @@ test("automation is local to repository projects", () => {
 });
 
 test("the automation menu exposes execution policy and queue state", () => {
+  assert.match(menuSource, /status === "ACTIVE" \? "automationPause" : "automationPlay"/);
+  assert.doesNotMatch(menuSource, /statusStarted|statusTodo/);
+  assert.match(menuSource, /aria-busy=\{pending/);
+  assert.match(menuSource, /自动认领/);
+  assert.match(menuSource, /aria-label=\{status === "ACTIVE" \? "自动认领中" : "自动化"\}/);
+  assert.doesNotMatch(menuSource, /已开启自动认领|自动认领未开启/);
   assert.match(menuSource, /自动认领开关/);
   assert.match(menuSource, /暂停当前项目/);
   assert.match(menuSource, /draft\.paused/);
@@ -71,7 +79,8 @@ test("the automation menu exposes execution policy and queue state", () => {
 test("automation changes submit immediately and reconcile server state", () => {
   assert.match(menuSource, /const disabled = pending \|\| Boolean\(unavailableReason\)/);
   assert.match(menuSource, /setDraft\(next\);\s*onChange\(next\)/);
-  assert.match(menuSource, /submitChange\(withAutomationModel\(draft, value as AutomationModel\)\)/);
+  assert.match(menuSource, /withAutomationModel\(draft, value as AutomationModel\)/);
+  assert.match(menuSource, /getAutomationModel\(draft\.model\)\.efforts\.map/);
   assert.match(menuSource, /wasPendingRef\.current && !pending/);
   assert.doesNotMatch(menuSource, />保存</);
   assert.match(appSource, /onOpen=\{\(\) => void reconcileProjectAutomation\(\)\}/);
@@ -96,4 +105,56 @@ test("automation status uses the exported Panel play and pause icon assets", () 
   assert.match(iconSource, /const PANEL_ICONS = \{[\s\S]*?automationPause,[\s\S]*?automationPlay,/);
   assert.match(playIcon, /width="16" height="16" viewBox="0 0 16 16"/);
   assert.match(pauseIcon, /width="16" height="16" viewBox="0 0 16 16"/);
+});
+test("the automation menu reuses the board switches and keeps form focus chrome suppressed", () => {
+  assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.enabledByUser \? " is-on" : ""\}`\}/);
+  assert.match(menuSource, /role="switch"/);
+  assert.match(menuSource, /aria-checked=\{draft\.enabledByUser\}/);
+  assert.match(menuSource, /className=\{`board-setting-switch\$\{draft\.paused \? " is-on" : ""\}`\}/);
+  assert.match(menuSource, /aria-checked=\{draft\.paused\}/);
+  assert.doesNotMatch(menuSource, /type="checkbox"/);
+  assert.match(styles, /\.project-automation-picker-trigger:focus-visible\s*\{[^}]*box-shadow:\s*0 0 0 2px var\(--accent-soft\);/s);
+  assert.doesNotMatch(styles, /\.project-automation-switch input:focus-visible/);
+});
+
+test("unavailable automation state has one notice, clears stale errors, and cannot change", () => {
+  assert.match(menuSource, /error && error !== unavailableReason/);
+  assert.match(menuSource, /const disabled = pending \|\| Boolean\(unavailableReason\)/);
+  assert.equal(menuSource.match(/disabled=\{disabled\}/g)?.length, 7);
+  const reconcileSource = appSource.slice(
+    appSource.indexOf("const reconcileProjectAutomation"),
+    appSource.indexOf("const saveProjectAutomation"),
+  );
+  assert.match(
+    reconcileSource,
+    /if \(!selectedProjectId \|\| automationUnavailableReason\) \{\s*setSelectedProjectAutomation\(null\);\s*setAutomationError\(null\);\s*return;/,
+  );
+  assert.doesNotMatch(reconcileSource, /setAutomationError\(automationProjectContext\.unavailableReason/);
+});
+
+test("automation changes submit immediately with model-specific effort normalization", () => {
+  assert.match(menuSource, /onChange: \(options: AutomationOptions\) => void/);
+  assert.match(menuSource, /const disabled = pending \|\| Boolean\(unavailableReason\)/);
+  assert.match(menuSource, /const submitChange = \(next: AutomationOptions\) => \{[\s\S]*?setDraft\(next\);[\s\S]*?onChange\(next\);[\s\S]*?\}/);
+  assert.match(menuSource, /withAutomationModel\(draft, value as AutomationModel\)/);
+  assert.match(menuSource, /getAutomationModel\(draft\.model\)\.efforts\.map/);
+  assert.match(menuSource, /low: "轻度"/);
+  assert.match(menuSource, /xhigh: "极高 \(xhigh\)"/);
+  assert.match(menuSource, /max: "最高"/);
+  assert.match(menuSource, /ultra: "极高 \(ultra\)"/);
+  assert.doesNotMatch(menuSource, />取消</);
+  assert.doesNotMatch(menuSource, />保存</);
+  assert.doesNotMatch(menuSource, /project-automation-actions/);
+  assert.doesNotMatch(menuSource, /onSave/);
+  assert.doesNotMatch(styles, /\.project-automation-actions/);
+});
+
+test("pending completion reconciles the optimistic draft to confirmed host state", () => {
+  assert.match(menuSource, /const wasPendingRef = useRef\(pending\)/);
+  assert.match(
+    menuSource,
+    /if \(wasPendingRef\.current && !pending\) \{\s*setDraft\(toAutomationOptions\(automation\)\);\s*\}/,
+  );
+  assert.match(menuSource, /wasPendingRef\.current = pending/);
+  assert.match(menuSource, /disabled=\{disabled\}/);
 });

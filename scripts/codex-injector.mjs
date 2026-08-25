@@ -4,6 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { accessSync, constants } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -52,7 +53,9 @@ const panelEnvironment = (name) => (
 );
 const independentCodexProfilePath = panelEnvironment("CODEX_PROFILE")
   ? path.resolve(panelEnvironment("CODEX_PROFILE"))
-  : "/private/tmp/codex-panel-independent-profile-v2";
+  : process.platform === "linux"
+    ? path.join(os.tmpdir(), "codex-panel-independent-profile-v2")
+    : "/private/tmp/codex-panel-independent-profile-v2";
 const injectionPath = path.join(projectRoot, "inject", "codex-panel.user.js");
 const panelDataDirectory = panelEnvironment("DATA_DIR")
   ? path.resolve(panelEnvironment("DATA_DIR"))
@@ -106,7 +109,7 @@ const codexAutomationMethods = new Set([
 let codexAutomationRequestSequence = 0;
 let codexAppServerRequestSequence = 0;
 const taskConversationOperations = new Map();
-const taskConversationOperationTtlMs = 120_000;
+const taskConversationFailureTtlMs = 120_000;
 const quotaPolicyTimers = new Map();
 const quotaPolicyRecords = new Map();
 const quotaPolicyQueues = new Map();
@@ -137,7 +140,7 @@ function parseArgs(argv) {
     stopManaged: false,
     controlAction: null,
     screenshot: null,
-    appPath: "/Applications/ChatGPT.app",
+    appPath: process.platform === "linux" ? "/usr/bin/chatgpt" : "/Applications/ChatGPT.app",
     appExecutable: null,
   };
 
@@ -177,6 +180,8 @@ function parseArgs(argv) {
     else if (arg === "--app-executable") options.appExecutable = path.resolve(argv[++index]);
     else throw new Error(`Unknown option: ${arg}`);
   }
+
+  if (process.platform === "linux" && options.launch) options.cdpPipe = true;
 
   if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535) {
     throw new Error("--port must be an integer between 1 and 65535");
@@ -276,6 +281,12 @@ function codexIsRunning() {
 }
 
 export function codexExecutablePath(appPath) {
+  if (process.platform === "linux") {
+    return validatedCodexExecutablePath(
+      appPath === "/usr/bin/chatgpt" ? "/usr/lib/chatgpt/ChatGPT" : appPath,
+    );
+  }
+  if (process.platform !== "darwin") return validatedCodexExecutablePath(appPath);
   const plistPath = path.join(appPath, "Contents", "Info.plist");
   const plistResult = spawnSync("/usr/bin/plutil", [
     "-extract", "CFBundleExecutable", "raw", "-o", "-", plistPath,
@@ -836,7 +847,12 @@ async function loadPanelFrameViaCdp(cdp, frameName, frameCapability) {
 
 async function openWithDefaultApplication(target) {
   await new Promise((resolve, reject) => {
-    const child = spawn(process.platform === "win32" ? "explorer.exe" : "/usr/bin/open", [target], {
+    const executable = process.platform === "win32"
+      ? "explorer.exe"
+      : process.platform === "linux"
+        ? "xdg-open"
+        : "/usr/bin/open";
+    const child = spawn(executable, [target], {
       detached: true,
       env: withoutPanelLauncherEnvironment(process.env),
       stdio: "ignore",
@@ -1382,7 +1398,14 @@ async function confirmTaskConversationViaCdp(cdp, executionContextId, request) {
 }
 
 async function startTaskConversationViaCdp(cdp, executionContextId, request) {
-  const { codexHostId, instruction, previousThreadId, targetRoot, title } = request;
+  const {
+    codexHostId,
+    instruction,
+    previousThreadId,
+    projectless,
+    targetRoot,
+    title,
+  } = request;
   const normalizedTargetRoot = normalizeWorkspaceRoot(targetRoot);
   const deadline = Date.now() + 8_000;
   let submitted = false;
@@ -1403,7 +1426,7 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
           !root
           || conversationId
           || !editor
-          || (editor.textContent || "") !== ${JSON.stringify(instruction)}
+          || (editor.innerText || "") !== ${JSON.stringify(instruction)}
         ) return false;
         editor.focus();
         return true;
@@ -1467,7 +1490,10 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
           );
           if (
             result?.thread?.id === threadId
-            && normalizeWorkspaceRoot(result.thread.cwd) === normalizedTargetRoot
+            && (
+              projectless
+              || normalizeWorkspaceRoot(result.thread.cwd) === normalizedTargetRoot
+            )
           ) {
             ready = true;
             break;
@@ -1475,7 +1501,11 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
         } catch {}
         await new Promise((resolve) => setTimeout(resolve, 80));
       }
-      if (!ready) throw new Error("Codex did not confirm the task conversation workspace root");
+      if (!ready) {
+        throw new Error(projectless
+          ? "Codex did not confirm the projectless task conversation"
+          : "Codex did not confirm the task conversation workspace root");
+      }
 
       try {
         await requestCodexAppServerViaCdp(
@@ -1536,15 +1566,26 @@ function getOrStartTaskConversation(cdp, executionContextId, request) {
     promise: Promise.resolve().then(() => startTaskConversationViaCdp(cdp, executionContextId, request)),
   };
   taskConversationOperations.set(request.taskId, operation);
-  const retainSettledOperation = () => {
+  const clearSettledOperation = () => {
+    if (taskConversationOperations.get(request.taskId) === operation) {
+      taskConversationOperations.delete(request.taskId);
+    }
+  };
+  const retainCreatedOrUncertainFailure = (error) => {
+    if (!(
+      error
+      && typeof error === "object"
+      && (typeof error.threadId === "string" || error.uncertain === true)
+    )) {
+      clearSettledOperation();
+      return;
+    }
     const timer = setTimeout(() => {
-      if (taskConversationOperations.get(request.taskId) === operation) {
-        taskConversationOperations.delete(request.taskId);
-      }
-    }, taskConversationOperationTtlMs);
+      clearSettledOperation();
+    }, taskConversationFailureTtlMs);
     timer.unref?.();
   };
-  void operation.promise.then(retainSettledOperation, retainSettledOperation);
+  void operation.promise.then(clearSettledOperation, retainCreatedOrUncertainFailure);
   return operation.promise;
 }
 
@@ -1991,9 +2032,16 @@ async function injectTarget(
         await hostBridge.publishHeartbeat();
       });
       await hostBridge.publishHeartbeat();
+      if (shouldOpen && !reconciled.shouldRemainOpen) {
+        await cdp.send("Runtime.evaluate", {
+          expression: "window.__codexPanelInjection__?.open()",
+          returnByValue: true,
+        });
+      }
+      const shouldRemainOpen = shouldOpen || reconciled.shouldRemainOpen;
       const status = await waitForInjectionStatus(
         cdp,
-        reconciled.shouldRemainOpen,
+        shouldRemainOpen,
         sourceHash,
         15_000,
       );
@@ -2239,7 +2287,9 @@ async function main() {
   let cdpRuntime = null;
   let controlServer = null;
   let openControl = null;
+  let openSignalHandler = null;
   const injectedTargets = new Map();
+  let idleAfterNormalExit = false;
   let openRequestGeneration = options.open ? 1 : 0;
   let openedRequestGeneration = 0;
   let openRequestInFlight = null;
@@ -2370,6 +2420,14 @@ async function main() {
           requestStop();
         }
       });
+      console.log(JSON.stringify({ openPanelSignalReady: true }));
+    } else if (options.watch && process.platform === "linux") {
+      openSignalHandler = () => {
+        openRequestGeneration += 1;
+        console.log(JSON.stringify({ openPanelSignalQueued: true }));
+        void requestPanelOpen();
+      };
+      process.on("SIGUSR2", openSignalHandler);
       console.log(JSON.stringify({ openPanelSignalReady: true }));
     }
     if (panelRuntimeFile && options.startupToken) {
@@ -2505,8 +2563,6 @@ async function main() {
       console.log(JSON.stringify({ panelManagedReady: true }));
       await publishManagedStatus();
     }
-    let idleAfterNormalExit = false;
-
     if (!options.watch) {
       codexProcess?.unref();
       return;
@@ -2651,6 +2707,7 @@ async function main() {
       process.removeListener("SIGINT", requestStop);
       process.removeListener("SIGTERM", requestStop);
       openControl?.close();
+      if (openSignalHandler) process.removeListener("SIGUSR2", openSignalHandler);
       await cleanup();
     }
   }

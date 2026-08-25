@@ -14,6 +14,7 @@ export type TaskPriority = (typeof TASK_PRIORITIES)[number];
 export type ActorType = "user" | "agent";
 export type AssigneeTarget = "current-user" | "codex-agent";
 export type IssueRelationType = "parent" | "blocks" | "blocked_by" | "related";
+export type IssueRelationOrigin = "manual" | "mention";
 
 export type ClaimState =
   | "queued"
@@ -89,10 +90,9 @@ export interface PanelMetadata {
   managePanelSkillPath?: string;
   capabilities?: PanelCapabilities;
   mode?: "local" | "cloud";
-  realtime?: {
-    transport: "poll";
-    intervalMs: number;
-  };
+  realtime?:
+    | { transport: "poll"; intervalMs: number }
+    | { transport: "websocket"; endpoint: string };
   localCapabilities?: {
     available: boolean;
   };
@@ -368,37 +368,6 @@ export interface AiChatThreadSnapshot {
   runs: AiChatRun[];
 }
 
-export interface WorkflowCapabilityOption {
-  id: string;
-  label: string;
-  description: string;
-  path: string;
-  scope: "user" | "repo" | "system" | "admin";
-}
-
-export interface WorkflowMcpServerOption {
-  id: string;
-  label: string;
-  transport: string;
-}
-
-export interface WorkflowCapabilities {
-  skills: WorkflowCapabilityOption[];
-  mcpServers: WorkflowMcpServerOption[];
-}
-
-export interface WorkflowOption {
-  id: string;
-  name: string;
-}
-
-export interface WorkflowWorkspaceRecord<T = unknown> {
-  projectId: string;
-  workspace: T | null;
-  version: number;
-  updatedAt: string | null;
-}
-
 export interface CodexProjectIdentity {
   codexProjectId: string;
   codexProjectKind: "local" | "remote";
@@ -427,6 +396,24 @@ export interface ProjectSummary {
   updatedAt: string | null;
   refreshing: boolean;
   error: string | null;
+}
+
+export interface ProjectReadme {
+  projectId: string;
+  content: string;
+  version: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface ProjectReadmeAttachment {
+  id: string;
+  projectId: string;
+  kind: "inline";
+  filename: string;
+  contentType: string;
+  size: number;
+  createdAt: string;
 }
 
 export interface TaskRelationSummary {
@@ -487,7 +474,6 @@ export interface Task {
   creatorName: string;
   creatorAvatarUrl: string | null;
   assignee: ActorIdentity;
-  workflowId: string | null;
   developmentContext: DevelopmentContext | null;
   startDate: string | null;
   dueDate: string | null;

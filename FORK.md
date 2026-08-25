@@ -24,25 +24,25 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`c1ec1b8fa4ecef5372a50f2e3387cb141faef52a`
-- 精确已合并上游基线：`c1ec1b8fa4ecef5372a50f2e3387cb141faef52a`
-- 比较范围：`c1ec1b8fa4ecef5372a50f2e3387cb141faef52a..HEAD`
+- 本次合并的上游父提交：`66c19fb2d33e1d7eec346499419a6a9979d2c0f1`
+- 精确已合并上游基线：`66c19fb2d33e1d7eec346499419a6a9979d2c0f1`
+- 比较范围：`66c19fb2d33e1d7eec346499419a6a9979d2c0f1..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
-本次上游合并将基线更新到 `1.1.2`，继续吸收富文本粘贴时保留剪贴板 metadata，以及移除思考步骤 hover 背景。Fork 原有的 Jira CLI、多 provider 与 Scheduled Task 方案已由上游 Jira 模型替代，不再属于活跃 Fork 能力。桌面端继续采用上游 Tauri/Rust 基础并迁入 Fork 现有能力，产品名仍为 `Codex Panel`；自动 updater 安装、上游发布工作流和 `taskctl` 命名未纳入 Fork 产品入口。
+本次上游合并将基线更新到 `1.1.6`，吸收项目 README、全项目视图、Codex 接管与 Linux 桌面打包、编辑器和显示设置改进，以及等价的 Issue 跨项目移动。Fork 原有的 Jira CLI、多 provider 与 Scheduled Task 方案已由上游 Jira 模型替代，不再属于活跃 Fork 能力。桌面端继续采用上游 Tauri/Rust 基础并迁入 Fork 现有能力，产品名仍为 `Codex Panel`；自动 updater 安装、上游发布工作流和 `taskctl` 命名未纳入 Fork 产品入口。
 
 ## Fork 发布版本策略
 
 - 权威上游版本来源：精确合并基线中的 `package.json`
 - 当前 Fork 版本来源：`package.json` 和 `package-lock.json` 的根包条目
-- 精确基线的上游版本：`1.1.2`
+- 精确基线的上游版本：`1.1.6`
 - 当前 Fork 版本：`0.1.0`
 - 匹配的 Fork 标签或 GitHub Release：无
 
 每个 Fork 发布版本都必须使用 `<upstream-version>-fork.<N>`。上游版本变化时从 `fork.1` 开始；同一上游版本的后续 Fork 发布递增 `N`。已准备但尚未发布的版本号在未被占用时可以保留。
 
-当前 Fork 版本 `0.1.0` 与精确上游基线版本不一致，也不符合 Fork 发布格式。下一个规范化 Fork 发布版本是 `1.1.2-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
+当前 Fork 版本 `0.1.0` 与精确上游基线版本不一致，也不符合 Fork 发布格式。下一个规范化 Fork 发布版本是 `1.1.6-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
 
 ## 活跃 Fork 能力
 
@@ -63,7 +63,7 @@
 - 生命周期：`等待上游吸收`
 - 原始目的：让横向列表具备与议题看板一致的分栏和卡片信息层级，并避免 Jira 内部长标识挤压标题与元信息。
 - 行为不变量：横向列表复用议题看板的状态色、流程箭头、列间距、列内滚动和卡片层级；Jira Issue 有外部 Key 时优先显示外部 Key，标题单独成行，元信息在卡片内换行。所有结构性样式必须限定在横向布局，竖向列表继续使用紧凑行。
-- 代码和测试路径：`web/src/components/IssueListView.tsx`、`web/src/styles.css` 和 `test/board-views.test.mjs`。
+- 代码和测试路径：`web/src/components/IssueListView.tsx`、`web/src/styles.css` 和 `test/board-interactions.test.mjs`。
 - 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
 - 来源：`78d2000be19d1f5212bdab3a40fa85e7de78ea00` 及本次扩展；提交后可用 `git log -S'displayIdentifier' -- web/src/components/IssueListView.tsx` 定位本次变更。
 - 合并指引：上游修改列表或看板样式时，保留横向列表与议题看板的视觉语义一致性、Jira 外部 Key 优先展示和竖向紧凑布局；避免用整文件覆盖破坏任一布局。
@@ -144,18 +144,6 @@
 - 移除条件：上游提供等价或更严格的显式来源授权模型，并覆盖宿主上下文与每项原生消息能力后同步移除。
 - 针对性验证：运行 `node --test test/inject.test.mjs`；分别使用默认受管来源和不同来源的 `window.__CODEX_PANEL_URL__`，确认前者可以接收宿主上下文并操作原生能力，后者只能收到主题和拖拽区域消息。
 
-### Issue 详情页项目切换
-
-- 生命周期：`等待上游吸收`
-- 原始目的：让导入到“全局”的待分配 Issue 以及普通 Issue 可以直接在详情页移动到正确项目，无需切换到 CLI。
-- 行为不变量：详情属性栏必须显示当前项目并复用现有项目移动 API；成功后打开目标项目并保持同一 Issue 详情和原生关联对话。有关联、绑定源项目的本地 AI 对话或 branch/worktree 开发上下文时，移动必须在写入前拒绝并显示可执行错误；状态、描述、标签、日期和其他属性不得改变。
-- 代码和测试路径：`web/src/App.tsx`、`web/src/components/TaskDetail.tsx`、`web/src/components/TaskPropertyPicker.tsx`、`server/database.mjs` 和 `test/task-project-move.test.mjs`。本次按仓库直接路径确认规则未新增 UI 自动化测试。
-- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
-- 来源：当前项目重分配能力；提交后可用 `git log -S'propertyMenu === "project"' -- web/src/components/TaskDetail.tsx` 定位。
-- 合并指引：上游调整详情属性栏或项目导航时，继续复用服务器项目移动完整性规则，保留“成功后目标项目继续打开同一 Issue、对话不变、开发上下文先清理”的完整路径，不得只改变前端当前项目标签。
-- 移除条件：上游提供等价的详情页项目切换、错误展示和上下文保持行为后同步移除。
-- 针对性验证：运行 `node --test test/task-project-move.test.mjs`、`npm run typecheck` 和 `npm run build:web`；在详情页移动无阻塞 Issue，确认 URL、顶部项目和属性栏都指向目标项目且对话入口仍存在；再对带开发上下文的 Issue 操作，确认错误要求先清理上下文且项目未变。
-
 ### Jira Bearer Token 认证
 
 - 生命周期：`等待上游吸收`
@@ -235,5 +223,5 @@
 - 仅存在于上游的轻量标签 `pre-cloud-collaboration-2026-07-24` 不是 Fork 发布版本。
 - 不含有意 Fork 解决结果的纯上游合并、生成产物噪声、被忽略的本地状态，以及最终效果已被回退的行为都不属于 Fork 能力。
 - 尚未合并的上游独有工作属于待合并输入，不属于 Fork 能力。
-- 截至上游 `1.1.2`，Tauri/Rust 桌面基础、新版 AI Composer、Agent/Skill/命令补全、可搜索 Issue 关系选择器和富文本剪贴板 metadata 保留已经进入 Fork；自动 updater 安装、上游发布工作流、`taskctl` 主命名和与 Fork 发布策略冲突的打包入口仍明确排除。
-- 上游 `1.1.2` 的单连接 Jira REST 基础同步、直接回写及主题化 Issue 属性菜单已经等价吸收；Fork 仅继续维护本文记录的可靠同步、Bearer 认证和跨仓库关联扩展。
+- 截至上游 `1.1.6`，Tauri/Rust 桌面基础、新版 AI Composer、Agent/Skill/命令补全、可搜索 Issue 关系选择器、富文本剪贴板、项目 README、全项目视图、Linux 桌面打包和 Issue 跨项目移动已经进入 Fork；自动 updater 安装、上游发布工作流、`taskctl` 主命名和与 Fork 发布策略冲突的打包入口仍明确排除。
+- 上游 `1.1.6` 的单连接 Jira REST 基础同步、直接回写、主题化 Issue 属性菜单和 Issue 跨项目移动已经等价吸收；Fork 仅继续维护本文记录的可靠同步、Bearer 认证和跨仓库关联扩展。

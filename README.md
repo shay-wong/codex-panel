@@ -131,6 +131,53 @@ After CDP becomes reachable, the launcher waits up to 30 seconds for Codex to cr
 
 Codex ships a renderer CSP that blocks arbitrary HTTP iframes. CDP CSP bypass does not retroactively change the already-loaded document, so the launcher enables it and performs the controlled post-bootstrap reload above before opening Panel. Chromium 151 also applies Local Network Access checks to loopback subframe navigation, so the launcher disables only `LocalNetworkAccessForSubframeNavigations` and the managed iframe explicitly delegates the corresponding local-network permissions. Other Local Network Access checks remain enabled. Taking over or refreshing an existing resident renderer uses the same one-reload rule. CDP is unauthenticated to other processes on the same machine. Because closing Panel intentionally leaves a manager-launched ChatGPT running, run only trusted local code for the full lifetime of that CDP-enabled ChatGPT instance.
 
+### Linux App: Ubuntu 24.04 x64 packages
+
+The first Linux desktop release supports Ubuntu 24.04 LTS on x64 only. Install the official ChatGPT desktop `.deb` first and confirm that `chatgpt` opens it. Then download either the Codex Panel `.deb` or `.AppImage` from the Fork's [GitHub Releases](https://github.com/shay-wong/codex-panel/releases/latest). Replace `<file>` below with the downloaded filename.
+
+Install the `.deb` package:
+
+```bash
+sudo apt install ./<file>.deb
+```
+
+Or run the AppImage:
+
+```bash
+chmod +x ./<file>.AppImage
+./<file>.AppImage
+```
+
+To build both packages on Ubuntu 24.04 x64, run:
+
+```bash
+npm ci
+npm run app:build:linux:x64
+```
+
+This first release does not support ARM64, Fedora, RPM packages, or other Linux distributions.
+
+### Windows code signing
+
+Official Windows releases require `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` and produce an Authenticode-signed NSIS installer. A release build without the configured certificate fails instead of publishing an unsigned installer. See the [Privacy policy](PRIVACY.md) and [Windows uninstall instructions](docs/windows-uninstall.md).
+
+The local build uses ad-hoc code signing for direct verification. A public macOS download still needs Developer ID signing and Apple notarization.
+
+### Windows App: tray launcher and bundled Panel
+
+Install the official Codex App from the Microsoft Store. To build the current-user NSIS installer on Windows x64, run:
+
+```powershell
+npm ci
+npm run app:build:windows
+```
+
+The installer is written to `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`. It installs a tray launcher, bundled Node runtime, local service, built web UI, `manage-panel` Skill, `panelctl.cmd`, and injection script. Panel data is stored in `%APPDATA%\Codex Panel`; logs are stored in `%LOCALAPPDATA%\Codex Panel\Logs`; the Skill is copied to `%USERPROFILE%\.agents\skills\manage-panel`.
+
+Windows builds do not auto-update. Official installers must pass the Authenticode and packaged-runtime verification described above. See [Windows uninstall](docs/windows-uninstall.md) for retained-data behavior.
+
+Codex 26.715.52143 ships a renderer CSP that blocks arbitrary HTTP iframes. The launcher therefore enables CDP CSP bypass, reloads that renderer once, installs the document-start script, and waits until the Panel OOPIF is actually loaded. CDP is unauthenticated to other processes on the same machine, so only run trusted local code while the launcher is active.
+
 To inject into a Codex instance that was already launched with CDP by another method, run:
 
 ```bash
@@ -161,6 +208,7 @@ To use a different UI origin, set `window.__CODEX_PANEL_URL__` before the user s
 | `CODEX_PANEL_DATA_DIR` | `$CODEX_PANEL_HOME/data` | SQLite data directory |
 | `CODEX_PANEL_URL` | `http://127.0.0.1:47823` | CLI API origin |
 | `CODEX_PANEL_CODESIGN_IDENTITY` | Matching local Apple Development identity, otherwise `-` | Explicit identity or certificate hash for signing `Codex Panel.app` |
+| `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` | none | Required Authenticode certificate thumbprint for official Windows builds |
 
 `npm start` prints both the local URL and the available LAN URLs. Teammates on the same trusted network can open one of those LAN URLs and use the same panel service. Task, comment, and attachment changes are broadcast to every open client through server-sent events; reconnecting clients perform a full refresh so changes made while disconnected are not missed. A teammate using `panelctl` can point it at the shared service with `CODEX_PANEL_URL=http://<host-ip>:47823`.
 
@@ -176,7 +224,7 @@ Each device keeps its own project checkout mapping and continues to use a local 
 
 See [Cloud collaboration](docs/cloud-collaboration.md) for owner deployment, existing GitHub installation setup, password rotation, local path mapping, and the one-time local-data migration flow.
 
-## Task Markdown
+## Issue Markdown
 
 Issue descriptions and comments support GFM, including tables and task lists. Fenced `mermaid` blocks render as read-only diagrams after loading; their source remains visible if rendering fails. Markdown HTML comments are hidden, and raw HTML is disabled.
 

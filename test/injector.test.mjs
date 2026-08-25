@@ -131,6 +131,7 @@ test("attach reconciles the renderer against a hashed current injection source",
   assert.match(source, /createHash\("sha256"\)/);
   assert.match(source, /__CODEX_PANEL_SOURCE_HASH__/);
   assert.match(source, /sourceHash: window\.__codexPanelInjection__\?\.sourceHash \|\| null/);
+  assert.doesNotMatch(source, /window\.__codexTaskboardInjection__/);
   assert.match(source, /const injectionScriptIdentifierName = "__CODEX_PANEL_SCRIPT_IDENTIFIER__"/);
   assert.match(source, /scriptIdentifier: window\[\$\{JSON\.stringify\(injectionScriptIdentifierName\)\}\] \|\| null/);
   assert.match(source, /Page\.removeScriptToEvaluateOnNewDocument/);

@@ -7,23 +7,15 @@ import {
   type RefObject,
 } from "react";
 import { assigneeTargetForActor } from "../actors";
+import { taskPriorityLabel, taskStatusLabel, useTaskboardI18n } from "../i18n";
 import { labelPresentation } from "../labels";
 import type { TaskCardPresentation } from "../taskConversations";
-import { TASK_PRIORITIES, TASK_STATUSES, type ActorIdentity, type Task, type TaskDraft, type TaskPriority, type TaskStatus } from "../types";
+import { TASK_PRIORITIES, TASK_STATUSES, type ActorIdentity, type Task, type TaskDraft, type TaskStatus } from "../types";
 import { ActorAvatar } from "./ActorAvatar";
-import { STATUS_DETAILS, StatusIcon } from "./BoardColumn";
-import { LinearIcon, LinearPriorityIcon } from "./LinearIcon";
+import { LinearIcon } from "./LinearIcon";
+import { DueDateIcon, PriorityIcon, StatusIcon } from "./SemanticIcons";
 import { TaskConversationMenu } from "./TaskConversationMenu";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
-import { PanelIcon } from "./PanelIcon";
-
-const PRIORITY_LABELS: Record<TaskPriority, string> = {
-  none: "无优先级",
-  urgent: "紧急",
-  high: "高",
-  medium: "中",
-  low: "低",
-};
 
 type ListCollapseMode = "always-expanded" | "remember" | "always-collapsed";
 
@@ -51,12 +43,12 @@ interface IssueListViewProps {
   onDrop: (status: TaskStatus, taskId: string, beforeTaskId: string | null) => void;
 }
 
-function createdDate(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(value));
+function createdDate(value: string, locale: string) {
+  return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(new Date(value));
 }
 
-function calendarDate(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" })
+function calendarDate(value: string, locale: string) {
+  return new Intl.DateTimeFormat(locale, { month: "numeric", day: "numeric" })
     .format(new Date(`${value}T12:00:00`));
 }
 
@@ -83,6 +75,7 @@ export function IssueListView({
   onDragEnter,
   onDrop,
 }: IssueListViewProps) {
+  const { language, locale, text } = useTaskboardI18n();
   const [priorityMenuTaskId, setPriorityMenuTaskId] = useState<string | null>(null);
   const [collapseMenuStatus, setCollapseMenuStatus] = useState<TaskStatus | null>(null);
   const [dropPosition, setDropPosition] = useState<{
@@ -137,6 +130,7 @@ export function IssueListView({
           const statusTasks = tasks.filter((task) => task.status === status);
           const isCollapsed = collapsedStatuses.has(status);
           const isDropTarget = dropTarget === status;
+          const statusLabel = taskStatusLabel(language, status);
           const dropBeforeTaskId = dropPosition?.status === status
             ? dropPosition.beforeTaskId
             : undefined;
@@ -169,8 +163,8 @@ export function IssueListView({
                   aria-expanded={!isCollapsed}
                 >
                   <LinearIcon name={isCollapsed ? "chevronRight" : "chevronDown"} />
-                  <span className="issue-list-status-icon"><StatusIcon status={status} /></span>
-                  <strong>{STATUS_DETAILS[status].label}</strong>
+                  <span className="issue-list-status-icon"><StatusIcon status={status} color="currentColor" size={14} /></span>
+                  <strong>{statusLabel}</strong>
                   <span>{statusTasks.length}</span>
                 </button>
                 <div
@@ -180,10 +174,10 @@ export function IssueListView({
                   <button
                     className="issue-list-collapse-menu-trigger"
                     type="button"
-                    aria-label={`${STATUS_DETAILS[status].label}折叠方式`}
+                  aria-label={text(`${statusLabel}折叠方式`, `${statusLabel} collapse behavior`)}
                     aria-haspopup="menu"
                     aria-expanded={collapseMenuStatus === status}
-                    title={`${STATUS_DETAILS[status].label}折叠方式`}
+                  title={text(`${statusLabel}折叠方式`, `${statusLabel} collapse behavior`)}
                     onClick={() => setCollapseMenuStatus((current) => current === status ? null : status)}
                   >
                     <LinearIcon name="displayOptions" />
@@ -192,7 +186,7 @@ export function IssueListView({
                     <div
                       className="issue-list-collapse-menu"
                       role="menu"
-                      aria-label={`${STATUS_DETAILS[status].label}折叠方式`}
+                      aria-label={text(`${statusLabel}折叠方式`, `${statusLabel} collapse behavior`)}
                     >
                       {([
                         ["always-expanded", "总是展开"],
@@ -261,8 +255,8 @@ export function IssueListView({
                               value={task.priority}
                               options={TASK_PRIORITIES.map((priority) => ({
                                 value: priority,
-                                label: PRIORITY_LABELS[priority],
-                                icon: <LinearPriorityIcon priority={priority} />,
+                                label: taskPriorityLabel(language, priority),
+                                icon: <PriorityIcon priority={priority} size={14} />,
                                 className: `priority-${priority}`,
                               }))}
                               open={priorityMenuTaskId === task.id}
@@ -275,7 +269,7 @@ export function IssueListView({
                           </span>
                           <span className="issue-list-labels">
                             {task.labels.slice(0, 2).map((label) => {
-                              const presentation = labelPresentation(label);
+                              const presentation = labelPresentation(label, language);
                               return (
                                 <i className={presentation.tone ? `tone-${presentation.tone}` : ""} key={label}>
                                   {presentation.tone && <span aria-hidden="true" />}
@@ -287,8 +281,8 @@ export function IssueListView({
                           </span>
                           {task.dueDate && (
                             <label className="issue-list-date" onClick={stopRow}>
-                              <PanelIcon name="calendar" />
-                              <span>{calendarDate(task.dueDate)}</span>
+                              <DueDateIcon color="currentColor" size={12} />
+                              <span>{calendarDate(task.dueDate, locale)}</span>
                               <input
                                 type="date"
                                 aria-label={`${displayIdentifier} 截止日期`}
@@ -309,6 +303,7 @@ export function IssueListView({
                             <select
                               aria-label={`${displayIdentifier} 负责人`}
                               value={assigneeTarget}
+                              disabled={task.source === "jira"}
                               onChange={(event) => void onUpdate(task, { assigneeTarget: event.target.value as "current-user" | "codex-agent" }).catch(() => {})}
                             >
                               <option value="current-user">{currentUser.name}</option>
@@ -317,12 +312,16 @@ export function IssueListView({
                           </label>
                         </span>
                         <time dateTime={task.createdAt} title={`创建于 ${new Date(task.createdAt).toLocaleString("zh-CN")}`}>
-                          {createdDate(task.createdAt)}
+                          {createdDate(task.createdAt, locale)}
                         </time>
                       </div>
                     );
                   }) : (
-                    <div className="issue-list-empty">{hasActiveFilters ? "当前筛选下没有匹配议题" : `没有${STATUS_DETAILS[status].label}议题`}</div>
+                    <div className="issue-list-empty">
+                      {hasActiveFilters
+                        ? text("当前筛选下没有匹配议题", "No issues match the current filters")
+                        : text(`没有${statusLabel}议题`, `No ${statusLabel.toLowerCase()} issues`)}
+                    </div>
                   )}
                 </div>
               )}

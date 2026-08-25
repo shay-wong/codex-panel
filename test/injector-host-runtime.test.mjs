@@ -213,6 +213,7 @@ test("SSH conversation confirmation, start, and attachment open require bounded 
     previousThreadId: "",
     codexHostId: "ssh-host",
     targetRoot: "/srv/project",
+    projectless: false,
     instruction: "Continue REMOTE-1",
     title: "REMOTE-1: Fix bridge",
   };

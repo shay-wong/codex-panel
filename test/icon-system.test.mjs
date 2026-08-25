@@ -4,11 +4,15 @@ import { test } from "node:test";
 
 const componentsUrl = new URL("../web/src/components/", import.meta.url);
 const componentFiles = (await readdir(componentsUrl))
-  .filter((name) => name.endsWith(".tsx") && name !== "LinearIcon.tsx")
+  .filter((name) => name.endsWith(".tsx") && !["LinearIcon.tsx", "SemanticIcons.tsx"].includes(name))
   .map((name) => new URL(name, componentsUrl));
 const productFiles = [new URL("../web/src/App.tsx", import.meta.url), ...componentFiles];
 const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 const iconSource = await readFile(new URL("../web/src/components/LinearIcon.tsx", import.meta.url), "utf8");
+const semanticIconSource = await readFile(
+  new URL("../web/src/components/SemanticIcons.tsx", import.meta.url),
+  "utf8",
+);
 const panelIconSource = await readFile(
   new URL("../web/src/components/PanelIcon.tsx", import.meta.url),
   "utf8",
@@ -40,11 +44,13 @@ test("legacy CSS-drawn status and priority icons stay removed", () => {
   );
 });
 
-test("new workflow statuses use the central Linear icon mapping and semantic colors", () => {
-  assert.match(iconSource, /in_review: "statusStarted"/);
-  assert.match(iconSource, /blocked: "alert"/);
-  assert.match(iconSource, /canceled: "statusCanceled"/);
-  assert.match(iconSource, /statusCanceled: \{[\s\S]*?M8 15A7 7 0 1 0 8 1/);
+test("new workflow statuses use the central semantic icon mapping and colors", () => {
+  assert.match(semanticIconSource, /in_review: statusReviewSource/);
+  assert.match(semanticIconSource, /blocked: statusBlockedSource/);
+  assert.match(semanticIconSource, /canceled: statusCanceledSource/);
+  assert.match(semanticIconSource, /in_review: "var\(--status-review\)"/);
+  assert.match(semanticIconSource, /blocked: "var\(--status-blocked\)"/);
+  assert.match(semanticIconSource, /canceled: "var\(--status-canceled\)"/);
   assert.match(styles, /--status-review: #43bc58/);
   assert.match(styles, /--status-blocked: #f34e52/);
   assert.match(styles, /--status-canceled: #9e9ea1/);

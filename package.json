@@ -20,7 +20,9 @@
     "app:dev": "npm run app:prepare && tauri dev",
     "app:build": "npm run app:prepare -- --target universal-apple-darwin && CI=true tauri build --target universal-apple-darwin --bundles app,dmg --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'",
     "app:build:local": "npm run app:prepare -- --target aarch64-apple-darwin && CI=true tauri build --target aarch64-apple-darwin --bundles app --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'",
+    "app:build:linux:x64": "npm run app:prepare -- --target x86_64-unknown-linux-gnu && tauri build --target x86_64-unknown-linux-gnu --bundles deb,appimage --ci --config src-tauri/tauri.linux.conf.json",
     "app:build:windows": "node scripts/build-windows-app.mjs",
+    "app:build:windows:unsigned": "npm run app:prepare -- --target x86_64-pc-windows-msvc && tauri build --target x86_64-pc-windows-msvc --bundles nsis --no-sign --ci --config src-tauri/tauri.windows.conf.json",
     "app:preflight": "node scripts/preflight-macos-app.mjs",
     "app:verify-packaged-panelctl": "node scripts/verify-packaged-taskctl.mjs",
     "tauri": "tauri",
@@ -44,8 +46,6 @@
     "check": "npm run typecheck && npm run build && npm test"
   },
   "dependencies": {
-    "@lobehub/icons-static-svg": "^1.94.0",
-    "@xyflow/react": "^12.11.2",
     "dhtmlx-gantt": "^10.0.0",
     "dompurify": "^3.4.13",
     "js-yaml": "4.1.1",
@@ -59,7 +59,8 @@
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "smol-toml": "^1.8.0",
-    "unified": "^11.0.5"
+    "unified": "^11.0.5",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",

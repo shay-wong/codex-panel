@@ -29,11 +29,16 @@ const windowsTarget = "x86_64-pc-windows-msvc";
 const windowsNodeArchiveName = `node-v${nodeVersion}-win-x64.zip`;
 const windowsNodeArchiveSha256 =
   "1177b4137ba5adaa56354ae40f1080c7450e8ae09cecb47da459d1c52ac99f97";
+const linuxTarget = "x86_64-unknown-linux-gnu";
+const linuxNodeArchiveName = `node-v${nodeVersion}-linux-x64.tar.gz`;
+const linuxNodeArchiveSha256 =
+  "b294a556e639d64338823920e5866c21c02741742d2e1529ee1a225c1ec9252a";
 const supportedTargets = new Set([
   "aarch64-apple-darwin",
   "x86_64-apple-darwin",
   "universal-apple-darwin",
   windowsTarget,
+  linuxTarget,
 ]);
 const scriptPath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -48,12 +53,19 @@ const target = parseTarget(process.argv.slice(2));
 if (target === windowsTarget && process.platform !== "win32") {
   throw new Error("Codex Panel for Windows must be prepared on Windows");
 }
-if (target !== windowsTarget && process.platform !== "darwin") {
+if (target === linuxTarget && process.platform !== "linux") {
+  throw new Error("Codex Panel for Linux must be prepared on Linux");
+}
+if (target !== windowsTarget && target !== linuxTarget && process.platform !== "darwin") {
   throw new Error("Codex Panel for macOS must be prepared on macOS");
 }
 
 function parseTarget(argv) {
-  let selected = process.platform === "win32" ? windowsTarget : "universal-apple-darwin";
+  let selected = process.platform === "win32"
+    ? windowsTarget
+    : process.platform === "linux"
+      ? linuxTarget
+      : "universal-apple-darwin";
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--target") selected = argv[++index];
@@ -118,9 +130,15 @@ async function writeRuntimeIntegrityManifest() {
   const files = await runtimeIntegrityEntries(resourcesDirectory);
   const nodePath = target === windowsTarget
     ? path.join(binariesDirectory, `node-${windowsTarget}.exe`)
-    : path.join(binariesDirectory, "node-universal-apple-darwin");
+    : target === linuxTarget
+      ? path.join(binariesDirectory, `codex-panel-node-${linuxTarget}`)
+      : path.join(binariesDirectory, "node-universal-apple-darwin");
   files.push({
-    path: target === windowsTarget ? "node.exe" : "node",
+    path: target === windowsTarget
+      ? "node.exe"
+      : target === linuxTarget
+        ? "codex-panel-node"
+        : "node",
     sha256: await sha256(nodePath),
   });
   files.sort((left, right) => left.path.localeCompare(right.path, "en"));
@@ -196,10 +214,6 @@ async function prepareMacNodeRuntime() {
     path.join(runtimes.get("arm64"), "LICENSE"),
     path.join(resourcesDirectory, "licenses", "Node-LICENSE"),
   );
-  await copyFile(
-    path.join(tauriRoot, "licenses", "Lobe-Icons-LICENSE.txt"),
-    path.join(resourcesDirectory, "licenses", "Lobe-Icons-LICENSE.txt"),
-  );
 }
 
 async function prepareWindowsNodeRuntime() {
@@ -227,9 +241,31 @@ async function prepareWindowsNodeRuntime() {
     path.join(runtime, "LICENSE"),
     path.join(resourcesDirectory, "licenses", "Node-LICENSE"),
   );
+}
+
+async function prepareLinuxNodeRuntime() {
+  const { archivePath } = await verifiedNodeArchive(
+    linuxNodeArchiveName,
+    linuxNodeArchiveSha256,
+  );
+  const destination = path.join(extractionDirectory, "linux-x64");
+  await rm(destination, { recursive: true, force: true });
+  await mkdir(destination, { recursive: true });
+  run("/usr/bin/tar", ["-xzf", archivePath, "-C", destination]);
+
+  const runtime = path.join(destination, `node-v${nodeVersion}-linux-x64`);
+  const targetPath = path.join(
+    binariesDirectory,
+    `codex-panel-node-${linuxTarget}`,
+  );
+  await mkdir(binariesDirectory, { recursive: true });
+  await rm(targetPath, { force: true });
+  await copyFile(path.join(runtime, "bin", "node"), targetPath);
+  await chmod(targetPath, 0o755);
+  await mkdir(path.join(resourcesDirectory, "licenses"), { recursive: true });
   await copyFile(
-    path.join(tauriRoot, "licenses", "Lobe-Icons-LICENSE.txt"),
-    path.join(resourcesDirectory, "licenses", "Lobe-Icons-LICENSE.txt"),
+    path.join(runtime, "LICENSE"),
+    path.join(resourcesDirectory, "licenses", "Node-LICENSE"),
   );
 }
 
@@ -259,6 +295,12 @@ async function copyApplicationResources() {
       { recursive: true },
     ),
   ]);
+  await mkdir(path.join(appResources, "node_modules"), { recursive: true });
+  await cp(
+    path.join(projectRoot, "node_modules", "ws"),
+    path.join(appResources, "node_modules", "ws"),
+    { recursive: true },
+  );
 
   await mkdir(path.join(appResources, "scripts"), { recursive: true });
   for (const fileName of [
@@ -310,6 +352,23 @@ async function copyApplicationResources() {
     return;
   }
 
+  if (target === linuxTarget) {
+    const panelctlWrapper = `#!/bin/sh
+set -u
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+RESOURCE_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
+export CODEX_PANEL_DATA_DIR="\${XDG_DATA_HOME:-$HOME/.local/share}/Codex Panel/data"
+export CODEX_PANEL_RUNTIME_FILE="$CODEX_PANEL_DATA_DIR/launcher-runtime.json"
+exec "$RESOURCE_DIR/../../bin/codex-panel-node" "$RESOURCE_DIR/app/cli/panelctl.mjs" "$@"
+`;
+    const panelctlPath = path.join(resourcesDirectory, "bin", "panelctl");
+    await mkdir(path.dirname(panelctlPath), { recursive: true });
+    await writeFile(panelctlPath, panelctlWrapper);
+    await chmod(panelctlPath, 0o755);
+    return;
+  }
+
   const taskctlWrapper = `#!/bin/zsh
 set -u
 
@@ -328,6 +387,7 @@ exec "$CONTENTS_DIR/MacOS/node" "$CONTENTS_DIR/Resources/app/cli/panelctl.mjs" "
 await mkdir(runtimeCacheDirectory, { recursive: true });
 await copyApplicationResources();
 if (target === windowsTarget) await prepareWindowsNodeRuntime();
+else if (target === linuxTarget) await prepareLinuxNodeRuntime();
 else await prepareMacNodeRuntime();
 await writeRuntimeIntegrityManifest();
 await rm(extractionDirectory, { recursive: true, force: true });

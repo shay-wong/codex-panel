@@ -70,12 +70,6 @@ The launcher-managed Panel origin receives Codex project, user, thread, and work
 
 After `npm ci`, run `npm run codex:install` to copy the repository's `manage-panel` and `handoff-panel` Skills into `~/.agents/skills`, install a real `~/.local/bin/panelctl` wrapper, build the standalone runtime, and generate the macOS launcher. The installed files carry ownership markers and never point back to repository files. Existing user-managed paths are preserved. On first install, the repository's current `.data` is copied through a live SQLite snapshot into the fixed user data directory without deleting the source. Plain dependency installation does not write any of these user-level integrations.
 
-## Move an issue from its detail view
-
-The issue detail sidebar shows the current Panel project and lets the user move the issue to another project, including from Global to a repository-backed project. After a successful move, Panel opens the target project with the same issue detail and linked native conversation intact.
-
-Panel rejects the move before mutation when the issue has relations, an issue-linked local AI conversation tied to the source project, or a branch/worktree development context. The displayed error identifies what must be removed or cleared before retrying. Status, description, labels, scheduling fields, and other issue properties remain unchanged.
-
 ## Jira Bearer token authentication
 
 Jira connection settings provide two explicit authentication modes. Account / API token uses Basic Auth for an account password or a Jira Cloud email and API token. Bearer token uses a Jira Data Center or Server personal access token without sending a username. Basic Auth requires a username or email, and switching modes requires entering the credential again.

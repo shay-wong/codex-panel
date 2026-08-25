@@ -3,6 +3,8 @@
   "name": "codex-panel",
   "main": "cloud/src/index.mjs",
   "compatibility_date": "2026-07-24",
+  "workers_dev": true,
+  "preview_urls": false,
   "assets": {
     "directory": "./dist/web",
     "binding": "ASSETS",
@@ -21,6 +23,20 @@
     {
       "binding": "ATTACHMENTS",
       "bucket_name": "codex-panel-attachments"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REALTIME_HUB",
+        "class_name": "RealtimeHub"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1-realtime-hub",
+      "new_sqlite_classes": ["RealtimeHub"]
     }
   ]
 }

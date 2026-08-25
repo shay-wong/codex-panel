@@ -1,6 +1,18 @@
 # panelctl CLI
 
-`panelctl` emits JSON. Add `--json` when making the output contract explicit.
+`panelctl` emits JSON for normal commands. Add `--json` when making the output contract explicit. Built-in help is the only successful stdout exception: it writes plain text, exits with code `0`, and does not contact Panel.
+
+```bash
+panelctl --help
+panelctl issue --help
+panelctl comment list --help
+```
+
+Use `--runtime-file FILE` with any command when an exact launcher runtime descriptor was injected.
+
+## Terminology: local companion
+
+**Companion** means the **device-local loopback HTTP service** used for cloud mode. In Chinese, prefer 本地 companion、本地配套服务, or 环回代理. Do not use 伴侣 or 伴侣 API. Ordinary `/api/tasks`, `/api/comments`, and `/api/attachments` routes are the Panel HTTP API, not the companion API.
 
 ## Context and projects
 
@@ -9,9 +21,13 @@ panelctl context current [--cwd PATH] [--json]
 panelctl project list [--json]
 panelctl project create --name NAME [--id ID] [--workspace-path PATH] [--json]
 panelctl project map PROJECT_ID --workspace-path PATH [--json]
+panelctl project readme get [PROJECT_ID] [--json]
+panelctl project readme set [PROJECT_ID] (--content TEXT | --file PATH) [--if-version N] [--json]
 ```
 
 Use `--workspace-path` to associate a project with a local repository. `context current` chooses the most specific project whose workspace contains the current directory, then falls back to the `local` project.
+
+Use `project readme get` and `project readme set` to manage the project's single root README document. Detailed multi-page documentation belongs in the repository's `docs/` directory.
 
 Set `CODEX_PANEL_URL` to override the default local API origin, `http://127.0.0.1:47823`.
 
@@ -84,12 +100,22 @@ panelctl issue update ID \
   [--if-version N] \
   [--json]
 
-panelctl issue move ID --status STATUS [--thread-id ID] [--if-version N] [--json]
+panelctl issue move ID --status STATUS \
+  [--thread-id ID] \
+  [--binding-thread-id ID \
+    [--binding-codex-project-id PROJECT_ID \
+     --binding-codex-project-kind local|remote \
+     --binding-codex-host-id HOST_ID \
+     --binding-workspace-path PATH] \
+   | --clear-binding-thread] \
+  [--if-version N] [--json]
 panelctl issue archive ID [--thread-id ID] [--if-version N] [--json]
 panelctl issue restore ID [--thread-id ID] [--if-version N] [--json]
 ```
 
 Use `issue move` to set `in_progress` before implementation and `in_review` after implementation and self-verification. Codex must not move work directly from `in_progress` to `done`; use `done` only after the user explicitly confirms acceptance or explicitly asks to mark the issue complete. Use `blocked` when work cannot continue and `canceled` when it will not continue. On a version conflict, fetch the issue again and reconcile before retrying.
+
+`--thread-id` records the conversation performing the mutation; it does not create a complete task binding. `--binding-thread-id` can stand alone only to preserve a legacy local binding. If any binding identity option is present, all four identity options are required. A conversation that claims or continues an issue must pass all five `--binding-*` options together and preserve an existing complete binding exactly. `--clear-binding-thread` conflicts with every `--binding-*` option.
 
 Use either `--git-branch` or `--worktree-path`/`--worktree-branch`; an issue has only one development context. Issue JSON stores it as `developmentContext`, either `{ "type": "branch", "branch": "..." }` or `{ "type": "worktree", "path": "...", "branch": "..." }`. Its singular `threadId` is the Codex conversation that most recently created or changed the issue itself. Recurrence requires a due date. Changing only `--project` preserves the issue's existing linked conversation.
 
@@ -129,11 +155,13 @@ For `blocks`, the anchor issue blocks the related issue. For `blocked_by`, the r
 Use the issue id to read or append comments. Comment updates and deletes require the latest comment `version` returned by `comment list`.
 
 ```bash
-panelctl comment list ISSUE_ID [--json]
-panelctl comment add ISSUE_ID --body TEXT [--thread-id ID] [--json]
+panelctl comment list ISSUE_ID [--after CURSOR] [--json]
+panelctl comment add ISSUE_ID (--body TEXT | --body-file FILE) [--thread-id ID] [--json]
 panelctl comment update COMMENT_ID --body TEXT --if-version N [--thread-id ID] [--json]
 panelctl comment delete COMMENT_ID --if-version N [--thread-id ID] [--json]
 ```
+
+Without `--after`, `comment list` returns the full list and a `nextCursor`. Keep that cursor and pass it to the next read of the same issue to receive only new or modified comments. `--body-file` reads UTF-8 content and passes it to the normal comment write path.
 
 Each comment JSON object independently records the most recent conversation that created or changed that comment as `threadId`. Comment operations never change the parent issue's `threadId`.
 
@@ -176,7 +204,7 @@ panelctl jira planning publish JIRA_ID --tickets-file TICKETS.json --if-version 
 
 Keys are stable within one Jira plan and blockers reference those keys. Every `projectId` must already be linked to the Jira issue. Publication creates or updates `backlog` Issues, links them to Jira, preserves dependency edges, cancels replaced Issues that have not started, and keeps Issues that are already active, under review, or complete.
 
-## Download inline images
+## Attachments
 
 Issue descriptions and comments may contain inline images at exact positions in their Markdown:
 
@@ -184,7 +212,17 @@ Issue descriptions and comments may contain inline images at exact positions in 
 ![alt text](/api/attachments/ATTACHMENT_ID/content)
 ```
 
-Download an inline image to an explicit local path before inspecting it:
+List or upload attachments with exactly one target:
+
+```bash
+panelctl attachment list (--task TASK_ID | --comment COMMENT_ID) [--after CURSOR] [--json]
+panelctl attachment upload --task TASK_ID --file PATH [--content-type TYPE] [--kind inline|attachment] [--json]
+panelctl attachment upload --comment COMMENT_ID --file PATH [--content-type TYPE] [--kind inline|attachment] [--json]
+```
+
+Without `--after`, each attachment list returns a full list and its own `nextCursor`. Keep separate cursors for each task or comment target.
+
+Download an attachment to an explicit local path before inspecting it:
 
 ```bash
 panelctl attachment download ATTACHMENT_ID --output PATH [--json]

@@ -72,9 +72,23 @@ import type {
   Task,
 } from "../types";
 import { COMPOSER_CONTRACT_VERSION } from "../types";
-import { STATUS_DETAILS } from "./BoardColumn";
-import { LinearIcon, LinearStatusIcon, type LinearIconName } from "./LinearIcon";
-import { PanelIcon } from "./PanelIcon";
+import { LinearIcon } from "./LinearIcon";
+import {
+  AttachmentIcon,
+  ConversationIcon,
+  DeleteIcon,
+  EditIcon,
+  FullAccessPermissionIcon,
+  PlusIcon,
+  ProjectIcon,
+  ReadOnlyPermissionIcon,
+  RefreshIcon,
+  RelationIcon,
+  SendIcon,
+  StatusIcon,
+  WorkspaceWritePermissionIcon,
+} from "./SemanticIcons";
+import { TaskboardIcon } from "./TaskboardIcon";
 
 export type AiChatOpenThreadRequest = {
   threadId: string;
@@ -178,6 +192,7 @@ type PanelResizeSession = {
 };
 
 const LAST_THREAD_KEY = "panel.aiChat.lastThreadId";
+const PANEL_VIEW_KEY = "panel.aiChat.panelView";
 const PANEL_GEOMETRY_KEY = "panel.aiChat.panelGeometry";
 const PANEL_EDGE_GAP = 8;
 const PANEL_MIN_WIDTH = 420;
@@ -209,7 +224,7 @@ const COMPOSER_HTML_BLOCKS = new Set([
 const COMPOSER_HTML_IGNORED = new Set(["SCRIPT", "STYLE", "SVG"]);
 const SANDBOX_LABELS: Record<AiChatSandbox, readonly [string, string]> = {
   "read-only": ["请求批准", "Ask for approval"],
-  "workspace-write": ["替我审批", "Approve selected actions"],
+  "workspace-write": ["帮我批准", "Approve selected actions"],
   "danger-full-access": ["完全访问权限", "Full access"],
 };
 
@@ -250,11 +265,11 @@ const SANDBOX_DESCRIPTIONS: Record<AiChatSandbox, readonly [string, string]> = {
   "danger-full-access": ["不受限制地访问互联网和您电脑上的任何文件", "Access the internet and any file on your computer without restrictions"],
 };
 
-const SANDBOX_ICONS: Record<AiChatSandbox, "hand" | "terminal" | "shieldAlert"> = {
-  "read-only": "hand",
-  "workspace-write": "terminal",
-  "danger-full-access": "shieldAlert",
-};
+function SandboxIcon({ sandbox }: { sandbox: AiChatSandbox }) {
+  if (sandbox === "read-only") return <ReadOnlyPermissionIcon color="currentColor" />;
+  if (sandbox === "workspace-write") return <WorkspaceWritePermissionIcon color="currentColor" />;
+  return <FullAccessPermissionIcon />;
+}
 
 const EFFORT_LABELS: Record<string, readonly [string, string]> = {
   low: ["低", "Low"],
@@ -832,7 +847,7 @@ function SkillReference({
       className="ai-chat-skill-reference"
       data-skill-id={skillId || undefined}
     >
-      <LinearIcon name="project" />
+      <ProjectIcon color="currentColor" />
       <span>{skill ? skillDisplayName(skill) : skillDisplayName({ id: skillId, label: skillId })}</span>
     </span>
   );
@@ -856,22 +871,17 @@ const ACTIVITY_LABELS: Record<string, readonly [string, string]> = {
 };
 const WARNING_ACTIVITY_LABEL: readonly [string, string] = ["警告", "Warning"];
 
-const ACTIVITY_ICONS: Record<string, LinearIconName> = {
-  plan: "write",
-  todo: "status",
-  todo_list: "status",
-  command: "terminal",
-  command_execution: "terminal",
-  file: "file",
-  file_change: "file",
-  mcp: "link",
-  mcp_tool_call: "link",
-  skill: "project",
-  web: "search",
-  web_search: "search",
-  error: "alert",
-  "turn.failed": "alert",
-};
+function ActivityIcon({ failed, type }: { failed: boolean; type: string }) {
+  if (failed || type === "error" || type === "turn.failed") return <LinearIcon name="alert" />;
+  if (type === "plan") return <EditIcon color="currentColor" />;
+  if (type === "todo" || type === "todo_list") return <StatusIcon status="todo" color="currentColor" />;
+  if (type === "command" || type === "command_execution") return <LinearIcon name="terminal" />;
+  if (type === "file" || type === "file_change") return <LinearIcon name="file" />;
+  if (type === "mcp" || type === "mcp_tool_call") return <RelationIcon color="currentColor" size={16} />;
+  if (type === "skill") return <ProjectIcon color="currentColor" />;
+  if (type === "web" || type === "web_search") return <LinearIcon name="search" />;
+  return <StatusIcon status="todo" color="currentColor" />;
+}
 
 const AI_CHAT_UNAVAILABLE_ERROR = Symbol("ai-chat-unavailable");
 type AiChatError = string | typeof AI_CHAT_UNAVAILABLE_ERROR;
@@ -1122,7 +1132,7 @@ function ThinkingSteps({
                   <div className={`ai-chat-thinking-step is-${eventStatus}${index === events.length - 1 ? " is-last" : ""}`}>
                     <span className="ai-chat-thinking-step-rail" aria-hidden="true">
                       <span className="ai-chat-thinking-step-icon">
-                        <LinearIcon name={eventStatus === "failed" ? "alert" : ACTIVITY_ICONS[event.type] ?? "statusTodo"} />
+                        <ActivityIcon failed={eventStatus === "failed"} type={event.type} />
                       </span>
                       {index !== events.length - 1 && (
                         <span className="ai-chat-thinking-step-connector" />
@@ -1186,7 +1196,7 @@ function EventAttachments({ event }: { event: AiChatEvent }) {
     <div className="ai-chat-event-attachments">
       {attachments.map((attachment, index) => (
         <span key={`${attachment.filename}-${index}`}>
-          <LinearIcon name="attachment" />
+          <AttachmentIcon color="currentColor" />
           <span>{attachment.filename}</span>
         </span>
       ))}
@@ -1298,7 +1308,9 @@ export function AiChat({
 }: AiChatProps) {
   const { locale, text } = useTaskboardI18n();
   const [panelOpen, setPanelOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(
+    () => panelStorage.getItem(PANEL_VIEW_KEY) === "history",
+  );
   const [menu, setMenu] = useState<MenuName>(null);
   const [threads, setThreads] = useState<AiChatThread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
@@ -1363,6 +1375,9 @@ export function AiChat({
   const snapshotLoadingRequestRef = useRef(0);
   const observedRunStatusesRef = useRef(new Map<string, AiChatRun["status"]>());
   const dangerConfirmOpen = pendingDangerInput !== null;
+  const openThreadRequestId = openThreadRequest && "threadId" in openThreadRequest
+    ? openThreadRequest.requestId
+    : null;
 
   const selectThread = useCallback((threadId: string | null) => {
     selectedThreadRef.current = threadId;
@@ -1376,12 +1391,20 @@ export function AiChat({
   }, [selectedThreadId]);
 
   useEffect(() => {
+    panelStorage.setItem(PANEL_VIEW_KEY, historyOpen ? "history" : "thread");
+  }, [historyOpen]);
+
+  useEffect(() => {
     panelOpenRef.current = panelOpen;
     if (panelOpen) {
       setUnread(false);
       setPanelGeometry(window.innerWidth <= 719 ? null : loadPanelGeometry());
     }
   }, [panelOpen]);
+
+  useEffect(() => {
+    if (panelOpen && selectedThreadId) editorRef.current?.focus();
+  }, [panelOpen, selectedThreadId, openThreadRequestId]);
 
   useEffect(() => {
     function finishPanelResize(pointerId?: number) {
@@ -1558,6 +1581,7 @@ export function AiChat({
     try {
       const next = await listAiChatThreads();
       setThreads(next);
+      if (next.length === 0) setHistoryOpen(false);
       setSelectedThreadId((current) => {
         const selected = current && next.some((thread) => thread.id === current)
           ? current
@@ -1804,21 +1828,12 @@ export function AiChat({
       event.preventDefault();
       event.stopPropagation();
       if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
-      if (dangerConfirmOpen) setPendingDangerInput(null);
-      else if (composerQueryState) {
-        dismissedComposerQueryRef.current = `${composerQueryState.trigger}${composerQueryState.query}`;
-        setComposerQueryState(null);
-      }
-      else if (menu) setMenu(null);
-      else if (historyOpen) setHistoryOpen(false);
-      else {
-        restorePersistedConversationFromDraft();
-        setPanelOpen(false);
-      }
+      restorePersistedConversationFromDraft();
+      setPanelOpen(false);
     }
     document.addEventListener("keydown", closeWithEscape, true);
     return () => document.removeEventListener("keydown", closeWithEscape, true);
-  }, [composerQueryState, dangerConfirmOpen, draftOrigin, historyOpen, menu, panelOpen, threads]);
+  }, [draftOrigin, panelOpen, threads]);
 
   const visibleComposerCandidates = useMemo(() => {
     const candidates = composerCandidates?.candidates.filter((candidate) => (
@@ -2158,6 +2173,7 @@ export function AiChat({
       await deleteAiChatThread(thread.id);
       const remainingThreads = threads.filter((candidate) => candidate.id !== thread.id);
       setThreads(remainingThreads);
+      if (remainingThreads.length === 0) setHistoryOpen(false);
       if (selectedThreadRef.current === thread.id) {
         setSnapshot(null);
         setDraftOrigin(null);
@@ -3045,11 +3061,8 @@ export function AiChat({
                           key={task.id}
                           onClick={() => void bindThreadToIssue(task.id)}
                         >
-                          <span
-                            className={`ai-chat-issue-option-icon status-icon-${STATUS_DETAILS[task.status].tone}`}
-                            aria-hidden="true"
-                          >
-                            <LinearStatusIcon status={task.status} />
+                          <span className="ai-chat-issue-option-icon" aria-hidden="true">
+                            <StatusIcon status={task.status} color="currentColor" size={14} />
                           </span>
                           <span className="ai-chat-issue-option-copy">
                             <strong>{task.identifier}</strong>
@@ -3084,7 +3097,7 @@ export function AiChat({
               title={text("对话历史", "Chat history")}
               onClick={() => { setHistoryOpen((current) => !current); setMenu(null); }}
             >
-              <LinearIcon name="conversation" />
+              <ConversationIcon color="currentColor" />
             </button>
             <button
               type="button"
@@ -3095,7 +3108,7 @@ export function AiChat({
               disabled={!projectId || loading}
               onClick={beginNewConversation}
             >
-              <LinearIcon name="plus" />
+              <PlusIcon color="currentColor" size={15} />
             </button>
             <button
               type="button"
@@ -3145,7 +3158,7 @@ export function AiChat({
                     disabled={thread.status === "running" || deletingThreadId === thread.id}
                     onClick={() => void deleteThread(thread)}
                   >
-                    <LinearIcon name="trash" />
+                    <DeleteIcon color="currentColor" />
                   </button>
                 </div>
               )) : (
@@ -3192,14 +3205,14 @@ export function AiChat({
                       );
                     }}
                   >
-                    <LinearIcon name="recurrence" />
+                    <RefreshIcon color="currentColor" />
                     {text("重试上一条消息", "Retry the previous message")}
                   </button>
                 )}
               </>
             ) : (
               <div className="ai-chat-empty">
-                <LinearIcon name="conversation" />
+                <ConversationIcon color="currentColor" />
                 <strong>{projectId
                   ? text("在当前项目中开始对话", "Start a chat in the current project")
                   : text("打开一个历史对话", "Open a chat from history")}</strong>
@@ -3329,7 +3342,9 @@ export function AiChat({
                     disabled={token.unavailable}
                   >
                     <span className="ai-chat-skill-reference">
-                      <LinearIcon name={token.kind === "agent" ? "conversation" : "project"} />
+                      {token.kind === "agent"
+                        ? <ConversationIcon color="currentColor" />
+                        : <ProjectIcon color="currentColor" />}
                       <span>{token.label}</span>
                     </span>
                   </button>,
@@ -3383,7 +3398,11 @@ export function AiChat({
                           selectComposerCandidate(candidate);
                         }}
                       >
-                        <LinearIcon name={candidate.kind === "skill" ? "project" : candidate.kind === "agent" ? "conversation" : "terminal"} />
+                        {candidate.kind === "skill"
+                          ? <ProjectIcon color="currentColor" />
+                          : candidate.kind === "agent"
+                            ? <ConversationIcon color="currentColor" />
+                            : <LinearIcon name="terminal" />}
                         <span>
                           <strong>{candidate.kind === "slashAction" ? candidate.command : candidate.label}</strong>
                           <small>{candidate.description ?? candidate.group}</small>
@@ -3421,7 +3440,7 @@ export function AiChat({
                 disabled={attachmentBlocked}
                 onClick={() => attachmentInputRef.current?.click()}
               >
-                <LinearIcon name="plus" />
+                <PlusIcon color="currentColor" size={15} />
               </button>
               <div className="ai-chat-menu-wrap ai-chat-permission-menu-wrap">
                 <button
@@ -3437,7 +3456,7 @@ export function AiChat({
                   }
                   onClick={() => setMenu((current) => current === "sandbox" ? null : "sandbox")}
                 >
-                  <LinearIcon name={SANDBOX_ICONS[draftSandbox]} />
+                  <SandboxIcon sandbox={draftSandbox} />
                   {text(...SANDBOX_LABELS[draftSandbox])}
                   <LinearIcon name="chevronDown" />
                 </button>
@@ -3466,7 +3485,7 @@ export function AiChat({
                         key={sandbox}
                         onClick={() => void chooseSandbox(sandbox)}
                       >
-                        <LinearIcon name={SANDBOX_ICONS[sandbox]} />
+                        <SandboxIcon sandbox={sandbox} />
                         <span>
                           <strong>{text(...SANDBOX_LABELS[sandbox])}</strong>
                           <small>{text(...SANDBOX_DESCRIPTIONS[sandbox])}</small>
@@ -3615,7 +3634,7 @@ export function AiChat({
                   }
                   onClick={() => void startMessage(draft, false)}
                 >
-                  <LinearIcon name="send" />
+                  <SendIcon color="currentColor" />
                 </button>
               )}
             </div>
@@ -3667,7 +3686,7 @@ export function AiChat({
           title={text("AI 对话", "AI chat")}
           onClick={() => setPanelOpen(true)}
         >
-          <PanelIcon name="aiLauncher" />
+          <TaskboardIcon name="aiLauncher" />
           {launcherState !== "idle" && <span className="ai-chat-launcher-state" aria-hidden="true" />}
         </button>
       )}

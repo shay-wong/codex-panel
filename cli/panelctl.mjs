@@ -16,12 +16,20 @@ import {
 export const SCHEMA_VERSION = 2;
 export const DEFAULT_API_URL = "http://127.0.0.1:47823";
 
-const BOOLEAN_OPTIONS = new Set(["json", "clear-binding-thread"]);
+const sourceRuntimeFile = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  ".data",
+  "launcher-runtime.json",
+);
+const BOOLEAN_OPTIONS = new Set(["json", "clear-binding-thread", "help"]);
+const GLOBAL_OPTIONS = new Set(["runtime-file"]);
 
 const COMMAND_OPTIONS = new Map([
   ["project list", new Set(["json"])],
   ["project create", new Set(["id", "name", "workspace-path", "json"])],
   ["project map", new Set(["workspace-path", "json"])],
+  ["project readme", new Set(["content", "file", "if-version", "json"])],
   ["cloud login", new Set(["url", "actor-name", "json"])],
   ["cloud status", new Set(["json"])],
   ["cloud logout", new Set(["json"])],
@@ -86,9 +94,10 @@ const COMMAND_OPTIONS = new Map([
   ["issue restore", new Set(["thread-id", "if-version", "json"])],
   ["issue relation", new Set(["type", "issue", "thread-id", "if-version", "json"])],
   ["jira planning", new Set(["spec-file", "tickets-file", "if-version", "json"])],
-  ["comment list", new Set(["json"])],
+  ["comment list", new Set(["after", "json"])],
   ["comment add", new Set([
     "body",
+    "body-file",
     "thread-id",
     "binding-thread-id",
     "binding-codex-project-id",
@@ -100,9 +109,92 @@ const COMMAND_OPTIONS = new Map([
   ])],
   ["comment update", new Set(["body", "thread-id", "if-version", "json"])],
   ["comment delete", new Set(["thread-id", "if-version", "json"])],
+  ["attachment list", new Set(["task", "comment", "after", "json"])],
   ["attachment download", new Set(["output", "json"])],
   ["attachment upload", new Set(["file", "task", "comment", "content-type", "kind", "json"])],
   ["context current", new Set(["cwd", "json"])],
+]);
+
+const HELP_TEXT = new Map([
+  ["", `Usage: panelctl RESOURCE ACTION [options]
+
+Commands:
+  context current [--cwd PATH] [--json]
+  project list
+  project create --name NAME [--id ID] [--workspace-path PATH]
+  project map PROJECT_ID --workspace-path PATH
+  project readme get [PROJECT_ID]
+  project readme set [PROJECT_ID] (--content TEXT | --file FILE) [--if-version N]
+  cloud login --url URL --actor-name NAME
+  cloud status|logout
+  issue list|get|create|update|move|archive|restore|relation
+  jira planning ISSUE_ID [--spec-file FILE] [--tickets-file FILE] [--if-version N]
+  comment list ISSUE_ID [--after CURSOR]
+  comment add ISSUE_ID (--body TEXT | --body-file FILE) [--thread-id ID]
+  comment update COMMENT_ID --body TEXT --if-version N [--thread-id ID]
+  comment delete COMMENT_ID --if-version N [--thread-id ID]
+  attachment list (--task ISSUE_ID | --comment COMMENT_ID) [--after CURSOR]
+  attachment download ATTACHMENT_ID --output PATH
+  attachment upload --file PATH (--task ISSUE_ID | --comment COMMENT_ID)
+
+Global options:
+  --runtime-file FILE  Use an explicit launcher runtime descriptor
+  --json               Make the JSON output contract explicit
+  --help               Show help for a supported command level
+
+Examples:
+  panelctl issue get LOCAL-275 --json
+  panelctl comment list LOCAL-275 --json
+
+Run panelctl issue --help for all issue arguments.`],
+  ["issue", `Usage: panelctl issue ACTION [arguments] [options]
+
+Actions:
+  list [--project PROJECT_ID] [--status STATUS] [--archived true|false|all] [--json]
+  get ISSUE_ID [--json]
+  create --project PROJECT_ID --title TITLE
+    [--description TEXT | --description-file FILE]
+    [--status STATUS] [--priority PRIORITY] [--labels a,b]
+    [--thread-id ID]
+    [--git-branch BRANCH | --worktree-path PATH [--worktree-branch BRANCH]]
+    [--start-date YYYY-MM-DD] [--due-date YYYY-MM-DD]
+    [--recurrence-interval N --recurrence-unit day|week|month|year] [--json]
+  update ISSUE_ID
+    [--project PROJECT_ID] [--title TITLE]
+    [--description TEXT | --description-file FILE]
+    [--status STATUS] [--priority PRIORITY] [--labels a,b]
+    [--thread-id ID]
+    [--git-branch BRANCH | --worktree-path PATH [--worktree-branch BRANCH]]
+    [--start-date YYYY-MM-DD] [--due-date YYYY-MM-DD]
+    [--recurrence-interval N --recurrence-unit day|week|month|year]
+    [--if-version N] [--json]
+  move ISSUE_ID --status STATUS [--thread-id ID]
+    [--binding-thread-id ID
+      [--binding-codex-project-id ID --binding-codex-project-kind local|remote
+       --binding-codex-host-id ID --binding-workspace-path PATH]
+     | --clear-binding-thread]
+    [--if-version N] [--json]
+  archive ISSUE_ID [--thread-id ID] [--if-version N] [--json]
+  restore ISSUE_ID [--thread-id ID] [--if-version N] [--json]
+  relation add|remove ISSUE_ID --type parent|blocks|blocked_by|related
+    --issue RELATED_ISSUE_ID [--thread-id ID] [--if-version N] [--json]
+
+Statuses: backlog, todo, in_progress, in_review, blocked, done, canceled
+Priorities: none, urgent, high, medium, low
+
+Example:
+  panelctl issue get LOCAL-275 --json`],
+  ["comment list", `Usage: panelctl comment list ISSUE_ID [--after CURSOR] [--json]
+
+Options:
+  --after CURSOR  Return comments created or modified after a prior nextCursor
+  --json          Make the JSON output contract explicit
+  --help          Show this help
+
+The response always includes nextCursor. Omit --after for the full list.
+
+Example:
+  panelctl comment list LOCAL-275 --after CURSOR --json`],
 ]);
 
 class PanelctlError extends Error {
@@ -180,6 +272,15 @@ export async function main(argv = process.argv.slice(2), overrides = {}) {
 
   try {
     const parsed = parseArgs(argv);
+    if (parsed.options.help) {
+      const scope = `${parsed.resource ?? ""} ${parsed.action ?? ""}`.trim();
+      const help = HELP_TEXT.get(scope);
+      if (!help || parsed.operands.length > 0 || Object.keys(parsed.options).length !== 1) {
+        throw usageError("Help is available for panelctl, panelctl issue, and panelctl comment list");
+      }
+      stdout.write(`${help}\n`);
+      return 0;
+    }
     const result = await execute(parsed, overrides);
     writeJson(stdout, { ...result, schemaVersion: SCHEMA_VERSION });
     return 0;
@@ -205,20 +306,21 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map, cloud login/status/logout, issue list/get/create/update/move/archive/restore/relation, jira planning, comment list/add/update/delete, attachment download/upload, context current",
+      "Expected one of: project list/create/map/readme, cloud login/status/logout, issue list/get/create/update/move/archive/restore/relation, jira planning, comment list/add/update/delete, attachment list/download/upload, context current",
     );
   }
   validateOptions(parsed.options, allowedOptions);
 
-  const env = overrides.env ?? process.env;
+  const processEnv = overrides.env ?? process.env;
+  const env = parsed.options["runtime-file"] === undefined
+    ? processEnv
+    : { ...processEnv, CODEX_PANEL_RUNTIME_FILE: parsed.options["runtime-file"] };
   const usesCompanionControl = command.startsWith("cloud ") || command === "project map";
   const hasCompanionUrl = env.CODEX_PANEL_COMPANION_URL !== undefined
     || env.CODEX_TASKBOARD_COMPANION_URL !== undefined;
-  const hasPanelUrl = env.CODEX_PANEL_URL !== undefined
-    || env.CODEX_TASKBOARD_URL !== undefined;
   const api = createApiClient(overrides, {
-    baseUrl: hasCompanionUrl || (usesCompanionControl && hasPanelUrl)
-      ? resolveCompanionUrl(env)
+    baseUrl: usesCompanionControl || hasCompanionUrl
+      ? await resolveCompanionUrl(env, overrides)
       : await resolvePanelBaseUrl(env, overrides),
   });
   switch (command) {
@@ -249,6 +351,8 @@ async function execute(parsed, overrides) {
           ),
         },
       );
+    case "project readme":
+      return executeProjectReadme(api, parsed, overrides);
     case "cloud login":
       expectOperandCount(parsed, 0);
       return cloudLogin(
@@ -295,16 +399,39 @@ async function execute(parsed, overrides) {
       );
     case "jira planning":
       return jiraPlanning(api, parsed.operands, parsed.options, overrides);
-    case "comment list":
+    case "comment list": {
       expectOperandCount(parsed, 1);
-      return api.request("GET", `${taskPath(parsed.operands[0])}/comments`);
-    case "comment add":
+      const search = new URLSearchParams();
+      if (parsed.options.after !== undefined) search.set("after", parsed.options.after);
+      const query = search.size > 0 ? `?${search}` : "";
+      return api.request("GET", `${taskPath(parsed.operands[0])}/comments${query}`);
+    }
+    case "comment add": {
       expectOperandCount(parsed, 1);
+      if (parsed.options.body !== undefined && parsed.options["body-file"] !== undefined) {
+        throw usageError("Use either --body or --body-file, not both");
+      }
+      let body;
+      if (parsed.options["body-file"] === undefined) {
+        body = requiredOption(parsed.options, "body");
+      } else {
+        const read = overrides.readFile ?? readFile;
+        try {
+          body = await read(parsed.options["body-file"], "utf8");
+        } catch (error) {
+          throw new PanelctlError(`Cannot read comment body file: ${parsed.options["body-file"]}`, {
+            code: "FILE_READ_FAILED",
+            exitCode: 2,
+            details: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
       return api.request("POST", `${taskPath(parsed.operands[0])}/comments`, {
-        body: requiredOption(parsed.options, "body"),
+        body,
         threadId: resolveThreadId(parsed.options, overrides),
         ...optionalField("threadBinding", threadBindingFromOptions(parsed.options)),
       });
+    }
     case "comment update":
       expectOperandCount(parsed, 1);
       return api.request("PATCH", commentPath(parsed.operands[0]), {
@@ -318,6 +445,21 @@ async function execute(parsed, overrides) {
         threadId: resolveThreadId(parsed.options, overrides),
         version: explicitVersion(parsed.options["if-version"]),
       });
+    case "attachment list": {
+      expectOperandCount(parsed, 0);
+      const taskId = parsed.options.task;
+      const commentId = parsed.options.comment;
+      if (Boolean(taskId) === Boolean(commentId)) {
+        throw usageError("attachment list requires exactly one of --task or --comment");
+      }
+      const search = new URLSearchParams();
+      if (parsed.options.after !== undefined) search.set("after", parsed.options.after);
+      const query = search.size > 0 ? `?${search}` : "";
+      const pathname = taskId
+        ? `${taskPath(taskId)}/attachments`
+        : `${commentPath(commentId)}/attachments`;
+      return api.request("GET", `${pathname}${query}`);
+    }
     case "attachment download":
       expectOperandCount(parsed, 1);
       return downloadAttachment(api, parsed.operands[0], parsed.options, overrides);
@@ -600,6 +742,69 @@ function guessContentType(filename) {
     case ".htm": return "text/html";
     default: return "application/octet-stream";
   }
+}
+
+async function executeProjectReadme(api, parsed, overrides) {
+  const operands = parsed.operands;
+  const firstOperand = operands[0];
+  const isExplicitSet = firstOperand === "set";
+  const isExplicitGet = firstOperand === "get";
+  const isOptionSet = parsed.options.content !== undefined || parsed.options.file !== undefined;
+  const isSet = isExplicitSet || (!isExplicitGet && isOptionSet);
+
+  let rawProjectId;
+  if (isExplicitSet || isExplicitGet) {
+    if (operands.length > 2) {
+      throw usageError(`project readme ${firstOperand} accepts at most 1 positional argument (project id)`);
+    }
+    rawProjectId = operands[1];
+  } else {
+    if (operands.length > 1) {
+      throw usageError("project readme accepts at most 1 positional argument (project id)");
+    }
+    rawProjectId = operands[0];
+  }
+
+  let projectId = rawProjectId;
+  if (!projectId) {
+    const context = await currentContext(api, {}, overrides);
+    projectId = context.project?.id ?? DEFAULT_PROJECT_ID;
+  }
+
+  if (isSet) {
+    let content = parsed.options.content;
+    if (content !== undefined && parsed.options.file !== undefined) {
+      throw usageError("Use either --content or --file, not both");
+    }
+    if (parsed.options.file !== undefined) {
+      const read = overrides.readFile ?? readFile;
+      try {
+        content = await read(parsed.options.file, "utf8");
+      } catch (error) {
+        throw new PanelctlError(`Cannot read file: ${parsed.options.file}`, {
+          code: "FILE_READ_FAILED",
+          exitCode: 2,
+          details: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (content === undefined) {
+      throw usageError("project readme set requires --content or --file");
+    }
+    const ifVersion = parsed.options["if-version"] !== undefined
+      ? explicitVersion(parsed.options["if-version"], { allowZero: true })
+      : undefined;
+    return api.request("PUT", `/api/projects/${encodeURIComponent(projectId)}/readme`, {
+      content,
+      ...(ifVersion !== undefined ? { version: ifVersion } : {}),
+    });
+  }
+
+  if (parsed.options.content !== undefined || parsed.options.file !== undefined || parsed.options["if-version"] !== undefined) {
+    throw usageError("project readme get does not accept --content, --file, or --if-version");
+  }
+
+  return api.request("GET", `/api/projects/${encodeURIComponent(projectId)}/readme`);
 }
 
 async function cloudLogin(api, rawUrl, actorName, overrides) {
@@ -961,7 +1166,7 @@ function optionalField(name, value) {
 
 function validateOptions(options, allowedOptions) {
   for (const name of Object.keys(options)) {
-    if (!allowedOptions.has(name)) {
+    if (!allowedOptions.has(name) && !GLOBAL_OPTIONS.has(name)) {
       throw usageError(`Unknown option --${name}`);
     }
   }
@@ -1006,11 +1211,11 @@ function attachmentContentPath(attachmentId) {
   return `/api/attachments/${encodeURIComponent(attachmentId)}/content`;
 }
 
-function explicitVersion(rawVersion) {
+function explicitVersion(rawVersion, { allowZero = false } = {}) {
   if (rawVersion === undefined) throw usageError("Missing required option --if-version");
   const version = Number(rawVersion);
-  if (!Number.isSafeInteger(version) || version < 1) {
-    throw usageError("--if-version must be a positive integer");
+  if (!Number.isSafeInteger(version) || version < (allowZero ? 0 : 1)) {
+    throw usageError(`--if-version must be a ${allowZero ? "non-negative" : "positive"} integer`);
   }
   return version;
 }
@@ -1038,13 +1243,18 @@ function resolveApiUrl(baseUrl, pathname) {
 async function resolvePanelBaseUrl(env, overrides) {
   if (env.CODEX_PANEL_URL !== undefined) return env.CODEX_PANEL_URL;
   if (env.CODEX_TASKBOARD_URL !== undefined) return env.CODEX_TASKBOARD_URL;
-  const descriptorPath = env.CODEX_PANEL_RUNTIME_FILE ?? env.CODEX_TASKBOARD_RUNTIME_FILE;
-  if (!descriptorPath) return DEFAULT_API_URL;
+  const configuredDescriptorPath = env.CODEX_PANEL_RUNTIME_FILE ?? env.CODEX_TASKBOARD_RUNTIME_FILE;
+  const descriptorPath = configuredDescriptorPath ?? sourceRuntimeFile;
   let descriptor;
   try {
-    const read = overrides.readFile ?? readFile;
+    const read = configuredDescriptorPath === undefined
+      ? readFile
+      : (overrides.readFile ?? readFile);
     descriptor = JSON.parse(await read(descriptorPath, "utf8"));
   } catch (error) {
+    if (configuredDescriptorPath === undefined && error?.code === "ENOENT") {
+      return DEFAULT_API_URL;
+    }
     throw new PanelctlError("Cannot read the active Panel launcher endpoint", {
       code: "SERVICE_UNAVAILABLE",
       exitCode: 3,
@@ -1060,12 +1270,12 @@ async function resolvePanelBaseUrl(env, overrides) {
   return descriptor.url;
 }
 
-function resolveCompanionUrl(env) {
+async function resolveCompanionUrl(env, overrides) {
   const rawUrl = env.CODEX_PANEL_COMPANION_URL
     ?? env.CODEX_TASKBOARD_COMPANION_URL
     ?? env.CODEX_PANEL_URL
     ?? env.CODEX_TASKBOARD_URL
-    ?? DEFAULT_API_URL;
+    ?? await resolvePanelBaseUrl(env, overrides);
   let url;
   try {
     url = new URL(rawUrl);
@@ -1080,13 +1290,17 @@ function resolveCompanionUrl(env) {
     || (url.protocol !== "http:" && url.protocol !== "https:")
     || url.username
     || url.password
-    || (url.pathname !== "/" && url.pathname !== "")
+    || !(
+      url.pathname === "/"
+      || (/^[a-z0-9-]{16,128}$/i.test(url.pathname.replace(/^\//, "").replace(/\/$/, ""))
+        && !url.pathname.replace(/^\//, "").replace(/\/$/, "").includes("/"))
+    )
     || url.search
     || url.hash
   ) {
     throw usageError("Local companion URL must be a loopback HTTP or HTTPS origin");
   }
-  return url.origin;
+  return url.toString().replace(/\/$/, "");
 }
 
 async function readResponse(response) {

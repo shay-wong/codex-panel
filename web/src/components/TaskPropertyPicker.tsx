@@ -87,6 +87,7 @@ export function TaskPropertyPicker<Value extends string>({
   }
 
   function closeFromFocusLeave(event: FocusEvent<HTMLElement>) {
+    if (menuRef.current?.matches(":active")) return;
     const next = event.relatedTarget as Node | null;
     if (!next || (!rootRef.current?.contains(next) && !menuRef.current?.contains(next))) {
       onOpenChange(false);
@@ -135,7 +136,8 @@ export function TaskPropertyPicker<Value extends string>({
       triggerRef.current?.focus();
     }
 
-    function closeFromViewportChange() {
+    function closeFromViewportChange(event: Event) {
+      if (event.type === "scroll" && menuRef.current?.contains(event.target as Node)) return;
       onOpenChange(false);
     }
 
