@@ -24,9 +24,9 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`66c19fb2d33e1d7eec346499419a6a9979d2c0f1`
-- 精确已合并上游基线：`66c19fb2d33e1d7eec346499419a6a9979d2c0f1`
-- 比较范围：`66c19fb2d33e1d7eec346499419a6a9979d2c0f1..HEAD`
+- 本次合并的上游父提交：`44304ac5bbf97c7dfdcde6b52d8bb2403925ab79`
+- 精确已合并上游基线：`44304ac5bbf97c7dfdcde6b52d8bb2403925ab79`
+- 比较范围：`44304ac5bbf97c7dfdcde6b52d8bb2403925ab79..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 

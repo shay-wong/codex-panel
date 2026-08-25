@@ -323,9 +323,6 @@ export function BoardCardDisplayMenu({
           <button className="button secondary" type="button" onClick={onReset}>
             {text("重置为默认", "Reset to default")}
           </button>
-          <button className="button primary" type="button" onClick={closeDialog}>
-            {text("完成", "Done")}
-          </button>
         </footer>
       </div>
     </div>,
