@@ -4,6 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Made the desktop launcher prefer the stable local Panel port `47823` and fall back to a private random port when it is unavailable, while keeping Codex CDP on a separate random endpoint.
 - Added WSL `panelctl` discovery of the Windows Codex Panel launcher runtime, including Windows loopback transport through `curl.exe` and an explicit `CODEX_PANEL_WSL_RUNTIME_FILE` override.
 - Fixed the one-time Cloud migration so project README image metadata and bytes reach D1 and R2, task start dates and mention-created relation origins are retained, and incomplete v2 bundles require a fresh export instead of silently losing data.
 - Fixed Linux desktop status after Codex exits normally: the manager now clears stale embedded-panel visibility and reports that it is waiting for Codex while retaining the control signal needed to reopen it.
