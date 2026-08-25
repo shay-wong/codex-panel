@@ -1549,6 +1549,12 @@ fn apply_renderer_status(snapshot: &mut LauncherSnapshot, pid: u32, status: Rend
     }
 }
 
+fn apply_waiting_for_codex(snapshot: &mut LauncherSnapshot) {
+    snapshot.phase = "waiting".into();
+    snapshot.message = "Panel 服务已启动，正在等待 Codex 连接。".into();
+    snapshot.embedded_visible = false;
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn monitor_renderer_readiness(
     app: AppHandle,
@@ -1890,8 +1896,7 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                     if state.generation.load(Ordering::SeqCst) == generation
                         && snapshot.child_pid == Some(pid)
                     {
-                        snapshot.phase = "waiting".into();
-                        snapshot.message = "Panel 服务已启动，正在等待 Codex 连接。".into();
+                        apply_waiting_for_codex(snapshot);
                     }
                 });
             } else if is_stderr && line.contains("Waiting for Codex") {
@@ -1899,8 +1904,7 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                     if state.generation.load(Ordering::SeqCst) == generation
                         && snapshot.child_pid == Some(pid)
                     {
-                        snapshot.phase = "starting".into();
-                        snapshot.message = "正在等待 Codex 窗口…".into();
+                        apply_waiting_for_codex(snapshot);
                     }
                 });
             } else if !is_stderr && line.contains("Codex Panel listening") {
@@ -3075,10 +3079,11 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_renderer_status, cached_release_check, github_api_error_message,
-        process_environment_key_is_blocked, sha256_file, status_menu_label,
-        trusted_panel_browser_url, verify_runtime_integrity, write_release_check_cache,
-        LauncherSnapshot, ReleaseCheckFailure, ReleaseCheckResult, RendererStatus,
+        apply_renderer_status, apply_waiting_for_codex, cached_release_check,
+        github_api_error_message, process_environment_key_is_blocked, sha256_file,
+        status_menu_label, trusted_panel_browser_url, verify_runtime_integrity,
+        write_release_check_cache, LauncherSnapshot, ReleaseCheckFailure, ReleaseCheckResult,
+        RendererStatus,
     };
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
@@ -3155,6 +3160,29 @@ mod tests {
         assert_eq!(snapshot.phase, "waiting");
         assert_eq!(snapshot.open_signal_pid, None);
         assert!(snapshot.open_request_pending);
+    }
+
+    #[test]
+    fn waiting_for_codex_hides_embedded_panel_but_keeps_linux_open_signal() {
+        let mut snapshot = LauncherSnapshot {
+            phase: "running".into(),
+            message: String::new(),
+            update_message: String::new(),
+            update_available: false,
+            update_url: None,
+            version: "0.1.0".into(),
+            app_path: None,
+            child_pid: Some(42),
+            open_signal_pid: Some(42),
+            open_request_pending: false,
+            embedded_visible: true,
+        };
+
+        apply_waiting_for_codex(&mut snapshot);
+
+        assert_eq!(snapshot.phase, "waiting");
+        assert_eq!(snapshot.open_signal_pid, Some(42));
+        assert!(!snapshot.embedded_visible);
     }
 
     #[cfg(unix)]
