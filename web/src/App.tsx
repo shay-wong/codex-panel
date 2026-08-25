@@ -2841,6 +2841,7 @@ export function App() {
     password: string;
     projects: string[];
     autoCompleteEnabled: boolean;
+    autoArchiveEnabled: boolean;
   }) {
     if (jiraSaving) return;
     setJiraSaving(true);
@@ -2848,23 +2849,24 @@ export function App() {
     try {
       let connection: JiraConnection;
       try {
-        const { autoCompleteEnabled, ...connectionInput } = input;
+        const { autoCompleteEnabled, autoArchiveEnabled, ...connectionInput } = input;
         connection = await configureJiraConnection(connectionInput);
-        await saveJiraSettings(autoCompleteEnabled);
-        connection = { ...connection, autoCompleteEnabled };
+        await saveJiraSettings({ autoCompleteEnabled, autoArchiveEnabled });
+        connection = { ...connection, autoCompleteEnabled, autoArchiveEnabled };
       } catch (error) {
         if (
           !(error instanceof ApiError)
           || error.code !== "JIRA_ACCOUNT_CHANGED"
           || !window.confirm(`${error.message}\n\n${text("确认切换账号并继续同步？", "Switch accounts and continue syncing?")}`)
         ) throw error;
-        const { autoCompleteEnabled, ...connectionInput } = input;
+        const { autoCompleteEnabled, autoArchiveEnabled, ...connectionInput } = input;
         connection = await configureJiraConnection({ ...connectionInput, acceptAccountChange: true });
-        await saveJiraSettings(autoCompleteEnabled);
-        connection = { ...connection, autoCompleteEnabled };
+        await saveJiraSettings({ autoCompleteEnabled, autoArchiveEnabled });
+        connection = { ...connection, autoCompleteEnabled, autoArchiveEnabled };
       }
       const nextProjects = await listProjects();
       setJiraConnection(connection);
+      setAiThreadsRevision((revision) => revision + 1);
       setProjects(nextProjects);
       setJiraDialogOpen(false);
       changeProject(connection.projectId);
@@ -3188,16 +3190,27 @@ export function App() {
               />
             )}
             {isJiraProject && (
-              <button
-                className="icon-button"
-                type="button"
-                disabled={jiraSyncing}
-                onClick={() => void syncJiraNow()}
-                aria-label={text("同步 Jira", "Sync Jira")}
-                title={text("同步 Jira", "Sync Jira")}
-              >
-                <LinearIcon name="recurrence" />
-              </button>
+              <>
+                <button
+                  className="icon-button"
+                  type="button"
+                  onClick={openJiraDialog}
+                  aria-label={text("Jira 设置", "Jira settings")}
+                  title={text("Jira 设置", "Jira settings")}
+                >
+                  <LinearIcon name="settings" />
+                </button>
+                <button
+                  className="icon-button"
+                  type="button"
+                  disabled={jiraSyncing}
+                  onClick={() => void syncJiraNow()}
+                  aria-label={text("同步 Jira", "Sync Jira")}
+                  title={text("同步 Jira", "Sync Jira")}
+                >
+                  <LinearIcon name="recurrence" />
+                </button>
+              </>
             )}
             {selectedProjectId && !isJiraProject && boardView !== "workflow" && (
               <button

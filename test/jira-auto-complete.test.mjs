@@ -195,6 +195,7 @@ test("Jira automatic completion stays opt-in, confirms transitions, and exposes 
     const baseUrl = `http://127.0.0.1:${address.port}`;
     assert.deepEqual((await api(baseUrl, "/api/local/jira-settings")).settings, {
       autoCompleteEnabled: false,
+      autoArchiveEnabled: false,
     });
 
     const firstContext = app.database.getJiraContext("jira-1");
@@ -253,7 +254,10 @@ test("Jira automatic completion stays opt-in, confirms transitions, and exposes 
     assert.equal(app.database.getAiChatThread(firstPlanningThread.id).archivedAt, null);
     assert.equal(app.database.getAiChatThread(firstExecutionThread.id).archivedAt, null);
 
-    await api(baseUrl, "/api/local/jira-settings", "PUT", { autoCompleteEnabled: true });
+    await api(baseUrl, "/api/local/jira-settings", "PUT", {
+      autoCompleteEnabled: true,
+      autoArchiveEnabled: true,
+    });
     await waitFor(() => app.database.getJiraAutoCompletion("jira-1")?.state === "completed");
     assert.equal(app.database.getTask("jira-1").status, "done");
     assert.equal(transitionPosts.get("AUTO-1"), 1);
@@ -433,7 +437,10 @@ test("Jira automatic completion stays opt-in, confirms transitions, and exposes 
     app.database.addJiraTaskLink(fifthJira.id, fifthJira.version, fifthIssue.id, ACTOR);
     app.jiraAutoComplete.reconcile(fifthJira.id);
     await fifthTransitionLookupStarted;
-    await api(baseUrl, "/api/local/jira-settings", "PUT", { autoCompleteEnabled: false });
+    await api(baseUrl, "/api/local/jira-settings", "PUT", {
+      autoCompleteEnabled: false,
+      autoArchiveEnabled: true,
+    });
     releaseFifthTransitionLookup();
     await waitFor(() => app.database.getJiraAutoCompletion(fifthJira.id)?.state === "dismissed");
     assert.equal(transitionPosts.get("AUTO-5") ?? 0, 0);
@@ -502,6 +509,7 @@ test("completed Jira conversation archiving reconciles link and restore eligibil
   };
   try {
     app.database.createProject({ id: "repo", name: "Repository", workspacePath: directory });
+    app.database.saveJiraSettings({ autoCompleteEnabled: false, autoArchiveEnabled: true });
 
     syncJira("jira-add", "in_progress");
     let jira = app.database.getTask("jira-add");

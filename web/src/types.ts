@@ -518,6 +518,20 @@ export interface JiraTaskContext {
   plan: JiraPlan | null;
   lifecycle: JiraLifecycle | null;
   autoCompletion: JiraAutoCompletion | null;
+  conversationArchive: JiraConversationArchive | null;
+}
+
+export interface JiraConversationArchive {
+  eligible: boolean;
+  reason:
+    | "jira_not_done"
+    | "no_linked_issues"
+    | "linked_issues_incomplete"
+    | "no_related_conversations"
+    | "already_archived"
+    | null;
+  relatedThreadCount: number;
+  unarchivedThreadCount: number;
 }
 
 export interface JiraAutoCompletion {
@@ -604,6 +618,7 @@ export interface JiraConnection {
   unknownIssueCount: number;
   syncError: { code: string; message: string } | null;
   autoCompleteEnabled: boolean;
+  autoArchiveEnabled: boolean;
   insecureHttp: boolean;
 }
 

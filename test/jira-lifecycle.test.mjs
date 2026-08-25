@@ -443,6 +443,7 @@ if (args[0] === "debug") {
         status: "done",
       });
     }
+    app.database.saveJiraSettings({ autoCompleteEnabled: false, autoArchiveEnabled: true });
     jiraStatus = { name: "Done", statusCategory: { key: "done" } };
     await api(baseUrl, "/api/local/jira-connection/sync", "POST");
     assert.ok(app.database.getAiChatThread(completedExecutionThread.id).archivedAt);

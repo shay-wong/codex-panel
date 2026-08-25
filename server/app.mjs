@@ -3209,9 +3209,12 @@ export function createPanelServer(options = {}) {
         if (request.method === "PUT") {
           const body = await readJson(request);
           assertPlainObject(body);
-          assertAllowedKeys(body, new Set(["autoCompleteEnabled"]));
+          assertAllowedKeys(body, new Set(["autoCompleteEnabled", "autoArchiveEnabled"]));
           if (typeof body.autoCompleteEnabled !== "boolean") {
             throw new ApiError(400, "INVALID_FIELD", "'autoCompleteEnabled' must be a boolean");
+          }
+          if (typeof body.autoArchiveEnabled !== "boolean") {
+            throw new ApiError(400, "INVALID_FIELD", "'autoArchiveEnabled' must be a boolean");
           }
           const settings = database.saveJiraSettings(body);
           if (settings.autoCompleteEnabled) jiraAutoComplete.queueAllEligible();
@@ -3810,6 +3813,19 @@ export function createPanelServer(options = {}) {
           throw new ApiError(400, "INVALID_FIELD", "Unsupported Jira automatic completion action");
         }
         const context = database.getJiraContext(jiraTaskId);
+        events.emit("task.jira.updated", { taskId: jiraTaskId, task: context.jira });
+        return sendJson(response, 200, { context });
+      }
+
+      const jiraConversationArchiveRoute = pathname.match(
+        /^\/api\/tasks\/([^/]+)\/jira-conversation-archive$/,
+      );
+      if (jiraConversationArchiveRoute) {
+        const jiraTaskId = decodeRouteSegment(jiraConversationArchiveRoute[1], "Task id");
+        assertNoQuery(url.searchParams, "POST /api/tasks/:id/jira-conversation-archive");
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        const { version } = parseJiraSimpleStart(await readJson(request));
+        const context = database.archiveJiraConversations(jiraTaskId, version);
         events.emit("task.jira.updated", { taskId: jiraTaskId, task: context.jira });
         return sendJson(response, 200, { context });
       }

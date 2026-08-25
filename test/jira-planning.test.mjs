@@ -543,6 +543,7 @@ if (args[0] === "debug") {
       }
     }
     const completedAgainAt = new Date(Date.now() + 3_000).toISOString();
+    app.database.saveJiraSettings({ autoCompleteEnabled: false, autoArchiveEnabled: true });
     app.database.syncJiraTasks([jiraIssue("done", completedAgainAt)], {
       originId: "test",
       projectName: "Jira",

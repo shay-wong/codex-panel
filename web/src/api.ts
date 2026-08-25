@@ -146,6 +146,7 @@ export async function getJiraConnection(signal?: AbortSignal): Promise<JiraConne
         unknownIssueCount: 0,
         syncError: null,
         autoCompleteEnabled: false,
+        autoArchiveEnabled: false,
         insecureHttp: false,
       };
     }
@@ -178,10 +179,13 @@ export async function syncJiraConnection(acceptAccountChange = false): Promise<J
   return data.connection;
 }
 
-export async function saveJiraSettings(autoCompleteEnabled: boolean): Promise<{ autoCompleteEnabled: boolean }> {
-  const data = await request<{ settings: { autoCompleteEnabled: boolean } }>("/api/local/jira-settings", {
+export async function saveJiraSettings(settings: {
+  autoCompleteEnabled: boolean;
+  autoArchiveEnabled: boolean;
+}): Promise<typeof settings> {
+  const data = await request<{ settings: typeof settings }>("/api/local/jira-settings", {
     method: "PUT",
-    body: JSON.stringify({ autoCompleteEnabled }),
+    body: JSON.stringify(settings),
   });
   return data.settings;
 }
@@ -626,6 +630,16 @@ export async function resolveJiraAutoCompletion(
   const data = await request<{ context: JiraTaskContext }>(
     `/api/tasks/${encodeURIComponent(taskId)}/jira-auto-complete`,
     { method: "POST", body: JSON.stringify({ action }) },
+  );
+  return data.context;
+}
+
+export async function archiveJiraConversations(
+  task: Pick<Task, "id" | "version">,
+): Promise<JiraTaskContext> {
+  const data = await request<{ context: JiraTaskContext }>(
+    `/api/tasks/${encodeURIComponent(task.id)}/jira-conversation-archive`,
+    { method: "POST", body: JSON.stringify({ version: task.version }) },
   );
   return data.context;
 }

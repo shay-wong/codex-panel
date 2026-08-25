@@ -196,6 +196,7 @@ function safeConfig(config, syncState, settings) {
       lastSyncedAt: state.lastSuccessfulAt,
       ...state,
       autoCompleteEnabled: settings.autoCompleteEnabled,
+      autoArchiveEnabled: settings.autoArchiveEnabled,
       insecureHttp: config.baseUrl.startsWith("http:"),
     }
     : {
@@ -209,6 +210,7 @@ function safeConfig(config, syncState, settings) {
       lastSyncedAt: null,
       ...state,
       autoCompleteEnabled: settings.autoCompleteEnabled,
+      autoArchiveEnabled: settings.autoArchiveEnabled,
       insecureHttp: false,
     };
 }
@@ -217,7 +219,10 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
   let pendingSync = null;
 
   function settings() {
-    return database.getJiraSettings?.() ?? { autoCompleteEnabled: false };
+    return database.getJiraSettings?.() ?? {
+      autoCompleteEnabled: false,
+      autoArchiveEnabled: false,
+    };
   }
 
   async function request(config, pathname, init = {}) {
