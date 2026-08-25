@@ -395,6 +395,7 @@ function aiChatThreadFromRow(row) {
     model: row.model,
     reasoningEffort: row.reasoning_effort,
     sandbox: row.sandbox,
+    archivedAt: row.archived_at,
     currentRun: null,
     latestTodo: null,
     createdAt: row.created_at,
@@ -637,6 +638,7 @@ export class PanelDatabase {
       CREATE TABLE IF NOT EXISTS jira_settings (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         auto_complete_enabled INTEGER NOT NULL DEFAULT 0 CHECK (auto_complete_enabled IN (0, 1)),
+        auto_archive_enabled INTEGER NOT NULL DEFAULT 0 CHECK (auto_archive_enabled IN (0, 1)),
         updated_at TEXT NOT NULL
       );
 
@@ -655,6 +657,7 @@ export class PanelDatabase {
         sandbox TEXT NOT NULL CHECK (sandbox IN (
           'read-only', 'workspace-write', 'danger-full-access'
         )),
+        archived_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -766,6 +769,20 @@ export class PanelDatabase {
       this.database.exec(`
         ALTER TABLE project_automation_policies
         ADD COLUMN parallelism_override INTEGER CHECK (parallelism_override BETWEEN 1 AND 8)
+      `);
+    }
+
+    const aiChatThreadColumns = this.database.prepare("PRAGMA table_info(ai_chat_threads)").all();
+    if (!aiChatThreadColumns.some((column) => column.name === "archived_at")) {
+      this.database.exec("ALTER TABLE ai_chat_threads ADD COLUMN archived_at TEXT");
+    }
+
+    const jiraSettingsColumns = this.database.prepare("PRAGMA table_info(jira_settings)").all();
+    if (!jiraSettingsColumns.some((column) => column.name === "auto_archive_enabled")) {
+      this.database.exec(`
+        ALTER TABLE jira_settings
+        ADD COLUMN auto_archive_enabled INTEGER NOT NULL DEFAULT 0
+        CHECK (auto_archive_enabled IN (0, 1))
       `);
     }
 
@@ -1037,6 +1054,13 @@ export class PanelDatabase {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS jira_plan_threads (
+        jira_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        thread_id TEXT NOT NULL UNIQUE REFERENCES ai_chat_threads(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (jira_task_id, thread_id)
+      );
+
       CREATE TABLE IF NOT EXISTS jira_plan_items (
         jira_task_id TEXT NOT NULL REFERENCES jira_plans(jira_task_id) ON DELETE CASCADE,
         publication INTEGER NOT NULL CHECK (publication > 0),
@@ -1065,6 +1089,12 @@ export class PanelDatabase {
         PRIMARY KEY (jira_task_id, publication, source_task_id, target_task_id),
         CHECK (source_task_id <> target_task_id)
       );
+    `);
+    this.database.exec(`
+      INSERT OR IGNORE INTO jira_plan_threads (jira_task_id, thread_id, created_at)
+      SELECT jira_task_id, thread_id, created_at
+      FROM jira_plans
+      WHERE thread_id IS NOT NULL
     `);
 
     const commentColumns = this.database.prepare("PRAGMA table_info(comments)").all();
@@ -1554,6 +1584,7 @@ export class PanelDatabase {
         WHERE id = ? AND external_source = 'jira' AND archived_at IS NULL
       `);
       for (const task of unknownTasks) markUnknown.run(task.message, task.id);
+      this.#archiveCompletedJiraThreads(timestamp);
       this.database.prepare("UPDATE projects SET updated_at = ? WHERE id = ?")
         .run(timestamp, JIRA_PROJECT_ID);
       this.database.exec("COMMIT");
@@ -1612,22 +1643,26 @@ export class PanelDatabase {
 
   getJiraSettings() {
     const row = this.database.prepare(
-      "SELECT auto_complete_enabled FROM jira_settings WHERE id = 1",
+      "SELECT auto_complete_enabled, auto_archive_enabled FROM jira_settings WHERE id = 1",
     ).get();
-    return { autoCompleteEnabled: Boolean(row?.auto_complete_enabled) };
+    return {
+      autoCompleteEnabled: Boolean(row?.auto_complete_enabled),
+      autoArchiveEnabled: Boolean(row?.auto_archive_enabled),
+    };
   }
 
-  saveJiraSettings({ autoCompleteEnabled }) {
+  saveJiraSettings({ autoCompleteEnabled, autoArchiveEnabled }) {
     const timestamp = now();
     this.database.exec("BEGIN IMMEDIATE");
     try {
       this.database.prepare(`
-        INSERT INTO jira_settings (id, auto_complete_enabled, updated_at)
-        VALUES (1, ?, ?)
+        INSERT INTO jira_settings (id, auto_complete_enabled, auto_archive_enabled, updated_at)
+        VALUES (1, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           auto_complete_enabled = excluded.auto_complete_enabled,
+          auto_archive_enabled = excluded.auto_archive_enabled,
           updated_at = excluded.updated_at
-      `).run(autoCompleteEnabled ? 1 : 0, timestamp);
+      `).run(autoCompleteEnabled ? 1 : 0, autoArchiveEnabled ? 1 : 0, timestamp);
       if (!autoCompleteEnabled) {
         this.database.prepare(`
           UPDATE jira_auto_completions
@@ -1635,6 +1670,7 @@ export class PanelDatabase {
           WHERE state IN ('queued', 'retry_wait')
         `).run(timestamp);
       }
+      if (autoArchiveEnabled) this.#archiveCompletedJiraThreads(timestamp);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -1715,6 +1751,7 @@ export class PanelDatabase {
         plan: null,
         lifecycle: null,
         autoCompletion: null,
+        conversationArchive: null,
       };
     }
     const projects = this.database.prepare(`
@@ -1754,7 +1791,100 @@ export class PanelDatabase {
       plan: this.getJiraPlan(jiraTask.id),
       lifecycle: this.getJiraLifecycle(jiraTask.id),
       autoCompletion: this.getJiraAutoCompletion(jiraTask.id),
+      conversationArchive: this.getJiraConversationArchive(jiraTask.id),
     };
+  }
+
+  getJiraConversationArchive(jiraTaskId) {
+    const jira = this.#requireTask(jiraTaskId);
+    if (jira.source !== "jira") {
+      throw new ApiError(409, "JIRA_TASK_REQUIRED", "Conversation archive requires a Jira task");
+    }
+    const issueCounts = this.database.prepare(`
+      SELECT
+        COUNT(*) AS linked_issue_count,
+        COALESCE(SUM(CASE WHEN issues.archived_at IS NOT NULL OR issues.status != 'done' THEN 1 ELSE 0 END), 0)
+          AS blocked_issue_count
+      FROM jira_task_links AS links
+      JOIN tasks AS issues ON issues.id = links.task_id
+      WHERE links.jira_task_id = ?
+    `).get(jiraTaskId);
+    const threadCounts = this.database.prepare(`
+      WITH related_threads(id) AS (
+        SELECT thread_id FROM jira_plan_threads WHERE jira_task_id = ?
+        UNION
+        SELECT items.thread_id
+        FROM jira_simple_start_operations AS operations
+        JOIN jira_simple_start_items AS items ON items.operation_id = operations.id
+        WHERE operations.jira_task_id = ?
+        UNION
+        SELECT queue.thread_id
+        FROM jira_task_links AS links
+        JOIN issue_claim_queue AS queue ON queue.task_id = links.task_id
+        WHERE links.jira_task_id = ? AND queue.thread_id IS NOT NULL
+        UNION
+        SELECT attempts.thread_id
+        FROM jira_task_links AS links
+        JOIN issue_claim_attempts AS attempts ON attempts.task_id = links.task_id
+        WHERE links.jira_task_id = ?
+        UNION
+        SELECT thread_id FROM jira_rework_items WHERE jira_task_id = ?
+      )
+      SELECT
+        COUNT(*) AS related_thread_count,
+        COALESCE(SUM(CASE WHEN threads.archived_at IS NULL THEN 1 ELSE 0 END), 0)
+          AS unarchived_thread_count
+      FROM related_threads
+      JOIN ai_chat_threads AS threads ON threads.id = related_threads.id
+    `).get(...Array(5).fill(jiraTaskId));
+    const linkedIssueCount = Number(issueCounts.linked_issue_count);
+    const blockedIssueCount = Number(issueCounts.blocked_issue_count);
+    const relatedThreadCount = Number(threadCounts.related_thread_count);
+    const unarchivedThreadCount = Number(threadCounts.unarchived_thread_count);
+    const reason = jira.status !== "done"
+      ? "jira_not_done"
+      : linkedIssueCount === 0
+        ? "no_linked_issues"
+        : blockedIssueCount > 0
+          ? "linked_issues_incomplete"
+          : relatedThreadCount === 0
+            ? "no_related_conversations"
+            : unarchivedThreadCount === 0
+              ? "already_archived"
+              : null;
+    return {
+      eligible: reason === null,
+      reason,
+      relatedThreadCount,
+      unarchivedThreadCount,
+    };
+  }
+
+  archiveJiraConversations(jiraTaskId, version) {
+    const jira = this.#requireTask(jiraTaskId);
+    this.#requireVersion(jira, version);
+    if (jira.source !== "jira") {
+      throw new ApiError(409, "JIRA_TASK_REQUIRED", "Conversation archive requires a Jira task");
+    }
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const state = this.getJiraConversationArchive(jiraTaskId);
+      if (!state.eligible) {
+        throw new ApiError(
+          409,
+          "JIRA_CONVERSATION_ARCHIVE_UNAVAILABLE",
+          `Jira conversations cannot be archived: ${state.reason}`,
+          { reason: state.reason },
+        );
+      }
+      this.#archiveCompletedJiraThreads(timestamp, jiraTaskId, true);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getJiraContext(jiraTaskId);
   }
 
   getJiraAutoCompletion(jiraTaskId) {
@@ -2024,6 +2154,7 @@ export class PanelDatabase {
             error_code = NULL, error_message = NULL, completed_at = ?, updated_at = ?
         WHERE jira_task_id = ?
       `).run(result.updatedAt, result.statusName, timestamp, timestamp, jiraTaskId);
+      this.#archiveCompletedJiraThreads(timestamp, jiraTaskId);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -2371,6 +2502,10 @@ export class PanelDatabase {
       if (plan.changes !== 1) {
         throw new ApiError(409, "VERSION_CONFLICT", "Jira plan changed since replanning started");
       }
+      this.database.prepare(`
+        INSERT OR IGNORE INTO jira_plan_threads (jira_task_id, thread_id, created_at)
+        VALUES (?, ?, ?)
+      `).run(jiraTask.id, threadId, timestamp);
       const lifecycle = this.database.prepare(`
         UPDATE jira_lifecycles
         SET pending_kind = NULL,
@@ -2685,6 +2820,10 @@ export class PanelDatabase {
           publication, version, published_at, created_at, updated_at
         ) VALUES (?, ?, 'planning', '', ?, NULL, 0, 1, NULL, ?, ?)
       `).run(jiraTask.id, threadId, sourceSnapshot, timestamp, timestamp);
+      this.database.prepare(`
+        INSERT OR IGNORE INTO jira_plan_threads (jira_task_id, thread_id, created_at)
+        VALUES (?, ?, ?)
+      `).run(jiraTask.id, threadId, timestamp);
       return { plan: this.getJiraPlan(jiraTask.id), shouldPrompt: true };
     }
     const nextThreadId = threadId ?? existing.thread_id;
@@ -2700,6 +2839,10 @@ export class PanelDatabase {
             version = version + 1, updated_at = ?
         WHERE jira_task_id = ?
       `).run(nextThreadId, sourceSnapshot, timestamp, jiraTask.id);
+      this.database.prepare(`
+        INSERT OR IGNORE INTO jira_plan_threads (jira_task_id, thread_id, created_at)
+        VALUES (?, ?, ?)
+      `).run(jiraTask.id, nextThreadId, timestamp);
     }
     const plan = this.getJiraPlan(jiraTask.id);
     return { plan, shouldPrompt: shouldRefresh || plan.promptedAt === null };
@@ -3200,6 +3343,7 @@ export class PanelDatabase {
         after: nextProjectIds,
       }], timestamp);
       this.#touchTask(jiraTask.id, version, null, null, timestamp);
+      this.#archiveCompletedJiraThreads(timestamp, jiraTask.id);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -3257,6 +3401,7 @@ export class PanelDatabase {
         after: relationActivityValue("jira", task),
       }], timestamp);
       this.#touchTask(jiraTask.id, version, null, null, timestamp);
+      this.#archiveCompletedJiraThreads(timestamp, jiraTask.id);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -3288,6 +3433,7 @@ export class PanelDatabase {
         after: null,
       }], timestamp);
       this.#touchTask(jiraTask.id, version, null, null, timestamp);
+      this.#archiveCompletedJiraThreads(timestamp, jiraTask.id);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -3577,7 +3723,7 @@ export class PanelDatabase {
 
   listAiChatThreads() {
     const rows = this.database.prepare(`
-      SELECT * FROM ai_chat_threads
+      SELECT * FROM ai_chat_threads WHERE archived_at IS NULL OR status = 'running'
       ORDER BY updated_at DESC, id
     `).all();
     if (rows.length === 0) return [];
@@ -3712,6 +3858,9 @@ export class PanelDatabase {
   }
 
   createAiChatRun(input) {
+    if (this.getAiChatThread(input.threadId)?.archivedAt) {
+      throw new ApiError(409, "AI_CHAT_THREAD_ARCHIVED", "Cannot continue an archived conversation");
+    }
     const id = input.id ?? randomUUID();
     const timestamp = input.startedAt ?? now();
     this.database.exec("BEGIN IMMEDIATE");
@@ -4138,11 +4287,50 @@ export class PanelDatabase {
       `).get(taskId)?.thread_id
       ?? this.database.prepare(`
         SELECT id FROM ai_chat_threads
-        WHERE origin_issue_id = ?
+        WHERE origin_issue_id = ? AND archived_at IS NULL
         ORDER BY created_at, id
         LIMIT 1
       `).get(taskId)?.id
       ?? null;
+  }
+
+  #archiveCompletedJiraThreads(timestamp, jiraTaskId = null, manual = false) {
+    if (!manual && !this.getJiraSettings().autoArchiveEnabled) return;
+    const candidates = jiraTaskId
+      ? [{ id: jiraTaskId }]
+      : this.database.prepare(`
+        SELECT id FROM tasks
+        WHERE external_source = 'jira' AND status = 'done'
+      `).all();
+    const archive = this.database.prepare(`
+      UPDATE ai_chat_threads
+      SET archived_at = ?, updated_at = ?
+      WHERE archived_at IS NULL
+        AND id IN (
+          SELECT thread_id FROM jira_plan_threads WHERE jira_task_id = ?
+          UNION
+          SELECT items.thread_id
+          FROM jira_simple_start_operations AS operations
+          JOIN jira_simple_start_items AS items ON items.operation_id = operations.id
+          WHERE operations.jira_task_id = ?
+          UNION
+          SELECT queue.thread_id
+          FROM jira_task_links AS links
+          JOIN issue_claim_queue AS queue ON queue.task_id = links.task_id
+          WHERE links.jira_task_id = ? AND queue.thread_id IS NOT NULL
+          UNION
+          SELECT attempts.thread_id
+          FROM jira_task_links AS links
+          JOIN issue_claim_attempts AS attempts ON attempts.task_id = links.task_id
+          WHERE links.jira_task_id = ?
+          UNION
+          SELECT thread_id FROM jira_rework_items WHERE jira_task_id = ?
+        )
+    `);
+    for (const candidate of candidates) {
+      if (!this.getJiraConversationArchive(candidate.id).eligible) continue;
+      archive.run(timestamp, timestamp, ...Array(5).fill(candidate.id));
+    }
   }
 
   interruptAbandonedAiChatRuns() {
@@ -4497,6 +4685,14 @@ export class PanelDatabase {
         `).run(JSON.stringify(mergedLabels), timestamp, destinationProjectId);
       }
       this.#recordTaskActivity(current.id, actor, activityChanges, timestamp);
+      if (changes.status === "done") {
+        const jiraTaskId = current.source === "jira"
+          ? current.id
+          : this.database.prepare(`
+            SELECT jira_task_id FROM jira_task_links WHERE task_id = ?
+          `).get(current.id)?.jira_task_id;
+        if (jiraTaskId) this.#archiveCompletedJiraThreads(timestamp, jiraTaskId);
+      }
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -4556,6 +4752,14 @@ export class PanelDatabase {
         taskFieldChanges(current, { status }),
         timestamp,
       );
+      if (status === "done") {
+        const jiraTaskId = current.source === "jira"
+          ? current.id
+          : this.database.prepare(`
+            SELECT jira_task_id FROM jira_task_links WHERE task_id = ?
+          `).get(current.id)?.jira_task_id;
+        if (jiraTaskId) this.#archiveCompletedJiraThreads(timestamp, jiraTaskId);
+      }
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -4627,6 +4831,10 @@ export class PanelDatabase {
         [{ field: "archivedAt", before: current.archivedAt, after: null }],
         timestamp,
       );
+      const link = this.database.prepare(`
+        SELECT jira_task_id FROM jira_task_links WHERE task_id = ?
+      `).get(current.id);
+      if (link) this.#archiveCompletedJiraThreads(timestamp, link.jira_task_id);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");

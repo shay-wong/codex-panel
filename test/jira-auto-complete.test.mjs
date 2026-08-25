@@ -195,10 +195,55 @@ test("Jira automatic completion stays opt-in, confirms transitions, and exposes 
     const baseUrl = `http://127.0.0.1:${address.port}`;
     assert.deepEqual((await api(baseUrl, "/api/local/jira-settings")).settings, {
       autoCompleteEnabled: false,
+      autoArchiveEnabled: false,
     });
 
     const firstContext = app.database.getJiraContext("jira-1");
     let firstIssue = app.database.getTask(firstContext.issues[0].id);
+    const firstPlanningThread = app.database.createAiChatThread({
+      id: "auto-planning-thread",
+      title: "AUTO-1 planning",
+      origin: {
+        projectId: "repo",
+        projectName: "Repository",
+        workspacePath: directory,
+      },
+      codexThreadId: "codex-auto-planning-thread",
+      model: "gpt-test",
+      reasoningEffort: "medium",
+      sandbox: "read-only",
+    });
+    app.database.beginJiraPlanning("jira-1", firstContext.jira.version, firstPlanningThread.id);
+    const firstExecutionThread = app.database.createAiChatThread({
+      id: "auto-execution-thread",
+      title: firstIssue.identifier,
+      origin: {
+        projectId: firstIssue.projectId,
+        projectName: "Repository",
+        workspacePath: directory,
+        issueId: firstIssue.id,
+        issueIdentifier: firstIssue.identifier,
+      },
+      codexThreadId: "codex-auto-execution-thread",
+      model: "gpt-test",
+      reasoningEffort: "medium",
+      sandbox: "workspace-write",
+    });
+    app.database.enqueueClaim(firstIssue.id, "manual");
+    app.database.setClaimThread(firstIssue.id, firstExecutionThread.id);
+    const firstExecutionRun = app.database.createAiChatRun({
+      id: "auto-execution-run",
+      threadId: firstExecutionThread.id,
+      status: "running",
+    });
+    app.database.insertAiChatEvent({
+      id: "auto-execution-event",
+      threadId: firstExecutionThread.id,
+      runId: firstExecutionRun.id,
+      type: "agent_message",
+      role: "assistant",
+      content: "Implementation completed",
+    });
     await api(baseUrl, `/api/tasks/${firstIssue.id}/move`, "POST", {
       version: firstIssue.version,
       status: "done",
@@ -206,11 +251,45 @@ test("Jira automatic completion stays opt-in, confirms transitions, and exposes 
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(transitionPosts.get("AUTO-1") ?? 0, 0);
     assert.equal(app.database.getJiraAutoCompletion("jira-1"), null);
+    assert.equal(app.database.getAiChatThread(firstPlanningThread.id).archivedAt, null);
+    assert.equal(app.database.getAiChatThread(firstExecutionThread.id).archivedAt, null);
 
-    await api(baseUrl, "/api/local/jira-settings", "PUT", { autoCompleteEnabled: true });
+    await api(baseUrl, "/api/local/jira-settings", "PUT", {
+      autoCompleteEnabled: true,
+      autoArchiveEnabled: true,
+    });
     await waitFor(() => app.database.getJiraAutoCompletion("jira-1")?.state === "completed");
     assert.equal(app.database.getTask("jira-1").status, "done");
     assert.equal(transitionPosts.get("AUTO-1"), 1);
+    assert.ok(app.database.getAiChatThread(firstPlanningThread.id).archivedAt);
+    assert.ok(app.database.getAiChatThread(firstExecutionThread.id).archivedAt);
+    assert.throws(
+      () => app.database.createAiChatRun({ threadId: firstPlanningThread.id }),
+      (error) => error?.code === "AI_CHAT_THREAD_ARCHIVED",
+    );
+    assert.equal(
+      app.database.listAiChatThreads().some((thread) => thread.id === firstPlanningThread.id),
+      false,
+    );
+    assert.equal(
+      app.database.listAiChatThreads().some((thread) => thread.id === firstExecutionThread.id),
+      true,
+    );
+    const archivedSnapshot = await api(
+      baseUrl,
+      `/api/local/ai/threads/${firstExecutionThread.id}`,
+    );
+    assert.equal(archivedSnapshot.thread.codexThreadId, "codex-auto-execution-thread");
+    assert.deepEqual(archivedSnapshot.runs.map((run) => run.id), [firstExecutionRun.id]);
+    assert.deepEqual(archivedSnapshot.events.map((event) => event.id), ["auto-execution-event"]);
+    app.database.updateAiChatRun(firstExecutionRun.id, {
+      status: "completed",
+      finishedAt: timestamp,
+    });
+    assert.equal(
+      app.database.listAiChatThreads().some((thread) => thread.id === firstExecutionThread.id),
+      false,
+    );
 
     const secondContext = app.database.getJiraContext("jira-2");
     const secondIssue = app.database.getTask(secondContext.issues[0].id);
@@ -358,10 +437,120 @@ test("Jira automatic completion stays opt-in, confirms transitions, and exposes 
     app.database.addJiraTaskLink(fifthJira.id, fifthJira.version, fifthIssue.id, ACTOR);
     app.jiraAutoComplete.reconcile(fifthJira.id);
     await fifthTransitionLookupStarted;
-    await api(baseUrl, "/api/local/jira-settings", "PUT", { autoCompleteEnabled: false });
+    await api(baseUrl, "/api/local/jira-settings", "PUT", {
+      autoCompleteEnabled: false,
+      autoArchiveEnabled: true,
+    });
     releaseFifthTransitionLookup();
     await waitFor(() => app.database.getJiraAutoCompletion(fifthJira.id)?.state === "dismissed");
     assert.equal(transitionPosts.get("AUTO-5") ?? 0, 0);
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("completed Jira conversation archiving reconciles link and restore eligibility", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "jira-thread-archive-"));
+  const app = createPanelServer({ dataDirectory: directory, codexExecutable: process.execPath });
+  const timestamp = "2026-08-24T06:00:00.000Z";
+  const syncJira = (id, status) => app.database.syncJiraTasks([{
+    id,
+    identifier: `JIRA:TEST:${id}`,
+    title: id,
+    description: "Conversation archive eligibility",
+    status,
+    priority: "medium",
+    labels: [],
+    sortOrder: 1000,
+    creator: ACTOR,
+    assignee: ACTOR,
+    dueDate: null,
+    externalOrigin: ORIGIN,
+    externalId: id,
+    externalKey: id.toUpperCase(),
+    externalUrl: `https://jira.example.test/browse/${id.toUpperCase()}`,
+    externalStatus: status,
+    externalUpdatedAt: timestamp,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }], {
+    archiveMissing: false,
+    originId: ORIGIN,
+    projectName: "Jira",
+    syncedAt: timestamp,
+  });
+  const createIssue = (title, status) => app.database.createTask({
+    projectId: "repo",
+    title,
+    description: "",
+    status,
+    priority: "medium",
+    labels: [],
+    actor: ACTOR,
+    assignee: ACTOR,
+    workflowId: null,
+    developmentContext: null,
+    startDate: null,
+    dueDate: null,
+    recurrence: null,
+  });
+  const createPlan = (jiraId, threadId) => {
+    const thread = app.database.createAiChatThread({
+      id: threadId,
+      title: threadId,
+      origin: { projectId: "repo", projectName: "Repository", workspacePath: directory },
+      model: "gpt-test",
+      reasoningEffort: "medium",
+      sandbox: "read-only",
+    });
+    app.database.beginJiraPlanning(jiraId, app.database.getTask(jiraId).version, thread.id);
+    return thread;
+  };
+  try {
+    app.database.createProject({ id: "repo", name: "Repository", workspacePath: directory });
+    app.database.saveJiraSettings({ autoCompleteEnabled: false, autoArchiveEnabled: true });
+
+    syncJira("jira-add", "in_progress");
+    let jira = app.database.getTask("jira-add");
+    app.database.setJiraProjects(jira.id, jira.version, ["repo"], ACTOR);
+    const addThread = createPlan(jira.id, "jira-add-plan");
+    const addIssue = createIssue("Add done link", "done");
+    syncJira(jira.id, "done");
+    assert.equal(app.database.getAiChatThread(addThread.id).archivedAt, null);
+    jira = app.database.getTask(jira.id);
+    app.database.addJiraTaskLink(jira.id, jira.version, addIssue.id, ACTOR);
+    assert.ok(app.database.getAiChatThread(addThread.id).archivedAt);
+
+    syncJira("jira-remove", "in_progress");
+    jira = app.database.getTask("jira-remove");
+    app.database.setJiraProjects(jira.id, jira.version, ["repo"], ACTOR);
+    const removeThread = createPlan(jira.id, "jira-remove-plan");
+    const removeDone = createIssue("Remaining done link", "done");
+    const removeTodo = createIssue("Removed unfinished link", "todo");
+    jira = app.database.getTask(jira.id);
+    app.database.addJiraTaskLink(jira.id, jira.version, removeDone.id, ACTOR);
+    jira = app.database.getTask(jira.id);
+    app.database.addJiraTaskLink(jira.id, jira.version, removeTodo.id, ACTOR);
+    syncJira(jira.id, "done");
+    assert.equal(app.database.getAiChatThread(removeThread.id).archivedAt, null);
+    jira = app.database.getTask(jira.id);
+    app.database.removeJiraTaskLink(jira.id, jira.version, removeTodo.id, ACTOR);
+    assert.ok(app.database.getAiChatThread(removeThread.id).archivedAt);
+
+    syncJira("jira-restore", "in_progress");
+    jira = app.database.getTask("jira-restore");
+    app.database.setJiraProjects(jira.id, jira.version, ["repo"], ACTOR);
+    const restoreThread = createPlan(jira.id, "jira-restore-plan");
+    const restoreIssue = createIssue("Restore done link", "done");
+    jira = app.database.getTask(jira.id);
+    app.database.addJiraTaskLink(jira.id, jira.version, restoreIssue.id, ACTOR);
+    app.database.archiveTask(restoreIssue.id, restoreIssue.version, undefined, undefined, ACTOR);
+    syncJira(jira.id, "done");
+    assert.equal(app.database.getAiChatThread(restoreThread.id).archivedAt, null);
+    const archivedIssue = app.database.getTask(restoreIssue.id);
+    app.database.restoreTask(archivedIssue.id, archivedIssue.version, undefined, undefined, ACTOR);
+    assert.ok(app.database.getAiChatThread(restoreThread.id).archivedAt);
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });

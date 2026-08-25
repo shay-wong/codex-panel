@@ -411,6 +411,23 @@ if (args[0] === "debug") {
     assert.equal(tasks.find((task) => task.id === second.id).status, "backlog");
 
     const currentFirst = tasks.find((task) => task.id === first.id);
+    const completedExecutionThread = app.database.createAiChatThread({
+      id: "completed-execution-thread",
+      title: currentFirst.identifier,
+      origin: {
+        projectId: currentFirst.projectId,
+        projectName: "Repository",
+        workspacePath: directory,
+        issueId: currentFirst.id,
+        issueIdentifier: currentFirst.identifier,
+      },
+      codexThreadId: "codex-completed-execution-thread",
+      model: "gpt-test",
+      reasoningEffort: "medium",
+      sandbox: "workspace-write",
+    });
+    app.database.enqueueClaim(currentFirst.id, "manual");
+    app.database.setClaimThread(currentFirst.id, completedExecutionThread.id);
     await api(baseUrl, `/api/tasks/${currentFirst.id}/move`, "POST", {
       version: currentFirst.version,
       status: "done",
@@ -426,8 +443,14 @@ if (args[0] === "debug") {
         status: "done",
       });
     }
+    app.database.saveJiraSettings({ autoCompleteEnabled: false, autoArchiveEnabled: true });
     jiraStatus = { name: "Done", statusCategory: { key: "done" } };
     await api(baseUrl, "/api/local/jira-connection/sync", "POST");
+    assert.ok(app.database.getAiChatThread(completedExecutionThread.id).archivedAt);
+    assert.equal(
+      app.database.listAiChatThreads().some((thread) => thread.id === completedExecutionThread.id),
+      false,
+    );
     jiraStatus = { name: "In Progress", statusCategory: { key: "indeterminate" } };
     await api(baseUrl, "/api/local/jira-connection/sync", "POST");
     context = (await api(baseUrl, `/api/tasks/${jira.id}/jira-context`)).context;

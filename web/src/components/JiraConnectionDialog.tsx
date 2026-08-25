@@ -15,6 +15,7 @@ interface JiraConnectionDialogProps {
     password: string;
     projects: string[];
     autoCompleteEnabled: boolean;
+    autoArchiveEnabled: boolean;
   }) => Promise<void>;
 }
 
@@ -36,6 +37,9 @@ export function JiraConnectionDialog({
   const [autoCompleteEnabled, setAutoCompleteEnabled] = useState(
     connection?.autoCompleteEnabled ?? false,
   );
+  const [autoArchiveEnabled, setAutoArchiveEnabled] = useState(
+    connection?.autoArchiveEnabled ?? false,
+  );
 
   useEffect(() => {
     setBaseUrl(connection?.baseUrl ?? "http://");
@@ -44,6 +48,7 @@ export function JiraConnectionDialog({
     setPassword("");
     setProjectsText(connection?.projects.join(", ") ?? "");
     setAutoCompleteEnabled(connection?.autoCompleteEnabled ?? false);
+    setAutoArchiveEnabled(connection?.autoArchiveEnabled ?? false);
   }, [connection]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -58,6 +63,7 @@ export function JiraConnectionDialog({
         .map((project) => project.trim())
         .filter(Boolean),
       autoCompleteEnabled,
+      autoArchiveEnabled,
     });
   }
 
@@ -181,6 +187,26 @@ export function JiraConnectionDialog({
             aria-label={text("自动完成 Jira", "Automatically complete Jira")}
             disabled={saving}
             onClick={() => setAutoCompleteEnabled((current) => !current)}
+          >
+            <span />
+          </button>
+        </div>
+        <div className="jira-setting-row">
+          <span>
+            <strong>{text("自动归档对话", "Automatically archive conversations")}</strong>
+            <small>{text(
+              "Jira 与所有关联 Issue 完成后，将相关对话移出活跃列表。默认关闭。",
+              "Move related conversations out of the active list after Jira and every linked issue are done. Off by default.",
+            )}</small>
+          </span>
+          <button
+            className={`board-setting-switch${autoArchiveEnabled ? " is-on" : ""}`}
+            type="button"
+            role="switch"
+            aria-checked={autoArchiveEnabled}
+            aria-label={text("自动归档对话", "Automatically archive conversations")}
+            disabled={saving}
+            onClick={() => setAutoArchiveEnabled((current) => !current)}
           >
             <span />
           </button>

@@ -10,6 +10,7 @@ import { panelStorage } from "../storage";
 import {
   ApiError,
   addJiraTaskLink,
+  archiveJiraConversations,
   attachmentDownloadUrl,
   claimTask,
   createComment,
@@ -562,6 +563,7 @@ export function TaskDetail({
   const [jiraAutoCompletionSaving, setJiraAutoCompletionSaving] = useState<
     "retry" | "accept_remote" | null
   >(null);
+  const [jiraArchiveSaving, setJiraArchiveSaving] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentsError, setAttachmentsError] = useState<TaskDetailError | null>(null);
@@ -947,6 +949,23 @@ export function TaskDetail({
     }
   }
 
+  async function archiveConversations() {
+    if (!jiraContext?.jira || !jiraContext.conversationArchive?.eligible || jiraArchiveSaving) return;
+    setJiraArchiveSaving(true);
+    onError(null);
+    try {
+      const context = await archiveJiraConversations(jiraContext.jira);
+      setJiraContext(context);
+      if (context.jira) setCurrentTask(context.jira);
+    } catch (error) {
+      onError(issueMessageFor(error));
+      setJiraContext(await getJiraTaskContext(currentTask.id).catch(() => jiraContext));
+    } finally {
+      onAiChatThreadsRefresh();
+      setJiraArchiveSaving(false);
+    }
+  }
+
   function handleTitleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -1305,6 +1324,17 @@ export function TaskDetail({
       : jiraContext?.plan
         ? text("继续规划", "Continue planning")
         : text("AI 规划", "Plan with AI");
+  const jiraArchiveTitle = jiraContext?.conversationArchive?.reason === "jira_not_done"
+    ? text("Jira 完成后才能归档对话", "Complete Jira before archiving conversations")
+    : jiraContext?.conversationArchive?.reason === "no_linked_issues"
+      ? text("至少关联一个 Issue 后才能归档", "Link at least one issue before archiving")
+      : jiraContext?.conversationArchive?.reason === "linked_issues_incomplete"
+        ? text("所有关联 Issue 均完成且未归档后才能归档对话", "Every linked issue must be done and unarchived")
+        : jiraContext?.conversationArchive?.reason === "no_related_conversations"
+          ? text("没有可归档的相关对话", "There are no related conversations to archive")
+          : jiraContext?.conversationArchive?.reason === "already_archived"
+            ? text("相关对话已归档", "Related conversations are already archived")
+            : text("归档相关对话", "Archive related conversations");
   const claimState = currentTask.claim?.state;
   const claimActive = claimState === "queued" || claimState === "retry_wait" || claimState === "running";
   const claimEnabled = currentTask.source === "local" && currentTask.status === "todo" && !claimActive;
@@ -2378,6 +2408,37 @@ export function TaskDetail({
                       : <LinearIcon name={jiraSimpleStartComplete ? "check" : "play"} />}
                     <span>{jiraSimpleStartLabel}</span>
                   </button>
+                  <button
+                    className={`jira-archive-button${jiraContext?.conversationArchive?.reason === "already_archived" ? " is-complete" : ""}`}
+                    type="button"
+                    title={jiraArchiveTitle}
+                    aria-describedby={
+                      jiraContext?.conversationArchive && !jiraContext.conversationArchive.eligible
+                        ? "jira-archive-status"
+                        : undefined
+                    }
+                    disabled={
+                      jiraContextLoading
+                      || jiraArchiveSaving
+                      || !jiraContext?.conversationArchive?.eligible
+                    }
+                    aria-busy={jiraArchiveSaving}
+                    onClick={() => void archiveConversations()}
+                  >
+                    {jiraArchiveSaving
+                      ? <span className="ai-chat-spinner" aria-hidden="true" />
+                      : <LinearIcon name={jiraContext?.conversationArchive?.reason === "already_archived" ? "check" : "conversation"} />}
+                    <span>{jiraArchiveSaving
+                      ? text("归档中…", "Archiving…")
+                      : jiraContext?.conversationArchive?.reason === "already_archived"
+                        ? text("对话已归档", "Conversations archived")
+                        : text("归档对话", "Archive conversations")}</span>
+                  </button>
+                  {jiraContext?.conversationArchive && !jiraContext.conversationArchive.eligible && (
+                    <small id="jira-archive-status" className="jira-archive-status">
+                      {jiraArchiveTitle}
+                    </small>
+                  )}
                 </div>
               </section>
             ) : jiraContext?.jira ? (

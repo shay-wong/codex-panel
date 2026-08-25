@@ -4640,9 +4640,16 @@ kbd {
 
 .jira-context-actions {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 6px;
   margin: 7px 7px 0;
+}
+
+.jira-archive-status {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .jira-lifecycle-alert {
@@ -4758,7 +4765,8 @@ kbd {
 }
 
 .jira-simple-start-button,
-.jira-planning-button {
+.jira-planning-button,
+.jira-archive-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4780,12 +4788,14 @@ kbd {
 }
 
 .jira-simple-start-button:hover:not(:disabled),
-.jira-planning-button:hover:not(:disabled) {
+.jira-planning-button:hover:not(:disabled),
+.jira-archive-button:hover:not(:disabled) {
   filter: brightness(0.97);
 }
 
 .jira-simple-start-button:disabled,
-.jira-planning-button:disabled {
+.jira-planning-button:disabled,
+.jira-archive-button:disabled {
   border-color: var(--border);
   background: var(--surface-muted);
   color: var(--text-tertiary);
@@ -4802,10 +4812,17 @@ kbd {
   color: var(--success);
 }
 
+.jira-archive-button.is-complete {
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+  color: var(--success);
+}
+
 .jira-simple-start-button > svg,
 .jira-simple-start-button .ai-chat-spinner,
 .jira-planning-button > svg,
-.jira-planning-button .ai-chat-spinner {
+.jira-planning-button .ai-chat-spinner,
+.jira-archive-button > svg,
+.jira-archive-button .ai-chat-spinner {
   width: 12px;
   height: 12px;
 }
@@ -5562,6 +5579,8 @@ kbd {
 
 .jira-connection-dialog {
   width: min(400px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
 }
 
 .jira-auth-method {

@@ -1495,8 +1495,17 @@ export function AiChat({
   }
 
   const replaceThread = useCallback((thread: AiChatThread) => {
+    if (thread.archivedAt && thread.status !== "running") {
+      setSnapshot((current) => current?.thread.id === thread.id ? null : current);
+      setSelectedThreadId((current) => {
+        if (current !== thread.id) return current;
+        selectedThreadRef.current = null;
+        return null;
+      });
+    }
     setThreads((current) => {
       const next = current.filter((candidate) => candidate.id !== thread.id);
+      if (thread.archivedAt && thread.status !== "running") return next;
       return [thread, ...next].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     });
   }, []);
