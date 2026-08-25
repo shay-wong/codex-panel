@@ -59,7 +59,8 @@ const INLINE_ATTACHMENT_TYPES = new Set([
 ]);
 const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const TRUSTED_EMBED_ORIGINS = new Set(["app://-"]);
-const TRUSTED_ORIGINS_ENV = "CODEX_TASKBOARD_TRUSTED_ORIGINS";
+const TRUSTED_ORIGINS_ENV = "CODEX_PANEL_TRUSTED_ORIGINS";
+const LEGACY_TRUSTED_ORIGINS_ENV = "CODEX_TASKBOARD_TRUSTED_ORIGINS";
 const CODEX_AGENT_ACTOR = {
   type: "agent",
   id: "codex-agent",
@@ -1792,7 +1793,9 @@ export function resolveServerOptions(options = {}) {
       ?? path.join(codexHome, "process_manager", "chat_processes.json"),
     instanceToken,
     instanceSecret,
-    trustedOrigins: parseTrustedOrigins(environment[TRUSTED_ORIGINS_ENV]),
+    trustedOrigins: parseTrustedOrigins(
+      environment[TRUSTED_ORIGINS_ENV] ?? environment[LEGACY_TRUSTED_ORIGINS_ENV],
+    ),
     version: String(
       options.version
         ?? environment.CODEX_PANEL_VERSION

@@ -471,7 +471,7 @@ test("accepts private LAN requests and rejects public Host and Origin headers", 
 test("trusted HTTPS origins allow a loopback reverse tunnel for HTTP and SSE only", async () => {
   const trustedOrigin = "https://board.example.test";
   const baseUrl = await startServer(() => ({
-    processEnv: { ...process.env, CODEX_TASKBOARD_TRUSTED_ORIGINS: trustedOrigin },
+    processEnv: { ...process.env, CODEX_PANEL_TRUSTED_ORIGINS: trustedOrigin },
   }));
   const host = "127.0.0.1";
 
@@ -510,7 +510,7 @@ test("trusted HTTPS origins do not inherit device-local capabilities from tunnel
     skillPath = path.join(directory, "skills", "manage-panel", "SKILL.md");
     return {
       skillPath,
-      processEnv: { ...process.env, CODEX_TASKBOARD_TRUSTED_ORIGINS: trustedOrigin },
+      processEnv: { ...process.env, CODEX_PANEL_TRUSTED_ORIGINS: trustedOrigin },
       cloudConfigStore: {
         async read() {
           return {
@@ -586,7 +586,7 @@ test("trusted HTTPS origins apply to cloud WebSocket upgrades without widening l
   const upstreamAddress = upstreamServer.address();
   const app = createPanelServer({
     dataDirectory: directory,
-    processEnv: { ...process.env, CODEX_TASKBOARD_TRUSTED_ORIGINS: trustedOrigin },
+    processEnv: { ...process.env, CODEX_PANEL_TRUSTED_ORIGINS: trustedOrigin },
     cloudConfigStore: {
       async read() {
         return {
@@ -621,13 +621,16 @@ test("trusted origin configuration rejects non-origin URLs", () => {
   const valid = resolveServerOptions({
     processEnv: {
       ...process.env,
-      CODEX_TASKBOARD_TRUSTED_ORIGINS: "https://board.example.test, https://second.example.test/",
+      CODEX_PANEL_TRUSTED_ORIGINS: "https://board.example.test, https://second.example.test/",
     },
   });
   assert.deepEqual(valid.trustedOrigins, new Set([
     "https://board.example.test",
     "https://second.example.test",
   ]));
+  assert.deepEqual(resolveServerOptions({
+    processEnv: { CODEX_TASKBOARD_TRUSTED_ORIGINS: "https://legacy.example.test" },
+  }).trustedOrigins, new Set(["https://legacy.example.test"]));
 
   for (const value of [
     "",
@@ -644,9 +647,9 @@ test("trusted origin configuration rejects non-origin URLs", () => {
   ]) {
     assert.throws(
       () => resolveServerOptions({
-        processEnv: { ...process.env, CODEX_TASKBOARD_TRUSTED_ORIGINS: value },
+        processEnv: { ...process.env, CODEX_PANEL_TRUSTED_ORIGINS: value },
       }),
-      /CODEX_TASKBOARD_TRUSTED_ORIGINS/,
+      /CODEX_PANEL_TRUSTED_ORIGINS/,
     );
   }
 });

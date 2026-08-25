@@ -198,6 +198,7 @@ npm run codex:inject -- --port 9229 --open
 | --- | --- | --- |
 | `CODEX_PANEL_HOST` | `0.0.0.0` | HTTP 监听地址；使用 `127.0.0.1` 可禁用局域网访问 |
 | `CODEX_PANEL_PORT` | `47823` | 本地 HTTP 端口 |
+| `CODEX_PANEL_TRUSTED_ORIGINS` | 未设置 | 允许通过回环反向隧道访问的逗号分隔精确 HTTPS 来源 |
 | `CODEX_PANEL_HOME` | macOS 上为 `~/Library/Application Support/Codex Panel` | 已安装 runtime 和默认数据根目录 |
 | `CODEX_PANEL_DATA_DIR` | `$CODEX_PANEL_HOME/data` | SQLite 数据目录 |
 | `CODEX_PANEL_URL` | `http://127.0.0.1:47823` | CLI API 地址 |
@@ -207,6 +208,8 @@ npm run codex:inject -- --port 9229 --open
 `npm start` 会输出本地 URL 和可用的局域网 URL。同一受信任网络中的协作者可以打开局域网 URL，共用同一个 Panel 服务。任务、评论和附件变更会通过服务器发送事件广播到所有已打开的客户端；重新连接的客户端会执行完整刷新，避免遗漏断线期间的变更。协作者可设置 `CODEX_PANEL_URL=http://<host-ip>:47823`，让 `panelctl` 连接共享服务。
 
 局域网模式没有账户认证：受信任局域网中任何能够访问该 URL 的人都可以读写 Panel。通过公网访问或部署到云端时，必须设置经过认证的访问边界。
+
+连接本地监听器的反向隧道必须把公网 HTTPS 来源配置到 `CODEX_PANEL_TRUSTED_ORIGINS`，例如 `https://board.example.test`；多个来源使用逗号分隔。每项必须是无路径、查询、片段、凭据或通配符的精确 HTTPS 来源，空值和规范化后重复的来源会在启动时被拒绝。代理或隧道必须保持回环 socket 连接、把 `Host` 改写为本地或私有地址，并保留浏览器提供的 `Origin`；只有请求没有该头时才能补入已配置的来源，且不能依赖 forwarded headers。可信来源可以访问普通 Panel HTTP 和实时接口，但不能获得设备本地能力。旧名称 `CODEX_TASKBOARD_TRUSTED_ORIGINS` 仅保留兼容读取。
 
 ## 通过 Cloudflare 共享
 
