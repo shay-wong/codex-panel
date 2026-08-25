@@ -2,17 +2,18 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-export const name = "codex-taskboard";
+export const name = "codex-panel";
 export const inject = ["webServer"];
 
-const ROUTE = "/integrations/codex-taskboard";
-const RUNTIME_FILE = process.env.CODEX_TASKBOARD_RUNTIME_FILE
-  ?? path.join(os.homedir(), "Library/Application Support/Codex Taskboard/launcher-runtime.json");
+const ROUTE = "/integrations/codex-panel";
+const RUNTIME_FILE = process.env.CODEX_PANEL_RUNTIME_FILE
+  ?? process.env.CODEX_TASKBOARD_RUNTIME_FILE
+  ?? path.join(os.homedir(), "Library/Application Support/Codex Panel/data/launcher-runtime.json");
 
-async function activeTaskboardUrl() {
+async function activePanelUrl() {
   const descriptor = JSON.parse(await readFile(RUNTIME_FILE, "utf8"));
   if (descriptor?.version !== 1 || typeof descriptor.url !== "string") {
-    throw new Error("The active Codex Taskboard runtime is invalid");
+    throw new Error("The active Codex Panel runtime is invalid");
   }
   const url = new URL(`${descriptor.url.replace(/\/$/, "")}/`);
   url.searchParams.set("host", "deepseek-harness");
@@ -27,7 +28,7 @@ export function apply(ctx) {
       handler: async (_request, response) => {
         try {
           response.writeHead(307, {
-            location: await activeTaskboardUrl(),
+            location: await activePanelUrl(),
             "cache-control": "no-store",
           });
           response.end();
@@ -36,10 +37,10 @@ export function apply(ctx) {
             "content-type": "text/plain; charset=utf-8",
             "cache-control": "no-store",
           });
-          response.end("Codex Taskboard is not running.");
+          response.end("Codex Panel is not running.");
         }
       },
     }),
-    "codex-taskboard: active runtime route",
+    "codex-panel: active runtime route",
   );
 }

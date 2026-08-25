@@ -55,38 +55,38 @@ async function assertElfX64(filePath) {
 }
 
 async function verifyPackageRoot(root, label) {
-  const launcherPath = path.join(root, "usr", "bin", "codex-taskboard-launcher");
-  const nodePath = path.join(root, "usr", "bin", "codex-taskboard-node");
-  const resourceRoot = path.join(root, "usr", "lib", "Codex Taskboard");
-  const taskctlPath = path.join(resourceRoot, "bin", "taskctl");
+  const launcherPath = path.join(root, "usr", "bin", "codex-panel-launcher");
+  const nodePath = path.join(root, "usr", "bin", "codex-panel-node");
+  const resourceRoot = path.join(root, "usr", "lib", "Codex Panel");
+  const panelctlPath = path.join(resourceRoot, "bin", "panelctl");
   const requiredResources = [
-    "app/cli/taskctl.mjs",
+    "app/cli/panelctl.mjs",
     "app/dist/web/index.html",
-    "app/inject/codex-taskboard.user.js",
+    "app/inject/codex-panel.user.js",
     "app/node_modules/smol-toml/package.json",
     "app/scripts/codex-injector.mjs",
     "app/server/app.mjs",
     "app/server/index.mjs",
     "app/shared/codex-executable.mjs",
-    "app/skills/manage-taskboard/SKILL.md",
+    "app/skills/manage-panel/SKILL.md",
   ];
 
   await assertExecutable(launcherPath);
   await assertElfX64(launcherPath);
   await assertExecutable(nodePath);
   await assertElfX64(nodePath);
-  await assertExecutable(taskctlPath);
+  await assertExecutable(panelctlPath);
   for (const resource of requiredResources) {
     const details = await stat(path.join(resourceRoot, resource));
     if (!details.isFile()) throw new Error(`${label} is missing ${resource}`);
   }
 
-  const wrapper = await readFile(taskctlPath, "utf8");
+  const wrapper = await readFile(panelctlPath, "utf8");
   if (
-    !wrapper.includes("codex-taskboard-node")
-    || !wrapper.includes("app/cli/taskctl.mjs")
+    !wrapper.includes("codex-panel-node")
+    || !wrapper.includes("app/cli/panelctl.mjs")
   ) {
-    throw new Error(`${label} taskctl does not use the packaged Node and CLI`);
+    throw new Error(`${label} panelctl does not use the packaged Node and CLI`);
   }
   const nodeVersion = run(nodePath, ["--version"]);
   if (nodeVersion !== "v22.23.2") {
@@ -94,7 +94,7 @@ async function verifyPackageRoot(root, label) {
   }
 }
 
-const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "codex-taskboard-linux-packages."));
+const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "codex-panel-linux-packages."));
 try {
   if (run("dpkg-deb", ["--field", debPath, "Architecture"]) !== "amd64") {
     throw new Error("Debian package architecture is not amd64");
