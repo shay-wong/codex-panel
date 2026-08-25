@@ -37,6 +37,7 @@ test("launcher actions show feedback on the button that was clicked", async () =
   let holdRefresh = false;
   let browserShouldFail = false;
   let phase = "waiting";
+  let openSignalPid = null;
   let statusListener;
   const state = () => ({
     snapshot: {
@@ -44,7 +45,7 @@ test("launcher actions show feedback on the button that was clicked", async () =
       message: phase === "running" ? "任务面板已在 Codex 客户端中打开。" : "Panel 服务已启动，正在等待 Codex 连接。",
       version: "0.1.0",
       childPid: 31281,
-      openSignalPid: null,
+      openSignalPid,
       openRequestPending,
       embeddedVisible: false,
       updateMessage: "尚未检查更新。",
@@ -139,5 +140,11 @@ test("launcher actions show feedback on the button that was clicked", async () =
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(dom.window.document.getElementById("codexStatus").textContent, "连接已就绪");
   assert.equal(dom.window.document.getElementById("embeddedStatus").textContent, "可以打开");
+
+  phase = "waiting";
+  openSignalPid = 31281;
+  statusListener({ payload: state().snapshot });
+  assert.equal(dom.window.document.getElementById("codexStatus").textContent, "正在等待连接");
+  assert.equal(dom.window.document.getElementById("embeddedStatus").textContent, "尚未就绪");
   dom.window.close();
 });

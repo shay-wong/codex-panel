@@ -174,7 +174,7 @@ npm run cloud:data -- export \
   --output cloud-migration-exports/initial
 ```
 
-The output directory contains issue content and attachment bytes. It is mode-restricted and ignored by Git, but it must still be handled as private data. This export is optional when starting with an empty cloud board.
+The output directory contains issue and project README content, task scheduling fields, task-relation origins, and both issue and project README attachment bytes. It is mode-restricted and ignored by Git, but it must still be handled as private data. This export is optional when starting with an empty cloud board.
 
 Before importing, authenticate Wrangler, provision the named D1 and R2 resources, and run `npm run cloud:migrate` so the remote D1 schema exists. The target D1 must contain no projects, and none of the bundle's attachment keys may already exist in R2. Import refuses a non-empty target instead of merging or overwriting it.
 

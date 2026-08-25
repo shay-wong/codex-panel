@@ -354,7 +354,7 @@
 
       function renderComponents(snapshot) {
         const hasProcess = snapshot.childPid !== null && snapshot.childPid !== undefined;
-        const integrationReady = snapshot.phase === "running" || snapshot.openSignalPid !== null && snapshot.openSignalPid !== undefined;
+        const integrationReady = snapshot.phase === "running";
         const isError = snapshot.phase === "error";
         const isOpening = snapshot.openRequestPending && integrationReady;
         const isQueued = snapshot.openRequestPending && !integrationReady;
@@ -371,7 +371,7 @@
         elements.message.textContent = snapshot.message;
         elements.version.textContent = `版本 ${snapshot.version}`;
         const needsStart = snapshot.phase === "stopped" || snapshot.phase === "error";
-        const integrationReady = snapshot.phase === "running" || snapshot.openSignalPid !== null && snapshot.openSignalPid !== undefined;
+        const integrationReady = snapshot.phase === "running";
         const isOpening = !needsStart && snapshot.openRequestPending && integrationReady;
         const isQueued = !needsStart && snapshot.openRequestPending && !integrationReady;
         elements.primaryAction.textContent = needsStart ? "启动并打开" : isOpening ? "正在打开…" : isQueued ? "等待连接" : "打开面板";
