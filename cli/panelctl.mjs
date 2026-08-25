@@ -92,6 +92,7 @@ const COMMAND_OPTIONS = new Map([
   ])],
   ["issue archive", new Set(["thread-id", "if-version", "json"])],
   ["issue restore", new Set(["thread-id", "if-version", "json"])],
+  ["issue tree", new Set(["direction", "depth", "json"])],
   ["issue relation", new Set(["type", "issue", "thread-id", "if-version", "json"])],
   ["jira planning", new Set(["spec-file", "tickets-file", "if-version", "json"])],
   ["comment list", new Set(["after", "json"])],
@@ -127,7 +128,7 @@ Commands:
   project readme set [PROJECT_ID] (--content TEXT | --file FILE) [--if-version N]
   cloud login --url URL --actor-name NAME
   cloud status|logout
-  issue list|get|create|update|move|archive|restore|relation
+  issue list|get|create|update|move|archive|restore|tree|relation
   jira planning ISSUE_ID [--spec-file FILE] [--tickets-file FILE] [--if-version N]
   comment list ISSUE_ID [--after CURSOR]
   comment add ISSUE_ID (--body TEXT | --body-file FILE) [--thread-id ID]
@@ -176,6 +177,7 @@ Actions:
     [--if-version N] [--json]
   archive ISSUE_ID [--thread-id ID] [--if-version N] [--json]
   restore ISSUE_ID [--thread-id ID] [--if-version N] [--json]
+  tree ISSUE_ID --direction descendants|ancestors --depth N [--json]
   relation add|remove ISSUE_ID --type parent|blocks|blocked_by|related
     --issue RELATED_ISSUE_ID [--thread-id ID] [--if-version N] [--json]
 
@@ -306,7 +308,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map/readme, cloud login/status/logout, issue list/get/create/update/move/archive/restore/relation, jira planning, comment list/add/update/delete, attachment list/download/upload, context current",
+      "Expected one of: project list/create/map/readme, cloud login/status/logout, issue list/get/create/update/move/archive/restore/tree/relation, jira planning, comment list/add/update/delete, attachment list/download/upload, context current",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -388,6 +390,9 @@ async function execute(parsed, overrides) {
     case "issue restore":
       expectOperandCount(parsed, 1);
       return archiveIssue(api, parsed.operands[0], parsed.options, overrides, "restore");
+    case "issue tree":
+      expectOperandCount(parsed, 1);
+      return getIssueTree(api, parsed.operands[0], parsed.options);
     case "issue relation":
       expectOperandCount(parsed, 2);
       return mutateIssueRelation(
@@ -1012,6 +1017,20 @@ async function archiveIssue(api, taskId, options, overrides, action) {
     threadId,
     version: await resolveVersion(api, taskId, options["if-version"]),
   });
+}
+
+async function getIssueTree(api, taskId, options) {
+  const direction = requiredOption(options, "direction");
+  if (direction !== "descendants" && direction !== "ancestors") {
+    throw usageError("--direction must be descendants or ancestors");
+  }
+  const rawDepth = requiredOption(options, "depth");
+  const depth = Number(rawDepth);
+  if (!/^\d+$/.test(rawDepth) || !Number.isSafeInteger(depth) || depth < 1 || depth > 25) {
+    throw usageError("--depth must be an integer from 1 to 25");
+  }
+  const query = new URLSearchParams({ direction, depth: String(depth) });
+  return api.request("GET", `${taskPath(taskId)}/tree?${query}`);
 }
 
 async function mutateIssueRelation(api, action, taskId, options, overrides) {

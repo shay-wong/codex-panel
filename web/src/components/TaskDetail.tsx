@@ -79,6 +79,7 @@ import {
   EditIcon,
   LabelIcon,
   MoreIcon,
+  NewConversationIcon,
   PriorityIcon,
   ProjectIcon,
   RecurrenceIcon,
@@ -2051,7 +2052,7 @@ export function TaskDetail({
                 disabled={openingThread}
                 onClick={() => onOpenInThread(currentTask)}
               >
-                <ActorAvatar actor={CODEX_AGENT_ACTOR} className="detail-thread-avatar" />
+                <NewConversationIcon color="currentColor" />
                 <span>{openingThread
                   ? text("正在打开…", "Opening…")
                   : text("在新对话打开", "Open in new conversation")}</span>
@@ -2236,6 +2237,7 @@ export function TaskDetail({
                 open={propertyMenu === "development"}
                 disabled={developmentScanLoading || savingProperty === "developmentContext"}
                 className="detail-property-picker"
+                popoverClassName="development-context-popover"
                 triggerClassName="detail-property-trigger"
                 ariaLabel={text("开发上下文", "Development context")}
                 title={currentTask.developmentContext?.type === "worktree" ? currentTask.developmentContext.path : undefined}

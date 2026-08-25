@@ -23,6 +23,10 @@ interface MarkdownAstNode {
   type: string;
   value?: string;
   children?: MarkdownAstNode[];
+  data?: {
+    hName?: string;
+    hProperties?: Record<string, unknown>;
+  };
   position?: {
     start: { offset?: number };
     end: { offset?: number };
@@ -329,6 +333,36 @@ export function remarkStripMarkdownComments() {
       return true;
     };
     visit(tree, true);
+    const children = tree.children;
+    if (!children || children.length < 2) return;
+    const nextChildren: MarkdownAstNode[] = [];
+
+    children.forEach((child, index) => {
+      const previous = children[index - 1];
+      const previousEnd = previous?.position?.end.offset;
+      const childStart = child.position?.start.offset;
+      if (previousEnd !== undefined && childStart !== undefined) {
+        const gap = source.slice(previousEnd, childStart);
+        if (/^[\t \r\n]*$/.test(gap)) {
+          const extraBlankLines = Math.max(0, (gap.match(/\r\n|\r|\n/g)?.length ?? 0) - 2);
+          for (let blankLine = 0; blankLine < extraBlankLines; blankLine += 1) {
+            nextChildren.push({
+              type: "paragraph",
+              children: [],
+              data: {
+                hName: "div",
+                hProperties: {
+                  className: ["markdown-blank-line"],
+                  "aria-hidden": "true",
+                },
+              },
+            });
+          }
+        }
+      }
+      nextChildren.push(child);
+    });
+    tree.children = nextChildren;
   };
 }
 

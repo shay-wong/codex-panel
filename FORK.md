@@ -24,13 +24,15 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`44304ac5bbf97c7dfdcde6b52d8bb2403925ab79`
-- 精确已合并上游基线：`44304ac5bbf97c7dfdcde6b52d8bb2403925ab79`
-- 比较范围：`44304ac5bbf97c7dfdcde6b52d8bb2403925ab79..HEAD`
+- 本次合并的上游父提交：`70d6f44f5a066adfbd9d7ff8662d4639bfea7c2d`
+- 精确已合并上游基线：`70d6f44f5a066adfbd9d7ff8662d4639bfea7c2d`
+- 比较范围：`70d6f44f5a066adfbd9d7ff8662d4639bfea7c2d..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
 本次上游合并将基线更新到 `1.1.6`，吸收项目 README、全项目视图、Codex 接管与 Linux 桌面打包、编辑器和显示设置改进，以及等价的 Issue 跨项目移动。Fork 原有的 Jira CLI、多 provider 与 Scheduled Task 方案已由上游 Jira 模型替代，不再属于活跃 Fork 能力。桌面端继续采用上游 Tauri/Rust 基础并迁入 Fork 现有能力，产品名仍为 `Codex Panel`；自动 updater 安装、上游发布工作流和 `taskctl` 命名未纳入 Fork 产品入口。
+
+本轮继续吸收精确 HTTPS trusted-origin 边界、确定性的 Issue 树查询、Markdown 图片边界修复和 Issue 详情控件改进；这些属于上游能力，不新增 Fork 能力条目。Fork 继续使用 `Codex Panel`、`panelctl` 和 `manage-panel` 主命名，并保留 Jira、桌面端、自动化和 Cloud 扩展的不变量。
 
 ## Fork 发布版本策略
 

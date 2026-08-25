@@ -930,6 +930,7 @@ export function App() {
     ?? editor?.projectId
     ?? (newTaskDraft?.projectId === selectedProjectId ? newTaskDraft.targetProjectId : undefined)
     ?? (isAllProjects ? GLOBAL_PROJECT_ID : selectedProjectId);
+  const developmentEditorProjectId = isAllProjects && editor ? editorProjectId : null;
   const createTargetProjects = projectChoices.flatMap((choice) => {
     const project = projects.find((candidate) => candidate.id === choice.id);
     return project && project.source !== "jira"
@@ -1639,7 +1640,7 @@ export function App() {
   useEffect(() => {
     const standalone = !embedded || window.parent === window;
     const developmentProjectId = isAllProjects
-      ? standalone ? contextMenuTask?.projectId : null
+      ? developmentEditorProjectId ?? (standalone ? contextMenuTask?.projectId : null)
       : selectedProjectId;
     if (!developmentProjectId) {
       setDevelopmentScan({ workspacePath: null, contexts: [] });
@@ -1653,7 +1654,11 @@ export function App() {
     const codexThreadId = hostContext?.threadId
       ?? (isAllProjects ? contextMenuTask?.threadId : detailTask?.threadId)
       ?? undefined;
-    const workspacePath = isAllProjects ? contextMenuWorkspacePath : selectedDeviceWorkspacePath;
+    const workspacePath = isAllProjects
+      ? developmentEditorProjectId
+        ? deviceWorkspacePaths[developmentEditorProjectId]
+        : contextMenuWorkspacePath
+      : selectedDeviceWorkspacePath;
     setDevelopmentScan({ workspacePath: workspacePath ?? null, contexts: [] });
     setDevelopmentScanLoading(true);
     void listDevelopmentContexts(
@@ -1681,6 +1686,8 @@ export function App() {
     contextMenuTask?.threadId,
     contextMenuWorkspacePath,
     detailTask?.threadId,
+    deviceWorkspacePaths,
+    developmentEditorProjectId,
     embedded,
     hostContext?.projectId,
     hostContext?.threadId,

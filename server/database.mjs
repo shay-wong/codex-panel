@@ -23,6 +23,7 @@ const JIRA_SIMPLE_START_ITEMS_TABLE = `
     UNIQUE (operation_id, thread_id)
   );
 `;
+const TASK_TREE_MAX_NODES = 1_000;
 
 export class ApiError extends Error {
   constructor(status, code, message, details) {
@@ -310,6 +311,22 @@ function taskRelationSummaryFromRow(row) {
     },
     archivedAt: row.archived_at,
     version: row.version,
+  };
+}
+
+function taskTreeNode(row, parentId, depth, path) {
+  return {
+    id: row.id,
+    parentId,
+    depth,
+    path,
+    summary: {
+      identifier: row.identifier,
+      title: row.title,
+      status: row.status,
+      priority: row.priority,
+      archivedAt: row.archived_at,
+    },
   };
 }
 
@@ -1138,7 +1155,41 @@ export class PanelDatabase {
       INSERT OR IGNORE INTO jira_plan_threads (jira_task_id, thread_id, created_at)
       SELECT jira_task_id, thread_id, created_at
       FROM jira_plans
-      WHERE thread_id IS NOT NULL
+      WHERE thread_id IS NOT NULL;
+
+      CREATE TRIGGER IF NOT EXISTS task_relations_require_same_project
+      BEFORE INSERT ON task_relations
+      WHEN NEW.relation_type = 'parent'
+      BEGIN
+        SELECT RAISE(ABORT, 'CROSS_PROJECT_RELATION')
+        WHERE EXISTS (
+          SELECT 1
+          FROM tasks AS source
+          JOIN tasks AS target ON target.id = NEW.target_task_id
+          WHERE source.id = NEW.source_task_id
+            AND source.project_id != target.project_id
+        );
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS task_relations_prevent_parent_cycle
+      BEFORE INSERT ON task_relations
+      WHEN NEW.relation_type = 'parent'
+      BEGIN
+        SELECT RAISE(ABORT, 'RELATION_CYCLE')
+        WHERE EXISTS (
+          WITH RECURSIVE ancestors(id) AS (
+            SELECT source_task_id
+            FROM task_relations
+            WHERE relation_type = 'parent' AND target_task_id = NEW.source_task_id
+            UNION
+            SELECT task_relations.source_task_id
+            FROM task_relations
+            JOIN ancestors ON task_relations.target_task_id = ancestors.id
+            WHERE task_relations.relation_type = 'parent'
+          )
+          SELECT 1 FROM ancestors WHERE id = NEW.target_task_id
+        );
+      END;
     `);
 
     const taskRelationColumns = this.database.prepare("PRAGMA table_info(task_relations)").all();
@@ -4526,6 +4577,70 @@ export class PanelDatabase {
     const activities = this.#activitiesForTasks([task.id]).get(task.id) ?? [];
     const previewImage = this.#taskPreviewImages([task.id]).get(task.id) ?? null;
     return attachTaskActivity(task, comments, activities, previewImage);
+  }
+
+  getTaskTree(id, direction, depth) {
+    const root = this.database.prepare(
+      "SELECT * FROM tasks WHERE id = ? OR identifier = ?",
+    ).get(id, id);
+    if (!root) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
+
+    const nodes = [taskTreeNode(root, null, 0, [root.id])];
+    const seen = new Set([root.id]);
+    let frontier = [nodes[0]];
+    const relationJoin = direction === "descendants"
+      ? `
+        FROM task_relations
+        JOIN tasks ON tasks.id = task_relations.target_task_id
+        WHERE task_relations.relation_type = 'parent'
+          AND task_relations.source_task_id IN (%PLACEHOLDERS%)
+      `
+      : `
+        FROM task_relations
+        JOIN tasks ON tasks.id = task_relations.source_task_id
+        WHERE task_relations.relation_type = 'parent'
+          AND task_relations.target_task_id IN (%PLACEHOLDERS%)
+      `;
+    const parentColumn = direction === "descendants"
+      ? "task_relations.source_task_id"
+      : "task_relations.target_task_id";
+
+    for (let level = 1; level <= depth && frontier.length > 0; level += 1) {
+      const placeholders = frontier.map(() => "?").join(", ");
+      const rows = this.database.prepare(`
+        SELECT tasks.*, ${parentColumn} AS tree_parent_id
+        ${relationJoin.replace("%PLACEHOLDERS%", placeholders)}
+        ORDER BY tasks.sort_order, tasks.created_at, tasks.id
+      `).all(...frontier.map((node) => node.id));
+      const rowsByParent = new Map();
+      for (const row of rows) {
+        const siblings = rowsByParent.get(row.tree_parent_id) ?? [];
+        siblings.push(row);
+        rowsByParent.set(row.tree_parent_id, siblings);
+      }
+      const next = [];
+      for (const parent of frontier) {
+        for (const row of rowsByParent.get(parent.id) ?? []) {
+          if (seen.has(row.id)) continue;
+          if (nodes.length >= TASK_TREE_MAX_NODES) {
+            throw new ApiError(413, "TREE_TOO_LARGE", `Task tree cannot exceed ${TASK_TREE_MAX_NODES} nodes`);
+          }
+          const node = taskTreeNode(row, parent.id, level, [...parent.path, row.id]);
+          nodes.push(node);
+          next.push(node);
+          seen.add(row.id);
+        }
+      }
+      frontier = next;
+    }
+
+    return {
+      rootId: root.id,
+      direction,
+      depth,
+      nodeCount: nodes.length,
+      nodes,
+    };
   }
 
   createTask(input) {

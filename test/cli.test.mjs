@@ -380,6 +380,32 @@ test("issue relation add and remove use typed relation endpoints", async () => {
   });
 });
 
+test("issue tree uses the bounded directional tree endpoint", async () => {
+  let requestedUrl;
+  const result = await run(
+    ["issue", "tree", "TASK/1", "--direction", "ancestors", "--depth", "3", "--json"],
+    async (url, init) => {
+      requestedUrl = url;
+      assert.equal(init.method, "GET");
+      return response({ tree: { rootId: "TASK/1", direction: "ancestors", depth: 3, nodes: [] } });
+    },
+  );
+  assert.equal(result.exitCode, 0);
+  assert.equal(requestedUrl.pathname, "/api/tasks/TASK%2F1/tree");
+  assert.equal(requestedUrl.searchParams.get("direction"), "ancestors");
+  assert.equal(requestedUrl.searchParams.get("depth"), "3");
+
+  for (const argv of [
+    ["issue", "tree", "TASK-1", "--direction", "down", "--depth", "1"],
+    ["issue", "tree", "TASK-1", "--direction", "descendants", "--depth", "0"],
+    ["issue", "tree", "TASK-1", "--direction", "descendants"],
+  ]) {
+    const invalid = await run(argv, async () => assert.fail("fetch should not be called"));
+    assert.equal(invalid.exitCode, 2);
+    assert.equal(invalid.stderr.error.code, "USAGE_ERROR");
+  }
+});
+
 test("issue relation validates its action and relation type before fetching", async () => {
   for (const argv of [
     ["issue", "relation", "replace", "TASK-1", "--type", "related", "--issue", "TASK-2"],

@@ -52,7 +52,10 @@ Every successful command writes one JSON object with `schemaVersion` to stdout. 
 ```bash
 panelctl issue list [--project PROJECT_ID] [--status STATUS] [--archived true|false|all] [--json]
 panelctl issue get ID [--json]
+panelctl issue tree ID --direction descendants|ancestors --depth N [--json]
 ```
+
+`issue tree` is a bounded structural read. `--depth 1` returns only direct children or the direct parent; larger values include that many levels, up to 25. The response is flat and deterministic: every node carries `id`, traversal `parentId`, `depth`, and `path` (usable as a breadcrumb), plus a small issue summary. It never calculates status rollups or changes issues.
 
 ## Create issues
 
@@ -148,7 +151,7 @@ panelctl issue relation remove ISSUE_ID \
 
 For `--type parent`, `ISSUE_ID` is the child and `PARENT_ISSUE_ID` is its parent. Adding another parent replaces the child's current parent atomically. To add an existing issue as a sub-issue, anchor the command on the child and pass the exact parent identifier with `--issue PARENT_ISSUE_ID`.
 
-For `blocks`, the anchor issue blocks the related issue. For `blocked_by`, the related issue blocks the anchor. `related` is symmetric. Self-relations, duplicates, parent cycles, and relations between different projects are rejected.
+For `blocks`, the anchor issue blocks the related issue. For `blocked_by`, the related issue blocks the anchor. `related` is symmetric. Self-relations, duplicates, and parent cycles are rejected. For compatibility, relation writes between different projects remain rejected for now; this is a temporary boundary, not the final hierarchy contract.
 
 ## Issue comments
 

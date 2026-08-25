@@ -502,7 +502,20 @@ export function createInlineMediaSegments(
   }
 
   if (offset < text.length) segments.push(textSegment(text.slice(offset)));
-  return normalizeSegments(segments);
+  const normalized = normalizeSegments(segments);
+  return normalized.map((segment, index) => {
+    if (segment.type !== "text") return segment;
+    const previousIsImage = isTaskboardAttachmentImage(normalized[index - 1]);
+    const nextIsImage = isTaskboardAttachmentImage(normalized[index + 1]);
+    let value = segment.text;
+    if (previousIsImage && nextIsImage && /^\n+$/.test(value)) {
+      value = value.slice(1);
+    } else {
+      if (previousIsImage && value.startsWith("\n")) value = value.slice(1);
+      if (nextIsImage && value.endsWith("\n")) value = value.slice(0, -1);
+    }
+    return value === segment.text ? segment : { ...segment, text: value };
+  });
 }
 
 export function inlineMediaImages(segments: InlineMediaSegment[]): PendingInlineImage[] {
@@ -529,12 +542,58 @@ export function inlineMediaText(segments: InlineMediaSegment[]): string {
   }).join("");
 }
 
+function isTaskboardAttachmentImage(segment: InlineMediaSegment | undefined): boolean {
+  return segment?.type === "pending-image" || (
+    segment?.type === "persisted-image"
+    && /^\/?api\/attachments\/[^/?#]+\/content$/.test(segment.url)
+  );
+}
+
+function serializeInlineMediaSegments(
+  segments: InlineMediaSegment[],
+  segmentValue: (segment: InlineMediaSegment) => string,
+): string {
+  let markdown = "";
+  let previousWasImage = false;
+  let sharedImageBoundary = false;
+  segments.forEach((segment, index) => {
+    const value = segmentValue(segment);
+    if (
+      segment.type === "text"
+      && isTaskboardAttachmentImage(segments[index - 1])
+      && isTaskboardAttachmentImage(segments[index + 1])
+      && /^\n*$/.test(value)
+    ) {
+      markdown += `\n${value}`;
+      previousWasImage = false;
+      sharedImageBoundary = true;
+      return;
+    }
+    if (!value) return;
+    const isImage = isTaskboardAttachmentImage(segment);
+    if (isImage) {
+      if (markdown && !sharedImageBoundary) markdown += "\n";
+      markdown += value;
+      previousWasImage = true;
+      sharedImageBoundary = false;
+      return;
+    }
+    if (previousWasImage) markdown += "\n";
+    markdown += value;
+    previousWasImage = false;
+    sharedImageBoundary = false;
+  });
+  return markdown;
+}
+
 export function serializeInlineMedia(segments: InlineMediaSegment[]): string {
-  return segments.map((segment) => {
-    if (segment.type === "text") return segment.text;
-    if (segment.type === "pending-image") return segment.token;
-    return segment.markdown;
-  }).join("");
+  return serializeInlineMediaSegments(segments, (segment) => (
+    segment.type === "text"
+      ? segment.text
+      : segment.type === "pending-image"
+        ? segment.token
+        : segment.markdown
+  ));
 }
 
 export function resolveInlineMediaMarkdown(
@@ -620,13 +679,13 @@ function inlineMediaRangeSegments(
 }
 
 function inlineMediaClipboardText(segments: InlineMediaSegment[]): string {
-  return segments.map((segment) => {
+  return serializeInlineMediaSegments(segments, (segment) => {
     if (segment.type === "text") return segment.text;
     if (segment.type === "pending-image") {
       return pendingImageClipboardMarkdown(segment) ?? segment.file.name;
     }
     return segment.markdown;
-  }).join("");
+  });
 }
 
 function pendingImageClipboardMarkdown(segment: InlineImageSegment): string | null {
