@@ -172,7 +172,9 @@ npm ci
 npm run app:build:windows
 ```
 
-The installer is written to `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`. It installs a tray launcher, bundled Node runtime, local service, built web UI, `manage-panel` Skill, `panelctl.cmd`, and injection script. Panel data is stored in `%APPDATA%\Codex Panel`; logs are stored in `%LOCALAPPDATA%\Codex Panel\Logs`; the Skill is copied to `%USERPROFILE%\.agents\skills\manage-panel`.
+The installer is written to `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`. It installs a tray launcher, bundled Node runtime, local service, built web UI, `manage-panel` Skill, `panelctl.cmd`, and injection script. Panel data is stored in `%LOCALAPPDATA%\Codex Panel\data`; logs are stored in `%LOCALAPPDATA%\Codex Panel\Logs`; the Skill is copied to `%USERPROFILE%\.agents\skills\manage-panel`.
+
+When `panelctl` runs inside WSL, it automatically finds the Windows launcher descriptor under `%LOCALAPPDATA%\Codex Panel\data` and sends requests through Windows `curl.exe`, so it can use the running Windows desktop app. Set `CODEX_PANEL_WSL_RUNTIME_FILE` to a WSL path only when the descriptor must be overridden explicitly.
 
 Windows builds do not auto-update. Official installers must pass the Authenticode and packaged-runtime verification described above. See [Windows uninstall](docs/windows-uninstall.md) for retained-data behavior.
 
@@ -207,6 +209,7 @@ To use a different UI origin, set `window.__CODEX_PANEL_URL__` before the user s
 | `CODEX_PANEL_HOME` | `~/Library/Application Support/Codex Panel` on macOS | Installed runtime and default data root |
 | `CODEX_PANEL_DATA_DIR` | `$CODEX_PANEL_HOME/data` | SQLite data directory |
 | `CODEX_PANEL_URL` | `http://127.0.0.1:47823` | CLI API origin |
+| `CODEX_PANEL_WSL_RUNTIME_FILE` | auto-discovered from Windows `LOCALAPPDATA` | WSL path to a Windows launcher descriptor |
 | `CODEX_PANEL_CODESIGN_IDENTITY` | Matching local Apple Development identity, otherwise `-` | Explicit identity or certificate hash for signing `Codex Panel.app` |
 | `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` | none | Required Authenticode certificate thumbprint for official Windows builds |
 | `CODEX_PANEL_TRUSTED_ORIGINS` | unset | Comma-separated exact HTTPS origins allowed through a loopback reverse tunnel |

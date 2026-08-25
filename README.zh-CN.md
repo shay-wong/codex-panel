@@ -166,7 +166,9 @@ npm ci
 npm run app:build:windows
 ```
 
-安装包位于 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`。它包含托盘启动器、内置 Node、本地服务、构建后的 Web UI、`manage-panel` Skill、`panelctl.cmd` 和注入脚本。Panel 数据存储在 `%APPDATA%\Codex Panel`，日志存储在 `%LOCALAPPDATA%\Codex Panel\Logs`，Skill 会复制到 `%USERPROFILE%\.agents\skills\manage-panel`。
+安装包位于 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`。它包含托盘启动器、内置 Node、本地服务、构建后的 Web UI、`manage-panel` Skill、`panelctl.cmd` 和注入脚本。Panel 数据存储在 `%LOCALAPPDATA%\Codex Panel\data`，日志存储在 `%LOCALAPPDATA%\Codex Panel\Logs`，Skill 会复制到 `%USERPROFILE%\.agents\skills\manage-panel`。
+
+在 WSL 中运行 `panelctl` 时，它会自动查找 `%LOCALAPPDATA%\Codex Panel\data` 下的 Windows launcher descriptor，并通过 Windows `curl.exe` 请求正在运行的 Windows 桌面端。只有需要显式覆盖 descriptor 时，才设置指向 WSL 路径的 `CODEX_PANEL_WSL_RUNTIME_FILE`。
 
 Windows 构建不支持自动更新。正式安装包必须配置 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT`，并通过前述 Authenticode 与打包 runtime 校验；未配置证书的正式构建会直接失败，不会发布未签名安装包。隐私说明见[隐私策略](PRIVACY.md)，保留数据的行为见 [Windows 卸载说明](docs/windows-uninstall.md)。
 
@@ -202,6 +204,7 @@ npm run codex:inject -- --port 9229 --open
 | `CODEX_PANEL_HOME` | macOS 上为 `~/Library/Application Support/Codex Panel` | 已安装 runtime 和默认数据根目录 |
 | `CODEX_PANEL_DATA_DIR` | `$CODEX_PANEL_HOME/data` | SQLite 数据目录 |
 | `CODEX_PANEL_URL` | `http://127.0.0.1:47823` | CLI API 地址 |
+| `CODEX_PANEL_WSL_RUNTIME_FILE` | 从 Windows `LOCALAPPDATA` 自动发现 | Windows launcher descriptor 的 WSL 路径 |
 | `CODEX_PANEL_CODESIGN_IDENTITY` | 匹配的本机 Apple Development 身份，否则为 `-` | 签名 `Codex Panel.app` 时显式指定身份名称或证书哈希 |
 | `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` | 无 | Windows 正式构建所需的 Authenticode 证书指纹 |
 

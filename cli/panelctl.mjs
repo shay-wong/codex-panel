@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 
+import { execFile, spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import { normalizeCloudUrl } from "../server/cloud-config.mjs";
 import {
@@ -15,6 +17,8 @@ import {
 
 export const SCHEMA_VERSION = 2;
 export const DEFAULT_API_URL = "http://127.0.0.1:47823";
+
+const execFileAsync = promisify(execFile);
 
 const sourceRuntimeFile = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -320,11 +324,10 @@ async function execute(parsed, overrides) {
   const usesCompanionControl = command.startsWith("cloud ") || command === "project map";
   const hasCompanionUrl = env.CODEX_PANEL_COMPANION_URL !== undefined
     || env.CODEX_TASKBOARD_COMPANION_URL !== undefined;
-  const api = createApiClient(overrides, {
-    baseUrl: usesCompanionControl || hasCompanionUrl
-      ? await resolveCompanionUrl(env, overrides)
-      : await resolvePanelBaseUrl(env, overrides),
-  });
+  const target = usesCompanionControl || hasCompanionUrl
+    ? await resolveCompanionUrl(env, overrides)
+    : await resolvePanelBaseUrl(env, overrides);
+  const api = createApiClient(overrides, target);
   switch (command) {
     case "project list":
       expectOperandCount(parsed, 0);
@@ -527,8 +530,14 @@ async function jiraPlanning(api, operands, options, overrides) {
   throw usageError("jira planning action must be get, save, or publish");
 }
 
-function createApiClient(overrides, { baseUrl: explicitBaseUrl } = {}) {
-  const fetchImplementation = overrides.fetch ?? globalThis.fetch;
+function createApiClient(overrides, {
+  url: explicitBaseUrl,
+  windowsTransport = false,
+} = {}) {
+  const fetchImplementation = overrides.fetch
+    ?? (windowsTransport
+      ? (url, init) => fetchThroughWindows(url, init, overrides)
+      : globalThis.fetch);
   if (typeof fetchImplementation !== "function") {
     throw new PanelctlError("fetch is not available", {
       code: "CLIENT_UNAVAILABLE",
@@ -1260,44 +1269,183 @@ function resolveApiUrl(baseUrl, pathname) {
 }
 
 async function resolvePanelBaseUrl(env, overrides) {
-  if (env.CODEX_PANEL_URL !== undefined) return env.CODEX_PANEL_URL;
-  if (env.CODEX_TASKBOARD_URL !== undefined) return env.CODEX_TASKBOARD_URL;
+  if (env.CODEX_PANEL_URL !== undefined) {
+    return { url: env.CODEX_PANEL_URL, windowsTransport: false };
+  }
+  if (env.CODEX_TASKBOARD_URL !== undefined) {
+    return { url: env.CODEX_TASKBOARD_URL, windowsTransport: false };
+  }
   const configuredDescriptorPath = env.CODEX_PANEL_RUNTIME_FILE ?? env.CODEX_TASKBOARD_RUNTIME_FILE;
-  const descriptorPath = configuredDescriptorPath ?? sourceRuntimeFile;
-  let descriptor;
-  try {
-    const read = configuredDescriptorPath === undefined
-      ? readFile
-      : (overrides.readFile ?? readFile);
-    descriptor = JSON.parse(await read(descriptorPath, "utf8"));
-  } catch (error) {
-    if (configuredDescriptorPath === undefined && error?.code === "ENOENT") {
-      return DEFAULT_API_URL;
+  const isWsl = isWslEnvironment(env);
+  const wslRuntimeFile = env.CODEX_PANEL_WSL_RUNTIME_FILE
+    ?? env.CODEX_TASKBOARD_WSL_RUNTIME_FILE;
+  const descriptorCandidates = configuredDescriptorPath !== undefined
+    ? [{
+      path: configuredDescriptorPath,
+      read: overrides.readFile ?? readFile,
+      required: true,
+      windowsTransport: false,
+    }]
+    : isWsl && wslRuntimeFile !== undefined
+      ? [{
+        path: wslRuntimeFile,
+        read: overrides.readFile ?? readFile,
+        required: true,
+        windowsTransport: true,
+      }]
+      : [
+        ...([isWsl ? await resolveWslRuntimeFile(overrides) : undefined]
+          .filter(Boolean)
+          .map((descriptorPath) => ({
+            path: descriptorPath,
+            read: overrides.readFile ?? readFile,
+            required: false,
+            windowsTransport: true,
+          }))),
+        {
+          path: sourceRuntimeFile,
+          read: readFile,
+          required: false,
+          windowsTransport: false,
+        },
+      ];
+
+  for (const {
+    path: descriptorPath,
+    read,
+    required,
+    windowsTransport,
+  } of descriptorCandidates) {
+    try {
+      const descriptor = JSON.parse(await read(descriptorPath, "utf8"));
+      if (![1, 2].includes(descriptor?.version) || typeof descriptor.url !== "string") {
+        throw new PanelctlError("The active Panel launcher endpoint is invalid", {
+          code: "INVALID_RESPONSE",
+          exitCode: 4,
+        });
+      }
+      return { url: descriptor.url, windowsTransport };
+    } catch (error) {
+      if (!required && error?.code === "ENOENT") continue;
+      if (error instanceof PanelctlError) throw error;
+      throw new PanelctlError("Cannot read the active Panel launcher endpoint", {
+        code: "SERVICE_UNAVAILABLE",
+        exitCode: 3,
+        details: error instanceof Error ? error.message : String(error),
+      });
     }
-    throw new PanelctlError("Cannot read the active Panel launcher endpoint", {
-      code: "SERVICE_UNAVAILABLE",
-      exitCode: 3,
-      details: error instanceof Error ? error.message : String(error),
-    });
   }
-  if (![1, 2].includes(descriptor?.version) || typeof descriptor.url !== "string") {
-    throw new PanelctlError("The active Panel launcher endpoint is invalid", {
-      code: "INVALID_RESPONSE",
-      exitCode: 4,
-    });
+
+  return { url: DEFAULT_API_URL, windowsTransport: false };
+}
+
+function isWslEnvironment(env) {
+  return env.WSL_DISTRO_NAME !== undefined || env.WSL_INTEROP !== undefined;
+}
+
+async function resolveWslRuntimeFile(overrides) {
+  const run = overrides.execFile ?? execFileAsync;
+  try {
+    const windowsAppData = await run(
+      "cmd.exe",
+      ["/d", "/u", "/s", "/c", "set LOCALAPPDATA"],
+      { encoding: "buffer" },
+    );
+    const appDataLine = windowsAppData.stdout
+      .toString("utf16le")
+      .split(/\r?\n/)
+      .find((line) => line.toUpperCase().startsWith("LOCALAPPDATA="));
+    const windowsAppDataPath = appDataLine?.slice("LOCALAPPDATA=".length);
+    if (windowsAppDataPath === undefined) return undefined;
+    const appData = await run(
+      "wslpath",
+      ["-u", windowsAppDataPath],
+      { encoding: "utf8" },
+    );
+    const appDataPath = appData.stdout.trim();
+    return appDataPath
+      ? path.join(appDataPath, "Codex Panel", "data", "launcher-runtime.json")
+      : undefined;
+  } catch {
+    return undefined;
   }
-  return descriptor.url;
+}
+
+async function fetchThroughWindows(url, init, overrides) {
+  const run = overrides.spawn ?? spawn;
+  const marker = "__CODEX_PANEL_CURL_RESPONSE__";
+  const args = [
+    "--disable",
+    "--noproxy",
+    "*",
+    "--silent",
+    "--show-error",
+    "--request",
+    init?.method ?? "GET",
+  ];
+  for (const [name, value] of new Headers(init?.headers)) {
+    args.push("--header", `${name}: ${value}`);
+  }
+  if (init?.body !== undefined) args.push("--data-binary", "@-");
+  args.push(
+    "--write-out",
+    `%{stderr}${marker}%{http_code}\t%{content_type}\t%{size_download}`,
+    "--url",
+    url.toString(),
+  );
+
+  return new Promise((resolve, reject) => {
+    const child = run("curl.exe", args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.stdin.on("error", reject);
+    child.once("error", reject);
+    child.once("close", (code) => {
+      const errorText = Buffer.concat(stderr).toString("utf8");
+      if (code !== 0) {
+        reject(new Error(errorText.trim() || `curl.exe exited with ${code}`));
+        return;
+      }
+      const markerIndex = errorText.lastIndexOf(marker);
+      if (markerIndex === -1) {
+        reject(new Error("curl.exe did not return HTTP response metadata"));
+        return;
+      }
+      const [statusText, contentType, contentLength] = errorText
+        .slice(markerIndex + marker.length)
+        .split("\t");
+      const status = Number(statusText);
+      if (!Number.isInteger(status) || status < 100 || status > 599) {
+        reject(new Error("curl.exe returned invalid HTTP response metadata"));
+        return;
+      }
+      const body = Buffer.concat(stdout);
+      resolve(new Response(body.length === 0 ? null : body, {
+        status,
+        headers: {
+          ...(contentType ? { "content-type": contentType } : {}),
+          ...(contentLength ? { "content-length": contentLength } : {}),
+        },
+      }));
+    });
+    child.stdin.end(init?.body);
+  });
 }
 
 async function resolveCompanionUrl(env, overrides) {
-  const rawUrl = env.CODEX_PANEL_COMPANION_URL
-    ?? env.CODEX_TASKBOARD_COMPANION_URL
-    ?? env.CODEX_PANEL_URL
-    ?? env.CODEX_TASKBOARD_URL
-    ?? await resolvePanelBaseUrl(env, overrides);
+  const explicitCompanionUrl = env.CODEX_PANEL_COMPANION_URL
+    ?? env.CODEX_TASKBOARD_COMPANION_URL;
+  const target = explicitCompanionUrl !== undefined
+    ? { url: explicitCompanionUrl, windowsTransport: false }
+    : await resolvePanelBaseUrl(env, overrides);
   let url;
   try {
-    url = new URL(rawUrl);
+    url = new URL(target.url);
   } catch {
     throw usageError("Local companion URL must be a valid URL");
   }
@@ -1319,7 +1467,10 @@ async function resolveCompanionUrl(env, overrides) {
   ) {
     throw usageError("Local companion URL must be a loopback HTTP or HTTPS origin");
   }
-  return url.toString().replace(/\/$/, "");
+  return {
+    url: url.toString().replace(/\/$/, ""),
+    windowsTransport: target.windowsTransport,
+  };
 }
 
 async function readResponse(response) {
