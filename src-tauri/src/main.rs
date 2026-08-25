@@ -172,14 +172,14 @@ struct RuntimeDescriptor {
     startup_token: Option<String>,
 }
 
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
 #[derive(Deserialize)]
 struct RuntimeIntegrityManifest {
     version: u32,
     files: Vec<RuntimeIntegrityEntry>,
 }
 
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
 #[derive(Deserialize)]
 struct RuntimeIntegrityEntry {
     path: String,
