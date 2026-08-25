@@ -24,13 +24,13 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`7492f79ee62a8a6db47f7d0543f8d821f84a1f66`
-- 精确已合并上游基线：`7492f79ee62a8a6db47f7d0543f8d821f84a1f66`
-- 比较范围：`7492f79ee62a8a6db47f7d0543f8d821f84a1f66..HEAD`
+- 本次合并的上游父提交：`c56056b2743917639b9d9f814c81f2241f66f69f`
+- 精确已合并上游基线：`c56056b2743917639b9d9f814c81f2241f66f69f`
+- 比较范围：`c56056b2743917639b9d9f814c81f2241f66f69f..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
-本次上游合并将基线更新到 `1.1.6`，吸收项目 README、全项目视图、Codex 接管与 Linux 桌面打包、编辑器和显示设置改进，以及等价的 Issue 跨项目移动。Fork 原有的 Jira CLI、多 provider 与 Scheduled Task 方案已由上游 Jira 模型替代，不再属于活跃 Fork 能力。桌面端继续采用上游 Tauri/Rust 基础并迁入 Fork 现有能力，产品名仍为 `Codex Panel`；自动 updater 安装、上游发布工作流和 `taskctl` 命名未纳入 Fork 产品入口。
+本次上游合并将基线更新到 `1.1.7`，吸收项目 README、全项目视图、Codex 接管与 Linux 桌面打包、编辑器和显示设置改进、等价的 Issue 跨项目移动，以及优先使用稳定本机端口并在占用时回退随机端口的桌面启动器行为。Fork 原有的 Jira CLI、多 provider 与 Scheduled Task 方案已由上游 Jira 模型替代，不再属于活跃 Fork 能力。桌面端继续采用上游 Tauri/Rust 基础并迁入 Fork 现有能力，产品名仍为 `Codex Panel`；自动 updater 安装、上游发布工作流和 `taskctl` 命名未纳入 Fork 产品入口。
 
 本轮继续吸收精确 HTTPS trusted-origin 边界、确定性的 Issue 树查询、Markdown 图片边界修复、Issue 详情控件改进，以及 WSL CLI 发现并访问 Windows launcher runtime 的能力；这些属于上游能力，不新增 Fork 能力条目。Fork 继续使用 `Codex Panel`、`panelctl` 和 `manage-panel` 主命名，并保留 Jira、桌面端、自动化和 Cloud 扩展的不变量。
 
@@ -38,13 +38,13 @@
 
 - 权威上游版本来源：精确合并基线中的 `package.json`
 - 当前 Fork 版本来源：`package.json` 和 `package-lock.json` 的根包条目
-- 精确基线的上游版本：`1.1.6`
+- 精确基线的上游版本：`1.1.7`
 - 当前 Fork 版本：`0.1.0`
 - 匹配的 Fork 标签或 GitHub Release：无
 
 每个 Fork 发布版本都必须使用 `<upstream-version>-fork.<N>`。上游版本变化时从 `fork.1` 开始；同一上游版本的后续 Fork 发布递增 `N`。已准备但尚未发布的版本号在未被占用时可以保留。
 
-当前 Fork 版本 `0.1.0` 与精确上游基线版本不一致，也不符合 Fork 发布格式。下一个规范化 Fork 发布版本是 `1.1.6-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
+当前 Fork 版本 `0.1.0` 与精确上游基线版本不一致，也不符合 Fork 发布格式。下一个规范化 Fork 发布版本是 `1.1.7-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
 
 ## 活跃 Fork 能力
 
