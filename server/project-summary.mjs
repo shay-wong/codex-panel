@@ -104,6 +104,7 @@ export class ProjectSummaryService {
           "--json",
           "--color",
           "never",
+          "--skip-git-repo-check",
           "-C",
           this.workspacePath,
           "-s",

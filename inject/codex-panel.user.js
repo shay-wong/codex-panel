@@ -34,6 +34,7 @@
   const PLUGIN_LABELS = ["插件", "外掛程式", "plugins"];
   const NATIVE_PAGE_LABELS = [
     "新建任务",
+    "新聊天",
     "新对话",
     "new task",
     "new chat",
@@ -1826,6 +1827,10 @@
     if (!clickable.closest("aside nav[role='navigation']")) return false;
     if (clickable.hasAttribute("data-app-action-sidebar-section-toggle")) return false;
     if (buttonMatches(clickable, NATIVE_PAGE_LABELS)) return true;
+    if (
+      clickable.matches("[role='button']")
+      && clickable.closest("[data-sidebar-chatgpt-conversation-key]")
+    ) return true;
     return Boolean(clickable.closest(
       "[data-app-action-sidebar-project-row],"
       + "[data-app-action-sidebar-project-id]",
