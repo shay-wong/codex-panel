@@ -91,6 +91,7 @@ test("Jira REST sync is atomic, rechecks missing issues, and confirms account ch
             key: "OPEN-1",
             fields: {
               summary: "Open",
+              description: "改动范围：\n # 第一项\n\n # 第二项\n\n测试重点：\n * 保留项目符号",
               status: { name: "To Do", statusCategory: { key: "new" } },
               assignee: account,
               reporter: account,
@@ -127,6 +128,10 @@ test("Jira REST sync is atomic, rechecks missing issues, and confirms account ch
   const unknown = await integration.sync({ force: true });
   assert.equal(unknown.syncedIssueCount, 1);
   assert.equal(unknown.unknownIssueCount, 1);
+  assert.equal(
+    database.syncCalls.at(-1).issues[0].description,
+    "改动范围：\n 1. 第一项\n\n 1. 第二项\n\n测试重点：\n * 保留项目符号",
+  );
   assert.equal(database.syncCalls.at(-1).options.unknownTasks[0].id, "jira-missing");
 
   missingMode = "open";

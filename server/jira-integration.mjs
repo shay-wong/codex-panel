@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { JIRA_PROJECT_ID } from "../shared/domain.mjs";
+import { JIRA_PROJECT_ID, jiraDescriptionToMarkdown } from "../shared/domain.mjs";
 import { ApiError } from "./database.mjs";
 
 const JIRA_FIELDS = [
@@ -156,7 +156,7 @@ function normalizeIssue(issue, config, index = 0) {
     id: internalId,
     identifier: internalId,
     title: limitedString(fields.summary, externalKey, 240),
-    description: typeof fields.description === "string" ? fields.description.slice(0, 100_000) : "",
+    description: jiraDescriptionToMarkdown(fields.description),
     status: taskStatusFromJira(fields.status),
     priority: taskPriorityFromJira(fields.priority),
     labels,

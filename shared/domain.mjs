@@ -32,3 +32,8 @@ export function isTaskStatus(value) {
 export function isTaskPriority(value) {
   return TASK_PRIORITIES.includes(value);
 }
+
+export function jiraDescriptionToMarkdown(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/^([ \t]*)#\s+/gm, (_, indent) => `${indent}1. `).slice(0, 100_000);
+}

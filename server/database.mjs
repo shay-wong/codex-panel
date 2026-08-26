@@ -3,7 +3,11 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { DEFAULT_LABEL_NAMES, JIRA_PROJECT_ID } from "../shared/domain.mjs";
+import {
+  DEFAULT_LABEL_NAMES,
+  JIRA_PROJECT_ID,
+  jiraDescriptionToMarkdown,
+} from "../shared/domain.mjs";
 
 const DEFAULT_PROJECT_LABELS_JSON = JSON.stringify(DEFAULT_LABEL_NAMES);
 const CLAIM_SOURCE_RANK = Object.freeze({ manual: 0, resume: 1, jira: 2, scan: 2 });
@@ -253,7 +257,9 @@ function taskFromRow(row) {
     identifier: row.identifier,
     projectId: row.project_id,
     title: row.title,
-    description: row.description,
+    description: row.external_source === "jira"
+      ? jiraDescriptionToMarkdown(row.description)
+      : row.description,
     status: row.status,
     priority: row.priority,
     labels: JSON.parse(row.labels),
