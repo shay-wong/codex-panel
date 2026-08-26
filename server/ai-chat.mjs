@@ -1125,9 +1125,9 @@ export class AiChatService {
       publicError = terminalError() || "Codex reported a failed turn";
     } else if (result.exitCode !== 0) {
       status = "failed";
-      publicError = result.exitCode === null
+      publicError = result.stderr?.trim() || (result.exitCode === null
         ? `Codex exited due to signal ${result.signal ?? "unknown"}`
-        : `Codex exited with code ${result.exitCode}`;
+        : `Codex exited with code ${result.exitCode}`);
     } else if (terminalOutcome() !== "completed") {
       status = "failed";
       publicError = pendingError() || "Codex exited without reporting turn completion";

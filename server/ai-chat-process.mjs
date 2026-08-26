@@ -185,6 +185,7 @@ export function buildCodexArgs(thread, addDirectories, imagePaths = []) {
     "--json",
     "--color",
     "never",
+    "--skip-git-repo-check",
     "-C",
     thread.origin.workspacePath,
     "-s",
@@ -472,7 +473,11 @@ export function spawnCodexTurn({
       rejectCompletion(fatalError);
       return;
     }
-    resolveCompletion({ exitCode, signal });
+    resolveCompletion({
+      exitCode,
+      signal,
+      stderr: stderrBuffer.toString("utf8"),
+    });
   });
   child.stdin.on("error", () => {});
   child.stdio[3].on("error", () => {});

@@ -817,7 +817,10 @@ if (args[0] === "app-server") {
       process.on("SIGTERM", () => process.exit(143));
       return;
     }
-    if (prompt.includes("FAIL")) process.exit(7);
+    if (prompt.includes("FAIL")) {
+      process.stderr.write("Fake Codex startup failed\\n");
+      process.exit(7);
+    }
     emit({type:"turn.completed",usage:{input_tokens:1,output_tokens:2}});
   });
 }
@@ -948,6 +951,7 @@ test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized
     assert.equal(environmentCaptures.every((entry) => entry.launcherKeys.length === 0), true);
     assert.deepEqual(captures[0].args, [
       "exec", "--json", "--color", "never",
+      "--skip-git-repo-check",
       "-C", fixture.workspace,
       "-s", "workspace-write",
       "-c", 'approval_policy="on-request"',
@@ -965,6 +969,7 @@ test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized
     );
     assert.deepEqual(captures[1].args, [
       "exec", "--json", "--color", "never",
+      "--skip-git-repo-check",
       "-C", fixture.workspace,
       "-s", "workspace-write",
       "-c", 'approval_policy="on-request"',
@@ -1058,9 +1063,10 @@ test("same-thread turns are locked, different threads run concurrently, failures
     const failed = await fixture.service.startTurn(firstThread.id, { message: "FAIL" });
     await waitFor(() => fixture.service.getRun(failed.id)?.status === "failed");
     assert.equal(fixture.service.getRun(failed.id).exitCode, 7);
+    assert.equal(fixture.service.getRun(failed.id).error, "Fake Codex startup failed");
     assert.equal(
       fixture.service.getThreadSnapshot(firstThread.id).events.some(
-        (event) => event.role === "error" && event.content.includes("code 7"),
+        (event) => event.role === "error" && event.content === "Fake Codex startup failed",
       ),
       true,
     );
