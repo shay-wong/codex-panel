@@ -3414,7 +3414,7 @@ export class PanelDatabase {
     `).run(timestamp, timestamp, operationId);
   }
 
-  setJiraProjects(id, version, projectIds, actor) {
+  setJiraProjects(id, version, projectIds, actor, workspaceProjectIds = new Set()) {
     const jiraTask = this.#requireTask(id);
     this.#requireVersion(jiraTask, version);
     this.#assertJiraMutationUnlocked(jiraTask.id);
@@ -3425,10 +3425,15 @@ export class PanelDatabase {
     if (uniqueProjectIds.length > 0) {
       const placeholders = uniqueProjectIds.map(() => "?").join(", ");
       const projects = this.database.prepare(`
-        SELECT id FROM projects
-        WHERE id IN (${placeholders}) AND id != ? AND workspace_path IS NOT NULL
+        SELECT id, workspace_path FROM projects
+        WHERE id IN (${placeholders}) AND id != ?
       `).all(...uniqueProjectIds, JIRA_PROJECT_ID);
-      if (projects.length !== uniqueProjectIds.length) {
+      if (
+        projects.length !== uniqueProjectIds.length
+        || projects.some((project) => (
+          project.workspace_path === null && !workspaceProjectIds.has(project.id)
+        ))
+      ) {
         throw new ApiError(
           400,
           "JIRA_PROJECT_INVALID",

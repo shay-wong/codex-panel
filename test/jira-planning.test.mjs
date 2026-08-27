@@ -120,13 +120,17 @@ if (args[0] === "debug") {
       createdAt: timestamp,
       updatedAt,
     });
-    app.database.createProject({ id: "api", name: "API", workspacePath: workspace });
-    app.database.createProject({ id: "web", name: "Web", workspacePath: workspace });
+    app.database.createProject({ id: "api", name: "API", workspacePath: null });
+    app.database.createProject({ id: "web", name: "Web", workspacePath: null });
     app.database.syncJiraTasks([jiraIssue("todo")], {
       originId: "test",
       projectName: "Jira",
       syncedAt: timestamp,
     });
+
+    const projectList = await api(baseUrl, "/api/projects", "GET");
+    assert.equal(projectList.projects.find((project) => project.id === "api").workspacePath, workspace);
+    assert.equal(projectList.projects.find((project) => project.id === "web").workspacePath, workspace);
 
     let jira = app.database.getTask("jira-plan-1");
     let result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
@@ -138,8 +142,12 @@ if (args[0] === "debug") {
     const planningThreadId = result.context.plan.threadId;
     await waitFor(() => app.database.getAiChatThread(planningThreadId).currentRun === null);
 
-    app.database.setJiraProjects(jira.id, jira.version, ["api", "web"], AGENT);
-    jira = app.database.getTask(jira.id);
+    result = await api(baseUrl, `/api/tasks/${jira.id}/jira-context`, "PUT", {
+      version: jira.version,
+      projectIds: ["api", "web"],
+    });
+    assert.deepEqual(result.context.projects.map((project) => project.id), ["api", "web"]);
+    jira = result.context.jira;
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
       version: jira.version,
     });

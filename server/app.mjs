@@ -3401,11 +3401,14 @@ export function createPanelServer(options = {}) {
           if ([...url.searchParams.keys()].length > 0) {
             throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/projects does not accept query parameters");
           }
+          const deviceWorkspaces = await readCodexProjectWorkspaces(resolved.codexStatePath);
           const projects = database.listProjects().map((project) => ({
             ...project,
             workspacePath: project.id === DEFAULT_PROJECT_ID
               ? null
-              : currentCloudConfig?.projectMappings[project.id] ?? project.workspacePath,
+              : currentCloudConfig?.projectMappings[project.id]
+                ?? deviceWorkspaces[project.id]
+                ?? project.workspacePath,
           }));
           return sendJson(response, 200, { projects });
         }
@@ -3713,11 +3716,17 @@ export function createPanelServer(options = {}) {
         }
         if (request.method === "PUT") {
           const { version, projectIds } = parseJiraProjects(await readJson(request));
+          const deviceWorkspaces = await readCodexProjectWorkspaces(resolved.codexStatePath);
+          const workspaceProjectIds = new Set([
+            ...Object.keys(currentCloudConfig?.projectMappings ?? {}),
+            ...Object.keys(deviceWorkspaces),
+          ]);
           const context = database.setJiraProjects(
             taskId,
             version,
             projectIds,
             actorFromRequest(request),
+            workspaceProjectIds,
           );
           events.emit("task.jira.updated", { taskId, task: context.jira });
           return sendJson(response, 200, { context });
