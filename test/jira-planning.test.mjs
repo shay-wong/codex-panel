@@ -38,16 +38,6 @@ async function cli(baseUrl, directory, args) {
   return JSON.parse(stdout);
 }
 
-async function waitFor(predicate, timeout = 4_000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    const value = await predicate();
-    if (value) return value;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error("Timed out waiting for condition");
-}
-
 test("Jira planning publishes repository tickets and preserves started work during replanning", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "jira-planning-"));
   const workspace = path.join(directory, "workspace");
@@ -138,9 +128,20 @@ if (args[0] === "debug") {
     });
     assert.equal(result.context.plan.status, "planning");
     assert.ok(result.context.plan.promptedAt);
-    assert.equal(app.database.getAiChatThread(result.context.plan.threadId).sandbox, "read-only");
+    assert.match(result.composerText, /请规划下面这个 Jira 需求/);
+    const initialComposerText = result.composerText;
+    assert.deepEqual(result.skillIds, ["grill-me", "to-spec", "to-tickets"]);
+    assert.equal(app.database.getAiChatThread(result.context.plan.threadId).sandbox, "workspace-write");
     const planningThreadId = result.context.plan.threadId;
-    await waitFor(() => app.database.getAiChatThread(planningThreadId).currentRun === null);
+    assert.equal(app.database.getAiChatThread(planningThreadId).currentRun, null);
+    assert.equal(app.database.listAiChatRuns(planningThreadId).length, 0);
+
+    result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
+      version: jira.version,
+    });
+    assert.equal(result.composerText, initialComposerText);
+    assert.equal(result.context.plan.threadId, planningThreadId);
+    assert.equal(app.database.listAiChatRuns(planningThreadId).length, 0);
 
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-context`, "PUT", {
       version: jira.version,
@@ -152,7 +153,8 @@ if (args[0] === "debug") {
       version: jira.version,
     });
     assert.equal(result.context.plan.threadId, planningThreadId);
-    await waitFor(() => app.database.getAiChatThread(planningThreadId).currentRun === null);
+    assert.match(result.composerText, /- API \(api\)/);
+    assert.equal(app.database.listAiChatRuns(planningThreadId).length, 0);
 
     const specPath = path.join(directory, "spec.md");
     const ticketsPath = path.join(directory, "tickets.json");
@@ -237,6 +239,7 @@ if (args[0] === "debug") {
     });
     assert.equal(result.context.plan.threadId, planningThreadId);
     assert.equal(result.context.plan.needsReview, true);
+    assert.match(result.composerText, /Jira 内容或关联仓库已经变化/);
     assert.throws(
       () => app.database.moveTask(
         webTask.id,
@@ -249,7 +252,6 @@ if (args[0] === "debug") {
       ),
       (error) => error?.code === "JIRA_PLAN_REVIEW_REQUIRED",
     );
-    await waitFor(() => app.database.getAiChatThread(planningThreadId).currentRun === null);
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning/spec`, "PUT", {
       version: result.context.plan.version,
       spec: "# Revised checkout spec",
@@ -329,7 +331,7 @@ if (args[0] === "debug") {
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
       version: jira.version,
     });
-    await waitFor(() => app.database.getAiChatThread(planningThreadId).currentRun === null);
+    assert.equal(app.database.listAiChatRuns(planningThreadId).length, 0);
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning/spec`, "PUT", {
       version: result.context.plan.version,
       spec: "# Moved checkout API spec",
@@ -371,37 +373,6 @@ if (args[0] === "debug") {
       undefined,
       AGENT,
     );
-    const startTurn = app.aiChat.startTurn.bind(app.aiChat);
-    let startTurnCall = 0;
-    let enterOldPlanning;
-    let releaseOldPlanning;
-    let enterFailedReplan;
-    let releaseFailedReplan;
-    const oldPlanningEntered = new Promise((resolve) => { enterOldPlanning = resolve; });
-    const oldPlanningRelease = new Promise((resolve) => { releaseOldPlanning = resolve; });
-    const failedReplanEntered = new Promise((resolve) => { enterFailedReplan = resolve; });
-    const failedReplanRelease = new Promise((resolve) => { releaseFailedReplan = resolve; });
-    app.aiChat.startTurn = async (threadId, input) => {
-      startTurnCall += 1;
-      if (startTurnCall === 1) {
-        enterOldPlanning();
-        await oldPlanningRelease;
-      } else if (startTurnCall === 2) {
-        throw new Error("intentional replan start failure");
-      } else if (startTurnCall === 3) {
-        enterFailedReplan();
-        await failedReplanRelease;
-        input = { ...input, message: `${input.message}\nWAIT_REPLAN` };
-      }
-      return startTurn(threadId, input);
-    };
-    const oldPlanningRequest = fetch(`${baseUrl}/api/tasks/${jira.id}/jira-planning`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
-      body: JSON.stringify({ version: jira.version }),
-    });
-    await oldPlanningEntered;
-
     for (const issue of result.context.issues) {
       const task = app.database.getTask(issue.id);
       if (task && !["done", "canceled"].includes(task.status)) {
@@ -443,6 +414,10 @@ if (args[0] === "debug") {
     assert.equal(planningResponse.status, 409);
     assert.equal(planningPayload.error.code, "JIRA_REPLAN_REQUIRED");
 
+    const createThread = app.aiChat.createThread.bind(app.aiChat);
+    app.aiChat.createThread = async () => {
+      throw new Error("intentional replan thread failure");
+    };
     const failedReplanResponse = await fetch(`${baseUrl}/api/tasks/${jira.id}/jira-lifecycle`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
@@ -454,68 +429,19 @@ if (args[0] === "debug") {
     assert.equal(afterStartFailure.plan.threadId, previousPlanningThreadId);
     assert.equal(afterStartFailure.plan.version, previousPlanVersion);
     assert.deepEqual(app.aiChat.listThreads().map((thread) => thread.id).sort(), previousThreadIds);
+    app.aiChat.createThread = createThread;
 
     const completeJiraReplan = app.database.completeJiraReplan.bind(app.database);
     app.database.completeJiraReplan = () => {
       throw new Error("intentional replan commit failure");
     };
-    const replanRequest = fetch(`${baseUrl}/api/tasks/${jira.id}/jira-lifecycle`, {
+    const failedCommitResponse = await fetch(`${baseUrl}/api/tasks/${jira.id}/jira-lifecycle`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
       body: JSON.stringify({ version: reopened.lifecycle.version, action: "replan" }),
     });
-    await failedReplanEntered;
-    const failedReplanThread = app.aiChat.listThreads().find(
-      (thread) => !previousThreadIds.includes(thread.id),
-    );
-    assert.ok(failedReplanThread);
-
-    releaseOldPlanning();
-    const oldPlanningResponse = await oldPlanningRequest;
-    const oldPlanningPayload = await oldPlanningResponse.json();
-    assert.equal(oldPlanningResponse.status, 409);
-    assert.equal(oldPlanningPayload.error.code, "JIRA_REOPEN_ACTION_IN_PROGRESS");
-    await waitFor(() => app.database.getAiChatThread(previousPlanningThreadId).currentRun === null);
-    assert.equal(app.database.getJiraContext(jira.id).plan.version, previousPlanVersion);
-
-    const repositoryResponse = await fetch(`${baseUrl}/api/tasks/${jira.id}/jira-context`, {
-      method: "PUT",
-      headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
-      body: JSON.stringify({ version: reopened.jira.version, projectIds: ["api"] }),
-    });
-    const repositoryPayload = await repositoryResponse.json();
-    assert.equal(repositoryResponse.status, 409);
-    assert.equal(repositoryPayload.error.code, "JIRA_REOPEN_ACTION_IN_PROGRESS");
-    assert.throws(
-      () => app.database.syncJiraTasks([jiraIssue("in_progress", reopenedAt)], {
-        originId: "test",
-        projectName: "Jira",
-        syncedAt: reopenedAt,
-      }),
-      (error) => error?.code === "JIRA_REOPEN_ACTION_IN_PROGRESS",
-    );
-    const conflictingResponse = await fetch(`${baseUrl}/api/tasks/${jira.id}/jira-lifecycle`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
-      body: JSON.stringify({ version: reopened.lifecycle.version, action: "rework" }),
-    });
-    const conflictingPayload = await conflictingResponse.json();
-    assert.equal(conflictingResponse.status, 409);
-    assert.equal(conflictingPayload.error.code, "JIRA_REOPEN_ACTION_IN_PROGRESS");
-    const duplicateReplanRequest = fetch(`${baseUrl}/api/tasks/${jira.id}/jira-lifecycle`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
-      body: JSON.stringify({ version: reopened.lifecycle.version, action: "replan" }),
-    });
-    releaseFailedReplan();
-    const [failedCommitResponse, duplicateFailedCommitResponse] = await Promise.all([
-      replanRequest,
-      duplicateReplanRequest,
-    ]);
     assert.equal(failedCommitResponse.status, 500);
-    assert.equal(duplicateFailedCommitResponse.status, 500);
-    assert.equal(app.database.getAiChatThread(failedReplanThread.id), null);
-    assert.equal(app.database.listAiChatRuns(failedReplanThread.id).length, 0);
+    assert.deepEqual(app.aiChat.listThreads().map((thread) => thread.id).sort(), previousThreadIds);
     const afterCommitFailure = app.database.getJiraContext(jira.id);
     assert.equal(afterCommitFailure.lifecycle.pending.kind, "reopened");
     assert.equal(afterCommitFailure.lifecycle.version, reopened.lifecycle.version);
@@ -523,7 +449,6 @@ if (args[0] === "debug") {
     assert.equal(afterCommitFailure.plan.version, previousPlanVersion);
 
     app.database.completeJiraReplan = completeJiraReplan;
-    app.aiChat.startTurn = startTurn;
     const replanResponse = await fetch(`${baseUrl}/api/tasks/${jira.id}/jira-lifecycle`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
@@ -533,9 +458,12 @@ if (args[0] === "debug") {
     result = await replanResponse.json();
     assert.equal(result.context.lifecycle.pending, null);
     assert.notEqual(result.context.plan.threadId, previousPlanningThreadId);
+    assert.match(result.composerText, /Jira 内容或关联仓库已经变化/);
+    assert.deepEqual(result.skillIds, ["grill-me", "to-spec", "to-tickets"]);
     const nextPlanningThreadId = result.context.plan.threadId;
     assert.equal(app.database.getAiChatThread(previousPlanningThreadId).archivedAt, null);
-    await waitFor(() => app.database.getAiChatThread(nextPlanningThreadId).currentRun === null);
+    assert.equal(app.database.getAiChatThread(nextPlanningThreadId).currentRun, null);
+    assert.equal(app.database.listAiChatRuns(nextPlanningThreadId).length, 0);
     for (const issue of result.context.issues) {
       const task = app.database.getTask(issue.id);
       if (task?.status !== "done") {

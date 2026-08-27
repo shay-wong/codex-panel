@@ -3641,8 +3641,12 @@ export function App() {
             onOpenLegacyLocalThread={openLegacyLocalThread}
             aiChatThreads={aiThreads}
             onAiChatThreadsRefresh={() => setAiThreadsRevision((revision) => revision + 1)}
-            onOpenAiChatThread={(threadId) => setAiOpenThreadRequest((current) => ({
+            onOpenAiChatThread={(threadId, composer) => setAiOpenThreadRequest((current) => ({
               threadId,
+              ...(composer ? {
+                composerText: composer.text,
+                skillIds: composer.skillIds,
+              } : {}),
               requestId: (current?.requestId ?? 0) + 1,
             }))}
             onOpenInThread={openTaskInThread}

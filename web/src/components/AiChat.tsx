@@ -92,6 +92,8 @@ import { TaskboardIcon } from "./TaskboardIcon";
 
 export type AiChatOpenThreadRequest = {
   threadId: string;
+  composerText?: string;
+  skillIds?: string[];
   requestId: number;
 } | {
   projectId: string;
@@ -1324,7 +1326,10 @@ export function AiChat({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<AiChatError | null>(null);
   const [draft, setDraft] = useState("");
-  const [requestedComposerText, setRequestedComposerText] = useState<string | null>(null);
+  const [requestedComposerText, setRequestedComposerText] = useState<{
+    text: string;
+    skillIds: string[];
+  } | null>(null);
   const [requestedComposerDraft, setRequestedComposerDraft] = useState<
     Extract<AiChatOpenThreadRequest, { composerDraft: unknown }>["composerDraft"] | null
   >(null);
@@ -1953,7 +1958,7 @@ export function AiChat({
           )
         : null);
       setRequestedComposerText("composerText" in openThreadRequest
-        ? openThreadRequest.composerText
+        ? { text: openThreadRequest.composerText, skillIds: [] }
         : null);
       setRequestedComposerDraft(composerDraft);
       setComposerRebindBlocked(composerDraft?.ready === false);
@@ -1967,10 +1972,13 @@ export function AiChat({
     const leavingDraft = draftOrigin !== null;
     draftReturnThreadIdRef.current = null;
     setDraftOrigin(null);
-    if (selectedChanged || leavingDraft) {
+    if (selectedChanged || leavingDraft || openThreadRequest.composerText) {
       setSnapshot(null);
       resetComposer();
     }
+    setRequestedComposerText(openThreadRequest.composerText
+      ? { text: openThreadRequest.composerText, skillIds: openThreadRequest.skillIds ?? [] }
+      : null);
     selectThread(openThreadRequest.threadId);
     if (!selectedChanged && (leavingDraft || snapshot?.thread.id !== openThreadRequest.threadId)) {
       void loadSnapshot(openThreadRequest.threadId);
@@ -1992,17 +2000,40 @@ export function AiChat({
   useEffect(() => {
     const editor = editorRef.current;
     if (!panelOpen || requestedComposerText === null || !editor) return;
-    editor.replaceChildren(document.createTextNode(requestedComposerText));
-    setDraft(requestedComposerText);
+    if (requestedComposerText.skillIds.length > 0 && !activeCatalog) return;
+    editor.replaceChildren();
+    const availableSkills = new Set((activeCatalog?.skills ?? []).map((skill) => skill.id));
+    const skillsAvailable = requestedComposerText.skillIds.every((skillId) => availableSkills.has(skillId));
+    const plainText = skillsAvailable
+      ? requestedComposerText.text
+      : [
+          requestedComposerText.skillIds.map((skillId) => `$${skillId}`).join(" "),
+          requestedComposerText.text,
+        ].filter(Boolean).join("\n\n");
+    if (skillsAvailable && requestedComposerText.skillIds.length > 0) {
+      const range = editor.ownerDocument.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+      const selection = editor.ownerDocument.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      insertComposerFragment({
+        message: `${requestedComposerText.skillIds.map(() => SKILL_MARKER).join(" ")}\n\n${plainText}`,
+        skillIds: requestedComposerText.skillIds,
+      }, range);
+    } else {
+      editor.replaceChildren(document.createTextNode(plainText));
+      setDraft(plainText);
+      editor.focus();
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
     setRequestedComposerText(null);
-    editor.focus();
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    range.collapse(false);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-  }, [panelOpen, requestedComposerText]);
+  }, [activeCatalog, panelOpen, requestedComposerText]);
 
   useEffect(() => {
     const editor = editorRef.current;
