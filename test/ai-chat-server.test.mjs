@@ -161,6 +161,60 @@ test("loopback AI API freezes server-owned origin and rejects injected execution
   }
 });
 
+test("AI chat serves local Markdown images only through their stored event position", async () => {
+  const fixture = await createServerFixture();
+  try {
+    const created = await request(fixture.baseUrl, "/api/local/ai/threads", {
+      method: "POST",
+      body: { projectId: "local" },
+    });
+    const threadId = created.body.thread.id;
+    const imagePath = path.join(fixture.directory, "qr code.png");
+    const image = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=",
+      "base64",
+    );
+    await writeFile(imagePath, image);
+    const event = fixture.app.database.insertAiChatEvent({
+      threadId,
+      type: "agent_message",
+      role: "assistant",
+      content: `![QR](${imagePath.replaceAll(" ", "%20")})`,
+    });
+
+    const response = await fetch(
+      `${fixture.baseUrl}/api/local/ai/events/${encodeURIComponent(event.id)}/images/0`,
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/png");
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), image);
+
+    const unknownPosition = await request(
+      fixture.baseUrl,
+      `/api/local/ai/events/${encodeURIComponent(event.id)}/images/1`,
+    );
+    assert.equal(unknownPosition.response.status, 404);
+    assert.equal(unknownPosition.body.error.code, "AI_CHAT_LOCAL_IMAGE_NOT_FOUND");
+
+    const fakeImagePath = path.join(fixture.directory, "not-an-image.png");
+    await writeFile(fakeImagePath, "private text");
+    const fakeEvent = fixture.app.database.insertAiChatEvent({
+      threadId,
+      type: "agent_message",
+      role: "assistant",
+      content: `![not an image](<${fakeImagePath}>)`,
+    });
+    const fakeImage = await request(
+      fixture.baseUrl,
+      `/api/local/ai/events/${encodeURIComponent(fakeEvent.id)}/images/0`,
+    );
+    assert.equal(fakeImage.response.status, 415);
+    assert.equal(fakeImage.body.error.code, "AI_CHAT_LOCAL_IMAGE_UNSUPPORTED");
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("non-local AI threads reject projects without an available workspace", async () => {
   const fixture = await createServerFixture();
   try {

@@ -8047,6 +8047,12 @@ kbd {
 .ai-chat-markdown h2 { font-size: 16px; }
 .ai-chat-markdown h3 { font-size: 14px; }
 
+.ai-chat-markdown img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
 .ai-chat-event-attachments {
   display: flex;
   flex-wrap: wrap;

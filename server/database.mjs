@@ -4125,6 +4125,11 @@ export class PanelDatabase {
     return aiChatEventFromRow(row);
   }
 
+  getAiChatEvent(id) {
+    const row = this.database.prepare("SELECT * FROM ai_chat_events WHERE id = ?").get(id);
+    return row ? aiChatEventFromRow(row) : null;
+  }
+
   listAiChatEvents(threadId) {
     return this.database.prepare(`
       SELECT * FROM ai_chat_events

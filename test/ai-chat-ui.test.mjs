@@ -172,6 +172,9 @@ test("panel follows the measured Codex-like layout and responsive boundary", () 
 test("chat renders Markdown, public thinking steps and never renders host-only fields", () => {
   assert.match(chatSource, /ReactMarkdown/);
   assert.match(chatSource, /remarkPlugins=\{\[remarkGfm\]\}/);
+  assert.match(chatSource, /img:\s*\(\{ node, src, \.\.\.props \}\)/);
+  assert.match(chatSource, /aiChatLocalImageUrl\(eventId, node\.position\.start\.offset\)/);
+  assert.match(chatSource, /key === "src" && url\.toLowerCase\(\)\.startsWith\("file:"\)/);
   assert.match(chatSource, /ai-chat-thinking-steps/);
   assert.match(chatSource, /aria-label=\{text\("停止生成", "Stop generating"\)\}/);
   assert.match(chatSource, /aria-label=\{text\("发送消息", "Send message"\)\}/);
