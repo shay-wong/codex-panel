@@ -2332,7 +2332,7 @@ export function createPanelServer(options = {}) {
       thread = await aiChat.createThread({
         projectId,
         title: `${context.jira.externalKey ?? context.jira.identifier} · Jira 规划`,
-        sandbox: "read-only",
+        sandbox: "workspace-write",
       });
     }
     const started = database.beginJiraPlanning(jiraTaskId, version, thread.id);
@@ -2355,7 +2355,7 @@ export function createPanelServer(options = {}) {
       thread = await aiChat.createThread({
         projectId,
         title: `${context.jira.externalKey ?? context.jira.identifier} · Jira 重新规划`,
-        sandbox: "read-only",
+        sandbox: "workspace-write",
       });
       run = await aiChat.startTurn(thread.id, {
         message: jiraPlanningPrompt(context.jira, context.projects, true, context.plan),

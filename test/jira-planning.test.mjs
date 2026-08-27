@@ -134,7 +134,7 @@ if (args[0] === "debug") {
     });
     assert.equal(result.context.plan.status, "planning");
     assert.ok(result.context.plan.promptedAt);
-    assert.equal(app.database.getAiChatThread(result.context.plan.threadId).sandbox, "read-only");
+    assert.equal(app.database.getAiChatThread(result.context.plan.threadId).sandbox, "workspace-write");
     const planningThreadId = result.context.plan.threadId;
     await waitFor(() => app.database.getAiChatThread(planningThreadId).currentRun === null);
 
