@@ -68,6 +68,7 @@ import { ActorAvatar } from "./ActorAvatar";
 import { STATUS_DETAILS } from "./BoardColumn";
 import { LabelPicker } from "./LabelPicker";
 import { LinearIcon } from "./LinearIcon";
+import { ProjectSelectionMenu } from "./ProjectSelectionMenu";
 import {
   AttachmentIcon,
   BlockingRelationIcon,
@@ -121,6 +122,12 @@ interface TaskDetailProps {
   tasks: Task[];
   referenceTasks: Task[];
   projects: Project[];
+  jiraRepositoryProjects: Array<{
+    id: string;
+    name: string;
+    workspacePath: string;
+    persisted: boolean;
+  }>;
   currentUser: ActorIdentity;
   jiraAvailable: boolean;
   availableLabels: string[];
@@ -154,6 +161,7 @@ interface TaskDetailProps {
   ) => void;
   onOpenInThread: (task: Task) => void;
   onCopy: (text: string, announcement: string) => void;
+  onEnsureJiraProjects: (projectIds: string[]) => Promise<void>;
   openingThread: boolean;
   onError: (message: TaskDetailError | null) => void;
 }
@@ -470,6 +478,7 @@ export function TaskDetail({
   tasks,
   referenceTasks,
   projects,
+  jiraRepositoryProjects,
   currentUser,
   jiraAvailable,
   availableLabels,
@@ -490,6 +499,7 @@ export function TaskDetail({
   onOpenAiChatThread,
   onOpenInThread,
   onCopy,
+  onEnsureJiraProjects,
   openingThread,
   onError,
 }: TaskDetailProps) {
@@ -508,6 +518,7 @@ export function TaskDetail({
   const [jiraContext, setJiraContext] = useState<JiraTaskContext | null>(null);
   const [jiraContextLoading, setJiraContextLoading] = useState(jiraAvailable);
   const [jiraProjectIds, setJiraProjectIds] = useState<string[]>([]);
+  const [jiraProjectSearch, setJiraProjectSearch] = useState("");
   const [jiraLinkSavingId, setJiraLinkSavingId] = useState<string | null>(null);
   const [jiraManagerOpen, setJiraManagerOpen] = useState(false);
   const [jiraSimpleStartSaving, setJiraSimpleStartSaving] = useState(false);
@@ -744,6 +755,7 @@ export function TaskDetail({
     setSavingProperty("jiraProjects");
     onError(null);
     try {
+      await onEnsureJiraProjects(jiraProjectIds);
       const latest = await getJiraTaskContext(currentTask.id);
       if (!latest.jira) {
         setJiraContext(latest);
@@ -1343,7 +1355,7 @@ export function TaskDetail({
   ));
   const linkedJiraProjectIds = new Set(jiraContext?.projects.map((project) => project.id) ?? []);
   const selectedJiraProjectIds = new Set(jiraProjectIds);
-  const addedJiraProjects = projects.filter((project) => (
+  const addedJiraProjects = jiraRepositoryProjects.filter((project) => (
     selectedJiraProjectIds.has(project.id) && !linkedJiraProjectIds.has(project.id)
   ));
   const removedJiraProjects = jiraContext?.projects.filter((project) => (
@@ -1432,9 +1444,6 @@ export function TaskDetail({
                 : currentTask.status === "todo"
                   ? text("立即执行", "Run now")
                   : text("仅待认领可执行", "Available only while waiting");
-  const repositoryProjects = projects.filter((project) => (
-    project.source !== "jira" && Boolean(project.workspacePath)
-  ));
   const activityTimeline = [
     ...taskActivities.flatMap((activity) => activity.changes.map((change, index) => ({
       kind: "change" as const,
@@ -2360,7 +2369,10 @@ export function TaskDetail({
             {jiraAvailable && (currentTask.source === "jira" ? (
               <section className="jira-context-section jira-context-overview" aria-label={text("Jira 关联", "Jira links")}>
                 <h2>Jira</h2>
-                <button className="jira-context-manage" type="button" onClick={() => setJiraManagerOpen(true)}>
+                <button className="jira-context-manage" type="button" onClick={() => {
+                  setJiraProjectSearch("");
+                  setJiraManagerOpen(true);
+                }}>
                   <LinearIcon name="link" />
                   <span>
                     <strong>{currentTask.externalStatus ?? text("未知状态", "Unknown status")}</strong>
@@ -2635,6 +2647,7 @@ export function TaskDetail({
         <div className="delete-backdrop jira-manager-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget && savingProperty !== "jiraProjects") {
             setJiraProjectIds(jiraContext?.projects.map((project) => project.id) ?? []);
+            setJiraProjectSearch("");
             setJiraManagerOpen(false);
           }
         }}>
@@ -2650,6 +2663,7 @@ export function TaskDetail({
                 disabled={savingProperty === "jiraProjects"}
                 onClick={() => {
                   setJiraProjectIds(jiraContext?.projects.map((project) => project.id) ?? []);
+                  setJiraProjectSearch("");
                   setJiraManagerOpen(false);
                 }}
               ><LinearIcon name="close" /></button>
@@ -2659,23 +2673,26 @@ export function TaskDetail({
                 <h3>{text("仓库", "Repositories")}</h3>
                 {jiraContextLoading ? (
                   <p className="jira-context-empty">{text("加载中…", "Loading…")}</p>
-                ) : repositoryProjects.length > 0 ? (
-                  <div className="jira-project-options">
-                    {repositoryProjects.map((project) => (
-                      <label key={project.id}>
-                        <input
-                          type="checkbox"
-                          checked={selectedJiraProjectIds.has(project.id)}
-                          disabled={savingProperty === "jiraProjects"}
-                          onChange={(event) => setJiraProjectIds((current) => event.target.checked
-                            ? [...current, project.id]
-                            : current.filter((projectId) => projectId !== project.id))}
-                        />
-                        <ProjectIcon />
-                        <span>{project.name}</span>
-                      </label>
+                ) : jiraRepositoryProjects.length > 0 ? (
+                  <ProjectSelectionMenu
+                    className="jira-project-picker"
+                    ariaLabel={text("关联仓库", "Linked repositories")}
+                    items={jiraRepositoryProjects}
+                    selectedIds={selectedJiraProjectIds}
+                    searchValue={jiraProjectSearch}
+                    searchLabel={text("按名称筛选仓库", "Filter repositories by name")}
+                    searchPlaceholder={text("筛选仓库…", "Filter repositories…")}
+                    clearSearchLabel={text("清除仓库筛选", "Clear repository filter")}
+                    emptyMessage={text("没有匹配仓库", "No matching repositories")}
+                    disabled={savingProperty === "jiraProjects"}
+                    multiple
+                    onSearchChange={setJiraProjectSearch}
+                    onSelect={(project) => setJiraProjectIds((current) => (
+                      current.includes(project.id)
+                        ? current.filter((projectId) => projectId !== project.id)
+                        : [...current, project.id]
                     ))}
-                  </div>
+                  />
                 ) : (
                   <p className="jira-context-empty">{text("暂无已连接本地仓库", "No local repositories connected")}</p>
                 )}
@@ -2776,6 +2793,7 @@ export function TaskDetail({
               <div>
                 <button className="button secondary" type="button" onClick={() => {
                   setJiraProjectIds(jiraContext?.projects.map((project) => project.id) ?? []);
+                  setJiraProjectSearch("");
                   setJiraManagerOpen(false);
                 }}>{text("关闭", "Close")}</button>
                 <button
