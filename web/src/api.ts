@@ -326,6 +326,12 @@ export async function listAiChatThreads(signal?: AbortSignal): Promise<AiChatThr
   return data.threads;
 }
 
+export function aiChatLocalImageUrl(eventId: string, offset: number): string {
+  return resolvePanelUrl(
+    `/api/local/ai/events/${encodeURIComponent(eventId)}/images/${offset}`,
+  );
+}
+
 export async function createAiChatThread(input: {
   projectId: string;
   issueId?: string;

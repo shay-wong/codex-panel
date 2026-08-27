@@ -147,6 +147,18 @@
 - 移除条件：上游提供等价的对话改绑、取消关联、Issue 反向展示、交接记录、上下文预填和原生 thread 自动关联能力后同步移除。
 - 针对性验证：运行 `node --test test/ai-chat-runner.test.mjs test/handoff-panel-skill.test.mjs test/injector-composer-prefill.test.mjs test/injector-host-runtime.test.mjs`、`npm run typecheck` 和 `npm run build`；在任意 Codex 对话中发送 `$handoff-panel --issue ISSUE-ID 重点说明`，确认原 `$handoff` 临时文档照常生成，随后目标 Issue 收到内容一致的交接评论；分别对本地和 SSH 项目点击“在对话中打开”，确认本地输入框包含 `$manage-panel`、Issue 编号、标题和最新交接，SSH 输入框包含完整 Issue 快照，两者均跟随 Panel 界面语言、不显示 `e-panel`、不自动发送；第一次真实发送后两者才显示新原生任务关联，SSH Issue 同时才变为处理中。
 
+### 内嵌 AI 对话显示本地图片
+
+- 生命周期：`等待上游吸收`
+- 原始目的：让 AI 在本地生成的二维码、截图等图片可以直接显示在 Panel 内嵌对话中，不再被浏览器误解析为 Panel HTTP 路径。
+- 行为不变量：只把已保存 AI 消息中由 Markdown AST 明确标识的绝对本地图片路径或 `file:` URL 改写为仅允许回环访问的 Panel API；请求只能携带 event ID 和该图片在原 Markdown 中的起始偏移，服务端必须重新解析已保存事件来取得路径，浏览器不能直接提交任意文件路径。只返回通过文件头确认的 PNG、JPEG、GIF 或 WebP，缺失或伪装文件必须拒绝；HTTP(S) 图片保留原地址，本地图片按对话宽度响应式缩放。
+- 代码和测试路径：`server/ai-chat.mjs`、`server/app.mjs`、`server/database.mjs`、`web/src/api.ts`、`web/src/components/AiChat.tsx`、`web/src/styles.css`、`test/ai-chat-server.test.mjs` 和 `test/ai-chat-ui.test.mjs`。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：本次 Fork 修复；可用 `git log -S'AI_CHAT_LOCAL_IMAGE_UNSUPPORTED' -- server/app.mjs test/ai-chat-server.test.mjs` 定位。
+- 合并指引：上游调整 AI 消息 Markdown 渲染或本地资源访问时，继续保留“事件与源码偏移绑定、服务端重新解析、回环限制和真实图片格式校验”的读取边界，不能退化为接受浏览器绝对路径的通用文件接口。
+- 移除条件：上游提供等价的本地图片显示能力，并保留事件绑定、回环访问和格式校验边界后同步移除。
+- 针对性验证：运行 `node --test test/ai-chat-server.test.mjs test/ai-chat-ui.test.mjs`、`npm run typecheck` 和 `git diff --check`；在全新隔离数据目录中写入包含 URI 编码本地 PNG 路径的 AI 消息，确认图片显示且普通 HTTP(S) 图片不被改写，再确认伪装成图片的文本文件被拒绝。
+
 ### 受管 iframe 的 Codex 原生权限边界
 
 - 生命周期：`长期保留`

@@ -66,6 +66,12 @@ Send `/handoff` or `/交接` in an embedded conversation to summarize its curren
 
 The original `$handoff` Skill remains unchanged. The separately installed `$handoff-panel --issue ISSUE-ID [handoff focus]` wrapper works from any Codex conversation: it completes the installed base Skill first, then validates the selected Issue and uses `panelctl` to attach the resulting document verbatim. Validation or publication failure preserves the temporary document and is reported as a partial failure. “Open in conversation” opens an unsent, Panel-localized draft without internal routing markers. Local drafts include `$manage-panel`, the latest handoff, and instructions to refresh the issue through `panelctl`; SSH drafts include the current issue snapshot because the remote worker cannot access local `panelctl`. Panel stores the local or SSH thread binding only after the user sends the draft and Codex creates the thread; SSH issues also move to in progress at that point.
 
+## Display local images in embedded AI conversations
+
+Embedded AI messages render Markdown images that reference absolute local PNG, JPEG, GIF, or WebP paths, including `file:` URLs. Paths containing spaces must be URI-encoded or enclosed in Markdown angle brackets. Images scale down to the conversation width without being enlarged beyond their intrinsic size.
+
+Panel rewrites only local image targets to a loopback-only endpoint tied to the saved message event and the image's Markdown source position. The server reparses that stored message, reads only the referenced path, and verifies the file signature before returning it. The browser cannot submit an arbitrary filesystem path through this endpoint, and normal HTTP(S) images keep their original URL.
+
 ## Managed iframe trust boundary
 
 The launcher-managed Panel origin receives Codex project, user, thread, and workspace context and may invoke native thread navigation, task creation, sidebar expansion, and automation. A custom `window.__CODEX_PANEL_URL__` origin remains display-only: it receives theme updates and may report titlebar drag regions to the host, but it cannot cross that native Codex boundary. `window.__CODEX_PANEL_MANAGED_ORIGIN__` identifies the trusted origin and defaults to the local Panel service.

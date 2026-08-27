@@ -12,11 +12,12 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { panelStorage } from "../storage";
 import { useTaskboardI18n } from "../i18n";
 import {
+  aiChatLocalImageUrl,
   createAiChatThread,
   deleteAiChatThread,
   getAiChatCatalog,
@@ -970,15 +971,22 @@ function activityDetailSummary(
 
 function MarkdownMessage({
   children,
+  eventId,
   skillsById,
 }: {
   children: string;
+  eventId: string;
   skillsById?: Map<string, AiChatSkill>;
 }) {
   return (
     <div className="ai-chat-markdown">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={(url, key) => (
+          key === "src" && url.toLowerCase().startsWith("file:")
+            ? url
+            : defaultUrlTransform(url)
+        )}
         components={{
           a: ({ node: _node, href, ...props }) => {
             if (href?.startsWith(SKILL_LINK_PREFIX)) {
@@ -986,6 +994,19 @@ function MarkdownMessage({
               return <SkillReference skill={skillsById?.get(skillId)} skillId={skillId} />;
             }
             return <a {...props} href={href} target="_blank" rel="noreferrer" />;
+          },
+          img: ({ node, src, ...props }) => {
+            const isLocal = typeof src === "string"
+              && (src.startsWith("/") || src.toLowerCase().startsWith("file:"));
+            if (isLocal && node && typeof node.position?.start.offset === "number") {
+              return (
+                <img
+                  {...props}
+                  src={aiChatLocalImageUrl(eventId, node.position.start.offset)}
+                />
+              );
+            }
+            return <img {...props} src={isLocal ? undefined : src} />;
           },
         }}
       >
@@ -1264,7 +1285,7 @@ function MessageTimeline({
               key={event.id}
               onCopy={handleSkillFragmentCopy}
             >
-              <MarkdownMessage skillsById={skillsById}>
+              <MarkdownMessage eventId={event.id} skillsById={skillsById}>
                 {skillMarkdown(event.content, eventSkillIds(event), skillsById)}
               </MarkdownMessage>
               <EventAttachments event={event} />
@@ -1274,7 +1295,7 @@ function MessageTimeline({
         if (event.role === "assistant" || event.type === "assistant" || event.type === "agent_message") {
           return (
             <article className="ai-chat-assistant-message" key={event.id}>
-              <MarkdownMessage>{event.content}</MarkdownMessage>
+              <MarkdownMessage eventId={event.id}>{event.content}</MarkdownMessage>
             </article>
           );
         }

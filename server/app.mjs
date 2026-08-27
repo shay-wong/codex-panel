@@ -10,6 +10,8 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { WebSocket as WebSocketClient, WebSocketServer } from "ws";
+import { unified } from "unified";
+import remarkParse from "remark-parse";
 
 import {
   DEFAULT_PROJECT_ID,
@@ -301,6 +303,45 @@ function decodeRouteSegment(value, name) {
     throw new ApiError(400, "INVALID_PATH", `${name} is invalid`);
   }
   return decoded;
+}
+
+function localImagePathFromAiEvent(event, offset) {
+  let imageNode = null;
+  const visit = (node) => {
+    if (imageNode || !node || typeof node !== "object") return;
+    if (node.type === "image" && node.position?.start.offset === offset) {
+      imageNode = node;
+      return;
+    }
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(unified().use(remarkParse).parse(event.content));
+
+  if (!imageNode) {
+    throw new ApiError(404, "AI_CHAT_LOCAL_IMAGE_NOT_FOUND", "Local image is not present at this message position");
+  }
+
+  let filename;
+  try {
+    filename = imageNode.url.toLowerCase().startsWith("file:")
+      ? fileURLToPath(imageNode.url)
+      : decodeURIComponent(imageNode.url);
+  } catch {
+    filename = null;
+  }
+  if (!filename || filename.includes("\0") || !path.isAbsolute(filename)) {
+    throw new ApiError(404, "AI_CHAT_LOCAL_IMAGE_NOT_FOUND", "Message position does not reference a local image");
+  }
+  return filename;
+}
+
+function localImageContentType(body) {
+  if (body.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"))) return "image/png";
+  if (body.subarray(0, 3).equals(Buffer.from("ffd8ff", "hex"))) return "image/jpeg";
+  if (["GIF87a", "GIF89a"].includes(body.subarray(0, 6).toString("ascii"))) return "image/gif";
+  if (body.subarray(0, 4).toString("ascii") === "RIFF"
+      && body.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  return null;
 }
 
 function isLoopbackAddress(value) {
@@ -3256,6 +3297,47 @@ export function createPanelServer(options = {}) {
           return sendJson(response, 201, { thread });
         }
         return methodNotAllowed(response, ["GET", "POST"]);
+      }
+
+      const aiEventImageRoute = pathname.match(/^\/api\/local\/ai\/events\/([^/]+)\/images\/(\d+)$/);
+      if (aiEventImageRoute) {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        assertNoQuery(url.searchParams, "GET /api/local/ai/events/:eventId/images/:offset");
+        const eventId = decodeRouteSegment(aiEventImageRoute[1], "Event id");
+        const offset = Number(aiEventImageRoute[2]);
+        if (!Number.isSafeInteger(offset)) {
+          throw new ApiError(404, "AI_CHAT_LOCAL_IMAGE_NOT_FOUND", "Local image position is invalid");
+        }
+        const filename = localImagePathFromAiEvent(aiChat.getEvent(eventId), offset);
+        let file;
+        try {
+          file = await open(filename, "r");
+          const fileStats = await file.stat();
+          const header = Buffer.alloc(12);
+          await file.read(header, 0, header.length, 0);
+          const contentType = localImageContentType(header);
+          if (!contentType) {
+            throw new ApiError(415, "AI_CHAT_LOCAL_IMAGE_UNSUPPORTED", "Local file is not a supported image");
+          }
+          response.writeHead(200, {
+            "cache-control": "no-store",
+            "content-length": fileStats.size,
+            "content-type": contentType,
+            "x-content-type-options": "nosniff",
+          });
+          const stream = file.createReadStream();
+          file = null;
+          stream.on("error", (error) => response.destroy(error));
+          stream.pipe(response);
+          return;
+        } catch (error) {
+          await file?.close().catch(() => {});
+          if (error instanceof ApiError) throw error;
+          if (["EACCES", "EISDIR", "ENOENT", "EPERM"].includes(error?.code)) {
+            throw new ApiError(404, "AI_CHAT_LOCAL_IMAGE_NOT_FOUND", "Local image is unavailable");
+          }
+          throw error;
+        }
       }
 
       const aiThreadEventsRoute = pathname.match(/^\/api\/local\/ai\/threads\/([^/]+)\/events$/);

@@ -236,6 +236,14 @@ export class AiChatService {
     };
   }
 
+  getEvent(eventId) {
+    const event = this.database.getAiChatEvent(eventId);
+    if (!event) {
+      throw new ApiError(404, "AI_CHAT_EVENT_NOT_FOUND", `AI chat event '${eventId}' does not exist`);
+    }
+    return event;
+  }
+
   getRun(runId) {
     const run = this.database.getAiChatRun(runId);
     if (!run) {
