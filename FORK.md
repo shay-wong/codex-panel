@@ -72,6 +72,18 @@
 - 移除条件：上游横向列表提供等价的看板式分栏、Jira Key 层级和竖向布局隔离后同步移除。
 - 针对性验证：运行 `npm run typecheck` 和 `npm run build:web`；在横向与竖向列表分别确认 Jira Key、卡片层级、状态列滚动和紧凑行，并在窄视口确认页面无横向溢出。
 
+### 项目总结有限梯度重试
+
+- 生命周期：`等待上游吸收`
+- 原始目的：避免一次临时 Codex 失败让项目总结保持错误状态 24 小时，同时限制后台自动尝试次数。
+- 行为不变量：项目总结生成失败后按 5、15、60 分钟依次等待并自动重试，第四次失败后停止自动重试；失败次数和最后尝试时间保存在 `project_summaries`，服务重启不能重置上限。失败状态始终保留手动重试入口，手动失败继续累计且不得重新开启无限自动重试；任意一次成功都会保存新总结并把失败次数归零。旧数据库中的错误记录迁移为第一次失败，已有总结、时间和错误文本不得丢失。
+- 代码和测试路径：`server/project-summary.mjs`、`server/database.mjs`、`server/app.mjs`、`web/src/api.ts`、`web/src/components/DashboardView.tsx`、`web/src/components/DashboardView.css` 和 `test/project-summary.test.mjs`。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：当前项目总结恢复修复；提交后可用 `git log -S'FAILURE_RETRY_DELAYS_MS' -- server/project-summary.mjs` 定位。
+- 合并指引：上游修改 Dashboard 总结生成、轮询或 `project_summaries` schema 时，保留持久化的 5/15/60 分钟有限重试、第四次失败后的停止边界、独立手动重试和成功归零；不得恢复失败后统一等待 24 小时或无上限后台重试。
+- 移除条件：上游提供等价的持久化有限梯度重试、手动恢复入口、成功归零和旧数据迁移后同步移除。
+- 针对性验证：运行 `node --test test/project-summary.test.mjs`、`npm run typecheck` 和 `npm run build:web`；在隔离数据目录与 fake Codex 下确认第四次失败后不再自动生成，点击重试时显示 loading，成功后总结立即更新且按钮消失。
+
 ### Cloud 一次性迁移完整性
 
 - 生命周期：`等待上游吸收`

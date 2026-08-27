@@ -3289,11 +3289,15 @@ export function createPanelServer(options = {}) {
 
       const projectSummaryRoute = pathname.match(/^\/api\/local\/projects\/([^/]+)\/summary$/);
       if (projectSummaryRoute) {
-        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
-        assertNoQuery(url.searchParams, "GET /api/local/projects/:id/summary");
+        if (!["GET", "POST"].includes(request.method)) return methodNotAllowed(response, ["GET", "POST"]);
+        assertNoQuery(url.searchParams, `${request.method} /api/local/projects/:id/summary`);
         const projectId = validateProjectId(
           decodeRouteSegment(projectSummaryRoute[1], "Project id"),
         );
+        if (request.method === "POST") {
+          await assertEmptyRequestBody(request, "POST /api/local/projects/:id/summary");
+          await projectSummary.refresh(projectId);
+        }
         return sendJson(response, 200, projectSummary.get(projectId));
       }
 

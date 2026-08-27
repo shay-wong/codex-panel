@@ -3,7 +3,8 @@ import { spawnCodexTurn } from "./ai-chat-process.mjs";
 import { ApiError } from "./database.mjs";
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
-const CHECK_INTERVAL_MS = 60 * 60 * 1_000;
+const CHECK_INTERVAL_MS = 60 * 1_000;
+const FAILURE_RETRY_DELAYS_MS = [5, 15, 60].map((minutes) => minutes * 60 * 1_000);
 const STATUS_LABELS = {
   backlog: "积压事项",
   todo: "待办",
@@ -14,9 +15,16 @@ const STATUS_LABELS = {
   canceled: "取消",
 };
 
-function isDue(summary) {
+export function projectSummaryRetryDelay(failureCount) {
+  return FAILURE_RETRY_DELAYS_MS[failureCount - 1] ?? null;
+}
+
+export function isProjectSummaryDue(summary, timestamp = Date.now()) {
   if (!summary.attemptedAt) return true;
-  return Date.now() - new Date(summary.attemptedAt).getTime() >= DAY_MS;
+  const delay = summary.error
+    ? projectSummaryRetryDelay(summary.failureCount)
+    : DAY_MS;
+  return delay !== null && timestamp - new Date(summary.attemptedAt).getTime() >= delay;
 }
 
 function buildPrompt(project, tasks) {
@@ -63,7 +71,7 @@ export class ProjectSummaryService {
       throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' was not found`);
     }
     const summary = this.database.getProjectSummary(projectId);
-    if (isDue(summary)) void this.refresh(projectId);
+    if (isProjectSummaryDue(summary)) void this.refresh(projectId);
     return {
       projectId,
       summary: summary.summary,
@@ -85,7 +93,7 @@ export class ProjectSummaryService {
 
   async refreshDueProjects() {
     for (const summary of this.database.listProjectSummaries()) {
-      if (isDue(summary)) await this.refresh(summary.projectId);
+      if (isProjectSummaryDue(summary)) await this.refresh(summary.projectId);
     }
   }
 

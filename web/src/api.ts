@@ -211,6 +211,13 @@ export async function getProjectSummary(
   );
 }
 
+export async function retryProjectSummary(projectId: string): Promise<ProjectSummary> {
+  return request<ProjectSummary>(
+    `/api/local/projects/${encodeURIComponent(projectId)}/summary`,
+    { method: "POST" },
+  );
+}
+
 export async function getPanelMetadata(signal?: AbortSignal): Promise<PanelMetadata> {
   return request<PanelMetadata>("/api/meta", { signal });
 }

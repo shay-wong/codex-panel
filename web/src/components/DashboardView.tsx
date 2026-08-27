@@ -4,7 +4,7 @@ import "./DashboardView.css";
 import dueDoneIcon from "../assets/panel/dashboard-due-done.svg";
 import dueEditIcon from "../assets/panel/dashboard-due-edit.svg";
 import processingAnimation from "../assets/panel/loading-16.svg";
-import { getProjectSummary } from "../api";
+import { getProjectSummary, retryProjectSummary } from "../api";
 import { taskPriorityLabel, taskStatusLabel, useTaskboardI18n } from "../i18n";
 import { labelPresentation } from "../labels";
 import type {
@@ -13,7 +13,7 @@ import type {
 } from "../taskConversations";
 import type { ActorIdentity, ProjectSummary, Task } from "../types";
 import { ActorAvatar } from "./ActorAvatar";
-import { PriorityIcon } from "./SemanticIcons";
+import { PriorityIcon, RefreshIcon } from "./SemanticIcons";
 import { TaskConversationMenu } from "./TaskConversationMenu";
 
 interface DashboardViewProps {
@@ -180,6 +180,7 @@ export function DashboardView({
   const [summaryLoadFailed, setSummaryLoadFailed] = useState(false);
   const [displayedSummary, setDisplayedSummary] = useState("");
   const [summaryTyping, setSummaryTyping] = useState(true);
+  const [summaryRetrying, setSummaryRetrying] = useState(false);
   const [progressHoverIndex, setProgressHoverIndex] = useState<number | null>(null);
   const [animateSummaryOnMount] = useState(animateSummary);
   const summaryAnimationStartedRef = useRef(false);
@@ -225,6 +226,19 @@ export function DashboardView({
       if (timer) clearTimeout(timer);
     };
   }, [isAllProjects, projectId]);
+
+  async function retrySummary() {
+    if (summaryRetrying) return;
+    setSummaryRetrying(true);
+    setSummaryLoadFailed(false);
+    try {
+      setProjectSummary(await retryProjectSummary(projectId));
+    } catch {
+      setSummaryLoadFailed(true);
+    } finally {
+      setSummaryRetrying(false);
+    }
+  }
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -517,6 +531,20 @@ export function DashboardView({
                 className={summaryTyping ? "is-typing" : undefined}
                 aria-label={summaryReady ? summary : text("Codex 正在整理项目总结", "Codex is preparing the project summary")}
               >{displayedSummary}</p>
+              {projectSummary?.error && (
+                <button
+                  className="dashboard-summary-retry"
+                  type="button"
+                  aria-label={text("重试生成项目总结", "Retry project summary")}
+                  title={text("重试", "Retry")}
+                  disabled={summaryRetrying || projectSummary.refreshing}
+                  onClick={() => void retrySummary()}
+                >
+                  {summaryRetrying || projectSummary.refreshing
+                    ? <img src={processingAnimation} alt="" aria-hidden="true" />
+                    : <RefreshIcon color="currentColor" />}
+                </button>
+              )}
             </div>
             <img className="dashboard-codex-mark" src="codex-agent-logo.png" alt="" aria-hidden="true" />
           </section>
