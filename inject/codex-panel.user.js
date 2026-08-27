@@ -170,9 +170,11 @@
     style.id = STYLE_ID;
     style.setAttribute(OWNED_ATTRIBUTE, "true");
     style.textContent = `
+      #${ENTRY_ID} {
+        color: var(--color-token-foreground, inherit);
+      }
       #${ENTRY_ID}[aria-current="page"] {
         background: var(--color-token-list-hover-background, color-mix(in srgb, currentColor 8%, transparent));
-        color: var(--color-token-foreground, inherit);
       }
       #${ENTRY_ID}:focus-visible {
         outline: 2px solid var(--color-token-border, Highlight);
