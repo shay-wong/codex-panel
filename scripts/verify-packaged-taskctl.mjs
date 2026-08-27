@@ -64,6 +64,8 @@ const nodePath = path.join(appPath, "Contents", "MacOS", "node");
 const appRoot = path.join(appPath, "Contents", "Resources", "app");
 const wrapperPath = path.join(appPath, "Contents", "Resources", "bin", "panelctl");
 await stat(path.join(appRoot, "node_modules", "smol-toml", "package.json"));
+await stat(path.join(appRoot, "node_modules", "unified", "package.json"));
+await stat(path.join(appRoot, "node_modules", "remark-parse", "package.json"));
 const reservation = createServer();
 await new Promise((resolve, reject) => {
   reservation.once("error", reject);

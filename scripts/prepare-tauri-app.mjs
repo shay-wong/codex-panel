@@ -48,6 +48,7 @@ const binariesDirectory = path.join(tauriRoot, "binaries");
 const resourcesDirectory = path.join(tauriRoot, "resources");
 const runtimeCacheDirectory = path.join(projectRoot, "dist", "tauri-runtime-cache");
 const extractionDirectory = path.join(runtimeCacheDirectory, "extracted");
+const serverRuntimePackages = ["remark-parse", "smol-toml", "unified", "ws"];
 const target = parseTarget(process.argv.slice(2));
 
 if (target === windowsTarget && process.platform !== "win32") {
@@ -91,6 +92,20 @@ async function exists(targetPath) {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function copyRuntimePackage(packageName, destinationNodeModules, copiedPackages) {
+  if (copiedPackages.has(packageName)) return;
+  copiedPackages.add(packageName);
+  const packageSegments = packageName.split("/");
+  const sourcePath = path.join(projectRoot, "node_modules", ...packageSegments);
+  const destinationPath = path.join(destinationNodeModules, ...packageSegments);
+  const manifest = JSON.parse(await readFile(path.join(sourcePath, "package.json"), "utf8"));
+  await mkdir(path.dirname(destinationPath), { recursive: true });
+  await cp(sourcePath, destinationPath, { recursive: true });
+  for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+    await copyRuntimePackage(dependency, destinationNodeModules, copiedPackages);
   }
 }
 
@@ -276,11 +291,6 @@ async function copyApplicationResources() {
   await Promise.all([
     cp(path.join(projectRoot, "server"), path.join(appResources, "server"), { recursive: true }),
     cp(path.join(projectRoot, "shared"), path.join(appResources, "shared"), { recursive: true }),
-    cp(
-      path.join(projectRoot, "node_modules", "smol-toml"),
-      path.join(appResources, "node_modules", "smol-toml"),
-      { recursive: true },
-    ),
     cp(path.join(projectRoot, "dist", "web"), path.join(appResources, "dist", "web"), {
       recursive: true,
     }),
@@ -295,12 +305,12 @@ async function copyApplicationResources() {
       { recursive: true },
     ),
   ]);
-  await mkdir(path.join(appResources, "node_modules"), { recursive: true });
-  await cp(
-    path.join(projectRoot, "node_modules", "ws"),
-    path.join(appResources, "node_modules", "ws"),
-    { recursive: true },
-  );
+  const destinationNodeModules = path.join(appResources, "node_modules");
+  await mkdir(destinationNodeModules, { recursive: true });
+  const copiedPackages = new Set();
+  for (const packageName of serverRuntimePackages) {
+    await copyRuntimePackage(packageName, destinationNodeModules, copiedPackages);
+  }
 
   await mkdir(path.join(appResources, "scripts"), { recursive: true });
   for (const fileName of [
