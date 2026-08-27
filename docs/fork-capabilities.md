@@ -10,6 +10,10 @@ The browser title and repository entry points use the `Codex Panel` name, and th
 
 The list view supports horizontal and vertical layouts. Horizontal layout uses the issue board's status colors, workflow arrows, column spacing, scrollable column bodies, and card hierarchy so statuses remain easy to scan. Jira issues show their external key when available, with the title on a separate line and metadata wrapping inside the card. Vertical layout keeps the existing compact rows.
 
+## Bounded project-summary retries
+
+Each project dashboard asks Codex for a daily progress summary. A failed generation is retried after 5, 15, and 60 minutes; after the fourth failure, Panel stops automatic attempts and leaves a manual retry button in the summary bubble. The button shows progress until that attempt finishes. A successful automatic or manual generation resets the failure count, while existing failed summaries migrate into the first retry stage without losing their stored text or error.
+
 ## Tauri/Rust desktop manager
 
 On macOS, the explicit `npm run codex:install` command builds a standalone runtime under `~/Library/Application Support/Codex Panel`, creates or refreshes `~/Applications/Codex Panel.app`, and removes only older launcher installations carrying a Codex Panel ownership marker. Plain `npm ci` continues to install project dependencies without writing user-level integrations. The installed product is the upstream Tauri/Rust desktop foundation under the unchanged `Codex Panel` name; the former SwiftPM launcher is no longer a product or build path.

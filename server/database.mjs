@@ -392,6 +392,7 @@ function projectSummaryFromRow(row) {
     generatedAt: row.generated_at,
     attemptedAt: row.attempted_at,
     error: row.error,
+    failureCount: Number(row.failure_count ?? 0),
   };
 }
 
@@ -686,7 +687,8 @@ export class PanelDatabase {
         summary TEXT,
         generated_at TEXT,
         attempted_at TEXT NOT NULL,
-        error TEXT
+        error TEXT,
+        failure_count INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0)
       );
 
       CREATE TABLE IF NOT EXISTS jira_sync_state (
@@ -824,6 +826,19 @@ export class PanelDatabase {
     const projectColumns = this.database.prepare("PRAGMA table_info(projects)").all();
     if (!projectColumns.some((column) => column.name === "workspace_path")) {
       this.database.exec("ALTER TABLE projects ADD COLUMN workspace_path TEXT");
+    }
+
+    const projectSummaryColumns = this.database.prepare(
+      "PRAGMA table_info(project_summaries)",
+    ).all();
+    if (!projectSummaryColumns.some((column) => column.name === "failure_count")) {
+      this.database.exec(`
+        ALTER TABLE project_summaries
+        ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0)
+      `);
+      this.database.exec(`
+        UPDATE project_summaries SET failure_count = 1 WHERE error IS NOT NULL
+      `);
     }
 
     const automationPolicyColumns = this.database.prepare(
@@ -3753,7 +3768,7 @@ export class PanelDatabase {
 
   getProjectSummary(projectId) {
     const row = this.database.prepare(`
-      SELECT project_id, summary, generated_at, attempted_at, error
+      SELECT project_id, summary, generated_at, attempted_at, error, failure_count
       FROM project_summaries
       WHERE project_id = ?
     `).get(projectId);
@@ -3763,12 +3778,13 @@ export class PanelDatabase {
       generatedAt: null,
       attemptedAt: null,
       error: null,
+      failureCount: 0,
     };
   }
 
   listProjectSummaries() {
     return this.database.prepare(`
-      SELECT project_id, summary, generated_at, attempted_at, error
+      SELECT project_id, summary, generated_at, attempted_at, error, failure_count
       FROM project_summaries
       ORDER BY project_id
     `).all().map(projectSummaryFromRow);
@@ -3778,13 +3794,14 @@ export class PanelDatabase {
     const timestamp = now();
     this.database.prepare(`
       INSERT INTO project_summaries (
-        project_id, summary, generated_at, attempted_at, error
-      ) VALUES (?, ?, ?, ?, NULL)
+        project_id, summary, generated_at, attempted_at, error, failure_count
+      ) VALUES (?, ?, ?, ?, NULL, 0)
       ON CONFLICT(project_id) DO UPDATE SET
         summary = excluded.summary,
         generated_at = excluded.generated_at,
         attempted_at = excluded.attempted_at,
-        error = NULL
+        error = NULL,
+        failure_count = 0
     `).run(projectId, summary, timestamp, timestamp);
     return this.getProjectSummary(projectId);
   }
@@ -3793,11 +3810,12 @@ export class PanelDatabase {
     const timestamp = now();
     this.database.prepare(`
       INSERT INTO project_summaries (
-        project_id, summary, generated_at, attempted_at, error
-      ) VALUES (?, NULL, NULL, ?, ?)
+        project_id, summary, generated_at, attempted_at, error, failure_count
+      ) VALUES (?, NULL, NULL, ?, ?, 1)
       ON CONFLICT(project_id) DO UPDATE SET
         attempted_at = excluded.attempted_at,
-        error = excluded.error
+        error = excluded.error,
+        failure_count = project_summaries.failure_count + 1
     `).run(projectId, timestamp, error);
     return this.getProjectSummary(projectId);
   }
