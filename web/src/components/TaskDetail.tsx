@@ -148,7 +148,10 @@ interface TaskDetailProps {
   onOpenLegacyLocalThread: (threadId: string) => void;
   aiChatThreads: AiChatThread[];
   onAiChatThreadsRefresh: () => void;
-  onOpenAiChatThread: (threadId: string) => void;
+  onOpenAiChatThread: (
+    threadId: string,
+    composer?: { text: string; skillIds: string[] },
+  ) => void;
   onOpenInThread: (task: Task) => void;
   onCopy: (text: string, announcement: string) => void;
   openingThread: boolean;
@@ -274,6 +277,7 @@ function activityValue(
   language: TaskboardLanguage,
   locale: string,
   text: (chinese: string, english: string) => string,
+  projects: Project[],
 ): string {
   if (field === "archivedAt") {
     return typeof value === "string"
@@ -291,6 +295,18 @@ function activityValue(
     return value.length > 0
       ? value.join(language === "zh" ? "、" : ", ")
       : text("无标签", "No labels");
+  }
+  if (field === "projectId" && typeof value === "string") {
+    return projects.find((project) => project.id === value)?.name ?? value;
+  }
+  if (field === "jiraProjects" && Array.isArray(value)) {
+    return value.length > 0
+      ? value.map((projectId) => (
+          typeof projectId === "string"
+            ? projects.find((project) => project.id === projectId)?.name ?? projectId
+            : String(projectId)
+        )).join(language === "zh" ? "、" : ", ")
+      : text("未设置", "Not set");
   }
   if (field === "assignee" && typeof value === "object") {
     const actor = value as ActorIdentity;
@@ -828,11 +844,19 @@ export function TaskDetail({
         setJiraContext(latest);
         return;
       }
-      const context = await startJiraPlanning(latest.jira);
+      const result = await startJiraPlanning(latest.jira);
+      const { context } = result;
       setJiraContext(context);
       if (context.jira) setCurrentTask(context.jira);
       onAiChatThreadsRefresh();
-      if (context.plan?.threadId) onOpenAiChatThread(context.plan.threadId);
+      if (context.plan?.threadId) {
+        onOpenAiChatThread(
+          context.plan.threadId,
+          result.composerText
+            ? { text: result.composerText, skillIds: result.skillIds ?? [] }
+            : undefined,
+        );
+      }
     } catch (error) {
       onError(messageFor(error));
       setJiraContext(await getJiraTaskContext(currentTask.id).catch(() => jiraContext));
@@ -860,9 +884,18 @@ export function TaskDetail({
     setJiraLifecycleSaving(action);
     onError(null);
     try {
-      const context = await resolveJiraLifecycle(jiraContext.jira.id, lifecycle.version, action);
+      const result = await resolveJiraLifecycle(jiraContext.jira.id, lifecycle.version, action);
+      const { context } = result;
       setJiraContext(context);
       if (context.jira) setCurrentTask(context.jira);
+      if (action === "replan" && context.plan?.threadId) {
+        onOpenAiChatThread(
+          context.plan.threadId,
+          result.composerText
+            ? { text: result.composerText, skillIds: result.skillIds ?? [] }
+            : undefined,
+        );
+      }
     } catch (error) {
       onError(issueMessageFor(error));
       setJiraContext(await getJiraTaskContext(currentTask.id).catch(() => jiraContext));
@@ -1682,6 +1715,7 @@ export function TaskDetail({
                       language,
                       locale,
                       text,
+                      projects,
                     );
                     const afterValue = activityValue(
                       change.field,
@@ -1689,6 +1723,7 @@ export function TaskDetail({
                       language,
                       locale,
                       text,
+                      projects,
                     );
                     return (
                       <article

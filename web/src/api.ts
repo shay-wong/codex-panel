@@ -642,12 +642,11 @@ export async function resolveJiraLifecycle(
   taskId: string,
   version: number,
   action: "pause" | "keep" | "rework" | "replan" | "migrate",
-): Promise<JiraTaskContext> {
-  const data = await request<{ context: JiraTaskContext }>(
+): Promise<{ context: JiraTaskContext; composerText?: string; skillIds?: string[] }> {
+  return request<{ context: JiraTaskContext; composerText?: string; skillIds?: string[] }>(
     `/api/tasks/${encodeURIComponent(taskId)}/jira-lifecycle`,
     { method: "POST", body: JSON.stringify({ version, action }) },
   );
-  return data.context;
 }
 
 export async function resolveJiraAutoCompletion(
@@ -683,12 +682,11 @@ export async function startSimpleJiraTask(
 
 export async function startJiraPlanning(
   task: Pick<Task, "id" | "version">,
-): Promise<JiraTaskContext> {
-  const data = await request<{ context: JiraTaskContext }>(
+): Promise<{ context: JiraTaskContext; composerText?: string; skillIds?: string[] }> {
+  return request<{ context: JiraTaskContext; composerText?: string; skillIds?: string[] }>(
     `/api/tasks/${encodeURIComponent(task.id)}/jira-planning`,
     { method: "POST", body: JSON.stringify({ version: task.version }) },
   );
-  return data.context;
 }
 
 export async function addJiraTaskLink(

@@ -2320,6 +2320,7 @@ export function createPanelServer(options = {}) {
   const pendingJiraSimpleStarts = new Map();
   // ponytail: one in-process reservation per Jira is enough while this server owns all local mutations.
   const pendingJiraReopenActions = new Map();
+  const jiraPlanningSkillIds = ["grill-me", "to-spec", "to-tickets"];
 
   function jiraPlanningPrompt(jiraTask, projects, review, plan) {
     const repositories = projects.length > 0
@@ -2373,34 +2374,41 @@ export function createPanelServer(options = {}) {
       thread = await aiChat.createThread({
         projectId,
         title: `${context.jira.externalKey ?? context.jira.identifier} · Jira 规划`,
-        sandbox: "read-only",
+        sandbox: "workspace-write",
       });
     }
     const started = database.beginJiraPlanning(jiraTaskId, version, thread.id);
+    let composerText = null;
+    if (started.shouldPrompt || database.listAiChatRuns(thread.id).length === 0) {
+      const review = Boolean(
+        context.plan
+        && (started.shouldPrompt || context.plan.spec.trim() || context.plan.publication > 0),
+      );
+      composerText = jiraPlanningPrompt(
+        context.jira,
+        context.projects,
+        review,
+        context.plan,
+      );
+    }
     if (started.shouldPrompt) {
-      await aiChat.startTurn(thread.id, {
-        message: jiraPlanningPrompt(context.jira, context.projects, Boolean(context.plan), context.plan),
-        skillIds: ["grill-me", "to-spec", "to-tickets"],
-      });
       database.markJiraPlanPrompted(jiraTaskId);
     }
-    return { context: database.getJiraContext(jiraTaskId) };
+    return {
+      context: database.getJiraContext(jiraTaskId),
+      ...(composerText ? { composerText, skillIds: jiraPlanningSkillIds } : {}),
+    };
   }
 
   async function createJiraReplan(jiraTaskId, version, reservation) {
     const context = database.beginJiraReplan(jiraTaskId, version, reservation);
     const projectId = context.projects[0]?.id ?? DEFAULT_PROJECT_ID;
     let thread;
-    let run;
     try {
       thread = await aiChat.createThread({
         projectId,
         title: `${context.jira.externalKey ?? context.jira.identifier} · Jira 重新规划`,
-        sandbox: "read-only",
-      });
-      run = await aiChat.startTurn(thread.id, {
-        message: jiraPlanningPrompt(context.jira, context.projects, true, context.plan),
-        skillIds: ["grill-me", "to-spec", "to-tickets"],
+        sandbox: "workspace-write",
       });
       return {
         context: database.completeJiraReplan(
@@ -2411,6 +2419,8 @@ export function createPanelServer(options = {}) {
           thread.id,
           reservation,
         ),
+        composerText: jiraPlanningPrompt(context.jira, context.projects, true, context.plan),
+        skillIds: jiraPlanningSkillIds,
       };
     } catch (error) {
       if (thread) {
@@ -3483,11 +3493,14 @@ export function createPanelServer(options = {}) {
           if ([...url.searchParams.keys()].length > 0) {
             throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/projects does not accept query parameters");
           }
+          const deviceWorkspaces = await readCodexProjectWorkspaces(resolved.codexStatePath);
           const projects = database.listProjects().map((project) => ({
             ...project,
             workspacePath: project.id === DEFAULT_PROJECT_ID
               ? null
-              : currentCloudConfig?.projectMappings[project.id] ?? project.workspacePath,
+              : currentCloudConfig?.projectMappings[project.id]
+                ?? deviceWorkspaces[project.id]
+                ?? project.workspacePath,
           }));
           return sendJson(response, 200, { projects });
         }
@@ -3795,11 +3808,17 @@ export function createPanelServer(options = {}) {
         }
         if (request.method === "PUT") {
           const { version, projectIds } = parseJiraProjects(await readJson(request));
+          const deviceWorkspaces = await readCodexProjectWorkspaces(resolved.codexStatePath);
+          const workspaceProjectIds = new Set([
+            ...Object.keys(currentCloudConfig?.projectMappings ?? {}),
+            ...Object.keys(deviceWorkspaces),
+          ]);
           const context = database.setJiraProjects(
             taskId,
             version,
             projectIds,
             actorFromRequest(request),
+            workspaceProjectIds,
           );
           events.emit("task.jira.updated", { taskId, task: context.jira });
           return sendJson(response, 200, { context });
