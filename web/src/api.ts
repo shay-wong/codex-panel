@@ -2,6 +2,7 @@ import type {
   ActorIdentity,
   AiChatCatalog,
   AiChatAttachmentInput,
+  AiChatSkill,
   AiChatRun,
   AiChatSandbox,
   AiChatThread,
@@ -649,10 +650,28 @@ export async function resolveJiraLifecycle(
   taskId: string,
   version: number,
   action: "pause" | "keep" | "rework" | "replan" | "migrate",
-): Promise<{ context: JiraTaskContext; composerText?: string; skillIds?: string[] }> {
-  return request<{ context: JiraTaskContext; composerText?: string; skillIds?: string[] }>(
+  threadId?: string,
+  projectId?: string | null,
+): Promise<{
+  context: JiraTaskContext;
+  composerText?: string;
+  skills?: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
+}> {
+  return request<{
+    context: JiraTaskContext;
+    composerText?: string;
+    skills?: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
+  }>(
     `/api/tasks/${encodeURIComponent(taskId)}/jira-lifecycle`,
-    { method: "POST", body: JSON.stringify({ version, action }) },
+    {
+      method: "POST",
+      body: JSON.stringify({
+        version,
+        action,
+        ...(threadId ? { threadId } : {}),
+        ...(projectId ? { projectId } : {}),
+      }),
+    },
   );
 }
 
@@ -689,10 +708,27 @@ export async function startSimpleJiraTask(
 
 export async function startJiraPlanning(
   task: Pick<Task, "id" | "version">,
-): Promise<{ context: JiraTaskContext; composerText?: string; skillIds?: string[] }> {
-  return request<{ context: JiraTaskContext; composerText?: string; skillIds?: string[] }>(
+  threadId?: string,
+  projectId?: string | null,
+): Promise<{
+  context: JiraTaskContext;
+  composerText?: string;
+  skills?: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
+}> {
+  return request<{
+    context: JiraTaskContext;
+    composerText?: string;
+    skills?: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
+  }>(
     `/api/tasks/${encodeURIComponent(task.id)}/jira-planning`,
-    { method: "POST", body: JSON.stringify({ version: task.version }) },
+    {
+      method: "POST",
+      body: JSON.stringify({
+        version: task.version,
+        ...(threadId ? { threadId } : {}),
+        ...(projectId ? { projectId } : {}),
+      }),
+    },
   );
 }
 

@@ -435,6 +435,7 @@ function aiChatThreadFromRow(row) {
     id: row.id,
     title: row.title,
     status: row.status,
+    purpose: row.purpose ?? "temporary",
     origin: {
       projectId: row.origin_project_id,
       projectName: row.origin_project_name,
@@ -712,6 +713,7 @@ export class PanelDatabase {
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('idle', 'running', 'failed')),
+        purpose TEXT NOT NULL DEFAULT 'temporary' CHECK (purpose IN ('temporary', 'formal')),
         origin_project_id TEXT NOT NULL,
         origin_project_name TEXT NOT NULL,
         origin_workspace_path TEXT NOT NULL,
@@ -855,6 +857,18 @@ export class PanelDatabase {
     if (!aiChatThreadColumns.some((column) => column.name === "archived_at")) {
       this.database.exec("ALTER TABLE ai_chat_threads ADD COLUMN archived_at TEXT");
     }
+    if (!aiChatThreadColumns.some((column) => column.name === "purpose")) {
+      this.database.exec(`
+        ALTER TABLE ai_chat_threads
+        ADD COLUMN purpose TEXT NOT NULL DEFAULT 'temporary'
+        CHECK (purpose IN ('temporary', 'formal'))
+      `);
+    }
+    this.database.exec(`
+      UPDATE ai_chat_threads SET purpose = 'formal'
+      WHERE purpose = 'temporary'
+        AND id IN (SELECT thread_id FROM issue_claim_queue WHERE thread_id IS NOT NULL)
+    `);
 
     const jiraSettingsColumns = this.database.prepare("PRAGMA table_info(jira_settings)").all();
     if (!jiraSettingsColumns.some((column) => column.name === "auto_archive_enabled")) {
@@ -1177,6 +1191,10 @@ export class PanelDatabase {
       SELECT jira_task_id, thread_id, created_at
       FROM jira_plans
       WHERE thread_id IS NOT NULL;
+
+      UPDATE ai_chat_threads SET purpose = 'formal'
+      WHERE purpose = 'temporary'
+        AND id IN (SELECT thread_id FROM jira_plan_threads);
 
       CREATE TRIGGER IF NOT EXISTS task_relations_require_same_project
       BEFORE INSERT ON task_relations
@@ -3966,16 +3984,17 @@ export class PanelDatabase {
     const timestamp = input.createdAt ?? now();
     this.database.prepare(`
       INSERT INTO ai_chat_threads (
-        id, title, status,
+        id, title, status, purpose,
         origin_project_id, origin_project_name, origin_workspace_path,
         origin_issue_id, origin_issue_identifier,
         codex_thread_id, model, reasoning_effort, sandbox,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.title,
       input.status ?? "idle",
+      input.purpose ?? "temporary",
       input.origin.projectId,
       input.origin.projectName,
       input.origin.workspacePath,

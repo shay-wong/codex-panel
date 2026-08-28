@@ -16,7 +16,7 @@ test("the project switcher merges live Codex projects with persisted Panel proje
   assert.match(appSource, /persistedById/);
   assert.match(appSource, /name: project\.id === GLOBAL_PROJECT_ID\s*\? text\("全局", "Global"\)\s*: persistedById\.get\(project\.id\)\?\.name \?\? project\.name/);
   assert.match(appSource, /for \(const project of projects\) \{[\s\S]*?inCodex: false,[\s\S]*?persisted: true/);
-  assert.match(appSource, /projectMenuChoices\.map\(\(project\) => \(/);
+  assert.match(appSource, /items=\{projectSelectionItems\}/);
   assert.match(appSource, /createProjectRequest/);
   assert.match(apiSource, /export async function createProject/);
 });
@@ -93,7 +93,7 @@ test("issue creation selects a project from all projects and detail supports pro
 
 test("the project header exposes project, automation, and create controls", () => {
   assert.match(appSource, /className="header-project-button"[\s\S]*?aria-haspopup="menu"/);
-  assert.match(appSource, /className="header-project-menu" role="menu" aria-label=\{text\("项目", "Projects"\)\}/);
+  assert.match(appSource, /<ProjectSelectionMenu[\s\S]*?className="header-project-menu"[\s\S]*?ariaLabel=\{text\("项目", "Projects"\)\}/);
   assert.match(appSource, /<ProjectAutomationMenu/);
   assert.match(appSource, /className="icon-button header-create-button"/);
   assert.match(styles, /\.header-project-menu \{[\s\S]*?-webkit-app-region: no-drag/);

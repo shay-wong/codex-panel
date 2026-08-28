@@ -1,5 +1,4 @@
 import {
-  Fragment,
   lazy,
   Suspense,
   useCallback,
@@ -10,6 +9,7 @@ import {
   useState,
   type CSSProperties,
   type Dispatch,
+  type MouseEvent as ReactMouseEvent,
   type SetStateAction,
 } from "react";
 import {
@@ -41,6 +41,7 @@ import {
   moveTask as moveTaskRequest,
   publishHostRuntime,
   removeTaskRelation,
+  resolveJiraLifecycle,
   resolvePanelUrl,
   resolvePanelWebSocketUrl,
   restoreTask as restoreTaskRequest,
@@ -48,6 +49,7 @@ import {
   setCurrentUserActor,
   syncJiraConnection,
   saveJiraSettings,
+  startJiraPlanning,
   uploadAttachment,
   updateTask as updateTaskRequest,
   saveProjectAutomationPolicy,
@@ -82,6 +84,7 @@ import {
   RelationIcon,
 } from "./components/SemanticIcons";
 import { ProjectAutomationMenu } from "./components/ProjectAutomationMenu";
+import { ProjectSelectionMenu, type ProjectSelectionItem } from "./components/ProjectSelectionMenu";
 import { PanelIcon } from "./components/PanelIcon";
 import { TaskContextMenu } from "./components/TaskContextMenu";
 import { TaskDetail } from "./components/TaskDetail";
@@ -126,6 +129,7 @@ import {
 import {
   TASK_STATUSES,
   type ActorIdentity,
+  type AiChatSkill,
   type AiChatThread,
   type CodexProjectIdentity,
   type CodexThreadBinding,
@@ -568,6 +572,9 @@ function LocalRealtimeSync({
         return;
       }
       if (event.type === "claim.updated" || event.type === "automation.updated") {
+        if (event.type === "claim.updated") {
+          setAiThreadsRevision((current) => current + 1);
+        }
         if (affectsSelectedProject) {
           void refreshAutomation();
           scheduleRefresh({ tasks: event.type === "claim.updated" });
@@ -722,6 +729,10 @@ export function App() {
   const [settlingTaskId, setSettlingTaskId] = useState<string | null>(null);
   const [openingProjectId, setOpeningProjectId] = useState<string | null>(null);
   const [openingThreadTaskId, setOpeningThreadTaskId] = useState<string | null>(null);
+  const [pendingExecutionOpen, setPendingExecutionOpen] = useState<{
+    taskId: string;
+    requestedAt: number;
+  } | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(
     () => panelStorage.getItem(FIRST_USE_COMPLETE_KEY) === null,
   );
@@ -776,6 +787,11 @@ export function App() {
     );
   }
   const pendingRemoteThreadClaimsRef = useRef(new Map<string, PendingRemoteThreadClaim>());
+  const pendingJiraPlanningRef = useRef(new Map<string, {
+    kind: "planning" | "replan";
+    lifecycleVersion?: number;
+    projectId: string | null;
+  }>());
   const legacyAutomationPauseRequestsRef = useRef(new Set<string>());
 
   useEffect(() => {
@@ -922,15 +938,66 @@ export function App() {
       ...sortedChoices.filter((project) => project.issueCount === 0),
     ];
   }, [hostContext?.projects, projectCodexIdentities, projects, recentProjectIds, text]);
+  const jiraRepositoryProjects = useMemo(() => {
+    const persistedById = new Map(projects.map((project) => [project.id, project]));
+    const hostById = new Map((hostContext?.projects ?? []).map((project) => [project.id, project]));
+    const repositories = new Map<string, {
+      id: string;
+      name: string;
+      workspacePath: string;
+      persisted: boolean;
+    }>();
+    for (const [id, workspacePath] of Object.entries(deviceWorkspacePaths)) {
+      if (id === GLOBAL_PROJECT_ID || persistedById.get(id)?.source === "jira") continue;
+      const persisted = persistedById.get(id);
+      const hostProject = hostById.get(id);
+      repositories.set(id, {
+        id,
+        name: persisted?.name
+          ?? hostProject?.name
+          ?? workspacePath.split(/[\\/]/).filter(Boolean).at(-1)
+          ?? id,
+        workspacePath,
+        persisted: Boolean(persisted),
+      });
+    }
+    for (const project of projects) {
+      if (project.id === GLOBAL_PROJECT_ID || project.source === "jira" || !project.workspacePath) continue;
+      repositories.set(project.id, {
+        id: project.id,
+        name: project.name,
+        workspacePath: project.workspacePath,
+        persisted: true,
+      });
+    }
+    return [...repositories.values()].sort((left, right) => left.name.localeCompare(right.name));
+  }, [deviceWorkspacePaths, hostContext?.projects, projects]);
   const projectMenuCandidates = projectChoices.filter(
     (project) => project.id !== GLOBAL_PROJECT_ID || project.issueCount > 0,
   );
-  const projectMenuNeedle = projectMenuSearch.trim().toLocaleLowerCase();
-  const projectMenuChoices = projectMenuNeedle
-    ? projectMenuCandidates.filter((project) => project.name.toLocaleLowerCase().includes(projectMenuNeedle))
-    : projectMenuCandidates;
-  const firstEmptyProjectId = projectMenuChoices.find((project) => project.issueCount === 0)?.id ?? null;
-  const hasProjectsWithIssues = projectMenuChoices.some((project) => project.issueCount > 0);
+  const firstEmptyProjectId = projectMenuCandidates.find((project) => project.issueCount === 0)?.id ?? null;
+  const hasProjectsWithIssues = projectMenuCandidates.some((project) => project.issueCount > 0);
+  const projectSelectionItems: ProjectSelectionItem[] = [
+    {
+      id: ALL_PROJECTS_ID,
+      name: text("所有项目", "All projects"),
+      searchable: false,
+      dividerAfter: true,
+    },
+    ...projectMenuCandidates.map((project) => ({
+      id: project.id,
+      name: project.name,
+      dividerBefore: hasProjectsWithIssues && project.id === firstEmptyProjectId,
+      onContextMenu: project.id.startsWith("temp-") ? (event: ReactMouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        setProjectContextMenu({
+          project,
+          x: event.clientX,
+          y: event.clientY,
+        });
+      } : undefined,
+    })),
+  ];
   const editorProjectId = editor?.task?.projectId
     ?? editor?.projectId
     ?? (newTaskDraft?.projectId === selectedProjectId ? newTaskDraft.targetProjectId : undefined)
@@ -1336,6 +1403,11 @@ export function App() {
       }
 
       if (message.type === "panel:thread-prepared" && message.payload) {
+        const payload = message.payload as { taskId?: unknown };
+        if (
+          typeof payload.taskId === "string"
+          && pendingJiraPlanningRef.current.has(payload.taskId)
+        ) return;
         setOpeningThreadTaskId(null);
         return;
       }
@@ -1349,20 +1421,47 @@ export function App() {
         }
         const task = tasksRef.current.find((candidate) => candidate.id === payload.taskId);
         const threadId = payload.threadId.trim();
+        const jiraPlanning = pendingJiraPlanningRef.current.get(payload.taskId);
+        pendingJiraPlanningRef.current.delete(payload.taskId);
+        if (jiraPlanning) setOpeningThreadTaskId(null);
         if (
           !task
           || !threadId
           || task.threadBinding?.threadId === threadId
           || task.legacyLocalThreadId === threadId
         ) return;
-        void updateTaskRequest(task, taskToDraft(task), threadId)
+        void (async () => {
+          let updated = task;
+          if (jiraPlanning?.kind === "replan" && jiraPlanning.lifecycleVersion !== undefined) {
+            const result = await resolveJiraLifecycle(
+              task.id,
+              jiraPlanning.lifecycleVersion,
+              "replan",
+              threadId,
+              jiraPlanning.projectId,
+            );
+            if (result.context.jira) updated = result.context.jira;
+            updated = await updateTaskRequest(updated, taskToDraft(updated), threadId);
+          } else {
+            updated = await updateTaskRequest(updated, taskToDraft(updated), threadId);
+          }
+          if (jiraPlanning?.kind === "planning") {
+            const result = await startJiraPlanning(updated, threadId, jiraPlanning.projectId);
+            if (result.context.jira) updated = result.context.jira;
+          }
+          return updated;
+        })()
           .then((updated) => {
             setTasks((current) => sortTasks(current.map((candidate) => (
               candidate.id === updated.id ? updated : candidate
             ))));
             setAnnouncement(textRef.current(
-              `${updated.identifier} 已关联到新 Codex 对话。`,
-              `${updated.identifier} is linked to the new Codex conversation.`,
+              jiraPlanning
+                ? `${updated.externalKey ?? updated.identifier} 已关联到新的 Jira 规划对话。`
+                : `${updated.identifier} 已关联到新 Codex 对话。`,
+              jiraPlanning
+                ? `${updated.externalKey ?? updated.identifier} is linked to the new Jira planning conversation.`
+                : `${updated.identifier} is linked to the new Codex conversation.`,
             ));
           })
           .catch((error) => {
@@ -1386,6 +1485,9 @@ export function App() {
           threadId?: unknown;
           uncertain?: unknown;
         };
+        if (typeof payload.taskId === "string") {
+          pendingJiraPlanningRef.current.delete(payload.taskId);
+        }
         if (typeof payload.taskId === "string" && pendingRemoteThreadClaimsRef.current.has(payload.taskId)) {
           pendingRemoteThreadClaimsRef.current.delete(payload.taskId);
           setOpeningThreadTaskId(null);
@@ -2618,6 +2720,29 @@ export function App() {
     window.location.assign(`codex://threads/${encodeURIComponent(threadId.trim())}`);
   }
 
+  useEffect(() => {
+    if (!pendingExecutionOpen) return;
+    const thread = [...aiThreads]
+      .filter((candidate) => (
+        candidate.origin.issueId === pendingExecutionOpen.taskId
+        && candidate.purpose === "formal"
+        && candidate.codexThreadId
+        && candidate.currentRun?.status === "running"
+        && Date.parse(candidate.updatedAt) >= pendingExecutionOpen.requestedAt - 2_000
+    ))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+    if (!thread?.codexThreadId) return;
+    setPendingExecutionOpen(null);
+    if (embedded && window.parent !== window) {
+      postEmbeddedHostMessage({
+        type: "panel:open-thread",
+        payload: { threadId: thread.codexThreadId, legacyLocal: true },
+      });
+    } else {
+      window.location.assign(`codex://threads/${encodeURIComponent(thread.codexThreadId)}`);
+    }
+  }, [aiThreads, embedded, pendingExecutionOpen]);
+
   function openTaskConversation(conversation: TaskConversationItem) {
     if (conversation.kind === "local-ai" && conversation.aiThreadId) {
       setAiOpenThreadRequest((current) => ({
@@ -2823,6 +2948,85 @@ export function App() {
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
     }
   }
+
+  async function openJiraPlanningInThread(
+    task: Task,
+    projectId: string | null,
+    composer: {
+      text: string;
+      skills: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
+      replanLifecycleVersion?: number;
+    },
+  ) {
+    if (!embedded || window.parent === window) {
+      throw new Error(text(
+        "请在 Codex App 中创建 Jira 规划对话。",
+        "Create Jira planning conversations in the Codex app.",
+      ));
+    }
+    if (!managePanelSkillPath) {
+      throw new Error(text(
+        "任务面板还没有读取到 manage-panel Skill 路径，请刷新后重试。",
+        "Panel has not received the manage-panel Skill path. Refresh and try again.",
+      ));
+    }
+    if (openingThreadTaskId) return;
+
+    const targetProject = projectId
+      ? projects.find((project) => project.id === projectId) ?? null
+      : null;
+    const codexProjectContext = projectId
+      ? codexProjectContextForTaskProject(projectId)
+      : null;
+    const workspacePath = projectId
+      ? codexProjectContext?.workspacePath
+        ?? deviceWorkspacePaths[projectId]
+        ?? targetProject?.workspacePath
+        ?? undefined
+      : undefined;
+    if (projectId && !workspacePath) {
+      throw new Error(text(
+        "所选仓库没有可用的本地目录。",
+        "The selected repository has no available local workspace.",
+      ));
+    }
+
+    const skillReferences = [
+      { name: "manage-panel", displayName: "Manage Panel", path: managePanelSkillPath },
+      ...composer.skills.map((skill) => ({
+        name: skill.id,
+        displayName: skill.label,
+        path: skill.path,
+      })),
+    ];
+    pendingJiraPlanningRef.current.set(task.id, composer.replanLifecycleVersion === undefined
+      ? { kind: "planning", projectId }
+      : { kind: "replan", lifecycleVersion: composer.replanLifecycleVersion, projectId });
+    setOpeningThreadTaskId(task.id);
+    setActionError(null);
+    postEmbeddedHostMessage({
+      type: "panel:create-thread",
+      payload: {
+        taskId: task.id,
+        identifier: task.externalKey ?? task.identifier,
+        title: `${task.externalKey ?? task.identifier} · ${composer.replanLifecycleVersion === undefined
+          ? "Jira 规划"
+          : "Jira 重新规划"}`,
+        instruction: composer.text,
+        skillName: skillReferences[0].name,
+        skillDisplayName: skillReferences[0].displayName,
+        skillPath: skillReferences[0].path,
+        skillReferences,
+        projectless: projectId === null,
+        projectName: targetProject?.name,
+        codexProjectId: codexProjectContext?.codexProjectId ?? projectId ?? undefined,
+        codexProjectKind: "local",
+        codexHostId: "local",
+        workspacePath,
+      },
+    });
+  }
+
   async function openTaskInThread(task: Task) {
     const taskProject = projects.find((project) => project.id === task.projectId);
     const savedRemoteIdentity = projectCodexIdentities[task.projectId]?.codexProjectKind === "remote"
@@ -2987,6 +3191,25 @@ export function App() {
     } finally {
       setOpeningProjectId(null);
     }
+  }
+
+  async function ensureJiraRepositoryProjects(projectIds: string[]) {
+    const selectedIds = new Set(projectIds);
+    const missing = jiraRepositoryProjects.filter((project) => (
+      selectedIds.has(project.id) && !project.persisted
+    ));
+    for (const project of missing) {
+      try {
+        await createProjectRequest({
+          id: project.id,
+          name: project.name,
+          workspacePath: project.workspacePath,
+        });
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.code !== "PROJECT_EXISTS") throw error;
+      }
+    }
+    if (missing.length > 0) await refreshProjectList();
   }
 
   function openJiraDialog() {
@@ -3243,111 +3466,58 @@ export function App() {
                   <PanelIcon className="project-switcher-chevron" name="dropdown" />
                 </button>
                 {projectMenuOpen && (
-                  <div className="header-project-menu" role="menu" aria-label={text("项目", "Projects")}>
-                    <span>{text("切换项目", "Switch project")}</span>
-                    <div className="project-menu-search">
-                      <label className="sr-only" htmlFor="project-menu-search-input">
-                        {text("按名称筛选项目", "Filter projects by name")}
-                      </label>
-                      <TaskboardIcon name="search" />
-                      <input
-                        id="project-menu-search-input"
-                        autoFocus
-                        type="search"
-                        value={projectMenuSearch}
-                        onChange={(event) => setProjectMenuSearch(event.target.value)}
-                        placeholder={text("筛选项目…", "Filter projects…")}
-                      />
-                      {projectMenuSearch && (
+                  <ProjectSelectionMenu
+                    className="header-project-menu"
+                    ariaLabel={text("项目", "Projects")}
+                    heading={text("切换项目", "Switch project")}
+                    items={projectSelectionItems}
+                    selectedIds={new Set([isAllProjects ? ALL_PROJECTS_ID : selectedProjectId])}
+                    searchValue={projectMenuSearch}
+                    searchLabel={text("按名称筛选项目", "Filter projects by name")}
+                    searchPlaceholder={text("筛选项目…", "Filter projects…")}
+                    clearSearchLabel={text("清除项目筛选", "Clear project filter")}
+                    emptyMessage={text("没有匹配项目", "No matching projects")}
+                    disabled={openingProjectId !== null}
+                    onSearchChange={setProjectMenuSearch}
+                    onSelect={(item) => {
+                      if (item.id === ALL_PROJECTS_ID) {
+                        if (isAllProjects) setProjectMenuOpen(false);
+                        else changeProject(ALL_PROJECTS_ID);
+                        return;
+                      }
+                      const project = projectMenuCandidates.find((candidate) => candidate.id === item.id);
+                      if (!project) return;
+                      if (project.id === selectedProjectId) setProjectMenuOpen(false);
+                      else void selectProject(project);
+                    }}
+                    actions={(
+                      <>
+                        <div className="project-menu-divider" role="separator" />
                         <button
-                          className="search-clear"
                           type="button"
-                          aria-label={text("清除项目筛选", "Clear project filter")}
-                          onClick={() => setProjectMenuSearch("")}
+                          role="menuitem"
+                          disabled={openingProjectId !== null}
+                          onClick={openJiraDialog}
                         >
-                          <LinearIcon name="close" />
+                          <RelationIcon className="project-avatar" color="currentColor" size={16} />
+                          <span>
+                            {jiraConnection?.configured
+                              ? text("Jira 设置", "Jira settings")
+                              : text("连接 Jira", "Connect Jira")}
+                          </span>
                         </button>
-                      )}
-                    </div>
-                    <div className="project-menu-list">
-                      {!projectMenuNeedle && (
-                        <>
-                          <button
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={isAllProjects}
-                            disabled={openingProjectId !== null}
-                            onClick={() => {
-                              if (isAllProjects) setProjectMenuOpen(false);
-                              else changeProject(ALL_PROJECTS_ID);
-                            }}
-                          >
-                            <TaskboardIcon className="project-avatar" name="projectFolder" />
-                            <span>{text("所有项目", "All projects")}</span>
-                            {isAllProjects && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
-                          </button>
-                          <div className="project-menu-divider" role="separator" />
-                        </>
-                      )}
-                      {projectMenuChoices.map((project) => (
-                        <Fragment key={project.id}>
-                          {hasProjectsWithIssues && project.id === firstEmptyProjectId && (
-                            <div className="project-menu-divider" role="separator" />
-                          )}
-                          <button
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={project.id === selectedProjectId}
-                            disabled={openingProjectId !== null}
-                            onContextMenu={project.id.startsWith("temp-") ? (event) => {
-                              event.preventDefault();
-                              setProjectContextMenu({
-                                project,
-                                x: event.clientX,
-                                y: event.clientY,
-                              });
-                            } : undefined}
-                            onClick={() => {
-                              if (project.id === selectedProjectId) setProjectMenuOpen(false);
-                              else void selectProject(project);
-                            }}
-                          >
-                            <TaskboardIcon className="project-avatar" name="projectFolder" />
-                            <span>{project.name}</span>
-                            {project.id === selectedProjectId && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
-                          </button>
-                        </Fragment>
-                      ))}
-                      {projectMenuNeedle && projectMenuChoices.length === 0 && (
-                        <div className="project-menu-empty">{text("没有匹配项目", "No matching projects")}</div>
-                      )}
-                    </div>
-                    <div className="project-menu-actions">
-                      <div className="project-menu-divider" role="separator" />
-                      <button
-                        type="button"
-                        role="menuitem"
-                        disabled={openingProjectId !== null}
-                        onClick={openJiraDialog}
-                      >
-                        <RelationIcon className="project-avatar" color="currentColor" size={16} />
-                        <span>
-                          {jiraConnection?.configured
-                            ? text("Jira 设置", "Jira settings")
-                            : text("连接 Jira", "Connect Jira")}
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        disabled={openingProjectId !== null}
-                        onClick={openCreateProjectDialog}
-                      >
-                        <PlusIcon className="project-avatar" color="currentColor" size={16} />
-                        <span>{text("创建项目", "Create project")}</span>
-                      </button>
-                    </div>
-                  </div>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          disabled={openingProjectId !== null}
+                          onClick={openCreateProjectDialog}
+                        >
+                          <PlusIcon className="project-avatar" color="currentColor" size={16} />
+                          <span>{text("创建项目", "Create project")}</span>
+                        </button>
+                      </>
+                    )}
+                  />
                 )}
               </div>
             </div>
@@ -3620,6 +3790,7 @@ export function App() {
             tasks={tasks}
             referenceTasks={referenceTasks}
             projects={projects}
+            jiraRepositoryProjects={jiraRepositoryProjects}
             currentUser={currentUser}
             jiraAvailable={panelMetadata !== null && panelMetadata.mode !== "cloud"}
             availableLabels={availableLabels}
@@ -3650,7 +3821,13 @@ export function App() {
               requestId: (current?.requestId ?? 0) + 1,
             }))}
             onOpenInThread={openTaskInThread}
+            onOpenJiraPlanning={openJiraPlanningInThread}
+            onExecutionStarted={(taskId) => setPendingExecutionOpen({
+              taskId,
+              requestedAt: Date.now(),
+            })}
             onCopy={(text, message) => void copyText(text, message)}
+            onEnsureJiraProjects={ensureJiraRepositoryProjects}
             openingThread={openingThreadTaskId === detailTask.id}
             onError={setActionError}
           />

@@ -419,9 +419,9 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.doesNotMatch(source, /prefillPrompt: prompt/);
   assert.match(source, /requestHostTaskComposerPrefill\(\{/);
   assert.match(source, /requestHost\("prefill-task-composer"/);
-  assert.match(source, /function waitForPreparedComposer\(identifier, skillPath\)/);
+  assert.match(source, /function waitForPreparedComposer\(identifier, skills\)/);
   assert.match(source, /\[skill-mention-name\]/);
-  assert.match(source, /mention\.getAttribute\("skill-mention-path"\) === skillPath/);
+  assert.match(source, /mention\.getAttribute\("skill-mention-path"\) === skill\.path/);
   assert.doesNotMatch(source, /submit\.click\(\)/);
   assert.match(source, /type: "panel:thread-prepared"/);
   assert.doesNotMatch(source, /function waitForCreatedThread/);
@@ -453,7 +453,7 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.match(webApp, /type: "panel:open-thread",\s*payload: binding/);
   assert.match(source, /await waitForRemoteProject\(requestedProjectId, codexHostId, targetRoot\)/);
   assert.match(createThreadSource, /prefillPrompt: instruction/);
-  assert.match(createThreadSource, /await waitForPreparedComposer\(identifier, ""\)/);
+  assert.match(createThreadSource, /await waitForPreparedComposer\(identifier, \[\]\)/);
   assert.doesNotMatch(createThreadSource, /requestHostTaskConversationStart/);
   assert.doesNotMatch(createThreadSource, /Input\.dispatchKeyEvent/);
   assert.doesNotMatch(openRemoteThreadSource, /moveTaskRequest/);

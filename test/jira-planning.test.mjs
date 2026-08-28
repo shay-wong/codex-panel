@@ -85,6 +85,7 @@ if (args[0] === "debug") {
     codexExecutable,
     codexStatePath,
     skillPath: "/skills/manage-panel/SKILL.md",
+    skillsDirectory: path.join(directory, "skills"),
   });
   try {
     const address = await app.listen({ port: 0 });
@@ -126,22 +127,22 @@ if (args[0] === "debug") {
     let result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
       version: jira.version,
     });
-    assert.equal(result.context.plan.status, "planning");
-    assert.ok(result.context.plan.promptedAt);
+    assert.equal(result.context.plan, null);
     assert.match(result.composerText, /请规划下面这个 Jira 需求/);
-    const initialComposerText = result.composerText;
-    assert.deepEqual(result.skillIds, ["grill-me", "to-spec", "to-tickets"]);
-    assert.equal(app.database.getAiChatThread(result.context.plan.threadId).sandbox, "workspace-write");
-    const planningThreadId = result.context.plan.threadId;
-    assert.equal(app.database.getAiChatThread(planningThreadId).currentRun, null);
-    assert.equal(app.database.listAiChatRuns(planningThreadId).length, 0);
+    assert.deepEqual(result.skills.map((skill) => skill.id), ["grill-me", "to-spec", "to-tickets"]);
+    assert.equal(app.aiChat.listThreads().length, 0);
 
+    let planningThreadId = "codex-native-jira-plan";
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
       version: jira.version,
+      threadId: planningThreadId,
     });
-    assert.equal(result.composerText, initialComposerText);
+    assert.equal(result.context.plan.status, "planning");
+    assert.ok(result.context.plan.promptedAt);
     assert.equal(result.context.plan.threadId, planningThreadId);
-    assert.equal(app.database.listAiChatRuns(planningThreadId).length, 0);
+    assert.equal(app.aiChat.listThreads().length, 1);
+    assert.equal(app.database.getAiChatThread(planningThreadId).purpose, "formal");
+    assert.equal(app.database.getAiChatThread(planningThreadId).codexThreadId, planningThreadId);
 
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-context`, "PUT", {
       version: jira.version,
@@ -154,7 +155,15 @@ if (args[0] === "debug") {
     });
     assert.equal(result.context.plan.threadId, planningThreadId);
     assert.match(result.composerText, /- API \(api\)/);
-    assert.equal(app.database.listAiChatRuns(planningThreadId).length, 0);
+    planningThreadId = "codex-native-jira-plan-project-review";
+    result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
+      version: jira.version,
+      threadId: planningThreadId,
+      projectId: "api",
+    });
+    assert.equal(result.context.plan.threadId, planningThreadId);
+    assert.equal(result.context.plan.needsReview, false);
+    assert.equal(app.aiChat.listThreads().length, 2);
 
     const specPath = path.join(directory, "spec.md");
     const ticketsPath = path.join(directory, "tickets.json");
@@ -252,6 +261,12 @@ if (args[0] === "debug") {
       ),
       (error) => error?.code === "JIRA_PLAN_REVIEW_REQUIRED",
     );
+    planningThreadId = "codex-native-jira-plan-content-review";
+    result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
+      version: jira.version,
+      threadId: planningThreadId,
+      projectId: "api",
+    });
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning/spec`, "PUT", {
       version: result.context.plan.version,
       spec: "# Revised checkout spec",
@@ -331,7 +346,13 @@ if (args[0] === "debug") {
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
       version: jira.version,
     });
-    assert.equal(app.database.listAiChatRuns(planningThreadId).length, 0);
+    planningThreadId = "codex-native-jira-plan-move-review";
+    result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
+      version: jira.version,
+      threadId: planningThreadId,
+      projectId: "web",
+    });
+    assert.equal(app.aiChat.listThreads().length, 4);
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning/spec`, "PUT", {
       version: result.context.plan.version,
       spec: "# Moved checkout API spec",
@@ -414,22 +435,18 @@ if (args[0] === "debug") {
     assert.equal(planningResponse.status, 409);
     assert.equal(planningPayload.error.code, "JIRA_REPLAN_REQUIRED");
 
-    const createThread = app.aiChat.createThread.bind(app.aiChat);
-    app.aiChat.createThread = async () => {
-      throw new Error("intentional replan thread failure");
-    };
-    const failedReplanResponse = await fetch(`${baseUrl}/api/tasks/${jira.id}/jira-lifecycle`, {
+    const prepareReplanResponse = await fetch(`${baseUrl}/api/tasks/${jira.id}/jira-lifecycle`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
       body: JSON.stringify({ version: reopened.lifecycle.version, action: "replan" }),
     });
-    assert.equal(failedReplanResponse.status, 500);
-    const afterStartFailure = app.database.getJiraContext(jira.id);
-    assert.equal(afterStartFailure.lifecycle.pending.kind, "reopened");
-    assert.equal(afterStartFailure.plan.threadId, previousPlanningThreadId);
-    assert.equal(afterStartFailure.plan.version, previousPlanVersion);
+    assert.equal(prepareReplanResponse.status, 200);
+    const preparedReplan = await prepareReplanResponse.json();
+    assert.equal(preparedReplan.context.lifecycle.pending.kind, "reopened");
+    assert.equal(preparedReplan.context.plan.threadId, previousPlanningThreadId);
+    assert.match(preparedReplan.composerText, /Jira 内容或关联仓库已经变化/);
+    assert.deepEqual(preparedReplan.skills.map((skill) => skill.id), ["grill-me", "to-spec", "to-tickets"]);
     assert.deepEqual(app.aiChat.listThreads().map((thread) => thread.id).sort(), previousThreadIds);
-    app.aiChat.createThread = createThread;
 
     const completeJiraReplan = app.database.completeJiraReplan.bind(app.database);
     app.database.completeJiraReplan = () => {
@@ -438,7 +455,11 @@ if (args[0] === "debug") {
     const failedCommitResponse = await fetch(`${baseUrl}/api/tasks/${jira.id}/jira-lifecycle`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
-      body: JSON.stringify({ version: reopened.lifecycle.version, action: "replan" }),
+      body: JSON.stringify({
+        version: reopened.lifecycle.version,
+        action: "replan",
+        threadId: "codex-native-replan-failed",
+      }),
     });
     assert.equal(failedCommitResponse.status, 500);
     assert.deepEqual(app.aiChat.listThreads().map((thread) => thread.id).sort(), previousThreadIds);
@@ -452,18 +473,19 @@ if (args[0] === "debug") {
     const replanResponse = await fetch(`${baseUrl}/api/tasks/${jira.id}/jira-lifecycle`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
-      body: JSON.stringify({ version: reopened.lifecycle.version, action: "replan" }),
+      body: JSON.stringify({
+        version: reopened.lifecycle.version,
+        action: "replan",
+        threadId: "codex-native-replan-next",
+      }),
     });
     assert.equal(replanResponse.status, 200);
     result = await replanResponse.json();
     assert.equal(result.context.lifecycle.pending, null);
-    assert.notEqual(result.context.plan.threadId, previousPlanningThreadId);
-    assert.match(result.composerText, /Jira 内容或关联仓库已经变化/);
-    assert.deepEqual(result.skillIds, ["grill-me", "to-spec", "to-tickets"]);
+    assert.equal(result.context.plan.threadId, "codex-native-replan-next");
     const nextPlanningThreadId = result.context.plan.threadId;
-    assert.equal(app.database.getAiChatThread(previousPlanningThreadId).archivedAt, null);
-    assert.equal(app.database.getAiChatThread(nextPlanningThreadId).currentRun, null);
-    assert.equal(app.database.listAiChatRuns(nextPlanningThreadId).length, 0);
+    assert.equal(app.database.getAiChatThread(previousPlanningThreadId).purpose, "formal");
+    assert.equal(app.database.getAiChatThread(nextPlanningThreadId).purpose, "formal");
     for (const issue of result.context.issues) {
       const task = app.database.getTask(issue.id);
       if (task?.status !== "done") {

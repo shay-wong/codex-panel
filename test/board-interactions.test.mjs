@@ -7,6 +7,7 @@ const boardColumnSource = await readFile(new URL("../web/src/components/BoardCol
 const apiSource = await readFile(new URL("../web/src/api.ts", import.meta.url), "utf8");
 const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 const detailSource = await readFile(new URL("../web/src/components/TaskDetail.tsx", import.meta.url), "utf8");
+const aiChatSource = await readFile(new URL("../web/src/components/AiChat.tsx", import.meta.url), "utf8");
 const editorSource = await readFile(new URL("../web/src/components/TaskEditor.tsx", import.meta.url), "utf8");
 const labelPickerSource = await readFile(new URL("../web/src/components/LabelPicker.tsx", import.meta.url), "utf8");
 const contextMenuSource = await readFile(new URL("../web/src/components/TaskContextMenu.tsx", import.meta.url), "utf8");
@@ -169,17 +170,32 @@ test("issues expose processing conversations without manual binding", () => {
   assert.match(contextMenuSource, /onOpenInThread/);
 });
 
-test("issue activity includes its linked embedded AI conversations", () => {
+test("issue activity opens formal execution in Codex and keeps it out of temporary chat", () => {
   assert.match(appSource, /<TaskDetail[\s\S]*?aiChatThreads=\{aiThreads\}/);
   assert.match(detailSource, /aiChatThreads: AiChatThread\[\]/);
   assert.match(detailSource, /const linkedAiChatThreads = aiChatThreads\.filter/);
   assert.match(detailSource, /\.\.\.linkedAiChatThreads\.map\(\(thread\) => \(\{/);
   assert.match(detailSource, /kind: "ai-conversation" as const/);
-  assert.match(
-    detailSource,
-    /if \(item\.kind === "ai-conversation"\)[\s\S]*?<AiConversationActivity[\s\S]*?thread=\{item\.thread\}[\s\S]*?onOpen=\{\(\) => onOpenAiChatThread\(item\.thread\.id\)\}/,
-  );
+  assert.match(detailSource, /const formalThread = item\.thread\.purpose === "formal"/);
+  assert.match(detailSource, /formalThread[\s\S]*?onOpenLegacyLocalThread\(item\.thread\.codexThreadId\)/);
+  assert.doesNotMatch(detailSource, /aiThread\?\.purpose === "temporary"[\s\S]*?onOpenAiChatThread\(aiThread\.id\)/);
+  assert.match(detailSource, /aiThread\?\.purpose === "formal"[\s\S]*?onOpenLegacyLocalThread\(aiThread\.codexThreadId\)/);
+  assert.match(detailSource, /: onExecutionStarted\(currentTask\.id\)/);
+  assert.match(aiChatSource, /threads\.filter\(\(thread\) => thread\.purpose === "temporary"\)/);
+  assert.match(aiChatSource, /onThreadsChange\?\.\(available \? threads : \[\]\)/);
+  assert.match(appSource, /message\.type === "panel:thread-prepared"[\s\S]*?pendingJiraPlanningRef\.current\.has\(payload\.taskId\)[\s\S]*?return;[\s\S]*?setOpeningThreadTaskId\(null\)/);
+  assert.match(appSource, /const jiraPlanning = pendingJiraPlanningRef\.current\.get\(payload\.taskId\)[\s\S]*?if \(jiraPlanning\) setOpeningThreadTaskId\(null\)/);
+  assert.match(appSource, /event\.type === "claim\.updated"[\s\S]*?setAiThreadsRevision\(\(current\) => current \+ 1\)/);
+  assert.match(appSource, /candidate\.origin\.issueId === pendingExecutionOpen\.taskId[\s\S]*?candidate\.purpose === "formal"[\s\S]*?candidate\.currentRun\?\.status === "running"/);
   assert.match(styles, /\.activity-conversation-link \{[\s\S]*?background: var\(--surface\)/);
+});
+
+test("Jira repository summary keeps the overflow count and manage action visible", () => {
+  assert.match(detailSource, /const additionalJiraProjectCount = Math\.max/);
+  assert.match(detailSource, /<em>\+\{additionalJiraProjectCount\}<\/em>/);
+  assert.match(styles, /\.jira-context-repositories > span \{[\s\S]*?text-overflow: ellipsis/);
+  assert.match(styles, /\.jira-context-repositories > em \{[\s\S]*?flex: 0 0 auto/);
+  assert.match(styles, /\.jira-context-manage > b \{[\s\S]*?white-space: nowrap/);
 });
 test("comments stage, upload, render and delete their own attachments", () => {
   assert.match(apiSource, /export async function uploadCommentAttachment/);
