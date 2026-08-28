@@ -454,7 +454,19 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.match(source, /await waitForRemoteProject\(requestedProjectId, codexHostId, targetRoot\)/);
   assert.match(createThreadSource, /prefillPrompt: instruction/);
   assert.match(createThreadSource, /await waitForPreparedComposer\(identifier, \[\]\)/);
-  assert.doesNotMatch(createThreadSource, /requestHostTaskConversationStart/);
+  assert.match(createThreadSource, /const autoSubmit = payload\?\.autoSubmit === true/);
+  assert.match(
+    createThreadSource,
+    /if \(autoSubmit\) \{[\s\S]*?requestHostTaskConversationStart\([\s\S]*?bind-native-claim/,
+  );
+  assert.match(source, /data-composer-navigation-target="run-location"/);
+  assert.match(createThreadSource, /await selectNativeWorktree\(\)/);
+  assert.match(injectorSource, /nativeDevelopmentContext\([\s\S]*?result\.thread\.cwd/);
+  assert.match(injectorSource, /gitValue\(root, \["branch", "--show-current"\]\)/);
+  assert.match(
+    createThreadSource,
+    /if \(autoSubmit\) \{[\s\S]*?return;[\s\S]*?pendingThreadAssociation = \{/,
+  );
   assert.doesNotMatch(createThreadSource, /Input\.dispatchKeyEvent/);
   assert.doesNotMatch(openRemoteThreadSource, /moveTaskRequest/);
   assert.match(webApp, /remoteTaskInstruction\(latestTask, comments, textRef\.current\)/);

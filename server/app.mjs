@@ -2117,8 +2117,6 @@ export function createPanelServer(options = {}) {
     skillsDirectory: resolved.skillsDirectory,
     resolveContext: resolveAiChatContext,
   });
-  const failedAutomaticWorktrees = new Set();
-
   async function canonicalWorkspace(workspacePath) {
     try {
       return await realpath(workspacePath);
@@ -2127,125 +2125,18 @@ export function createPanelServer(options = {}) {
     }
   }
 
-  function automaticWorktreeBranch(task) {
-    const slug = task.identifier.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    return `panel/${slug || "issue"}-${task.id.slice(0, 8)}`;
-  }
-
   async function prepareClaimExecution(task) {
     if (options.prepareClaimExecution) return await options.prepareClaimExecution(task);
-    let current = database.getTask(task.id) ?? task;
-    let context = await resolveAiChatContext(current.projectId, current.id);
-    if (current.developmentContext?.type === "worktree") {
-      return {
-        task: current,
-        workspacePath: context.workspacePath,
-        workspaceKey: await canonicalWorkspace(context.workspacePath),
-      };
-    }
-
-    const sharedWorkspace = context.workspacePath;
-    const sharedWorkspaceKey = await canonicalWorkspace(sharedWorkspace);
-    if (current.developmentContext || failedAutomaticWorktrees.has(current.id)) {
-      return { task: current, workspacePath: sharedWorkspace, workspaceKey: sharedWorkspaceKey };
-    }
-    const existingThreadId = database.suggestedExecutionThreadId(current.id);
-    const existingThread = existingThreadId ? database.getAiChatThread(existingThreadId) : null;
-    if (existingThread) {
-      return {
-        task: current,
-        workspacePath: existingThread.origin.workspacePath,
-        workspaceKey: await canonicalWorkspace(existingThread.origin.workspacePath),
-      };
-    }
-
-    let repositoryRoot;
-    let worktreePath;
-    let branch;
-    try {
-      const rootResult = await execFileAsync(
-        "git",
-        ["-C", sharedWorkspace, "rev-parse", "--show-toplevel"],
-        { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
-      );
-      repositoryRoot = await canonicalWorkspace(rootResult.stdout.trim());
-      worktreePath = path.join(resolved.dataDirectory, "worktrees", current.id);
-      branch = automaticWorktreeBranch(current);
-      await mkdir(path.dirname(worktreePath), { recursive: true });
-      let baseRef = "refs/heads/main";
-      try {
-        await execFileAsync(
-          "git",
-          ["-C", repositoryRoot, "show-ref", "--verify", "refs/remotes/origin/main"],
-          { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
-        );
-        baseRef = "refs/remotes/origin/main";
-      } catch {
-        await execFileAsync(
-          "git",
-          ["-C", repositoryRoot, "show-ref", "--verify", "refs/heads/main"],
-          { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
-        );
-      }
-
-      let existing = false;
-      if (existsSync(worktreePath)) {
-        try {
-          await execFileAsync(
-            "git",
-            ["-C", worktreePath, "rev-parse", "--show-toplevel"],
-            { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
-          );
-          existing = true;
-        } catch {}
-      }
-      if (!existing) {
-        try {
-          await execFileAsync(
-            "git",
-            ["-C", repositoryRoot, "worktree", "add", "-b", branch, worktreePath, baseRef],
-            { env: codexProcessEnvironment, timeout: 30_000, maxBuffer: 4 * 1024 * 1024 },
-          );
-        } catch (createError) {
-          try {
-            await execFileAsync(
-              "git",
-              ["-C", repositoryRoot, "show-ref", "--verify", `refs/heads/${branch}`],
-              { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
-            );
-            await execFileAsync(
-              "git",
-              ["-C", repositoryRoot, "worktree", "add", worktreePath, branch],
-              { env: codexProcessEnvironment, timeout: 30_000, maxBuffer: 4 * 1024 * 1024 },
-            );
-          } catch {
-            throw createError;
-          }
-        }
-      }
-    } catch {
-      // ponytail: retry worktree creation after a service restart; this process uses safe shared-workspace serialism.
-      failedAutomaticWorktrees.add(current.id);
-      return { task: current, workspacePath: sharedWorkspace, workspaceKey: sharedWorkspaceKey };
-    }
-
-    current = database.getTask(current.id) ?? current;
-    if (!current.developmentContext) {
-      current = database.updateTask(
-        current.id,
-        current.version,
-        { developmentContext: { type: "worktree", path: worktreePath, branch } },
-        undefined,
-        undefined,
-        CODEX_AGENT_ACTOR,
-      );
-      events.emit("task.updated", { task: current });
-    }
-    context = await resolveAiChatContext(current.projectId, current.id);
+    const current = database.getTask(task.id) ?? task;
+    const context = await resolveAiChatContext(current.projectId);
+    const workspacePath = await canonicalWorkspace(context.workspacePath);
     return {
       task: current,
-      workspacePath: context.workspacePath,
-      workspaceKey: await canonicalWorkspace(context.workspacePath),
+      workspacePath,
+      workspaceKey: workspacePath,
+      projectName: context.project?.name ?? database.getProject(current.projectId)?.name,
+      codexProjectId: current.projectId,
+      useWorktree: current.developmentContext?.type !== "branch",
     };
   }
 
@@ -2322,6 +2213,7 @@ export function createPanelServer(options = {}) {
   const claimQueue = new ClaimQueueService({
     database,
     aiChat,
+    managePanelSkillPath: resolved.nativeSkillPath,
     prepareExecution: prepareClaimExecution,
     cleanupExecution: cleanupClaimExecution,
     onTaskChanged: (task) => events.emit("task.moved", { task }),
@@ -2704,25 +2596,6 @@ export function createPanelServer(options = {}) {
         events.emit("task.jira.updated", { taskId: task.id, task: context.jira });
       }
 
-      let thread = database.getAiChatThread(item.threadId);
-      if (!thread) {
-        const prepared = await prepareClaimExecution(task);
-        task = prepared.task;
-        thread = await aiChat.createThread({
-          id: item.threadId,
-          projectId: task.projectId,
-          issueId: task.id,
-          title: `${task.identifier} · ${started.jira.externalKey ?? started.jira.identifier}`,
-          purpose: "formal",
-        });
-      }
-      if (thread.origin.issueId !== task.id || thread.status !== "idle") {
-        throw new ApiError(
-          409,
-          "JIRA_SIMPLE_START_THREAD_CONFLICT",
-          `Conversation '${thread.id}' is no longer idle for '${task.identifier}'`,
-        );
-      }
     }
 
     for (const item of database.listJiraSimpleStartItems(jiraTaskId)) {
@@ -3597,6 +3470,53 @@ export function createPanelServer(options = {}) {
           return sendJson(response, 200, { policy });
         }
         return methodNotAllowed(response, ["GET", "PUT"]);
+      }
+
+      if (pathname === "/api/local/native-claims/next") {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "POST /api/local/native-claims/next");
+        await assertEmptyRequestBody(request, "POST /api/local/native-claims/next");
+        return sendJson(response, 200, { claim: await claimQueue.reserveNextNativeClaim() });
+      }
+
+      const nativeClaimRoute = pathname.match(/^\/api\/local\/native-claims\/([^/]+)$/);
+      if (nativeClaimRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "POST /api/local/native-claims/:action");
+        const action = decodeRouteSegment(nativeClaimRoute[1], "Native claim action");
+        const body = await readJson(request);
+        assertPlainObject(body);
+        if (action === "bind") {
+          assertAllowedKeys(body, new Set([
+            "reservationId", "taskId", "threadBinding", "developmentContext",
+          ]));
+          const reservationId = stringField(body.reservationId, "reservationId", {
+            required: true,
+            maxLength: 128,
+          });
+          const taskId = stringField(body.taskId, "taskId", { required: true, maxLength: 128 });
+          const threadBinding = parseThreadBinding(body.threadBinding);
+          const developmentContext = parseDevelopmentContext(body.developmentContext ?? null);
+          return sendJson(response, 200, claimQueue.bindNativeClaim(
+            reservationId,
+            taskId,
+            threadBinding,
+            developmentContext,
+          ));
+        }
+        if (action === "fail") {
+          assertAllowedKeys(body, new Set(["reservationId", "taskId", "error"]));
+          const reservationId = stringField(body.reservationId, "reservationId", {
+            required: true,
+            maxLength: 128,
+          });
+          const taskId = stringField(body.taskId, "taskId", { required: true, maxLength: 128 });
+          const error = stringField(body.error, "error", { required: true, maxLength: 4_096 });
+          return sendJson(response, 200, {
+            claim: await claimQueue.failNativeClaim(reservationId, taskId, error),
+          });
+        }
+        throw new ApiError(404, "NOT_FOUND", "Native claim action not found");
       }
 
       const taskClaimRoute = pathname.match(/^\/api\/local\/tasks\/([^/]+)\/claim$/);
