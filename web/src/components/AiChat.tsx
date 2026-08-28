@@ -178,16 +178,20 @@ type DraftThreadOrigin = {
   projectId: string;
   issueId: string | null;
 };
-type PanelResizeEdge = "top" | "left" | "top-left";
+type PanelPointerAction = "move" | "top" | "left" | "top-left";
 type PanelGeometry = {
+  left: number;
+  top: number;
   width: number;
   height: number;
 };
-type PanelResizeSession = {
-  edge: PanelResizeEdge;
+type PanelPointerSession = {
+  action: PanelPointerAction;
   pointerId: number;
   startX: number;
   startY: number;
+  startLeft: number;
+  startTop: number;
   startWidth: number;
   startHeight: number;
   geometry: PanelGeometry;
@@ -197,11 +201,12 @@ type PanelResizeSession = {
 const LAST_THREAD_KEY = "panel.aiChat.lastThreadId";
 const PANEL_VIEW_KEY = "panel.aiChat.panelView";
 const PANEL_GEOMETRY_KEY = "panel.aiChat.panelGeometry";
+const PANEL_MAXIMIZED_KEY = "panel.aiChat.panelMaximized";
 const PANEL_EDGE_GAP = 8;
 const PANEL_MIN_WIDTH = 420;
 const PANEL_MAX_WIDTH = 960;
 const PANEL_MIN_HEIGHT = 360;
-const PANEL_DEFAULT_GEOMETRY: PanelGeometry = {
+const PANEL_DEFAULT_SIZE = {
   width: 420,
   height: 700,
 };
@@ -239,26 +244,66 @@ function clampPanelGeometry(geometry: PanelGeometry): PanelGeometry {
   const minWidth = Math.min(PANEL_MIN_WIDTH, maxWidth);
   const maxHeight = window.innerHeight - PANEL_EDGE_GAP * 2;
   const minHeight = Math.min(PANEL_MIN_HEIGHT, maxHeight);
+  const width = Math.min(maxWidth, Math.max(minWidth, geometry.width));
+  const height = Math.min(maxHeight, Math.max(minHeight, geometry.height));
   return {
-    width: Math.min(maxWidth, Math.max(minWidth, geometry.width)),
-    height: Math.min(maxHeight, Math.max(minHeight, geometry.height)),
+    left: Math.min(
+      window.innerWidth - PANEL_EDGE_GAP - width,
+      Math.max(PANEL_EDGE_GAP, geometry.left),
+    ),
+    top: Math.min(
+      window.innerHeight - PANEL_EDGE_GAP - height,
+      Math.max(PANEL_EDGE_GAP, geometry.top),
+    ),
+    width,
+    height,
   };
+}
+
+function defaultPanelGeometry(): PanelGeometry {
+  const width = Math.min(PANEL_DEFAULT_SIZE.width, window.innerWidth - PANEL_EDGE_GAP * 2);
+  const height = Math.min(PANEL_DEFAULT_SIZE.height, window.innerHeight - PANEL_EDGE_GAP * 2);
+  return clampPanelGeometry({
+    left: window.innerWidth - PANEL_EDGE_GAP - width,
+    top: window.innerHeight - PANEL_EDGE_GAP - height,
+    width,
+    height,
+  });
+}
+
+function maximizedPanelGeometry(): PanelGeometry {
+  return {
+    left: PANEL_EDGE_GAP,
+    top: PANEL_EDGE_GAP,
+    width: window.innerWidth - PANEL_EDGE_GAP * 2,
+    height: window.innerHeight - PANEL_EDGE_GAP * 2,
+  };
+}
+
+function loadPanelMaximized(): boolean {
+  return panelStorage.getItem(PANEL_MAXIMIZED_KEY) === "true";
 }
 
 function loadPanelGeometry(): PanelGeometry {
   const stored = panelStorage.getItem(PANEL_GEOMETRY_KEY);
-  if (!stored) return clampPanelGeometry(PANEL_DEFAULT_GEOMETRY);
+  if (!stored) return defaultPanelGeometry();
   try {
     const geometry = JSON.parse(stored) as PanelGeometry;
     if (
       !Number.isFinite(geometry.width)
       || !Number.isFinite(geometry.height)
     ) {
-      return clampPanelGeometry(PANEL_DEFAULT_GEOMETRY);
+      return defaultPanelGeometry();
     }
-    return clampPanelGeometry(geometry);
+    const left = Number.isFinite(geometry.left)
+      ? geometry.left
+      : window.innerWidth - PANEL_EDGE_GAP - geometry.width;
+    const top = Number.isFinite(geometry.top)
+      ? geometry.top
+      : window.innerHeight - PANEL_EDGE_GAP - geometry.height;
+    return clampPanelGeometry({ ...geometry, left, top });
   } catch {
-    return clampPanelGeometry(PANEL_DEFAULT_GEOMETRY);
+    return defaultPanelGeometry();
   }
 }
 
@@ -1380,9 +1425,12 @@ export function AiChat({
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [panelGeometry, setPanelGeometry] = useState<PanelGeometry | null>(
-    () => window.innerWidth <= 719 ? null : loadPanelGeometry(),
+    () => window.innerWidth <= 719
+      ? null
+      : loadPanelMaximized() ? maximizedPanelGeometry() : loadPanelGeometry(),
   );
-  const [panelResizeEdge, setPanelResizeEdge] = useState<PanelResizeEdge | null>(null);
+  const [panelPointerAction, setPanelPointerAction] = useState<PanelPointerAction | null>(null);
+  const [panelMaximized, setPanelMaximized] = useState(loadPanelMaximized);
   const editorRef = useRef<HTMLDivElement>(null);
   const composerQueryRangeRef = useRef<Range | null>(null);
   const dismissedComposerQueryRef = useRef<string | null>(null);
@@ -1391,7 +1439,8 @@ export function AiChat({
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
-  const panelResizeSessionRef = useRef<PanelResizeSession | null>(null);
+  const panelPointerSessionRef = useRef<PanelPointerSession | null>(null);
+  const panelRestoreGeometryRef = useRef<PanelGeometry | null>(null);
   const selectedThreadRef = useRef(selectedThreadId);
   const handledOpenThreadRequestRef = useRef<number | null>(null);
   const draftReturnThreadIdRef = useRef<string | null>(null);
@@ -1423,8 +1472,12 @@ export function AiChat({
   useEffect(() => {
     panelOpenRef.current = panelOpen;
     if (panelOpen) {
+      const maximized = loadPanelMaximized();
       setUnread(false);
-      setPanelGeometry(window.innerWidth <= 719 ? null : loadPanelGeometry());
+      setPanelMaximized(maximized);
+      setPanelGeometry(window.innerWidth <= 719
+        ? null
+        : maximized ? maximizedPanelGeometry() : loadPanelGeometry());
     }
   }, [panelOpen]);
 
@@ -1433,8 +1486,8 @@ export function AiChat({
   }, [panelOpen, selectedThreadId, openThreadRequestId]);
 
   useEffect(() => {
-    function finishPanelResize(pointerId?: number) {
-      const session = panelResizeSessionRef.current;
+    function finishPanelPointerAction(pointerId?: number) {
+      const session = panelPointerSessionRef.current;
       if (!session || (pointerId !== undefined && session.pointerId !== pointerId)) return;
       if (session.captureTarget.hasPointerCapture(session.pointerId)) {
         session.captureTarget.releasePointerCapture(session.pointerId);
@@ -1445,77 +1498,98 @@ export function AiChat({
           JSON.stringify(session.geometry),
         );
       }
-      panelResizeSessionRef.current = null;
-      setPanelResizeEdge(null);
+      panelPointerSessionRef.current = null;
+      setPanelPointerAction(null);
     }
 
-    function resizePanel(event: PointerEvent) {
-      const session = panelResizeSessionRef.current;
+    function moveOrResizePanel(event: PointerEvent) {
+      const session = panelPointerSessionRef.current;
       if (!session || session.pointerId !== event.pointerId) return;
       event.preventDefault();
 
-      const maxWidth = Math.min(
-        PANEL_MAX_WIDTH,
-        window.innerWidth - PANEL_EDGE_GAP * 2,
-      );
+      const deltaX = event.clientX - session.startX;
+      const deltaY = event.clientY - session.startY;
+      if (session.action === "move") {
+        session.geometry = clampPanelGeometry({
+          left: session.startLeft + deltaX,
+          top: session.startTop + deltaY,
+          width: session.startWidth,
+          height: session.startHeight,
+        });
+        setPanelGeometry(session.geometry);
+        return;
+      }
+
+      const right = session.startLeft + session.startWidth;
+      const bottom = session.startTop + session.startHeight;
+      const maxWidth = Math.min(PANEL_MAX_WIDTH, right - PANEL_EDGE_GAP);
       const minWidth = Math.min(PANEL_MIN_WIDTH, maxWidth);
-      const maxHeight = window.innerHeight - PANEL_EDGE_GAP * 2;
+      const maxHeight = bottom - PANEL_EDGE_GAP;
       const minHeight = Math.min(PANEL_MIN_HEIGHT, maxHeight);
-      const resizeWidth = session.edge === "left" || session.edge === "top-left";
-      const resizeHeight = session.edge === "top" || session.edge === "top-left";
+      const resizeWidth = session.action === "left" || session.action === "top-left";
+      const resizeHeight = session.action === "top" || session.action === "top-left";
       const width = resizeWidth
         ? Math.min(
             maxWidth,
-            Math.max(minWidth, session.startWidth - (event.clientX - session.startX)),
+            Math.max(minWidth, session.startWidth - deltaX),
           )
         : session.startWidth;
       const height = resizeHeight
         ? Math.min(
             maxHeight,
-            Math.max(minHeight, session.startHeight - (event.clientY - session.startY)),
+            Math.max(minHeight, session.startHeight - deltaY),
           )
         : session.startHeight;
-      session.geometry = { width, height };
+      session.geometry = {
+        left: resizeWidth ? right - width : session.startLeft,
+        top: resizeHeight ? bottom - height : session.startTop,
+        width,
+        height,
+      };
       setPanelGeometry(session.geometry);
     }
 
     function handlePointerEnd(event: PointerEvent) {
-      finishPanelResize(event.pointerId);
+      finishPanelPointerAction(event.pointerId);
     }
 
     function handleWindowBlur() {
-      finishPanelResize();
+      finishPanelPointerAction();
     }
 
     function handleWindowResize() {
-      finishPanelResize();
+      finishPanelPointerAction();
       if (window.innerWidth <= 719) {
         setPanelGeometry(null);
         return;
       }
 
-      setPanelGeometry(loadPanelGeometry());
+      setPanelGeometry((current) => (
+        panelMaximized
+          ? maximizedPanelGeometry()
+          : clampPanelGeometry(current ?? loadPanelGeometry())
+      ));
     }
 
-    window.addEventListener("pointermove", resizePanel, { passive: false });
+    window.addEventListener("pointermove", moveOrResizePanel, { passive: false });
     window.addEventListener("pointerup", handlePointerEnd);
     window.addEventListener("pointercancel", handlePointerEnd);
     window.addEventListener("blur", handleWindowBlur);
     window.addEventListener("resize", handleWindowResize);
     return () => {
-      window.removeEventListener("pointermove", resizePanel);
+      window.removeEventListener("pointermove", moveOrResizePanel);
       window.removeEventListener("pointerup", handlePointerEnd);
       window.removeEventListener("pointercancel", handlePointerEnd);
       window.removeEventListener("blur", handleWindowBlur);
       window.removeEventListener("resize", handleWindowResize);
     };
-  }, []);
+  }, [panelMaximized]);
 
-  function startPanelResize(
+  function startPanelPointerAction(
     event: ReactPointerEvent<HTMLDivElement>,
-    edge: PanelResizeEdge,
+    action: PanelPointerAction,
   ) {
-    if (window.innerWidth <= 719) return;
+    if (window.innerWidth <= 719 || panelMaximized || event.button !== 0) return;
     const panel = panelRef.current;
     if (!panel) return;
 
@@ -1523,24 +1597,46 @@ export function AiChat({
     event.stopPropagation();
     const rect = panel.getBoundingClientRect();
     event.currentTarget.setPointerCapture(event.pointerId);
-    panelResizeSessionRef.current = {
-      edge,
+    panelPointerSessionRef.current = {
+      action,
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
+      startLeft: rect.left,
+      startTop: rect.top,
       startWidth: rect.width,
       startHeight: rect.height,
       geometry: {
+        left: rect.left,
+        top: rect.top,
         width: rect.width,
         height: rect.height,
       },
       captureTarget: event.currentTarget,
     };
     setPanelGeometry({
+      left: rect.left,
+      top: rect.top,
       width: rect.width,
       height: rect.height,
     });
-    setPanelResizeEdge(edge);
+    setPanelPointerAction(action);
+  }
+
+  function togglePanelMaximized() {
+    if (window.innerWidth <= 719) return;
+    if (panelMaximized) {
+      const geometry = clampPanelGeometry(panelRestoreGeometryRef.current ?? loadPanelGeometry());
+      panelStorage.setItem(PANEL_GEOMETRY_KEY, JSON.stringify(geometry));
+      panelStorage.setItem(PANEL_MAXIMIZED_KEY, "false");
+      setPanelGeometry(geometry);
+      setPanelMaximized(false);
+      return;
+    }
+    panelRestoreGeometryRef.current = panelGeometry ?? loadPanelGeometry();
+    panelStorage.setItem(PANEL_MAXIMIZED_KEY, "true");
+    setPanelGeometry(maximizedPanelGeometry());
+    setPanelMaximized(true);
   }
 
   const replaceThread = useCallback((thread: AiChatThread) => {
@@ -3018,7 +3114,7 @@ export function AiChat({
       {panelOpen && (
         <section
           ref={panelRef}
-          className={`ai-chat-panel${panelResizeEdge ? ` is-resizing-${panelResizeEdge}` : ""}`}
+          className={`ai-chat-panel${panelPointerAction ? ` is-${panelPointerAction === "move" ? "moving" : `resizing-${panelPointerAction}`}` : ""}${panelMaximized ? " is-maximized" : ""}`}
           style={panelGeometry ?? undefined}
           aria-label={text("Codex AI 对话", "Codex AI chat")}
           data-screen-label={text("Codex AI 对话", "Codex AI chat")}
@@ -3026,20 +3122,24 @@ export function AiChat({
           <div
             className="ai-chat-resize-handle is-top"
             aria-hidden="true"
-            onPointerDown={(event) => startPanelResize(event, "top")}
+            onPointerDown={(event) => startPanelPointerAction(event, "top")}
           />
           <div
             className="ai-chat-resize-handle is-left"
             aria-hidden="true"
-            onPointerDown={(event) => startPanelResize(event, "left")}
+            onPointerDown={(event) => startPanelPointerAction(event, "left")}
           />
           <div
             className="ai-chat-resize-handle is-top-left"
             aria-hidden="true"
-            onPointerDown={(event) => startPanelResize(event, "top-left")}
+            onPointerDown={(event) => startPanelPointerAction(event, "top-left")}
           />
           <header className="ai-chat-panel-header">
-            <div className="ai-chat-panel-title">
+            <div
+              className="ai-chat-panel-title"
+              onDoubleClick={togglePanelMaximized}
+              onPointerDown={(event) => startPanelPointerAction(event, "move")}
+            >
               <strong>{snapshot?.thread.title ?? text("新对话", "New chat")}</strong>
               <span>{snapshot?.thread.origin.projectName ?? text(
                 "选择对话或从当前项目新建",
@@ -3142,6 +3242,19 @@ export function AiChat({
                 )}
               </div>
             )}
+            <button
+              className="ai-chat-panel-maximize"
+              type="button"
+              aria-label={panelMaximized
+                ? text("还原对话窗口", "Restore chat window")
+                : text("最大化对话窗口", "Maximize chat window")}
+              title={panelMaximized
+                ? text("还原", "Restore")
+                : text("最大化", "Maximize")}
+              onClick={togglePanelMaximized}
+            >
+              <LinearIcon name="expand" color="currentColor" />
+            </button>
             <button
               type="button"
               aria-label={text("对话历史", "Chat history")}

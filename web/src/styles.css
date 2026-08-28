@@ -7598,6 +7598,10 @@ kbd {
   cursor: nwse-resize;
 }
 
+.ai-chat-panel.is-maximized .ai-chat-resize-handle {
+  display: none;
+}
+
 .ai-chat-panel-header {
   display: flex;
   flex: 0 0 42px;
@@ -7614,7 +7618,14 @@ kbd {
   align-items: center;
   min-width: 0;
   gap: 7px;
+  cursor: grab;
   line-height: 1;
+  touch-action: none;
+  user-select: none;
+}
+
+.ai-chat-panel.is-moving .ai-chat-panel-title {
+  cursor: grabbing;
 }
 
 .ai-chat-panel-title strong {
@@ -9296,13 +9307,19 @@ kbd {
     inset: 0;
     width: 100%;
     min-width: 0;
+    max-width: none;
     height: 100%;
+    max-height: none;
     border: 0;
     border-radius: 0;
     resize: none;
   }
 
   .ai-chat-resize-handle {
+    display: none;
+  }
+
+  .ai-chat-panel-header > .ai-chat-panel-maximize {
     display: none;
   }
 

@@ -234,11 +234,14 @@ test("danger confirmation sends the bound pending retry instead of the current d
   assert.doesNotMatch(chatSource, /onClick=\{\(\) => void startMessage\(draft,\s*true\)\}/);
 });
 
-test("SSE hints are coalesced and custom panel resize handles do not clip narrow menus", () => {
+test("SSE hints are coalesced and movable panel geometry persists without clipping narrow menus", () => {
   assert.match(chatSource, /createAiSnapshotRefreshQueue/);
   assert.match(chatSource, /selectedHintRefreshQueue\.request\(selectedThreadId\)/);
-  assert.match(chatSource, /function startPanelResize\(/);
-  assert.match(chatSource, /onPointerDown=\{\(event\) => startPanelResize\(event, "top-left"\)\}/);
+  assert.match(chatSource, /function startPanelPointerAction\(/);
+  assert.match(chatSource, /onPointerDown=\{\(event\) => startPanelPointerAction\(event, "top-left"\)\}/);
+  assert.match(chatSource, /const PANEL_MAXIMIZED_KEY = "panel\.aiChat\.panelMaximized";/);
+  assert.match(chatSource, /panelStorage\.setItem\(PANEL_MAXIMIZED_KEY, "true"\);/);
+  assert.match(chatSource, /panelStorage\.setItem\(PANEL_MAXIMIZED_KEY, "false"\);/);
   assert.match(styles, /\.ai-chat-resize-handle\.is-top-left\s*\{[\s\S]*?cursor:\s*nwse-resize;/);
   assert.match(styles, /@media \(max-width:\s*719px\)[\s\S]*?\.ai-chat-resize-handle\s*\{[\s\S]*?display:\s*none;/);
   assert.match(styles, /@media \(max-width:\s*719px\)[\s\S]*?\.ai-chat-menu-wrap\s*\{[\s\S]*?position:\s*static;/);
