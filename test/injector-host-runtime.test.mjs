@@ -251,6 +251,44 @@ test("SSH conversation confirmation, start, and attachment open require bounded 
   ]);
 });
 
+test("native claim host actions require bounded reservation and thread identities", async () => {
+  const calls = [];
+  const handlers = {
+    parseAutomationRequest: () => null,
+    claimNext: async () => calls.push(["next"]),
+    bindClaim: async (request) => calls.push(["bind", request.reservationId, request.threadBinding.threadId]),
+    failClaim: async (request) => calls.push(["fail", request.reservationId, request.error]),
+    sendResponse: async (_executionContextId, response) => calls.push(["response", response.ok]),
+  };
+  const binding = {
+    threadId: "thread-1",
+    codexProjectId: "project-1",
+    codexProjectKind: "local",
+    codexHostId: "local",
+    workspacePath: "/tmp/repository",
+  };
+  const reservationId = "8f99fbb3-12d4-48af-8938-89f993fab008";
+
+  for (const request of [
+    { id: "claim-next", action: "next-native-claim" },
+    { id: "claim-bind", action: "bind-native-claim", reservationId, taskId: "task-1", threadBinding: binding },
+    { id: "claim-fail", action: "fail-native-claim", reservationId, taskId: "task-1", error: "composer failed" },
+  ]) {
+    await handleHostBindingPayload({ payload: JSON.stringify(request), executionContextId: 12 }, handlers);
+  }
+  await handleHostBindingPayload({
+    payload: JSON.stringify({ id: "claim-invalid", action: "bind-native-claim", reservationId, taskId: "task-1", threadBinding: { ...binding, workspacePath: "" } }),
+    executionContextId: 12,
+  }, handlers);
+
+  assert.deepEqual(calls, [
+    ["next"], ["response", true],
+    ["bind", reservationId, "thread-1"], ["response", true],
+    ["fail", reservationId, "composer failed"], ["response", true],
+    ["response", false],
+  ]);
+});
+
 test("a stale automation parser receives an immediate host error instead of timing out", async () => {
   const responses = [];
   const staleParser = () => null;

@@ -199,6 +199,22 @@ async function fetchJson(url) {
   return response.json();
 }
 
+async function requestPanelApi(pathname, body) {
+  const response = await fetch(`${panelBaseUrl}${pathname}`, {
+    method: "POST",
+    cache: "no-store",
+    ...(body === undefined ? {} : {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(result?.error?.message ?? result?.message ?? `Panel returned HTTP ${response.status}`);
+  }
+  return result ?? {};
+}
+
 async function isReachable(url) {
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(1_500) });
@@ -1364,6 +1380,46 @@ function normalizeWorkspaceRoot(value) {
   return `${withoutTrailingSlash[0].toLowerCase()}${withoutTrailingSlash.slice(1)}`;
 }
 
+function gitValue(workspacePath, args) {
+  const result = spawnSync("git", ["-C", workspacePath, ...args], {
+    encoding: "utf8",
+    env: withoutPanelLauncherEnvironment(process.env),
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 10_000,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(result.stderr?.trim() || `Git exited with status ${result.status}`);
+  }
+  return result.stdout.trim();
+}
+
+function nativeDevelopmentContext(workspacePath, targetRoot, useWorktree) {
+  const root = gitValue(workspacePath, ["rev-parse", "--show-toplevel"]);
+  const branch = gitValue(root, ["branch", "--show-current"]) || null;
+  if (targetRoot) {
+    const commonDirectory = (candidate) => path.resolve(
+      candidate,
+      gitValue(candidate, ["rev-parse", "--git-common-dir"]),
+    );
+    if (
+      normalizeWorkspaceRoot(commonDirectory(root))
+      !== normalizeWorkspaceRoot(commonDirectory(targetRoot))
+    ) {
+      throw new Error("Codex created the task conversation outside the selected repository");
+    }
+  }
+  if (useWorktree && normalizeWorkspaceRoot(root) === normalizeWorkspaceRoot(targetRoot)) {
+    throw new Error("Codex did not create a new local worktree");
+  }
+  return {
+    workspacePath: root,
+    developmentContext: useWorktree
+      ? { type: "worktree", path: root, branch }
+      : { type: "branch", branch },
+  };
+}
+
 async function confirmTaskConversationViaCdp(cdp, executionContextId, request) {
   const deadline = Date.now() + 12_000;
   while (Date.now() < deadline) {
@@ -1400,12 +1456,14 @@ async function confirmTaskConversationViaCdp(cdp, executionContextId, request) {
 
 async function startTaskConversationViaCdp(cdp, executionContextId, request) {
   const {
+    codexProjectId,
     codexHostId,
     instruction,
     previousThreadId,
     projectless,
     targetRoot,
     title,
+    useWorktree,
   } = request;
   const normalizedTargetRoot = normalizeWorkspaceRoot(targetRoot);
   const deadline = Date.now() + 8_000;
@@ -1479,6 +1537,7 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
       discoveredThreadId = threadId;
       const readyDeadline = Date.now() + 10_000;
       let ready = false;
+      let threadWorkspacePath = "";
       while (Date.now() < readyDeadline) {
         try {
           const result = await requestCodexAppServerViaCdp(
@@ -1493,10 +1552,12 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
             result?.thread?.id === threadId
             && (
               projectless
+              || useWorktree
               || normalizeWorkspaceRoot(result.thread.cwd) === normalizedTargetRoot
             )
           ) {
             ready = true;
+            threadWorkspacePath = result.thread.cwd;
             break;
           }
         } catch {}
@@ -1533,8 +1594,9 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
 
       const titleDeadline = Date.now() + 10_000;
       while (Date.now() < titleDeadline) {
+        let result;
         try {
-          const result = await requestCodexAppServerViaCdp(
+          result = await requestCodexAppServerViaCdp(
             cdp,
             executionContextId,
             codexHostId,
@@ -1542,10 +1604,28 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
             { threadId, includeTurns: false },
             10_000,
           );
-          if (result?.thread?.id === threadId && result.thread.name === title) {
-            return { threadId, title };
-          }
         } catch {}
+        if (result?.thread?.id === threadId && result.thread.name === title) {
+          const context = projectless
+            ? { workspacePath: result.thread.cwd, developmentContext: null }
+            : nativeDevelopmentContext(
+                result.thread.cwd || threadWorkspacePath,
+                targetRoot,
+                useWorktree,
+              );
+          return {
+            threadId,
+            title,
+            threadBinding: {
+              threadId,
+              codexProjectId,
+              codexProjectKind: "local",
+              codexHostId,
+              workspacePath: context.workspacePath,
+            },
+            developmentContext: context.developmentContext,
+          };
+        }
         await new Promise((resolve) => setTimeout(resolve, 80));
       }
       throw new Error("Codex did not confirm the task conversation title");
@@ -1634,7 +1714,7 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
     break;
   }
 
-  for (const skill of skills) {
+  for (const [skillIndex, skill] of skills.entries()) {
     await cdp.send("Input.insertText", { text: "$" });
     let selectedSkill = false;
     deadline = stageDeadline();
@@ -1698,7 +1778,19 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
     if (!mentionReady) {
       throw new Error(`Timed out while creating the ${skill.displayName} Skill mention`);
     }
-    if (skills.length > 1) {
+    if (skillIndex < skills.length - 1) {
+      deadline = stageDeadline();
+      while (Date.now() < deadline) {
+        const closed = await cdp.send("Runtime.evaluate", {
+          expression: `(() => !Array.from(document.querySelectorAll(
+            '[data-composer-overlay-floating-ui="true"]'
+          )).some((candidate) => candidate.getClientRects().length > 0))()`,
+          contextId: executionContextId,
+          returnByValue: true,
+        });
+        if (closed.result.value === true) break;
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      }
       await cdp.send("Input.insertText", { text: " " });
     }
   }
@@ -1762,6 +1854,18 @@ function installPanelHostBinding(cdp, supervisor, startupToken) {
       ),
       openExternal: openExternalUrl,
       openAttachment,
+      claimNext: () => requestPanelApi("/api/local/native-claims/next"),
+      bindClaim: (request) => requestPanelApi("/api/local/native-claims/bind", {
+        reservationId: request.reservationId,
+        taskId: request.taskId,
+        threadBinding: request.threadBinding,
+        developmentContext: request.developmentContext ?? null,
+      }),
+      failClaim: (request) => requestPanelApi("/api/local/native-claims/fail", {
+        reservationId: request.reservationId,
+        taskId: request.taskId,
+        error: request.error,
+      }),
       confirmConversation: (request, executionContextId) => (
         confirmTaskConversationViaCdp(cdp, executionContextId, request)
       ),

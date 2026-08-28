@@ -150,6 +150,142 @@ test("claim queue persists source order, priority, retry delay, and restart reco
   }
 });
 
+test("native claim starts only after Codex returns a complete project binding", async () => {
+  const item = await fixture();
+  const task = item.createTask("Native execution");
+  const queue = new ClaimQueueService({
+    database: item.database,
+    aiChat: {
+      async getCatalog() {
+        return { skills: [{ id: "implement", label: "Implement", path: "/skills/implement/SKILL.md" }] };
+      },
+    },
+    managePanelSkillPath: "/skills/manage-panel/SKILL.md",
+    prepareExecution: async (candidate) => ({
+      task: candidate,
+      workspacePath: item.directory,
+      workspaceKey: item.directory,
+    }),
+  });
+  try {
+    queue.enqueue(task.id);
+    const reservation = await queue.reserveNextNativeClaim();
+    assert.equal(reservation.taskId, task.id);
+    assert.equal(reservation.autoSubmit, true);
+    assert.deepEqual(reservation.skillReferences.map((skill) => skill.name), ["manage-panel", "implement"]);
+    assert.equal(item.database.getClaimQueueItem(task.id).state, "running");
+    assert.equal(item.database.getTask(task.id).status, "todo");
+
+    const bound = queue.bindNativeClaim(reservation.reservationId, task.id, {
+      threadId: "native-thread-1",
+      codexProjectId: "codex-project-1",
+      codexProjectKind: "local",
+      codexHostId: "local",
+      workspacePath: item.directory,
+    });
+    assert.equal(bound.claim.state, "running");
+    assert.equal(bound.task.status, "in_progress");
+    assert.equal(bound.task.threadBinding.threadId, "native-thread-1");
+    assert.equal(bound.task.threadBinding.codexProjectId, "codex-project-1");
+    assert.equal(item.database.listClaimAttempts(task.id).length, 1);
+    assert.equal(item.database.listClaimAttempts(task.id)[0].runId, null);
+  } finally {
+    queue.close();
+    await item.close();
+  }
+});
+
+test("native claim reservation prevents duplicate dispatch and counts startup failures", async () => {
+  const item = await fixture();
+  const task = item.createTask("Native startup failure");
+  let releasePreparation;
+  const preparation = new Promise((resolve) => { releasePreparation = resolve; });
+  const queue = new ClaimQueueService({
+    database: item.database,
+    aiChat: {
+      async getCatalog() {
+        return { skills: [{ id: "implement", label: "Implement", path: "/skills/implement/SKILL.md" }] };
+      },
+    },
+    managePanelSkillPath: "/skills/manage-panel/SKILL.md",
+    prepareExecution: async (candidate) => {
+      await preparation;
+      return { task: candidate, workspacePath: item.directory, workspaceKey: item.directory };
+    },
+    retryDelaysMs: [0, 0],
+  });
+  try {
+    queue.enqueue(task.id);
+    const firstReservation = queue.reserveNextNativeClaim();
+    assert.equal(await queue.reserveNextNativeClaim(), null);
+    releasePreparation();
+    const reservation = await firstReservation;
+
+    await queue.failNativeClaim(reservation.reservationId, task.id, "Codex connection timed out");
+    const claim = item.database.getClaimQueueItem(task.id);
+    assert.equal(claim.state, "retry_wait");
+    assert.equal(claim.attemptCount, 1);
+  } finally {
+    queue.close();
+    await item.close();
+  }
+});
+
+test("Jira native claims use the external key for task and branch context", async () => {
+  const item = await fixture();
+  const task = item.createTask("Jira execution");
+  const timestamp = new Date().toISOString();
+  item.database.syncJiraTasks([{
+    id: "jira-native-1",
+    identifier: "JIRA:TEST:1",
+    title: "Jira requirement",
+    description: "Execute in the repository",
+    status: "in_progress",
+    priority: "medium",
+    labels: [],
+    sortOrder: 1000,
+    creator: actor,
+    assignee: actor,
+    dueDate: null,
+    externalOrigin: "test",
+    externalId: "1",
+    externalKey: "TEST-123",
+    externalUrl: "https://jira.test/browse/TEST-123",
+    externalStatus: "In Progress",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }], { originId: "test", projectName: "Jira", syncedAt: timestamp });
+  let jira = item.database.getTask("jira-native-1");
+  item.database.setJiraProjects(jira.id, jira.version, ["claim-project"], actor);
+  jira = item.database.getTask(jira.id);
+  item.database.addJiraTaskLink(jira.id, jira.version, task.id, actor);
+  const queue = new ClaimQueueService({
+    database: item.database,
+    aiChat: {
+      async getCatalog() {
+        return { skills: [{ id: "implement", label: "Implement", path: "/skills/implement/SKILL.md" }] };
+      },
+    },
+    managePanelSkillPath: "/skills/manage-panel/SKILL.md",
+    prepareExecution: async (candidate) => ({
+      task: candidate,
+      workspacePath: item.directory,
+      workspaceKey: item.directory,
+    }),
+  });
+  try {
+    queue.enqueue(task.id, "jira");
+    const reservation = await queue.reserveNextNativeClaim();
+    assert.equal(reservation.identifier, "TEST-123");
+    assert.match(reservation.title, /^TEST-123 /);
+    assert.match(reservation.instruction, /使用 Jira 标识 TEST-123/);
+    assert.match(reservation.instruction, new RegExp(`不要使用 Panel Issue 标识 ${task.identifier}`));
+  } finally {
+    queue.close();
+    await item.close();
+  }
+});
+
 test("claim queue applies project capacity and workspace locks independently", async () => {
   const item = await fixture();
   const otherWorkspace = path.join(item.directory, "other-workspace");
@@ -327,7 +463,7 @@ test("claim queue applies project capacity and workspace locks independently", a
   }
 });
 
-test("Panel creates isolated Git worktrees and retains them through review", async () => {
+test("Panel reserves a repository until Codex binds its native worktree", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "panel-automatic-worktrees-"));
   const repository = path.join(directory, "repository");
   const dataDirectory = path.join(directory, "data");
@@ -373,96 +509,39 @@ test("Panel creates isolated Git worktrees and retains them through review", asy
       name: "Repository",
       workspacePath: repository,
     });
-    const first = createTask("First worktree");
-    const second = createTask("Second worktree");
-    const completions = new Map();
+    const task = createTask("Native worktree");
+    const nativeWorktree = path.join(directory, "codex-worktree");
+    await execFileAsync("git", ["-C", repository, "worktree", "add", "-b", "shay-native-1", nativeWorktree]);
     app.claimQueue.aiChat = {
-      async createThread(input) {
-        const task = app.database.getTask(input.issueId);
-        return app.database.createAiChatThread({
-          title: input.title,
-          origin: {
-            projectId: input.projectId,
-            projectName: "Repository",
-            workspacePath: task.developmentContext.path,
-            issueId: task.id,
-            issueIdentifier: task.identifier,
-          },
-          model: input.model,
-          reasoningEffort: input.reasoningEffort,
-          sandbox: input.sandbox,
-        });
-      },
-      getThread(threadId) {
-        return app.database.getAiChatThread(threadId);
-      },
-      async startTurn(threadId) {
-        const run = app.database.createAiChatRun({ threadId });
-        let finish;
-        const completion = new Promise((resolve) => { finish = resolve; });
-        completions.set(run.id, { completion, finish });
-        return run;
-      },
-      waitForRun(runId) {
-        return completions.get(runId).completion;
+      async getCatalog() {
+        return { skills: [{ id: "implement", label: "Implement", path: "/skills/implement/SKILL.md" }] };
       },
     };
-    app.claimQueue.enqueue(first.id);
-    app.claimQueue.enqueue(second.id);
-    await app.claimQueue.runOnce();
+    app.claimQueue.enqueue(task.id);
+    const reservation = await app.claimQueue.reserveNextNativeClaim();
 
-    const runningFirst = app.database.getTask(first.id);
-    const runningSecond = app.database.getTask(second.id);
-    const firstClaim = app.database.getClaimQueueItem(first.id);
-    const secondClaim = app.database.getClaimQueueItem(second.id);
-    assert.equal(firstClaim.state, "running");
-    assert.equal(secondClaim.state, "running");
-    assert.equal(runningFirst.developmentContext.type, "worktree");
-    assert.equal(runningSecond.developmentContext.type, "worktree");
-    assert.notEqual(runningFirst.developmentContext.path, runningSecond.developmentContext.path);
-    assert.notEqual(firstClaim.threadId, secondClaim.threadId);
-    assert.equal(
-      app.database.getAiChatThread(firstClaim.threadId).origin.workspacePath,
-      runningFirst.developmentContext.path,
-    );
-    assert.equal(
-      app.database.getAiChatThread(secondClaim.threadId).origin.workspacePath,
-      runningSecond.developmentContext.path,
-    );
-    for (const task of [runningFirst, runningSecond]) {
-      const { stdout: root } = await execFileAsync(
-        "git",
-        ["-C", task.developmentContext.path, "rev-parse", "--show-toplevel"],
-      );
-      const { stdout: branch } = await execFileAsync(
-        "git",
-        ["-C", task.developmentContext.path, "branch", "--show-current"],
-      );
-      assert.equal(await realpath(root.trim()), await realpath(task.developmentContext.path));
-      assert.equal(branch.trim(), task.developmentContext.branch);
-    }
+    assert.equal(reservation.workspacePath, await realpath(repository));
+    assert.equal(reservation.useWorktree, true);
+    assert.equal(app.database.getClaimQueueItem(task.id).state, "running");
+    assert.equal(app.database.getTask(task.id).developmentContext, null);
 
-    const reviewTasks = [runningFirst, runningSecond].map((task) => app.database.moveTask(
-      task.id,
-      task.version,
-      "in_review",
-      undefined,
-      undefined,
-      undefined,
-      actor,
-    ));
-    for (const task of reviewTasks) {
-      const run = app.database.listClaimAttempts(task.id).at(-1);
-      completions.get(run.runId).finish({ id: run.runId, status: "completed", error: null });
-    }
-    await waitFor(() => reviewTasks.every(
-      (task) => app.database.getClaimQueueItem(task.id).state === "completed",
-    ));
-    for (const task of reviewTasks) {
-      const retained = await app.claimQueue.cleanupCompletedTask(task);
-      assert.equal(retained.developmentContext.path, task.developmentContext.path);
-      await access(task.developmentContext.path);
-    }
+    const bound = app.claimQueue.bindNativeClaim(reservation.reservationId, task.id, {
+      threadId: "native-thread-1",
+      codexProjectId: "repository",
+      codexProjectKind: "local",
+      codexHostId: "local",
+      workspacePath: nativeWorktree,
+    }, {
+      type: "worktree",
+      path: nativeWorktree,
+      branch: "shay-native-1",
+    });
+    assert.equal(bound.claim.state, "running");
+    assert.equal(bound.task.status, "in_progress");
+    assert.equal(bound.task.developmentContext.path, nativeWorktree);
+    assert.equal(bound.task.developmentContext.branch, "shay-native-1");
+    assert.equal(bound.task.threadBinding.workspacePath, nativeWorktree);
+    await access(nativeWorktree);
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });
@@ -894,7 +973,7 @@ if (args[0] === "debug") {
     assert.equal(claim.source, "manual");
     assert.equal(claim.state, "queued");
     assert.equal(claim.threadId, null);
-    assert.equal(app.database.suggestedExecutionThreadId(item.taskId), item.threadId);
+    assert.equal(item.threadId, null);
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });
