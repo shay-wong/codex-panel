@@ -4,6 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed Jira planning conversation setup when Codex returns a namespaced Skill mention and its resolved symlink target instead of Panel's catalog alias and link path.
 - Fixed the packaged desktop service startup after the AI Skill catalog began using `js-yaml` by including that existing production dependency in every Tauri runtime bundle.
 - Added bounded project-summary recovery: failed Codex summaries retry after 5, 15, and 60 minutes, stop after the fourth failure, retain a manual retry action, and reset the sequence after success.
 - Made the desktop launcher prefer the stable local Panel port `47823` and fall back to a private random port when it is unavailable, while keeping Codex CDP on a separate random endpoint.
