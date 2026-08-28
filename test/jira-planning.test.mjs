@@ -85,6 +85,7 @@ if (args[0] === "debug") {
     codexExecutable,
     codexStatePath,
     skillPath: "/skills/manage-panel/SKILL.md",
+    skillsDirectory: path.join(directory, "skills"),
   });
   try {
     const address = await app.listen({ port: 0 });

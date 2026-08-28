@@ -1786,6 +1786,7 @@ async function scanDevelopmentContexts(workspacePath, processEnv = process.env) 
 
 export function resolveServerOptions(options = {}) {
   const environment = options.processEnv ?? process.env;
+  const homeDirectory = environment.HOME || environment.USERPROFILE || os.homedir();
   const dataDirectory = options.dataDirectory
     ? path.resolve(options.dataDirectory)
     : resolvePanelDataDirectory({ environment });
@@ -1828,6 +1829,8 @@ export function resolveServerOptions(options = {}) {
       ?? options.skillPath
       ?? (existsSync(installedSkillPath) ? installedSkillPath : skillPath),
     codexExecutable: resolveCodexExecutable({ explicit: options.codexExecutable }),
+    skillsDirectory: options.skillsDirectory
+      ?? path.join(homeDirectory, ".agents", "skills"),
     codexStatePath: options.codexStatePath
       ?? path.join(codexHome, ".codex-global-state.json"),
     codexProcessesPath: options.codexProcessesPath
@@ -2096,6 +2099,7 @@ export function createPanelServer(options = {}) {
       events.emit("comment.created", { comment, task });
     },
     processEnv: codexProcessEnvironment,
+    skillsDirectory: resolved.skillsDirectory,
     resolveContext: resolveAiChatContext,
   });
   const failedAutomaticWorktrees = new Set();

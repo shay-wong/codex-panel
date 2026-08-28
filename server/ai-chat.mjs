@@ -179,6 +179,7 @@ export class AiChatService {
     this.handoffActor = options.handoffActor ?? DEFAULT_HANDOFF_ACTOR;
     this.onIssueCommentCreated = options.onIssueCommentCreated ?? (() => {});
     this.processEnv = options.processEnv ?? process.env;
+    this.skillsDirectory = options.skillsDirectory;
     this.killGraceMs = options.killGraceMs ?? 1_000;
     this.appServer = options.appServer ?? new CodexAppServer({
       executable: this.codexExecutable,
@@ -187,6 +188,7 @@ export class AiChatService {
     this.composerCatalog = options.composerCatalog ?? new ComposerCatalog({
       appServer: this.appServer,
       issueSlashCommands: () => loadSlashCommands(),
+      skillsDirectory: this.skillsDirectory,
     });
     this.resolveContext = options.resolveContext ?? (async (projectId, issueId) => {
       const resolved = await resolveAiWorkspace(projectId, this.codexStatePath, this.database);
@@ -274,6 +276,7 @@ export class AiChatService {
       codexExecutable: this.codexExecutable,
       workspacePath,
       processEnv: this.processEnv,
+      skillsDirectory: this.skillsDirectory,
     });
   }
 
