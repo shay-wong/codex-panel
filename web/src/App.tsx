@@ -2725,7 +2725,9 @@ export function App() {
     const thread = [...aiThreads]
       .filter((candidate) => (
         candidate.origin.issueId === pendingExecutionOpen.taskId
+        && candidate.purpose === "formal"
         && candidate.codexThreadId
+        && candidate.currentRun?.status === "running"
         && Date.parse(candidate.updatedAt) >= pendingExecutionOpen.requestedAt - 2_000
     ))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
