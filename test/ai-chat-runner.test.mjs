@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -32,7 +32,8 @@ async function waitFor(predicate, timeout = 4_000) {
 async function createComposerCatalogFixture(issueSlashCommands) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "panel-composer-catalog-"));
   const agentsDirectory = path.join(directory, "agents");
-  await mkdir(agentsDirectory);
+  const skillsDirectory = path.join(directory, "skills");
+  await Promise.all([mkdir(agentsDirectory), mkdir(skillsDirectory)]);
   await writeFile(path.join(agentsDirectory, "master.toml"), [
     'name = "任务总管"',
     'description = "协调专业 agents"',
@@ -59,10 +60,16 @@ async function createComposerCatalogFixture(issueSlashCommands) {
       return () => subscribers.delete(listener);
     },
   };
-  const catalog = new ComposerCatalog({ appServer, agentsDirectory, issueSlashCommands });
+  const catalog = new ComposerCatalog({
+    appServer,
+    agentsDirectory,
+    issueSlashCommands,
+    skillsDirectory,
+  });
   return {
     catalog,
     directory,
+    skillsDirectory,
     setSkills(value) { skills = value; },
     setSkillsError(value) { skillsError = value; },
     async close() {
@@ -71,6 +78,45 @@ async function createComposerCatalogFixture(issueSlashCommands) {
     },
   };
 }
+
+test("linked user Skills remain selectable when Codex omits symbolic-link directories", async () => {
+  const fixture = await createComposerCatalogFixture();
+  try {
+    const sourceDirectory = path.join(fixture.directory, "linked-skill-source");
+    await mkdir(path.join(sourceDirectory, "agents"), { recursive: true });
+    await writeFile(path.join(sourceDirectory, "SKILL.md"), [
+      "---",
+      "name: linked-skill",
+      "description: Linked Skill workflow",
+      "disable-model-invocation: true",
+      "---",
+      "",
+      "Run the linked workflow.",
+    ].join("\n"));
+    await writeFile(path.join(sourceDirectory, "agents", "openai.yaml"), [
+      "interface:",
+      '  display_name: "Linked Skill"',
+    ].join("\n"));
+    await symlink(
+      sourceDirectory,
+      path.join(fixture.skillsDirectory, "linked-skill"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const response = await fixture.catalog.candidates({
+      workspacePath: "/workspace",
+      trigger: "@",
+      query: "linked",
+    });
+    assert.equal(response.candidates[0].label, "Linked Skill");
+    assert.equal(
+      decodeComposerReferenceKey(response.candidates[0].persistence.referenceKey),
+      "linked-skill",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
 
 test("versioned Slash catalog applies platform and debug filters", async () => {
   const darwin = await loadSlashCommands("darwin");
@@ -835,6 +881,7 @@ if (args[0] === "app-server") {
     },
   }));
   const databasePath = path.join(directory, "panel.sqlite");
+  const skillsDirectory = path.join(directory, "skills");
   const database = new PanelDatabase(databasePath);
   database.createProject({ id: "project", name: "Project", workspacePath: null });
   database.createProject({ id: "other", name: "Other", workspacePath: null });
@@ -844,6 +891,7 @@ if (args[0] === "app-server") {
     codexExecutable: executable,
     codexStatePath,
     managePanelSkillPath: "/fixture/manage-panel/SKILL.md",
+    skillsDirectory,
     processEnv: {
       ...process.env,
       FAKE_CAPTURE_PATH: capturePath,
@@ -872,6 +920,7 @@ if (args[0] === "app-server") {
     environmentCapturePath,
     otherWorkspace,
     service,
+    skillsDirectory,
     workspace,
     async close() {
       await this.service.close();
@@ -880,6 +929,47 @@ if (args[0] === "app-server") {
     },
   };
 }
+
+test("AI turns serialize linked user Skills omitted by the Codex catalog", async () => {
+  const fixture = await createFixture();
+  try {
+    const sourceDirectory = path.join(fixture.directory, "linked-turn-skill-source");
+    await Promise.all([
+      mkdir(sourceDirectory),
+      mkdir(fixture.skillsDirectory),
+    ]);
+    await writeFile(path.join(sourceDirectory, "SKILL.md"), [
+      "---",
+      "name: linked-turn-skill",
+      "description: Linked turn workflow",
+      "disable-model-invocation: true",
+      "---",
+      "",
+      "Run the linked turn workflow.",
+    ].join("\n"));
+    const linkedDirectory = path.join(fixture.skillsDirectory, "linked-turn-skill");
+    await symlink(
+      sourceDirectory,
+      linkedDirectory,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const catalog = await fixture.service.getCatalog("project");
+    assert.equal(catalog.skills.some((skill) => skill.id === "linked-turn-skill"), true);
+    const thread = await fixture.service.createThread({ projectId: "project" });
+    const run = await fixture.service.startTurn(thread.id, {
+      message: "\uFFFC run",
+      skillIds: ["linked-turn-skill"],
+    });
+    await waitFor(() => fixture.service.getRun(run.id)?.status !== "running");
+    const captures = (await readFile(fixture.capturePath, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.ok(captures[0].prompt.includes(
+      `[$linked-turn-skill](${path.join(linkedDirectory, "SKILL.md")}) run`,
+    ));
+  } finally {
+    await fixture.close();
+  }
+});
 
 function createIssue(database, projectId, title) {
   return database.createTask({
@@ -1248,6 +1338,7 @@ test("startup marks abandoned runs interrupted while preserving the Codex thread
     codexExecutable: path.join(fixture.directory, "fake-codex.mjs"),
     codexStatePath: path.join(fixture.directory, "codex-state.json"),
     managePanelSkillPath: "/fixture/manage-panel/SKILL.md",
+    skillsDirectory: path.join(fixture.directory, "skills"),
   });
   fixture.service = restarted;
   try {

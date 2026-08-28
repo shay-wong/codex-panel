@@ -47,6 +47,7 @@ if (args[0] === "debug") {
     codexExecutable,
     codexStatePath,
     skillPath: "/fixture/manage-panel/SKILL.md",
+    skillsDirectory: path.join(directory, "skills"),
   });
   const address = await app.listen({ host, port: 0 });
   return {

@@ -4,6 +4,7 @@ import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { load as parseYaml } from "js-yaml";
 import { parse as parseToml } from "smol-toml";
 
 import { withoutPanelLauncherEnvironment } from "../shared/codex-environment.mjs";
@@ -17,6 +18,8 @@ const CATALOG_MAX_BUFFER = 2 * 1024 * 1024;
 const COMPOSER_CONTRACT_VERSION = "composer.v1";
 const SLASH_COMMAND_CATALOG_URL = new URL("./codex-slash-commands-0.139.0.json", import.meta.url);
 let slashCommandCatalogPromise;
+
+const DEFAULT_USER_SKILLS_DIRECTORY = path.join(os.homedir(), ".agents", "skills");
 
 const VERIFIED_SLASH_ACTIONS = [
   {
@@ -54,6 +57,77 @@ const UNSUPPORTED_COMPOSER_SOURCES = [
 
 function nonEmptyTomlString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function parseYamlDocument(source) {
+  try {
+    const value = parseYaml(source);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function linkedUserSkills(skillsDirectory) {
+  let entries;
+  try {
+    entries = await readdir(skillsDirectory, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const skills = [];
+  for (const entry of entries) {
+    if (!entry.isSymbolicLink()) continue;
+    const skillDirectory = path.join(skillsDirectory, entry.name);
+    const skillPath = path.join(skillDirectory, "SKILL.md");
+    try {
+      const source = await readFile(skillPath, "utf8");
+      const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
+      const metadata = frontmatter ? parseYamlDocument(frontmatter[1]) : null;
+      if (
+        typeof metadata?.name !== "string"
+        || metadata.name.trim() !== entry.name
+        || typeof metadata.description !== "string"
+        || !metadata.description.trim()
+      ) {
+        continue;
+      }
+      let interfaceConfig = null;
+      try {
+        interfaceConfig = parseYamlDocument(
+          await readFile(path.join(skillDirectory, "agents", "openai.yaml"), "utf8"),
+        )?.interface ?? null;
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+      const displayName = typeof interfaceConfig?.display_name === "string"
+        ? interfaceConfig.display_name.trim()
+        : "";
+      skills.push({
+        name: entry.name,
+        description: metadata.description.trim(),
+        interface: displayName ? { displayName } : null,
+        path: skillPath,
+        scope: "user",
+        enabled: true,
+      });
+    } catch {}
+  }
+  return skills.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+async function includeLinkedUserSkills(entries, skillsDirectory) {
+  const existingNames = new Set(entries.flatMap((entry) => (
+    Array.isArray(entry?.skills)
+      ? entry.skills.flatMap((skill) => (
+          typeof skill?.name === "string" && skill.name.trim() ? [skill.name.trim()] : []
+        ))
+      : []
+  )));
+  const missing = (await linkedUserSkills(skillsDirectory))
+    .filter((skill) => !existingNames.has(skill.name));
+  return missing.length > 0 ? [...entries, { skills: missing }] : entries;
 }
 
 async function readConfiguredAgent(filePath, roleNameHint = null) {
@@ -608,12 +682,13 @@ function referenceUnavailable(nodeIndex, reasonCode = "SOURCE_UNAVAILABLE") {
 }
 
 export class ComposerCatalog {
-  constructor({ appServer, agentsDirectory, codexHome, issueSlashCommands } = {}) {
+  constructor({ appServer, agentsDirectory, codexHome, issueSlashCommands, skillsDirectory } = {}) {
     this.appServer = appServer;
     this.codexHome = codexHome
       ?? (agentsDirectory ? path.dirname(agentsDirectory) : process.env.CODEX_HOME)
       ?? path.join(os.homedir(), ".codex");
     this.agentsDirectory = agentsDirectory ?? path.join(this.codexHome, "agents");
+    this.skillsDirectory = skillsDirectory ?? DEFAULT_USER_SKILLS_DIRECTORY;
     this.issueSlashCommands = issueSlashCommands ?? null;
     this.workspaces = new Map();
     this.unsubscribe = appServer.subscribe((notification) => {
@@ -666,7 +741,10 @@ export class ComposerCatalog {
     let skillsAvailable = false;
     if (workspacePath) {
       try {
-        entries = await this.appServer.listSkills(workspacePath, { forceReload: false });
+        entries = await includeLinkedUserSkills(
+          await this.appServer.listSkills(workspacePath, { forceReload: false }),
+          this.skillsDirectory,
+        );
         skillsAvailable = true;
       } catch {}
     }
@@ -768,7 +846,10 @@ export class ComposerCatalog {
     let entries = [];
     let skillsAvailable = false;
     try {
-      entries = await this.appServer.listSkills(workspacePath, { forceReload: true });
+      entries = await includeLinkedUserSkills(
+        await this.appServer.listSkills(workspacePath, { forceReload: true }),
+        this.skillsDirectory,
+      );
       skillsAvailable = true;
     } catch {}
     const { agents, available: agentsAvailable } = await listConfiguredAgents({
@@ -870,7 +951,10 @@ export class ComposerCatalog {
 
     let entries;
     try {
-      entries = await this.appServer.listSkills(workspacePath, { forceReload: true });
+      entries = await includeLinkedUserSkills(
+        await this.appServer.listSkills(workspacePath, { forceReload: true }),
+        this.skillsDirectory,
+      );
     } catch {
       const firstReferenceIndex = nodes.findIndex((node) => (
         node.type === "skill" || node.type === "agent"
@@ -948,10 +1032,11 @@ export async function discoverAiCatalog({
   codexExecutable,
   workspacePath,
   processEnv,
+  skillsDirectory = DEFAULT_USER_SKILLS_DIRECTORY,
 }) {
   const environment = withoutPanelLauncherEnvironment(processEnv);
   const modelCommand = executableCommand(codexExecutable, ["debug", "models"]);
-  const [modelResult, skillEntries, commands] = await Promise.all([
+  const [modelResult, codexSkillEntries, commands] = await Promise.all([
     execFileAsync(modelCommand.executable, modelCommand.args, {
       cwd: workspacePath,
       env: environment,
@@ -963,6 +1048,7 @@ export async function discoverAiCatalog({
     listSkills(codexExecutable, workspacePath, environment),
     loadSlashCommands(),
   ]);
+  const skillEntries = await includeLinkedUserSkills(codexSkillEntries, skillsDirectory);
   const modelCatalog = JSON.parse(modelResult.stdout);
   return {
     models: sanitizeModels(modelCatalog?.models),
