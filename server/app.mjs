@@ -2390,6 +2390,64 @@ export function createPanelServer(options = {}) {
     });
   }
 
+  function resolveJiraPlanningProjectId(context, selectedProjectId) {
+    const linkedProjectIds = context.projects.map((project) => project.id);
+    if (linkedProjectIds.length === 0) {
+      if (selectedProjectId && selectedProjectId !== DEFAULT_PROJECT_ID) {
+        throw new ApiError(
+          409,
+          "JIRA_PLANNING_PROJECT_INVALID",
+          "Projectless Jira planning cannot target a linked repository",
+        );
+      }
+      return DEFAULT_PROJECT_ID;
+    }
+    if (linkedProjectIds.length === 1) {
+      if (selectedProjectId && selectedProjectId !== linkedProjectIds[0]) {
+        throw new ApiError(
+          409,
+          "JIRA_PLANNING_PROJECT_INVALID",
+          "Jira planning must use the linked repository",
+        );
+      }
+      return linkedProjectIds[0];
+    }
+    if (!selectedProjectId) {
+      throw new ApiError(
+        409,
+        "JIRA_PLANNING_PROJECT_REQUIRED",
+        "Choose one of the linked repositories before creating the Jira planning task",
+      );
+    }
+    if (!linkedProjectIds.includes(selectedProjectId)) {
+      throw new ApiError(
+        409,
+        "JIRA_PLANNING_PROJECT_INVALID",
+        "Jira planning must use one of the linked repositories",
+      );
+    }
+    return selectedProjectId;
+  }
+
+  function assertJiraPlanningThreadReuse(context, threadId, targetProjectId) {
+    const existingThread = database.getAiChatThread(threadId);
+    if (!existingThread) return null;
+    if (
+      context.plan?.threadId !== threadId
+      || existingThread.archivedAt
+      || existingThread.purpose !== "formal"
+      || existingThread.codexThreadId !== threadId
+      || existingThread.origin.projectId !== targetProjectId
+    ) {
+      throw new ApiError(
+        409,
+        "JIRA_PLANNING_THREAD_CONFLICT",
+        "Jira planning cannot reuse an unrelated or unavailable Codex task",
+      );
+    }
+    return existingThread;
+  }
+
   async function startJiraPlanning(jiraTaskId, version, threadId, selectedProjectId) {
     const context = database.getJiraContext(jiraTaskId);
     if (!context.jira) {
@@ -2426,11 +2484,13 @@ export function createPanelServer(options = {}) {
       };
     }
 
-    const createdThread = !database.getAiChatThread(threadId);
+    const targetProjectId = resolveJiraPlanningProjectId(context, selectedProjectId);
+    const existingThread = assertJiraPlanningThreadReuse(context, threadId, targetProjectId);
+    const createdThread = !existingThread;
     if (createdThread) {
       await aiChat.createThread({
         id: threadId,
-        projectId: selectedProjectId ?? projectId,
+        projectId: targetProjectId,
         title: `${context.jira.externalKey ?? context.jira.identifier} · Jira 规划`,
         purpose: "formal",
         codexThreadId: threadId,
@@ -2478,11 +2538,13 @@ export function createPanelServer(options = {}) {
 
   async function createJiraReplan(jiraTaskId, version, threadId, selectedProjectId, reservation) {
     const context = database.beginJiraReplan(jiraTaskId, version, reservation);
-    const createdThread = !database.getAiChatThread(threadId);
+    const targetProjectId = resolveJiraPlanningProjectId(context, selectedProjectId);
+    const existingThread = assertJiraPlanningThreadReuse(context, threadId, targetProjectId);
+    const createdThread = !existingThread;
     if (createdThread) {
       await aiChat.createThread({
         id: threadId,
-        projectId: selectedProjectId ?? context.projects[0]?.id ?? DEFAULT_PROJECT_ID,
+        projectId: targetProjectId,
         title: `${context.jira.externalKey ?? context.jira.identifier} · Jira 重新规划`,
         purpose: "formal",
         codexThreadId: threadId,
