@@ -19,12 +19,45 @@ const JIRA_SIMPLE_START_ITEMS_TABLE = `
     operation_id TEXT NOT NULL REFERENCES jira_simple_start_operations(id) ON DELETE CASCADE,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
     task_id TEXT NOT NULL,
-    thread_id TEXT NOT NULL,
+    thread_id TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (operation_id, project_id),
     UNIQUE (operation_id, task_id),
     UNIQUE (operation_id, thread_id)
+  );
+`;
+const ISSUE_CLAIM_QUEUE_TABLE = `
+  CREATE TABLE issue_claim_queue (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    thread_id TEXT UNIQUE,
+    source TEXT NOT NULL CHECK (source IN ('manual', 'resume', 'jira', 'scan')),
+    state TEXT NOT NULL CHECK (state IN (
+      'queued', 'running', 'retry_wait', 'blocked', 'failed', 'completed', 'canceled'
+    )),
+    resume_requested INTEGER NOT NULL DEFAULT 0 CHECK (resume_requested IN (0, 1)),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    available_at TEXT NOT NULL,
+    enqueued_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    last_error TEXT,
+    updated_at TEXT NOT NULL
+  );
+`;
+const ISSUE_CLAIM_ATTEMPTS_TABLE = `
+  CREATE TABLE issue_claim_attempts (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    thread_id TEXT NOT NULL,
+    run_id TEXT UNIQUE,
+    status TEXT NOT NULL CHECK (status IN (
+      'running', 'completed', 'failed', 'interrupted', 'blocked'
+    )),
+    error TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT
   );
 `;
 const TASK_TREE_MAX_NODES = 1_000;
@@ -786,39 +819,12 @@ export class PanelDatabase {
         updated_at TEXT NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS issue_claim_queue (
-        task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        thread_id TEXT UNIQUE REFERENCES ai_chat_threads(id) ON DELETE SET NULL,
-        source TEXT NOT NULL CHECK (source IN ('manual', 'resume', 'jira', 'scan')),
-        state TEXT NOT NULL CHECK (state IN (
-          'queued', 'running', 'retry_wait', 'blocked', 'failed', 'completed', 'canceled'
-        )),
-        resume_requested INTEGER NOT NULL DEFAULT 0 CHECK (resume_requested IN (0, 1)),
-        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
-        available_at TEXT NOT NULL,
-        enqueued_at TEXT NOT NULL,
-        started_at TEXT,
-        finished_at TEXT,
-        last_error TEXT,
-        updated_at TEXT NOT NULL
-      );
+      ${ISSUE_CLAIM_QUEUE_TABLE.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS")}
 
       CREATE INDEX IF NOT EXISTS issue_claim_queue_dispatch
         ON issue_claim_queue(state, available_at, enqueued_at);
 
-      CREATE TABLE IF NOT EXISTS issue_claim_attempts (
-        id TEXT PRIMARY KEY,
-        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-        thread_id TEXT NOT NULL REFERENCES ai_chat_threads(id) ON DELETE CASCADE,
-        run_id TEXT UNIQUE REFERENCES ai_chat_runs(id) ON DELETE SET NULL,
-        status TEXT NOT NULL CHECK (status IN (
-          'running', 'completed', 'failed', 'interrupted', 'blocked'
-        )),
-        error TEXT,
-        started_at TEXT NOT NULL,
-        finished_at TEXT
-      );
+      ${ISSUE_CLAIM_ATTEMPTS_TABLE.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS")}
 
       CREATE INDEX IF NOT EXISTS issue_claim_attempts_task_started
         ON issue_claim_attempts(task_id, started_at, id);
@@ -864,11 +870,32 @@ export class PanelDatabase {
         CHECK (purpose IN ('temporary', 'formal'))
       `);
     }
-    this.database.exec(`
-      UPDATE ai_chat_threads SET purpose = 'formal'
-      WHERE purpose = 'temporary'
-        AND id IN (SELECT thread_id FROM issue_claim_queue WHERE thread_id IS NOT NULL)
-    `);
+    const claimQueueSql = this.database.prepare(`
+      SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'issue_claim_queue'
+    `).get()?.sql ?? "";
+    const claimAttemptsSql = this.database.prepare(`
+      SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'issue_claim_attempts'
+    `).get()?.sql ?? "";
+    if (/REFERENCES\s+ai_chat_threads/i.test(claimQueueSql)) {
+      this.database.exec(`
+        ALTER TABLE issue_claim_queue RENAME TO issue_claim_queue_legacy;
+        ${ISSUE_CLAIM_QUEUE_TABLE}
+        INSERT INTO issue_claim_queue SELECT * FROM issue_claim_queue_legacy;
+        DROP TABLE issue_claim_queue_legacy;
+        CREATE INDEX issue_claim_queue_dispatch
+          ON issue_claim_queue(state, available_at, enqueued_at);
+      `);
+    }
+    if (/REFERENCES\s+ai_chat_threads/i.test(claimAttemptsSql)) {
+      this.database.exec(`
+        ALTER TABLE issue_claim_attempts RENAME TO issue_claim_attempts_legacy;
+        ${ISSUE_CLAIM_ATTEMPTS_TABLE}
+        INSERT INTO issue_claim_attempts SELECT * FROM issue_claim_attempts_legacy;
+        DROP TABLE issue_claim_attempts_legacy;
+        CREATE INDEX issue_claim_attempts_task_started
+          ON issue_claim_attempts(task_id, started_at, id);
+      `);
+    }
 
     const jiraSettingsColumns = this.database.prepare("PRAGMA table_info(jira_settings)").all();
     if (!jiraSettingsColumns.some((column) => column.name === "auto_archive_enabled")) {
@@ -876,6 +903,22 @@ export class PanelDatabase {
         ALTER TABLE jira_settings
         ADD COLUMN auto_archive_enabled INTEGER NOT NULL DEFAULT 0
         CHECK (auto_archive_enabled IN (0, 1))
+      `);
+    }
+
+    const jiraSimpleStartItemColumns = this.database.prepare(
+      "PRAGMA table_info(jira_simple_start_items)",
+    ).all();
+    if (jiraSimpleStartItemColumns.find((column) => column.name === "thread_id")?.notnull === 1) {
+      this.database.exec(`
+        ALTER TABLE jira_simple_start_items RENAME TO jira_simple_start_items_legacy;
+        ${JIRA_SIMPLE_START_ITEMS_TABLE}
+        INSERT INTO jira_simple_start_items (
+          operation_id, project_id, task_id, thread_id, created_at, updated_at
+        )
+        SELECT operation_id, project_id, task_id, thread_id, created_at, updated_at
+        FROM jira_simple_start_items_legacy;
+        DROP TABLE jira_simple_start_items_legacy;
       `);
     }
 
@@ -3299,10 +3342,10 @@ export class PanelDatabase {
       SELECT
         operations.*,
         COUNT(items.project_id) AS project_count,
-        SUM(CASE WHEN threads.id IS NOT NULL THEN 1 ELSE 0 END) AS ready_count
+        SUM(CASE WHEN tasks.id IS NOT NULL THEN 1 ELSE 0 END) AS ready_count
       FROM jira_simple_start_operations AS operations
       LEFT JOIN jira_simple_start_items AS items ON items.operation_id = operations.id
-      LEFT JOIN ai_chat_threads AS threads ON threads.id = items.thread_id
+      LEFT JOIN tasks ON tasks.id = items.task_id
       WHERE operations.jira_task_id = ?
       GROUP BY operations.id
     `).get(jiraTaskId);
@@ -3373,7 +3416,7 @@ export class PanelDatabase {
       return {
         projectId: project.id,
         taskId: linked[0]?.id ?? randomUUID(),
-        threadId: randomUUID(),
+        threadId: null,
       };
     });
     this.database.exec("BEGIN IMMEDIATE");
@@ -3390,10 +3433,7 @@ export class PanelDatabase {
       `);
       for (const item of items) {
         insertItem.run(
-          operationId,
-          item.projectId,
-          item.taskId,
-          item.threadId,
+          operationId, item.projectId, item.taskId, item.threadId,
           timestamp,
           timestamp,
         );
@@ -3431,9 +3471,13 @@ export class PanelDatabase {
       SELECT 1
       FROM jira_simple_start_items AS items
       LEFT JOIN tasks ON tasks.id = items.task_id
-      LEFT JOIN ai_chat_threads ON ai_chat_threads.id = items.thread_id
+      LEFT JOIN issue_claim_queue AS claims ON claims.task_id = items.task_id
       WHERE items.operation_id = ?
-        AND (tasks.id IS NULL OR ai_chat_threads.id IS NULL)
+        AND (
+          tasks.id IS NULL
+          OR claims.task_id IS NULL
+          OR claims.state NOT IN ('queued', 'running', 'retry_wait', 'completed')
+        )
       LIMIT 1
     `).get(operationId);
     if (pending) {
@@ -4306,6 +4350,41 @@ export class PanelDatabase {
 
   reconcileClaimQueue() {
     const timestamp = now();
+    const changedTaskIds = this.database.prepare(`
+      SELECT queue.task_id
+      FROM issue_claim_queue AS queue
+      JOIN tasks ON tasks.id = queue.task_id
+      WHERE (
+        queue.state IN ('queued', 'retry_wait')
+        AND (tasks.archived_at IS NOT NULL OR tasks.status NOT IN ('todo', 'in_progress'))
+      ) OR (
+        queue.state = 'running'
+        AND (
+          tasks.archived_at IS NOT NULL
+          OR (queue.thread_id IS NULL AND tasks.status != 'todo')
+          OR (queue.thread_id IS NOT NULL AND tasks.status != 'in_progress')
+        )
+      )
+    `).all().map((row) => row.task_id);
+    this.database.prepare(`
+      UPDATE issue_claim_attempts
+      SET status = CASE
+            WHEN tasks.status IN ('in_review', 'done') THEN 'completed'
+            WHEN tasks.status = 'blocked' THEN 'blocked'
+            ELSE 'interrupted'
+          END,
+          error = CASE
+            WHEN tasks.status IN ('in_review', 'done', 'blocked') THEN error
+            ELSE COALESCE(error, 'Issue execution was canceled')
+          END,
+          finished_at = COALESCE(issue_claim_attempts.finished_at, ?)
+      FROM tasks
+      JOIN issue_claim_queue AS queue ON queue.task_id = tasks.id
+      WHERE issue_claim_attempts.task_id = tasks.id
+        AND issue_claim_attempts.status = 'running'
+        AND queue.state = 'running'
+        AND (tasks.archived_at IS NOT NULL OR tasks.status != 'in_progress')
+    `).run(timestamp);
     this.database.prepare(`
       UPDATE issue_claim_queue
       SET state = CASE
@@ -4317,12 +4396,26 @@ export class PanelDatabase {
           updated_at = ?
       FROM tasks
       WHERE tasks.id = issue_claim_queue.task_id
-        AND issue_claim_queue.state IN ('queued', 'retry_wait')
+        AND issue_claim_queue.state IN ('queued', 'retry_wait', 'running')
         AND (
           tasks.archived_at IS NOT NULL
-          OR tasks.status NOT IN ('todo', 'in_progress')
+          OR (
+            issue_claim_queue.state IN ('queued', 'retry_wait')
+            AND tasks.status NOT IN ('todo', 'in_progress')
+          )
+          OR (
+            issue_claim_queue.state = 'running'
+            AND issue_claim_queue.thread_id IS NULL
+            AND tasks.status != 'todo'
+          )
+          OR (
+            issue_claim_queue.state = 'running'
+            AND issue_claim_queue.thread_id IS NOT NULL
+            AND tasks.status != 'in_progress'
+          )
         )
     `).run(timestamp, timestamp);
+    return [...new Set(changedTaskIds)];
   }
 
   listReadyClaims(at = now()) {
@@ -4366,6 +4459,17 @@ export class PanelDatabase {
     return this.listReadyClaims(at)[0] ?? null;
   }
 
+  listRunningClaims() {
+    return this.database.prepare(`
+      SELECT task_id FROM issue_claim_queue
+      WHERE state = 'running'
+      ORDER BY started_at, task_id
+    `).all().map(({ task_id: taskId }) => ({
+      task: this.getTask(taskId),
+      claim: this.getClaimQueueItem(taskId),
+    }));
+  }
+
   setClaimThread(taskId, threadId) {
     const timestamp = now();
     const result = this.database.prepare(`
@@ -4390,6 +4494,83 @@ export class PanelDatabase {
       throw new ApiError(409, "CLAIM_NOT_READY", `Claim queue item '${taskId}' is not ready`);
     }
     return this.getClaimQueueItem(taskId);
+  }
+
+  bindNativeClaim(taskId, threadBinding, actor, developmentContext = null) {
+    const task = this.#requireTask(taskId);
+    const claim = this.getClaimQueueItem(taskId);
+    if (task.archivedAt !== null || task.status !== "todo") {
+      throw new ApiError(409, "CLAIM_TASK_STATUS", "Only waiting issues can bind a native execution");
+    }
+    if (!claim || claim.state !== "running" || claim.threadId !== null) {
+      throw new ApiError(409, "CLAIM_NOT_READY", `Claim queue item '${taskId}' is not ready`);
+    }
+    this.#assertJiraPlanAllowsExecution(task.id, "in_progress");
+    const timestamp = now();
+    const attemptId = randomUUID();
+    const row = this.database.prepare(`
+      SELECT MIN(sort_order) AS minimum
+      FROM tasks
+      WHERE project_id = ? AND status = 'in_progress' AND archived_at IS NULL AND id != ?
+    `).get(task.projectId, task.id);
+    const sortOrder = row.minimum === null ? 1000 : row.minimum - 1000;
+    const storedBinding = storedThreadBinding(threadBinding, threadBinding.threadId);
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const claimResult = this.database.prepare(`
+        UPDATE issue_claim_queue
+        SET thread_id = ?,
+            resume_requested = 0, started_at = ?, finished_at = NULL,
+            last_error = NULL, updated_at = ?
+        WHERE task_id = ? AND state = 'running' AND thread_id IS NULL
+      `).run(threadBinding.threadId, timestamp, timestamp, task.id);
+      if (claimResult.changes !== 1) {
+        throw new ApiError(409, "CLAIM_NOT_READY", `Claim queue item '${taskId}' is not ready`);
+      }
+      const taskResult = this.database.prepare(`
+        UPDATE tasks
+        SET status = 'in_progress', sort_order = ?,
+            thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
+            thread_codex_host_id = ?, thread_workspace_path = ?,
+            git_branch = ?, worktree_path = ?, worktree_branch = ?,
+            version = version + 1, updated_at = ?
+        WHERE id = ? AND status = 'todo' AND archived_at IS NULL
+      `).run(
+        sortOrder,
+        ...storedBinding,
+        developmentContext?.type === "branch" ? developmentContext.branch : null,
+        developmentContext?.type === "worktree" ? developmentContext.path : null,
+        developmentContext?.type === "worktree" ? developmentContext.branch : null,
+        timestamp,
+        task.id,
+      );
+      if (taskResult.changes !== 1) {
+        throw new ApiError(409, "CLAIM_TASK_STATUS", "Only waiting issues can bind a native execution");
+      }
+      this.database.prepare(`
+        INSERT INTO issue_claim_attempts (
+          id, task_id, thread_id, run_id, status, error, started_at, finished_at
+        ) VALUES (?, ?, ?, NULL, 'running', NULL, ?, NULL)
+      `).run(attemptId, task.id, threadBinding.threadId, timestamp);
+      this.database.prepare(`
+        UPDATE jira_simple_start_items SET thread_id = ?, updated_at = ? WHERE task_id = ?
+      `).run(threadBinding.threadId, timestamp, task.id);
+      this.#recordTaskActivity(
+        task.id,
+        actor,
+        taskFieldChanges(task, { status: "in_progress" }),
+        timestamp,
+      );
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return {
+      task: this.getTask(task.id),
+      claim: this.getClaimQueueItem(task.id),
+      attempt: this.listClaimAttempts(task.id).find((attempt) => attempt.id === attemptId),
+    };
   }
 
   requestClaimResume(taskId) {
@@ -4471,38 +4652,57 @@ export class PanelDatabase {
 
   recoverInterruptedClaims() {
     const timestamp = now();
-    const taskIds = this.database.prepare(`
-      SELECT task_id FROM issue_claim_queue WHERE state = 'running'
+    const interrupted = this.database.prepare(`
+      SELECT queue.task_id,
+             EXISTS (
+               SELECT 1 FROM ai_chat_threads WHERE ai_chat_threads.id = queue.thread_id
+             ) AS legacy_ai_chat
+      FROM issue_claim_queue AS queue
+      JOIN tasks ON tasks.id = queue.task_id
+      WHERE queue.state = 'running'
+        AND (
+          tasks.thread_id IS NULL
+          OR tasks.thread_codex_project_id IS NULL
+          OR tasks.thread_codex_project_kind IS NULL
+          OR tasks.thread_codex_host_id IS NULL
+          OR tasks.thread_workspace_path IS NULL
+        )
       ORDER BY started_at, task_id
-    `).all().map((row) => row.task_id);
+    `).all();
+    const taskIds = interrupted.map((row) => row.task_id);
+    if (taskIds.length === 0) return [];
+    const placeholders = taskIds.map(() => "?").join(", ");
     this.database.prepare(`
       UPDATE issue_claim_attempts
       SET status = 'interrupted', error = COALESCE(error, 'Panel service restarted'),
           finished_at = COALESCE(finished_at, ?)
-      WHERE status = 'running'
-    `).run(timestamp);
-    this.database.prepare(`
-      UPDATE issue_claim_queue
-      SET state = 'queued', source = 'resume', available_at = ?,
-          finished_at = NULL,
-          last_error = 'Panel service restarted', updated_at = ?
-      WHERE state = 'running'
-    `).run(timestamp, timestamp);
+      WHERE status = 'running' AND task_id IN (${placeholders})
+    `).run(timestamp, ...taskIds);
+    const legacyTaskIds = interrupted.filter((row) => row.legacy_ai_chat).map((row) => row.task_id);
+    if (legacyTaskIds.length > 0) {
+      const legacyPlaceholders = legacyTaskIds.map(() => "?").join(", ");
+      this.database.prepare(`
+        UPDATE issue_claim_queue
+        SET state = 'queued', source = 'resume', available_at = ?,
+            finished_at = NULL, last_error = 'Panel service restarted', updated_at = ?
+        WHERE task_id IN (${legacyPlaceholders})
+      `).run(timestamp, timestamp, ...legacyTaskIds);
+    }
+    const nativeTaskIds = interrupted.filter((row) => !row.legacy_ai_chat).map((row) => row.task_id);
+    if (nativeTaskIds.length > 0) {
+      const nativePlaceholders = nativeTaskIds.map(() => "?").join(", ");
+      this.database.prepare(`
+        UPDATE issue_claim_queue
+        SET state = 'blocked', finished_at = ?,
+            last_error = 'Panel service restarted', updated_at = ?
+        WHERE task_id IN (${nativePlaceholders})
+      `).run(timestamp, timestamp, ...nativeTaskIds);
+    }
     return taskIds;
   }
 
   suggestedExecutionThreadId(taskId) {
-    return this.getClaimQueueItem(taskId)?.threadId
-      ?? this.database.prepare(`
-        SELECT thread_id FROM jira_simple_start_items WHERE task_id = ? LIMIT 1
-      `).get(taskId)?.thread_id
-      ?? this.database.prepare(`
-        SELECT id FROM ai_chat_threads
-        WHERE origin_issue_id = ? AND archived_at IS NULL
-        ORDER BY created_at, id
-        LIMIT 1
-      `).get(taskId)?.id
-      ?? null;
+    return this.getClaimQueueItem(taskId)?.threadId ?? null;
   }
 
   #archiveCompletedJiraThreads(timestamp, jiraTaskId = null, manual = false) {

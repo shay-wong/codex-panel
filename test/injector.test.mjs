@@ -55,6 +55,7 @@ test("the CDP bridge accepts local prefill, SSH conversation, and attachment act
   assert.match(source, /data-composer-overlay-floating-ui/);
   assert.match(source, /button\[data-list-navigation-item="true"\]/);
   assert.match(source, /skill-mention-path/);
+  assert.match(source, /some\(\(candidate\) => candidate\.getClientRects\(\)\.length > 0\)\)\(\)/);
   assert.match(source, /cdp\.send\("Input\.insertText", \{ text: instruction \}\)/);
   assert.match(source, /const stageDeadline = \(\) => Date\.now\(\) \+ 8_000/);
   assert.match(source, /compact\(editor\.textContent\)\.includes\(compact\(instruction\)\)/);

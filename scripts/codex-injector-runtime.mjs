@@ -58,6 +58,73 @@ function parseHostRequest(payload, parseAutomationRequest) {
           diagnosticCode: AUTOMATION_SCHEMA_DIAGNOSTIC,
         };
   }
+  if (request.action === "next-native-claim") {
+    return { id, request, error: null };
+  }
+  if (
+    request.action === "bind-native-claim"
+    && typeof request.reservationId === "string"
+    && /^[a-f0-9-]{36}$/i.test(request.reservationId)
+    && typeof request.taskId === "string"
+    && request.taskId.length > 0
+    && request.taskId.length <= 128
+    && request.threadBinding
+    && typeof request.threadBinding === "object"
+    && !Array.isArray(request.threadBinding)
+    && typeof request.threadBinding.threadId === "string"
+    && request.threadBinding.threadId.length > 0
+    && request.threadBinding.threadId.length <= 240
+    && typeof request.threadBinding.codexProjectId === "string"
+    && request.threadBinding.codexProjectId.length > 0
+    && request.threadBinding.codexProjectId.length <= 240
+    && request.threadBinding.codexProjectKind === "local"
+    && request.threadBinding.codexHostId === "local"
+    && typeof request.threadBinding.workspacePath === "string"
+    && request.threadBinding.workspacePath.length > 0
+    && request.threadBinding.workspacePath.length <= 4_096
+    && (
+      request.developmentContext === undefined
+      ||
+      request.developmentContext === null
+      || (
+        request.developmentContext
+        && typeof request.developmentContext === "object"
+        && !Array.isArray(request.developmentContext)
+        && (
+          (
+            request.developmentContext.type === "worktree"
+            && typeof request.developmentContext.path === "string"
+            && request.developmentContext.path.length > 0
+            && request.developmentContext.path.length <= 4_096
+            && (
+              request.developmentContext.branch === null
+              || (
+                typeof request.developmentContext.branch === "string"
+                && request.developmentContext.branch.length <= 512
+              )
+            )
+          )
+          || (
+            request.developmentContext.type === "branch"
+            && typeof request.developmentContext.branch === "string"
+            && request.developmentContext.branch.length > 0
+            && request.developmentContext.branch.length <= 512
+          )
+        )
+      )
+    )
+  ) return { id, request, error: null };
+  if (
+    request.action === "fail-native-claim"
+    && typeof request.reservationId === "string"
+    && /^[a-f0-9-]{36}$/i.test(request.reservationId)
+    && typeof request.taskId === "string"
+    && request.taskId.length > 0
+    && request.taskId.length <= 128
+    && typeof request.error === "string"
+    && request.error.length > 0
+    && request.error.length <= 4_096
+  ) return { id, request, error: null };
   if (
     request.action === "prefill-task-composer"
     && typeof request.instruction === "string"
@@ -141,6 +208,15 @@ function parseHostRequest(payload, parseAutomationRequest) {
     && typeof request.title === "string"
     && request.title.length > 0
     && request.title.length <= 240
+    && (
+      request.codexProjectId === undefined
+      || (
+        typeof request.codexProjectId === "string"
+        && request.codexProjectId.length > 0
+        && request.codexProjectId.length <= 240
+      )
+    )
+    && (request.useWorktree === undefined || typeof request.useWorktree === "boolean")
   ) {
     return { id, request, error: null };
   }
@@ -179,6 +255,12 @@ export async function handleHostBindingPayload(params, handlers) {
       result = await handlers.openAttachment(parsed.request);
     } else if (parsed.request.action === "automation") {
       result = await handlers.runAutomation(parsed.request, params.executionContextId);
+    } else if (parsed.request.action === "next-native-claim") {
+      result = await handlers.claimNext();
+    } else if (parsed.request.action === "bind-native-claim") {
+      result = await handlers.bindClaim(parsed.request);
+    } else if (parsed.request.action === "fail-native-claim") {
+      result = await handlers.failClaim(parsed.request);
     } else if (parsed.request.action === "start-task-conversation") {
       result = await handlers.startConversation(parsed.request, params.executionContextId);
     } else if (parsed.request.action === "confirm-task-conversation") {

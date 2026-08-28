@@ -55,6 +55,8 @@
   const PROJECT_SECTION_LABELS = ["projects", "项目"];
   const TASK_SECTION_LABELS = ["tasks", "任务", "chats", "对话"];
   const SEND_LABELS = ["send", "发送", "傳送"];
+  const NATIVE_WORKTREE_LABELS = ["新建本地工作树", "新增本機工作樹", "new local worktree"];
+  const LOCAL_RUN_LABELS = ["本地", "本機", "local"];
   const NATIVE_HEADER_DESTINATION_LABELS = [
     "查看活动",
     "查看活动，需要关注",
@@ -131,6 +133,7 @@
   let openGeneration = 0;
   let pendingThreadCreation = null;
   let pendingThreadAssociation = null;
+  let nativeClaimPollInFlight = false;
   let lastNativeThreadId = "";
   let panelNativeThreadId = "";
   let lastNativeProjectId = "";
@@ -1055,6 +1058,34 @@
     throw new Error("Codex 对话输入框没有生成 manage-panel Skill 引用");
   }
 
+  async function selectNativeWorktree() {
+    const trigger = Array.from(document.querySelectorAll(
+      '[data-composer-navigation-target="run-location"]',
+    )).find((candidate) => candidate.getClientRects().length > 0);
+    if (!trigger) throw new Error("Codex 没有显示运行位置选择器");
+    trigger.click();
+    const deadline = Date.now() + 4_000;
+    while (Date.now() < deadline) {
+      const item = Array.from(document.querySelectorAll('[role="menuitem"]')).find((candidate) => (
+        candidate.getClientRects().length > 0
+        && NATIVE_WORKTREE_LABELS.includes(normalizedLabel(candidate.textContent))
+      ));
+      if (!item) {
+        await new Promise((resolve) => window.setTimeout(resolve, 40));
+        continue;
+      }
+      item.click();
+      while (Date.now() < deadline) {
+        const selected = Array.from(document.querySelectorAll(
+          '[data-composer-navigation-target="run-location"]',
+        )).find((candidate) => candidate.getClientRects().length > 0);
+        if (selected && !LOCAL_RUN_LABELS.includes(normalizedLabel(selected.textContent))) return;
+        await new Promise((resolve) => window.setTimeout(resolve, 40));
+      }
+    }
+    throw new Error("Codex 没有切换到新建本地工作树");
+  }
+
   async function createThreadForTask(payload) {
     const taskId = typeof payload?.taskId === "string" ? payload.taskId.trim() : "";
     const identifier = typeof payload?.identifier === "string" ? payload.identifier.trim() : "";
@@ -1089,12 +1120,17 @@
       : "";
     const projectless = payload?.projectless === true;
     const codexProjectKind = payload?.codexProjectKind === "remote" ? "remote" : "local";
+    const autoSubmit = payload?.autoSubmit === true;
+    const reservationId = typeof payload?.reservationId === "string"
+      ? payload.reservationId.trim()
+      : "";
     if (
       !taskId
       || !identifier
       || !title
       || !instruction
       || (codexProjectKind === "local" && skillReferences.length === 0)
+      || (autoSubmit && (!reservationId || projectless || codexProjectKind !== "local"))
       || pendingThreadCreation
     ) return;
     pendingThreadCreation = taskId;
@@ -1143,6 +1179,7 @@
         return;
       }
 
+      const previousThreadId = normalizeThreadId(threadIdFromLocation() || lastNativeThreadId);
       if (!projectless && workspacePath) {
         await bridge.sendMessageFromView({
           type: "electron-set-active-workspace-root",
@@ -1185,7 +1222,30 @@
         skills: skillReferences,
       });
       const composer = await waitForPreparedComposer(identifier, skillReferences);
-      const selectedProjectId = projectless ? "" : await selectedNativeProjectId();
+      const selectedProjectId = projectless
+        ? ""
+        : (await selectedNativeProjectId()) || payload.codexProjectId;
+      if (autoSubmit) {
+        if (payload?.useWorktree !== false) await selectNativeWorktree();
+        const started = await requestHostTaskConversationStart({
+          taskId,
+          previousThreadId,
+          codexProjectId: selectedProjectId,
+          codexHostId: "local",
+          targetRoot: workspacePath,
+          projectless: false,
+          instruction,
+          title,
+          useWorktree: payload?.useWorktree !== false,
+        });
+        await requestHost("bind-native-claim", {
+          reservationId,
+          taskId,
+          threadBinding: started.threadBinding,
+          developmentContext: started.developmentContext ?? null,
+        });
+        return;
+      }
       pendingThreadAssociation = {
         taskId,
         identifier,
@@ -1200,6 +1260,15 @@
       };
       postToFrame({ type: "panel:thread-prepared", payload: { taskId } });
     } catch (error) {
+      if (autoSubmit && reservationId) {
+        try {
+          await requestHost("fail-native-claim", {
+            reservationId,
+            taskId,
+            error: error instanceof Error ? error.message : "无法创建 Codex 对话",
+          });
+        } catch (_) {}
+      }
       postToFrame({
         type: "panel:thread-create-error",
         payload: {
@@ -1641,21 +1710,42 @@
   function requestHostTaskConversationStart({
     taskId,
     previousThreadId,
+    codexProjectId,
     codexHostId,
     targetRoot,
     projectless = !targetRoot,
     instruction,
     title,
+    useWorktree = false,
   }) {
     return requestHost("start-task-conversation", {
       taskId,
       previousThreadId,
+      codexProjectId,
       codexHostId,
       targetRoot,
       projectless,
       instruction,
       title,
+      useWorktree,
     }, TASK_CONVERSATION_REQUEST_TIMEOUT_MS);
+  }
+
+  async function pollNativeClaim() {
+    if (
+      nativeClaimPollInFlight
+      || pendingThreadCreation
+      || !hasLiveHostBinding()
+    ) return;
+    nativeClaimPollInFlight = true;
+    try {
+      const response = await requestHost("next-native-claim");
+      if (response?.claim) await createThreadForTask(response.claim);
+    } catch (_) {
+      // The next heartbeat retries after the launcher or Panel service recovers.
+    } finally {
+      nativeClaimPollInFlight = false;
+    }
   }
 
   function frameMatchesPanelUrl(panelUrl) {
@@ -1966,8 +2056,12 @@
         "aria-current",
       ],
     });
-    hostContextTimer = window.setInterval(postHostContext, 1_000);
+    hostContextTimer = window.setInterval(() => {
+      postHostContext();
+      void pollNativeClaim();
+    }, 1_000);
     postHostContext();
+    void pollNativeClaim();
   }
 
   function destroy() {

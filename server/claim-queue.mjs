@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { ApiError } from "./database.mjs";
 
 const CODEX_AGENT_ACTOR = {
@@ -22,10 +24,14 @@ function isTransientError(error) {
     .test(errorText(error));
 }
 
-function executionPrompt(task) {
+function executionPrompt(task, executionIdentifier = task.identifier) {
+  const branchInstruction = executionIdentifier === task.identifier
+    ? `创建分支时使用任务标识 ${executionIdentifier}。`
+    : `创建分支时使用 Jira 标识 ${executionIdentifier}，不要使用 Panel Issue 标识 ${task.identifier}。`;
   return [
     "\uFFFC",
-    `自动执行 Panel 议题 ${task.identifier}：${task.title}`,
+    `自动执行 ${executionIdentifier} 对应的 Panel 议题 ${task.identifier}：${task.title}`,
+    branchInstruction,
     "开始前读取该议题的最新描述和全部评论，并严格按当前内容实施。不要创建第二个执行对话。",
     "完成实现、验证和本地代码审核后，在议题中记录关键改动、验证结果和剩余限制，并移动到 in_review。",
     "如果必须等待用户输入，在议题中提出明确问题并移动到 blocked；如果实施或测试确认失败，也记录原因并移动到 blocked。",
@@ -36,6 +42,7 @@ export class ClaimQueueService {
   constructor(options) {
     this.database = options.database;
     this.aiChat = options.aiChat;
+    this.managePanelSkillPath = options.managePanelSkillPath ?? null;
     this.onTaskChanged = options.onTaskChanged ?? (() => {});
     this.onCommentCreated = options.onCommentCreated ?? (() => {});
     this.onQueueChanged = options.onQueueChanged ?? (() => {});
@@ -50,6 +57,7 @@ export class ClaimQueueService {
     this.started = false;
     this.closed = false;
     this.activeExecutions = new Map();
+    this.nativeReservations = new Map();
     this.#recoverInterruptedClaims();
   }
 
@@ -120,6 +128,109 @@ export class ClaimQueueService {
     await this.#tick(false);
   }
 
+  async reserveNextNativeClaim() {
+    if (!this.managePanelSkillPath) {
+      throw new ApiError(409, "NATIVE_CLAIM_UNAVAILABLE", "Native Codex claim execution is unavailable");
+    }
+    await this.#tick(false);
+    const now = Date.now();
+    for (const [taskId, reservation] of this.nativeReservations) {
+      if (reservation.expiresAt <= now) {
+        await this.#failNativeReservation(
+          reservation.reservationId,
+          taskId,
+          new Error("Codex native claim reservation timed out"),
+        );
+      }
+    }
+    const runningByProject = new Map();
+    for (const { task } of this.database.listRunningClaims()) {
+      if (!task) continue;
+      runningByProject.set(task.projectId, (runningByProject.get(task.projectId) ?? 0) + 1);
+    }
+    for (const next of this.database.listReadyClaims()) {
+      if (this.nativeReservations.has(next.task.id)) continue;
+      if ((runningByProject.get(next.task.projectId) ?? 0) >= next.policy.parallelism) continue;
+      const reservation = {
+        reservationId: randomUUID(),
+        taskId: next.task.id,
+        projectId: next.task.projectId,
+        expiresAt: now + 10 * 60_000,
+      };
+      this.nativeReservations.set(next.task.id, reservation);
+      try {
+        this.onQueueChanged(this.database.markClaimRunning(next.task.id));
+        const prepared = await this.prepareExecution(next.task);
+        const catalog = await this.aiChat.getCatalog(next.task.projectId);
+        const implement = catalog.skills.find((skill) => skill.id === "implement");
+        if (!implement) {
+          throw new ApiError(409, "IMPLEMENT_SKILL_UNAVAILABLE", "The implement Skill is unavailable");
+        }
+        const jira = this.database.getJiraContext(next.task.id).jira;
+        const executionIdentifier = jira?.externalKey ?? next.task.identifier;
+        reservation.workspacePath = prepared.workspacePath;
+        return {
+          ...reservation,
+          identifier: executionIdentifier,
+          panelIdentifier: next.task.identifier,
+          title: `${executionIdentifier} · ${next.task.title}`,
+          instruction: executionPrompt(next.task, executionIdentifier),
+          workspacePath: prepared.workspacePath,
+          workspaceLabel: prepared.workspaceLabel,
+          projectName: prepared.projectName,
+          codexProjectId: prepared.codexProjectId ?? next.task.projectId,
+          codexProjectKind: "local",
+          codexHostId: "local",
+          autoSubmit: true,
+          useWorktree: prepared.useWorktree !== false,
+          skillReferences: [
+            { name: "manage-panel", displayName: "Manage Panel", path: this.managePanelSkillPath },
+            { name: implement.id, displayName: implement.label, path: implement.path },
+          ],
+        };
+      } catch (error) {
+        await this.#failNativeReservation(
+          reservation.reservationId,
+          next.task.id,
+          error,
+        );
+      }
+    }
+    return null;
+  }
+
+  bindNativeClaim(reservationId, taskId, threadBinding, developmentContext = null) {
+    const reservation = this.nativeReservations.get(taskId);
+    if (!reservation || reservation.reservationId !== reservationId) {
+      throw new ApiError(409, "CLAIM_RESERVATION_EXPIRED", "The native claim reservation expired");
+    }
+    if (threadBinding.workspacePath !== (developmentContext?.path ?? reservation.workspacePath)) {
+      throw new ApiError(409, "CLAIM_WORKSPACE_CONFLICT", "Codex returned an unexpected execution workspace");
+    }
+    const result = this.database.bindNativeClaim(
+      taskId,
+      threadBinding,
+      CODEX_AGENT_ACTOR,
+      developmentContext,
+    );
+    this.nativeReservations.delete(taskId);
+    this.onTaskChanged(result.task);
+    this.onQueueChanged(result.claim);
+    return result;
+  }
+
+  async failNativeClaim(reservationId, taskId, error) {
+    return await this.#failNativeReservation(reservationId, taskId, new Error(error));
+  }
+
+  async #failNativeReservation(reservationId, taskId, error) {
+    const reservation = this.nativeReservations.get(taskId);
+    if (!reservation || reservation.reservationId !== reservationId) return null;
+    this.nativeReservations.delete(taskId);
+    await this.#handleFailure(taskId, null, error);
+    return this.database.getClaimQueueItem(taskId);
+  }
+
   async cleanupCompletedTask(task) {
     return await this.cleanupExecution(task);
   }
@@ -145,6 +256,11 @@ export class ClaimQueueService {
         && thread.origin.projectId === task.projectId
         && thread.origin.workspacePath === task.developmentContext.path,
       );
+      const legacyConsistent = consistent && Boolean(thread && previousAttempt?.runId);
+      if (legacyConsistent && task.status === "blocked" && claim.resumeRequested) {
+        this.enqueue(taskId, "resume");
+        continue;
+      }
       if (!consistent) {
         if (task && ["in_progress", "todo"].includes(task.status)) this.#moveTask(task, "blocked");
         const blocked = this.database.finishClaim(
@@ -153,10 +269,6 @@ export class ClaimQueueService {
           "Interrupted execution context could not be verified after Panel restarted",
         );
         this.onQueueChanged(blocked);
-        continue;
-      }
-      if (task?.status === "blocked" && claim?.resumeRequested) {
-        this.enqueue(taskId, "resume");
         continue;
       }
       if (!task || task.status !== "in_progress") continue;
@@ -197,6 +309,7 @@ export class ClaimQueueService {
       const scanClaims = this.database.enqueueDueProjectScans();
       this.database.reconcileClaimQueue();
       for (const claim of [...jiraClaims, ...scanClaims]) this.onQueueChanged(claim);
+      if (this.managePanelSkillPath) return;
       const runningByProject = new Map();
       const activeWorkspaces = new Set();
       for (const execution of this.activeExecutions.values()) {
