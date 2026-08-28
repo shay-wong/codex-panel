@@ -150,6 +150,21 @@ if (args[0] === "debug") {
     });
     assert.deepEqual(result.context.projects.map((project) => project.id), ["api", "web"]);
     jira = result.context.jira;
+
+    let invalidPlanningResponse = await fetch(`${baseUrl}/api/tasks/${jira.id}/jira-planning`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
+      body: JSON.stringify({
+        version: jira.version,
+        threadId: "codex-native-jira-plan-invalid-project",
+        projectId: "local",
+      }),
+    });
+    let invalidPlanningPayload = await invalidPlanningResponse.json();
+    assert.equal(invalidPlanningResponse.status, 409);
+    assert.equal(invalidPlanningPayload.error.code, "JIRA_PLANNING_PROJECT_INVALID");
+    assert.equal(app.database.getAiChatThread("codex-native-jira-plan-invalid-project"), null);
+
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
       version: jira.version,
     });
@@ -448,6 +463,29 @@ if (args[0] === "debug") {
     assert.deepEqual(preparedReplan.skills.map((skill) => skill.id), ["grill-me", "to-spec", "to-tickets"]);
     assert.deepEqual(app.aiChat.listThreads().map((thread) => thread.id).sort(), previousThreadIds);
 
+    await app.aiChat.createThread({
+      id: "codex-native-foreign-thread",
+      projectId: "api",
+      title: "Foreign formal thread",
+      purpose: "formal",
+      codexThreadId: "codex-native-foreign-thread",
+    });
+    invalidPlanningResponse = await fetch(`${baseUrl}/api/tasks/${jira.id}/jira-lifecycle`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
+      body: JSON.stringify({
+        version: reopened.lifecycle.version,
+        action: "replan",
+        threadId: "codex-native-foreign-thread",
+        projectId: "api",
+      }),
+    });
+    invalidPlanningPayload = await invalidPlanningResponse.json();
+    assert.equal(invalidPlanningResponse.status, 409);
+    assert.equal(invalidPlanningPayload.error.code, "JIRA_PLANNING_THREAD_CONFLICT");
+    assert.equal(app.database.getJiraContext(jira.id).plan.threadId, previousPlanningThreadId);
+    const threadIdsAfterForeignConflict = app.aiChat.listThreads().map((thread) => thread.id).sort();
+
     const completeJiraReplan = app.database.completeJiraReplan.bind(app.database);
     app.database.completeJiraReplan = () => {
       throw new Error("intentional replan commit failure");
@@ -459,10 +497,11 @@ if (args[0] === "debug") {
         version: reopened.lifecycle.version,
         action: "replan",
         threadId: "codex-native-replan-failed",
+        projectId: "api",
       }),
     });
     assert.equal(failedCommitResponse.status, 500);
-    assert.deepEqual(app.aiChat.listThreads().map((thread) => thread.id).sort(), previousThreadIds);
+    assert.deepEqual(app.aiChat.listThreads().map((thread) => thread.id).sort(), threadIdsAfterForeignConflict);
     const afterCommitFailure = app.database.getJiraContext(jira.id);
     assert.equal(afterCommitFailure.lifecycle.pending.kind, "reopened");
     assert.equal(afterCommitFailure.lifecycle.version, reopened.lifecycle.version);
@@ -477,6 +516,7 @@ if (args[0] === "debug") {
         version: reopened.lifecycle.version,
         action: "replan",
         threadId: "codex-native-replan-next",
+        projectId: "api",
       }),
     });
     assert.equal(replanResponse.status, 200);
