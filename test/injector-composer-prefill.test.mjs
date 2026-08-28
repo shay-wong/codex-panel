@@ -14,6 +14,8 @@ test("composer prefill waits for the Skill menu to close between linked Skills",
   let pendingSkill = null;
   let menuSkillIndex = 0;
   let overlayClosePolls = 0;
+  let delayedMention = null;
+  let delayedMentionAt = 0;
   let editorText = "";
   const inserted = [];
   const instruction = [
@@ -36,6 +38,10 @@ test("composer prefill waits for the Skill menu to close between linked Skills",
     getClientRects: () => [1],
     focus() {},
     querySelectorAll(selector) {
+      if (delayedMention && now >= delayedMentionAt) {
+        mentions.push(delayedMention);
+        delayedMention = null;
+      }
       return selector === "[skill-mention-name]" ? mentions : [];
     },
   };
@@ -43,12 +49,18 @@ test("composer prefill waits for the Skill menu to close between linked Skills",
     click() {
       const skill = pendingSkill;
       const nativeSkill = nativeSkills[skills.indexOf(skill)];
-      mentions.push({
+      const mention = {
         getAttribute(name) {
           if (name === "skill-mention-name") return nativeSkill.name;
           return name === "skill-mention-path" ? nativeSkill.path : null;
         },
-      });
+      };
+      if (skill.name === "grill-me") {
+        delayedMention = mention;
+        delayedMentionAt = now + 8_400;
+      } else {
+        mentions.push(mention);
+      }
       editorText += skill.displayName;
       overlayClosePolls = 2;
     },
@@ -118,7 +130,7 @@ test("composer prefill waits for the Skill menu to close between linked Skills",
   assert.deepEqual(inserted, ["$", " ", "$", instruction]);
   assert.ok(editorText.includes("LOCAL-42"));
   assert.equal(mentions.length, 2);
-  assert.match(injectedSource, /const COMPOSER_PREFILL_REQUEST_TIMEOUT_MS = 36_000/);
+  assert.match(injectedSource, /const COMPOSER_PREFILL_REQUEST_TIMEOUT_MS = 60_000/);
   assert.match(
     injectedSource,
     /requestHost\("prefill-task-composer", \{[\s\S]*?\}, COMPOSER_PREFILL_REQUEST_TIMEOUT_MS\)/,
