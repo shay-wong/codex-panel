@@ -21,8 +21,12 @@ test("composer prefill waits for the Skill menu to close between linked Skills",
     "Before acting, use panelctl to read the latest issue content and every comment.",
   ].join("\n\n");
   const skills = [
-    { name: "manage-panel", displayName: "Manage Panel", path: "/tmp/manage-panel/SKILL.md" },
-    { name: "grill-me", displayName: "Grill Me", path: "/tmp/grill-me/SKILL.md" },
+    { name: "manage-panel", displayName: "Manage Panel", path: "/tmp/links/manage-panel/SKILL.md" },
+    { name: "grill-me", displayName: "Grill Me", path: "/tmp/links/grill-me/SKILL.md" },
+  ];
+  const nativeSkills = [
+    { name: "manage-panel", path: "/tmp/source/manage-panel/SKILL.md" },
+    { name: "shay-skills:grill-me", path: "/tmp/source/grill-me/SKILL.md" },
   ];
   const mentions = [];
   const editor = {
@@ -38,10 +42,11 @@ test("composer prefill waits for the Skill menu to close between linked Skills",
   const button = {
     click() {
       const skill = pendingSkill;
+      const nativeSkill = nativeSkills[skills.indexOf(skill)];
       mentions.push({
         getAttribute(name) {
-          if (name === "skill-mention-name") return skill.name;
-          return name === "skill-mention-path" ? skill.path : null;
+          if (name === "skill-mention-name") return nativeSkill.name;
+          return name === "skill-mention-path" ? nativeSkill.path : null;
         },
       });
       editorText += skill.displayName;
@@ -82,8 +87,9 @@ test("composer prefill waits for the Skill menu to close between linked Skills",
   const prefillTaskComposerViaCdp = new Function(
     "Date",
     "setTimeout",
+    "realpath",
     `${functionSource}\nreturn prefillTaskComposerViaCdp;`,
-  )(FakeDate, fakeSetTimeout);
+  )(FakeDate, fakeSetTimeout, async (skillPath) => skillPath.replace("/links/", "/source/"));
   const cdp = {
     async send(method, params) {
       if (method === "Input.insertText") {

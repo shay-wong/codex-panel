@@ -3,7 +3,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { accessSync, constants, createReadStream, createWriteStream } from "node:fs";
-import { mkdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { createInterface } from "node:readline";
 import { pipeline } from "node:stream/promises";
@@ -1675,22 +1675,31 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
   const skills = Array.isArray(request.skills)
     ? request.skills
     : [{ name: skillName, displayName: skillDisplayName, path: skillPath }];
+  const resolvedSkills = await Promise.all(skills.map(async (skill) => ({
+    ...skill,
+    resolvedPath: await realpath(skill.path).catch(() => skill.path),
+  })));
   const stageDeadline = () => Date.now() + 8_000;
   let deadline = stageDeadline();
   while (Date.now() < deadline) {
     const prepared = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
         const instruction = ${JSON.stringify(instruction)};
-        const skills = ${JSON.stringify(skills)};
+        const skills = ${JSON.stringify(resolvedSkills)};
         const compact = (value) => String(value || "").replace(/\\s+/g, "");
+        const matchesSkill = (candidate, skill) => {
+          const name = candidate.getAttribute("skill-mention-name") || "";
+          const skillPath = candidate.getAttribute("skill-mention-path") || "";
+          return (name === skill.name || name.endsWith(":" + skill.name))
+            && (skillPath === skill.path || skillPath === skill.resolvedPath);
+        };
         const editor = Array.from(document.querySelectorAll(
           '[data-codex-composer="true"][contenteditable="true"]'
         )).find((candidate) => candidate.getClientRects().length > 0);
         if (!editor) return { ready: false };
         const mentions = Array.from(editor.querySelectorAll("[skill-mention-name]"));
         const skillsMatch = skills.every((skill) => mentions.some((candidate) => (
-          candidate.getAttribute("skill-mention-name") === skill.name
-          && candidate.getAttribute("skill-mention-path") === skill.path
+          matchesSkill(candidate, skill)
         )));
         if (skillsMatch && compact(editor.textContent).includes(compact(instruction))) {
           return { ready: true, matches: true };
@@ -1714,7 +1723,7 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
     break;
   }
 
-  for (const [skillIndex, skill] of skills.entries()) {
+  for (const [skillIndex, skill] of resolvedSkills.entries()) {
     await cdp.send("Input.insertText", { text: "$" });
     let selectedSkill = false;
     deadline = stageDeadline();
@@ -1752,15 +1761,21 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
         expression: `(() => {
           const skillName = ${JSON.stringify(skill.name)};
           const skillPath = ${JSON.stringify(skill.path)};
+          const resolvedPath = ${JSON.stringify(skill.resolvedPath)};
           const editor = Array.from(document.querySelectorAll(
             '[data-codex-composer="true"][contenteditable="true"]'
           )).find((candidate) => candidate.getClientRects().length > 0);
           if (!editor) return { ready: false };
           const selected = Array.from(editor.querySelectorAll("[skill-mention-name]"))
-            .find((candidate) => candidate.getAttribute("skill-mention-name") === skillName);
+            .find((candidate) => {
+              const name = candidate.getAttribute("skill-mention-name") || "";
+              return name === skillName || name.endsWith(":" + skillName);
+            });
           return {
             ready: Boolean(selected),
-            pathMatches: selected?.getAttribute("skill-mention-path") === skillPath,
+            pathMatches: [skillPath, resolvedPath].includes(
+              selected?.getAttribute("skill-mention-path") || ""
+            ),
           };
         })()`,
         contextId: executionContextId,
@@ -1778,7 +1793,7 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
     if (!mentionReady) {
       throw new Error(`Timed out while creating the ${skill.displayName} Skill mention`);
     }
-    if (skillIndex < skills.length - 1) {
+    if (skillIndex < resolvedSkills.length - 1) {
       deadline = stageDeadline();
       while (Date.now() < deadline) {
         const closed = await cdp.send("Runtime.evaluate", {
@@ -1802,16 +1817,21 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
     const verified = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
         const instruction = ${JSON.stringify(instruction)};
-        const skills = ${JSON.stringify(skills)};
+        const skills = ${JSON.stringify(resolvedSkills)};
         const compact = (value) => String(value || "").replace(/\\s+/g, "");
+        const matchesSkill = (candidate, skill) => {
+          const name = candidate.getAttribute("skill-mention-name") || "";
+          const skillPath = candidate.getAttribute("skill-mention-path") || "";
+          return (name === skill.name || name.endsWith(":" + skill.name))
+            && (skillPath === skill.path || skillPath === skill.resolvedPath);
+        };
         const editor = Array.from(document.querySelectorAll(
           '[data-codex-composer="true"][contenteditable="true"]'
         )).find((candidate) => candidate.getClientRects().length > 0);
         if (!editor) return false;
         const mentions = Array.from(editor.querySelectorAll("[skill-mention-name]"));
         const skillsMatch = skills.every((skill) => mentions.some((candidate) => (
-          candidate.getAttribute("skill-mention-name") === skill.name
-          && candidate.getAttribute("skill-mention-path") === skill.path
+          matchesSkill(candidate, skill)
         )));
         return skillsMatch && compact(editor.textContent).includes(compact(instruction));
       })()`,
