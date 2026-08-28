@@ -1680,6 +1680,7 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
     resolvedPath: await realpath(skill.path).catch(() => skill.path),
   })));
   const stageDeadline = () => Date.now() + 8_000;
+  const mentionDeadline = () => Date.now() + 15_000;
   let deadline = stageDeadline();
   while (Date.now() < deadline) {
     const prepared = await cdp.send("Runtime.evaluate", {
@@ -1755,7 +1756,7 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
     if (!selectedSkill) throw new Error(`Timed out while selecting the ${skill.displayName} Skill`);
 
     let mentionReady = false;
-    deadline = stageDeadline();
+    deadline = mentionDeadline();
     while (Date.now() < deadline) {
       const mention = await cdp.send("Runtime.evaluate", {
         expression: `(() => {
