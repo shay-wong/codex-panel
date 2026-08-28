@@ -40,6 +40,7 @@ import {
 import { TASK_PRIORITIES, TASK_STATUSES } from "../types";
 import type {
   ActorIdentity,
+  AiChatSkill,
   AiChatThread,
   Attachment,
   Comment,
@@ -160,6 +161,16 @@ interface TaskDetailProps {
     composer?: { text: string; skillIds: string[] },
   ) => void;
   onOpenInThread: (task: Task) => void;
+  onOpenJiraPlanning: (
+    task: Task,
+    projectId: string | null,
+    composer: {
+      text: string;
+      skills: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
+      replanLifecycleVersion?: number;
+    },
+  ) => Promise<void>;
+  onExecutionStarted: (taskId: string) => void;
   onCopy: (text: string, announcement: string) => void;
   onEnsureJiraProjects: (projectIds: string[]) => Promise<void>;
   openingThread: boolean;
@@ -433,9 +444,11 @@ function ConversationLink({
 function AiConversationActivity({
   thread,
   onOpen,
+  native = false,
 }: {
   thread: AiChatThread;
   onOpen: () => void;
+  native?: boolean;
 }) {
   const { locale, text } = useTaskboardI18n();
   const statusLabel = {
@@ -452,7 +465,9 @@ function AiConversationActivity({
       <button
         className="activity-conversation-link"
         type="button"
-        title={text(`打开内嵌对话 ${thread.title}`, `Open embedded conversation ${thread.title}`)}
+        title={native
+          ? text(`打开 Codex 对话 ${thread.title}`, `Open Codex conversation ${thread.title}`)
+          : text(`打开临时对话 ${thread.title}`, `Open temporary conversation ${thread.title}`)}
         aria-label={text(
           `打开内嵌对话：${thread.title}，${statusLabel}`,
           `Open embedded conversation: ${thread.title}, ${statusLabel}`,
@@ -463,7 +478,9 @@ function AiConversationActivity({
           <strong>{thread.title}</strong>
           <small>
             <span className={`activity-conversation-state is-${thread.status}`} aria-hidden="true" />
-            <span>{text(`内嵌 AI 对话 · ${statusLabel}`, `Embedded AI conversation · ${statusLabel}`)}</span>
+            <span>{native
+              ? text(`Codex 对话 · ${statusLabel}`, `Codex conversation · ${statusLabel}`)
+              : text(`临时 AI 对话 · ${statusLabel}`, `Temporary AI conversation · ${statusLabel}`)}</span>
             <time title={exactTime(thread.updatedAt, locale)}>{relativeTime(thread.updatedAt, locale)}</time>
           </small>
         </span>
@@ -498,6 +515,8 @@ export function TaskDetail({
   onAiChatThreadsRefresh,
   onOpenAiChatThread,
   onOpenInThread,
+  onOpenJiraPlanning,
+  onExecutionStarted,
   onCopy,
   onEnsureJiraProjects,
   openingThread,
@@ -521,6 +540,8 @@ export function TaskDetail({
   const [jiraProjectSearch, setJiraProjectSearch] = useState("");
   const [jiraLinkSavingId, setJiraLinkSavingId] = useState<string | null>(null);
   const [jiraManagerOpen, setJiraManagerOpen] = useState(false);
+  const [jiraPlanningProjectAction, setJiraPlanningProjectAction] = useState<"planning" | "replan" | null>(null);
+  const [jiraPlanningProjectSearch, setJiraPlanningProjectSearch] = useState("");
   const [jiraSimpleStartSaving, setJiraSimpleStartSaving] = useState(false);
   const [jiraPlanningSaving, setJiraPlanningSaving] = useState(false);
   const [jiraLifecycleSaving, setJiraLifecycleSaving] = useState<
@@ -847,9 +868,42 @@ export function TaskDetail({
     }
   }
 
-  async function createOrContinueJiraPlanning() {
+  function openExistingJiraPlanning(): boolean {
+    const threadId = jiraContext?.plan?.threadId;
+    if (!threadId) return false;
+    if (currentTask.threadBinding?.threadId === threadId) {
+      onOpenThread(currentTask.threadBinding);
+      return true;
+    }
+    if (currentTask.legacyLocalThreadId === threadId) {
+      onOpenLegacyLocalThread(threadId);
+      return true;
+    }
+    const aiThread = aiChatThreads.find((thread) => thread.id === threadId);
+    if (aiThread?.purpose === "formal" && aiThread.codexThreadId) {
+      onOpenLegacyLocalThread(aiThread.codexThreadId);
+      return true;
+    }
+    return false;
+  }
+
+  function requestJiraPlanning() {
+    if (jiraPlanningSaving || openingThread) return;
+    if (jiraContext?.plan && !jiraContext.plan.needsReview && openExistingJiraPlanning()) return;
+    const linkedProjects = jiraContext?.projects ?? [];
+    if (linkedProjects.length > 1) {
+      setJiraPlanningProjectSearch("");
+      setJiraPlanningProjectAction("planning");
+      return;
+    }
+    void createOrContinueJiraPlanning(linkedProjects[0]?.id ?? null);
+  }
+
+  async function createOrContinueJiraPlanning(projectId: string | null) {
     if (jiraPlanningSaving) return;
     setJiraPlanningSaving(true);
+    setJiraPlanningProjectAction(null);
+    onError(null);
     try {
       const latest = await getJiraTaskContext(currentTask.id);
       if (!latest.jira) {
@@ -860,14 +914,11 @@ export function TaskDetail({
       const { context } = result;
       setJiraContext(context);
       if (context.jira) setCurrentTask(context.jira);
-      onAiChatThreadsRefresh();
-      if (context.plan?.threadId) {
-        onOpenAiChatThread(
-          context.plan.threadId,
-          result.composerText
-            ? { text: result.composerText, skillIds: result.skillIds ?? [] }
-            : undefined,
-        );
+      if (result.composerText && result.skills && context.jira) {
+        await onOpenJiraPlanning(context.jira, projectId, {
+          text: result.composerText,
+          skills: result.skills,
+        });
       }
     } catch (error) {
       onError(messageFor(error));
@@ -877,12 +928,50 @@ export function TaskDetail({
     }
   }
 
+  function requestJiraReplanning() {
+    if (jiraLifecycleSaving || openingThread) return;
+    const linkedProjects = jiraContext?.projects ?? [];
+    if (linkedProjects.length > 1) {
+      setJiraPlanningProjectSearch("");
+      setJiraPlanningProjectAction("replan");
+      return;
+    }
+    void createJiraReplanning(linkedProjects[0]?.id ?? null);
+  }
+
+  async function createJiraReplanning(projectId: string | null) {
+    const lifecycle = jiraContext?.lifecycle;
+    if (!jiraContext?.jira || lifecycle?.pending?.kind !== "reopened" || jiraLifecycleSaving) return;
+    setJiraLifecycleSaving("replan");
+    setJiraPlanningProjectAction(null);
+    onError(null);
+    try {
+      const result = await resolveJiraLifecycle(jiraContext.jira.id, lifecycle.version, "replan");
+      setJiraContext(result.context);
+      if (result.context.jira) setCurrentTask(result.context.jira);
+      if (result.composerText && result.skills && result.context.jira) {
+        await onOpenJiraPlanning(result.context.jira, projectId, {
+          text: result.composerText,
+          skills: result.skills,
+          replanLifecycleVersion: lifecycle.version,
+        });
+      }
+    } catch (error) {
+      onError(issueMessageFor(error));
+      setJiraContext(await getJiraTaskContext(currentTask.id).catch(() => jiraContext));
+    } finally {
+      setJiraLifecycleSaving(null);
+    }
+  }
+
   async function executeNow() {
     if (claiming) return;
     setClaiming(true);
     onError(null);
     try {
-      setCurrentTask(await claimTask(currentTask.id));
+      const claimed = await claimTask(currentTask.id);
+      setCurrentTask(claimed);
+      onExecutionStarted(claimed.id);
     } catch (error) {
       onError(messageFor(error));
     } finally {
@@ -900,14 +989,6 @@ export function TaskDetail({
       const { context } = result;
       setJiraContext(context);
       if (context.jira) setCurrentTask(context.jira);
-      if (action === "replan" && context.plan?.threadId) {
-        onOpenAiChatThread(
-          context.plan.threadId,
-          result.composerText
-            ? { text: result.composerText, skillIds: result.skillIds ?? [] }
-            : undefined,
-        );
-      }
     } catch (error) {
       onError(issueMessageFor(error));
       setJiraContext(await getJiraTaskContext(currentTask.id).catch(() => jiraContext));
@@ -1355,6 +1436,15 @@ export function TaskDetail({
   ));
   const linkedJiraProjectIds = new Set(jiraContext?.projects.map((project) => project.id) ?? []);
   const selectedJiraProjectIds = new Set(jiraProjectIds);
+  const linkedJiraProjectNames = jiraContext?.projects.map((project) => project.name).join(" · ") ?? "";
+  const linkedJiraProjectSummary = jiraContext?.projects[0]?.name
+    ?? text("尚未绑定仓库", "No repository linked");
+  const additionalJiraProjectCount = Math.max((jiraContext?.projects.length ?? 0) - 1, 0);
+  const selectedJiraProjects = jiraProjectIds.flatMap((projectId) => {
+    const project = jiraRepositoryProjects.find((candidate) => candidate.id === projectId)
+      ?? jiraContext?.projects.find((candidate) => candidate.id === projectId);
+    return project ? [project] : [];
+  });
   const addedJiraProjects = jiraRepositoryProjects.filter((project) => (
     selectedJiraProjectIds.has(project.id) && !linkedJiraProjectIds.has(project.id)
   ));
@@ -1404,7 +1494,7 @@ export function TaskDetail({
               `已发布 ${jiraContext.plan.items.length} 个 Issue`,
               `${jiraContext.plan.items.length} issues published`,
             );
-  const jiraPlanningLabel = jiraPlanningSaving
+  const jiraPlanningLabel = jiraPlanningSaving || openingThread
     ? text("正在打开…", "Opening…")
     : jiraContext?.simpleStart
       ? text("已选择一键执行", "Simple execution selected")
@@ -1704,11 +1794,17 @@ export function TaskDetail({
                   <div className="comments-loading" aria-label={text("正在加载活动", "Loading activity")} aria-busy="true"><i /><i /></div>
                 ) : activityTimeline.map((item) => {
                   if (item.kind === "ai-conversation") {
+                    const formalThread = item.thread.purpose === "formal";
                     return (
                       <AiConversationActivity
                         key={`ai-conversation-${item.id}`}
                         thread={item.thread}
-                        onOpen={() => onOpenAiChatThread(item.thread.id)}
+                        native={formalThread}
+                        onOpen={() => formalThread
+                          ? item.thread.codexThreadId
+                            ? onOpenLegacyLocalThread(item.thread.codexThreadId)
+                            : onExecutionStarted(currentTask.id)
+                          : onOpenAiChatThread(item.thread.id)}
                       />
                     );
                   }
@@ -2376,9 +2472,17 @@ export function TaskDetail({
                   <LinearIcon name="link" />
                   <span>
                     <strong>{currentTask.externalStatus ?? text("未知状态", "Unknown status")}</strong>
+                    <small className="jira-context-repositories" title={linkedJiraProjectNames}>
+                      <span>{jiraContextLoading
+                        ? text("加载仓库…", "Loading repositories…")
+                        : linkedJiraProjectSummary}</span>
+                      {!jiraContextLoading && additionalJiraProjectCount > 0 && (
+                        <em>+{additionalJiraProjectCount}</em>
+                      )}
+                    </small>
                     <small>{text(
-                      `${jiraContext?.projects.length ?? 0} 个仓库 · ${jiraContext?.issues.length ?? 0} 个 Issue · ${jiraPlanStatusLabel}`,
-                      `${jiraContext?.projects.length ?? 0} repositories · ${jiraContext?.issues.length ?? 0} issues · ${jiraPlanStatusLabel}`,
+                      `${jiraContext?.issues.length ?? 0} 个 Issue · ${jiraPlanStatusLabel}`,
+                      `${jiraContext?.issues.length ?? 0} issues · ${jiraPlanStatusLabel}`,
                     )}</small>
                   </span>
                   <b>{text("管理关联", "Manage")}</b>
@@ -2420,13 +2524,15 @@ export function TaskDetail({
                           && !jiraContext?.lifecycle?.duplicateOf?.accessible
                         )}
                         aria-busy={jiraLifecycleSaving !== null}
-                        onClick={() => void applyJiraLifecycle(
-                          jiraLifecyclePending.kind === "reopened"
-                            ? jiraContext?.plan ? "replan" : "rework"
-                            : jiraLifecyclePending.kind === "duplicate"
-                              ? "migrate"
-                              : "pause"
-                        )}
+                        onClick={() => jiraLifecyclePending.kind === "reopened" && jiraContext?.plan
+                          ? requestJiraReplanning()
+                          : void applyJiraLifecycle(
+                              jiraLifecyclePending.kind === "reopened"
+                                ? "rework"
+                                : jiraLifecyclePending.kind === "duplicate"
+                                  ? "migrate"
+                                  : "pause",
+                            )}
                       >{jiraLifecycleSaving
                           ? <><span className="ai-chat-spinner" aria-hidden="true" />{text("处理中…", "Applying…")}</>
                           : jiraLifecyclePending.kind === "reopened"
@@ -2507,14 +2613,15 @@ export function TaskDetail({
                     disabled={
                       jiraContextLoading
                       || jiraPlanningSaving
+                      || openingThread
                       || Boolean(jiraContext?.simpleStart)
                       || Boolean(jiraContext?.lifecycle?.duplicateOf)
                       || Boolean(jiraLifecyclePending)
                     }
-                    aria-busy={jiraPlanningSaving}
-                    onClick={() => void createOrContinueJiraPlanning()}
+                    aria-busy={jiraPlanningSaving || openingThread}
+                    onClick={requestJiraPlanning}
                   >
-                    {jiraPlanningSaving
+                    {jiraPlanningSaving || openingThread
                       ? <span className="ai-chat-spinner" aria-hidden="true" />
                       : <ConversationIcon />}
                     <span>{jiraPlanningLabel}</span>
@@ -2643,6 +2750,60 @@ export function TaskDetail({
         </div>
       </div>
 
+      {jiraPlanningProjectAction && currentTask.source === "jira" && (
+        <div className="delete-backdrop jira-manager-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !jiraPlanningSaving) {
+            setJiraPlanningProjectAction(null);
+          }
+        }}>
+          <div
+            className="jira-manager-dialog jira-planning-project-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="jira-planning-project-title"
+          >
+            <header>
+              <div>
+                <h2 id="jira-planning-project-title">{text("选择规划仓库", "Choose planning repository")}</h2>
+                <p>{text("新对话会在所选项目下创建", "The new conversation will be created in this project")}</p>
+              </div>
+              <button
+                type="button"
+                aria-label={text("关闭", "Close")}
+                disabled={jiraPlanningSaving}
+                onClick={() => setJiraPlanningProjectAction(null)}
+              ><LinearIcon name="close" /></button>
+            </header>
+            <div className="jira-planning-project-body">
+              <ProjectSelectionMenu
+                ariaLabel={text("选择规划仓库", "Choose planning repository")}
+                items={jiraContext?.projects ?? []}
+                selectedIds={new Set<string>()}
+                searchValue={jiraPlanningProjectSearch}
+                searchLabel={text("按名称筛选仓库", "Filter repositories by name")}
+                searchPlaceholder={text("筛选仓库…", "Filter repositories…")}
+                clearSearchLabel={text("清除仓库筛选", "Clear repository filter")}
+                emptyMessage={text("没有匹配仓库", "No matching repositories")}
+                disabled={jiraPlanningSaving}
+                onSearchChange={setJiraPlanningProjectSearch}
+                onSelect={(project) => void (jiraPlanningProjectAction === "replan"
+                  ? createJiraReplanning(project.id)
+                  : createOrContinueJiraPlanning(project.id))}
+              />
+            </div>
+            <footer>
+              <span>{text("只影响这次规划对话", "This only affects this planning conversation")}</span>
+              <button
+                className="button secondary"
+                type="button"
+                disabled={jiraPlanningSaving}
+                onClick={() => setJiraPlanningProjectAction(null)}
+              >{text("取消", "Cancel")}</button>
+            </footer>
+          </div>
+        </div>
+      )}
+
       {jiraAvailable && jiraManagerOpen && currentTask.source === "jira" && (
         <div className="delete-backdrop jira-manager-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget && savingProperty !== "jiraProjects") {
@@ -2674,25 +2835,44 @@ export function TaskDetail({
                 {jiraContextLoading ? (
                   <p className="jira-context-empty">{text("加载中…", "Loading…")}</p>
                 ) : jiraRepositoryProjects.length > 0 ? (
-                  <ProjectSelectionMenu
-                    className="jira-project-picker"
-                    ariaLabel={text("关联仓库", "Linked repositories")}
-                    items={jiraRepositoryProjects}
-                    selectedIds={selectedJiraProjectIds}
-                    searchValue={jiraProjectSearch}
-                    searchLabel={text("按名称筛选仓库", "Filter repositories by name")}
-                    searchPlaceholder={text("筛选仓库…", "Filter repositories…")}
-                    clearSearchLabel={text("清除仓库筛选", "Clear repository filter")}
-                    emptyMessage={text("没有匹配仓库", "No matching repositories")}
-                    disabled={savingProperty === "jiraProjects"}
-                    multiple
-                    onSearchChange={setJiraProjectSearch}
-                    onSelect={(project) => setJiraProjectIds((current) => (
-                      current.includes(project.id)
-                        ? current.filter((projectId) => projectId !== project.id)
-                        : [...current, project.id]
-                    ))}
-                  />
+                  <>
+                    <div className="jira-selected-projects" aria-live="polite">
+                      <strong>{jiraProjectsChanged
+                        ? text("当前选择", "Current selection")
+                        : text("已绑定", "Linked")}</strong>
+                      {selectedJiraProjects.length > 0 ? (
+                        <div>
+                          {selectedJiraProjects.map((project) => (
+                            <span className="jira-selected-project" key={project.id} title={project.name}>
+                              <LinearIcon name="folder" />
+                              <span>{project.name}</span>
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <small>{text("尚未选择仓库", "No repository selected")}</small>
+                      )}
+                    </div>
+                    <ProjectSelectionMenu
+                      className="jira-project-picker"
+                      ariaLabel={text("关联仓库", "Linked repositories")}
+                      items={jiraRepositoryProjects}
+                      selectedIds={selectedJiraProjectIds}
+                      searchValue={jiraProjectSearch}
+                      searchLabel={text("按名称筛选仓库", "Filter repositories by name")}
+                      searchPlaceholder={text("筛选仓库…", "Filter repositories…")}
+                      clearSearchLabel={text("清除仓库筛选", "Clear repository filter")}
+                      emptyMessage={text("没有匹配仓库", "No matching repositories")}
+                      disabled={savingProperty === "jiraProjects"}
+                      multiple
+                      onSearchChange={setJiraProjectSearch}
+                      onSelect={(project) => setJiraProjectIds((current) => (
+                        current.includes(project.id)
+                          ? current.filter((projectId) => projectId !== project.id)
+                          : [...current, project.id]
+                      ))}
+                    />
+                  </>
                 ) : (
                   <p className="jira-context-empty">{text("暂无已连接本地仓库", "No local repositories connected")}</p>
                 )}
@@ -2720,7 +2900,7 @@ export function TaskDetail({
                     <div>
                       <span>{text("规划", "Planning")}</span>
                       <strong>{jiraPlanStatusLabel}</strong>
-                      <button type="button" onClick={() => void createOrContinueJiraPlanning()}>
+                      <button type="button" onClick={requestJiraPlanning}>
                         {text("打开对话", "Open conversation")}
                       </button>
                     </div>

@@ -769,13 +769,28 @@ function parseJiraSimpleStart(body) {
   return { version: parseVersion(body.version) };
 }
 
+function parseJiraPlanning(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "threadId", "projectId"]));
+  return {
+    version: parseVersion(body.version),
+    threadId: parseThreadId(body.threadId),
+    projectId: body.projectId === undefined ? undefined : validateProjectId(body.projectId),
+  };
+}
+
 function parseJiraLifecycle(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "action"]));
+  assertAllowedKeys(body, new Set(["version", "action", "threadId", "projectId"]));
   if (!["pause", "keep", "rework", "replan", "migrate"].includes(body.action)) {
     throw new ApiError(400, "INVALID_FIELD", "Unsupported Jira lifecycle action");
   }
-  return { version: parseVersion(body.version), action: body.action };
+  return {
+    version: parseVersion(body.version),
+    action: body.action,
+    threadId: parseThreadId(body.threadId),
+    projectId: body.projectId === undefined ? undefined : validateProjectId(body.projectId),
+  };
 }
 
 function parseJiraPlanSpec(body) {
@@ -2358,7 +2373,24 @@ export function createPanelServer(options = {}) {
     ].join("\n");
   }
 
-  async function startJiraPlanning(jiraTaskId, version) {
+  async function jiraPlanningSkills(projectId) {
+    const catalog = await aiChat.getCatalog(projectId);
+    const skillsById = new Map(catalog.skills.map((skill) => [skill.id, skill]));
+    const missing = jiraPlanningSkillIds.filter((skillId) => !skillsById.has(skillId));
+    if (missing.length > 0) {
+      throw new ApiError(
+        409,
+        "JIRA_PLANNING_SKILL_UNAVAILABLE",
+        `Jira planning Skills are unavailable: ${missing.join(", ")}`,
+      );
+    }
+    return jiraPlanningSkillIds.map((skillId) => {
+      const skill = skillsById.get(skillId);
+      return { id: skill.id, label: skill.label, path: skill.path };
+    });
+  }
+
+  async function startJiraPlanning(jiraTaskId, version, threadId, selectedProjectId) {
     const context = database.getJiraContext(jiraTaskId);
     if (!context.jira) {
       throw new ApiError(409, "JIRA_TASK_REQUIRED", "Only Jira issues can be planned");
@@ -2369,76 +2401,106 @@ export function createPanelServer(options = {}) {
     if (context.lifecycle?.pending?.kind === "reopened") {
       throw new ApiError(409, "JIRA_REPLAN_REQUIRED", "Choose how to handle the reopened Jira issue first");
     }
+    if (context.lifecycle?.duplicateOf) {
+      throw new ApiError(409, "JIRA_DUPLICATE", "Use the canonical Jira issue instead of planning a duplicate");
+    }
+    if (context.simpleStart) {
+      throw new ApiError(
+        409,
+        "JIRA_PLANNING_SIMPLE_START_CONFLICT",
+        "This Jira issue already uses the simple execution flow",
+      );
+    }
     const projectId = context.projects[0]?.id ?? DEFAULT_PROJECT_ID;
-    let thread = context.plan?.threadId
-      ? database.getAiChatThread(context.plan.threadId)
-      : null;
-    if (thread?.archivedAt) thread = null;
-    if (!thread) {
-      thread = await aiChat.createThread({
-        projectId,
+    const skills = await jiraPlanningSkills(projectId);
+    if (!threadId) {
+      return {
+        context,
+        composerText: jiraPlanningPrompt(
+          context.jira,
+          context.projects,
+          Boolean(context.plan),
+          context.plan,
+        ),
+        skills,
+      };
+    }
+
+    const createdThread = !database.getAiChatThread(threadId);
+    if (createdThread) {
+      await aiChat.createThread({
+        id: threadId,
+        projectId: selectedProjectId ?? projectId,
         title: `${context.jira.externalKey ?? context.jira.identifier} · Jira 规划`,
-        sandbox: "workspace-write",
+        purpose: "formal",
+        codexThreadId: threadId,
       });
     }
-    const started = database.beginJiraPlanning(jiraTaskId, version, thread.id);
-    let composerText = null;
-    if (started.shouldPrompt || database.listAiChatRuns(thread.id).length === 0) {
-      const review = Boolean(
-        context.plan
-        && (started.shouldPrompt || context.plan.spec.trim() || context.plan.publication > 0),
-      );
-      composerText = jiraPlanningPrompt(
-        context.jira,
-        context.projects,
-        review,
-        context.plan,
-      );
+
+    let started;
+    try {
+      started = database.beginJiraPlanning(jiraTaskId, version, threadId);
+    } catch (error) {
+      if (createdThread) await aiChat.discardThread(threadId);
+      throw error;
     }
     if (started.shouldPrompt) {
       database.markJiraPlanPrompted(jiraTaskId);
     }
     return {
       context: database.getJiraContext(jiraTaskId),
-      ...(composerText ? { composerText, skillIds: jiraPlanningSkillIds } : {}),
     };
   }
 
-  async function createJiraReplan(jiraTaskId, version, reservation) {
+  function jiraReplanContext(jiraTaskId, version) {
+    const context = database.getJiraContext(jiraTaskId);
+    if (!context.jira || context.lifecycle?.pending?.kind !== "reopened" || !context.plan) {
+      throw new ApiError(
+        409,
+        "JIRA_REPLAN_UNAVAILABLE",
+        "Planning again requires a reopened planned Jira issue",
+      );
+    }
+    if (context.lifecycle.version !== version) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Jira lifecycle changed since it was read");
+    }
+    return context;
+  }
+
+  async function prepareJiraReplan(jiraTaskId, version) {
+    const context = jiraReplanContext(jiraTaskId, version);
+    return {
+      context,
+      composerText: jiraPlanningPrompt(context.jira, context.projects, true, context.plan),
+      skills: await jiraPlanningSkills(context.projects[0]?.id ?? DEFAULT_PROJECT_ID),
+    };
+  }
+
+  async function createJiraReplan(jiraTaskId, version, threadId, selectedProjectId, reservation) {
     const context = database.beginJiraReplan(jiraTaskId, version, reservation);
-    const projectId = context.projects[0]?.id ?? DEFAULT_PROJECT_ID;
-    let thread;
-    try {
-      thread = await aiChat.createThread({
-        projectId,
+    const createdThread = !database.getAiChatThread(threadId);
+    if (createdThread) {
+      await aiChat.createThread({
+        id: threadId,
+        projectId: selectedProjectId ?? context.projects[0]?.id ?? DEFAULT_PROJECT_ID,
         title: `${context.jira.externalKey ?? context.jira.identifier} · Jira 重新规划`,
-        sandbox: "workspace-write",
+        purpose: "formal",
+        codexThreadId: threadId,
       });
+    }
+    try {
       return {
         context: database.completeJiraReplan(
           jiraTaskId,
           context.jira.version,
           version,
           context.plan.version,
-          thread.id,
+          threadId,
           reservation,
         ),
-        composerText: jiraPlanningPrompt(context.jira, context.projects, true, context.plan),
-        skillIds: jiraPlanningSkillIds,
       };
     } catch (error) {
-      if (thread) {
-        try {
-          await aiChat.discardThread(thread.id);
-        } catch (cleanupError) {
-          throw new ApiError(
-            500,
-            "JIRA_REPLAN_CLEANUP_FAILED",
-            `Jira replanning failed and its new conversation could not be removed: ${cleanupError.message}`,
-            { cause: error.message },
-          );
-        }
-      }
+      if (createdThread) await aiChat.discardThread(threadId);
       throw error;
     }
   }
@@ -2589,6 +2651,7 @@ export function createPanelServer(options = {}) {
           projectId: task.projectId,
           issueId: task.id,
           title: `${task.identifier} · ${started.jira.externalKey ?? started.jira.identifier}`,
+          purpose: "formal",
         });
       }
       if (thread.origin.issueId !== task.id || thread.status !== "idle") {
@@ -2689,6 +2752,7 @@ export function createPanelServer(options = {}) {
           projectId: task.projectId,
           issueId: task.id,
           title: `${task.identifier} · ${started.jira.externalKey ?? started.jira.identifier} · 返工`,
+          purpose: "formal",
         });
       }
     }
@@ -2701,12 +2765,13 @@ export function createPanelServer(options = {}) {
     ));
   }
 
-  function runJiraReplan(jiraTaskId, version) {
+  function runJiraReplan(jiraTaskId, version, threadId, projectId) {
+    if (!threadId) return prepareJiraReplan(jiraTaskId, version);
     return runJiraReopenAction(
       jiraTaskId,
       version,
       "replan",
-      (reservation) => createJiraReplan(jiraTaskId, version, reservation),
+      (reservation) => createJiraReplan(jiraTaskId, version, threadId, projectId, reservation),
     );
   }
 
@@ -3875,7 +3940,7 @@ export function createPanelServer(options = {}) {
         const jiraTaskId = decodeRouteSegment(jiraLifecycleRoute[1], "Task id");
         assertNoQuery(url.searchParams, "POST /api/tasks/:id/jira-lifecycle");
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
-        const { version, action } = parseJiraLifecycle(await readJson(request));
+        const { version, action, threadId, projectId } = parseJiraLifecycle(await readJson(request));
         if (action === "rework") {
           return sendJson(
             response,
@@ -3884,7 +3949,7 @@ export function createPanelServer(options = {}) {
           );
         }
         if (action === "replan") {
-          return sendJson(response, 200, await runJiraReplan(jiraTaskId, version));
+          return sendJson(response, 200, await runJiraReplan(jiraTaskId, version, threadId, projectId));
         }
         let targets = null;
         let result;
@@ -3987,8 +4052,12 @@ export function createPanelServer(options = {}) {
         const jiraTaskId = decodeRouteSegment(jiraPlanningRoute[1], "Task id");
         assertNoQuery(url.searchParams, "POST /api/tasks/:id/jira-planning");
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
-        const { version } = parseJiraSimpleStart(await readJson(request));
-        return sendJson(response, 200, await startJiraPlanning(jiraTaskId, version));
+        const { version, threadId, projectId } = parseJiraPlanning(await readJson(request));
+        return sendJson(
+          response,
+          200,
+          await startJiraPlanning(jiraTaskId, version, threadId, projectId),
+        );
       }
 
       const jiraLinkRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-links\/([^/]+)$/);

@@ -1037,18 +1037,18 @@
     }
   }
 
-  async function waitForPreparedComposer(identifier, skillPath) {
+  async function waitForPreparedComposer(identifier, skills) {
     const deadline = Date.now() + 8_000;
     while (Date.now() < deadline) {
       const editor = document.querySelector('[data-codex-composer="true"][contenteditable="true"]');
       if (editor && editor.getClientRects().length > 0) {
         const containsIdentifier = normalizedLabel(editor.textContent).includes(normalizedLabel(identifier));
-        const skillMention = Array.from(editor.querySelectorAll("[skill-mention-name]"))
-          .find((mention) => (
-            mention.getAttribute("skill-mention-name") === "manage-panel"
-            && mention.getAttribute("skill-mention-path") === skillPath
-          ));
-        if (containsIdentifier && (!skillPath || skillMention)) return editor;
+        const mentions = Array.from(editor.querySelectorAll("[skill-mention-name]"));
+        const skillsReady = skills.every((skill) => mentions.some((mention) => (
+          mention.getAttribute("skill-mention-name") === skill.name
+          && mention.getAttribute("skill-mention-path") === skill.path
+        )));
+        if (containsIdentifier && skillsReady) return editor;
       }
       await new Promise((resolve) => window.setTimeout(resolve, 80));
     }
@@ -1065,6 +1065,25 @@
       ? payload.skillDisplayName.trim()
       : "";
     const skillPath = typeof payload?.skillPath === "string" ? payload.skillPath.trim() : "";
+    const rawSkillReferences = Array.isArray(payload?.skillReferences)
+      ? payload.skillReferences
+      : [{ name: skillName, displayName: skillDisplayName, path: skillPath }];
+    const skillReferences = rawSkillReferences.length > 0
+      && rawSkillReferences.length <= 8
+      && rawSkillReferences.every((skill) => (
+        typeof skill?.name === "string"
+        && /^[a-z0-9-]{1,100}$/i.test(skill.name.trim())
+        && typeof skill?.displayName === "string"
+        && skill.displayName.trim()
+        && typeof skill?.path === "string"
+        && skill.path.trim()
+      ))
+        ? rawSkillReferences.map((skill) => ({
+            name: skill.name.trim(),
+            displayName: skill.displayName.trim(),
+            path: skill.path.trim(),
+          }))
+        : [];
     const workspacePath = typeof payload?.workspacePath === "string"
       ? payload.workspacePath.trim()
       : "";
@@ -1075,7 +1094,7 @@
       || !identifier
       || !title
       || !instruction
-      || (codexProjectKind === "local" && (!skillName || !skillDisplayName || !skillPath))
+      || (codexProjectKind === "local" && skillReferences.length === 0)
       || pendingThreadCreation
     ) return;
     pendingThreadCreation = taskId;
@@ -1107,7 +1126,7 @@
             prefillPrompt: instruction,
           },
         });
-        const composer = await waitForPreparedComposer(identifier, "");
+        const composer = await waitForPreparedComposer(identifier, []);
         pendingThreadAssociation = {
           taskId,
           identifier,
@@ -1163,8 +1182,9 @@
         skillDisplayName,
         skillName,
         skillPath,
+        skills: skillReferences,
       });
-      const composer = await waitForPreparedComposer(identifier, skillPath);
+      const composer = await waitForPreparedComposer(identifier, skillReferences);
       const selectedProjectId = projectless ? "" : await selectedNativeProjectId();
       pendingThreadAssociation = {
         taskId,
@@ -1608,12 +1628,13 @@
     return requestHost("load-frame", { frameName, frameCapability: capability });
   }
 
-  function requestHostTaskComposerPrefill({ instruction, skillDisplayName, skillName, skillPath }) {
+  function requestHostTaskComposerPrefill({ instruction, skillDisplayName, skillName, skillPath, skills }) {
     return requestHost("prefill-task-composer", {
       instruction,
       skillDisplayName,
       skillName,
       skillPath,
+      skills,
     }, COMPOSER_PREFILL_REQUEST_TIMEOUT_MS);
   }
 

@@ -4997,6 +4997,32 @@ kbd {
   font-weight: 400;
 }
 
+.jira-context-overview > .jira-context-manage .jira-context-repositories {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.jira-context-overview > .jira-context-manage .jira-context-repositories > span {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jira-context-overview > .jira-context-manage .jira-context-repositories > em {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-style: normal;
+}
+
+.jira-context-overview > .jira-context-manage > b {
+  white-space: nowrap;
+}
+
 .jira-context-actions {
   display: flex;
   align-items: center;
@@ -5209,6 +5235,57 @@ kbd {
 
 .jira-project-picker .project-menu-list {
   scrollbar-gutter: stable;
+}
+
+.jira-selected-projects {
+  margin: 0 2px 8px;
+  padding-bottom: 8px;
+  border-bottom: var(--border-hairline) solid var(--border);
+}
+
+.jira-selected-projects > strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 550;
+}
+
+.jira-selected-projects > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.jira-selected-project {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 24px;
+  gap: 5px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.jira-selected-project > svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+
+.jira-selected-project > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jira-selected-projects > small {
+  color: var(--text-tertiary);
+  font-size: 10px;
 }
 
 .jira-project-diff,
@@ -5473,6 +5550,18 @@ kbd {
   border-radius: 7px;
   background: var(--surface);
   box-shadow: 0 18px 56px rgba(0, 0, 0, 0.28);
+}
+
+.jira-planning-project-dialog {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.jira-planning-project-body {
+  padding: 14px 16px;
+}
+
+.jira-planning-project-body .project-menu-list {
+  max-height: min(320px, calc(100vh - 250px));
 }
 
 .jira-manager-dialog > header,

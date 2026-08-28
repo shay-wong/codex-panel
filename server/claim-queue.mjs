@@ -257,6 +257,7 @@ export class ClaimQueueService {
           projectId: task.projectId,
           issueId: task.id,
           title: `${task.identifier} · 自动执行`,
+          purpose: "formal",
           model: policy.model,
           reasoningEffort: policy.reasoningEffort,
           sandbox: "workspace-write",

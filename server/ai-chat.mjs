@@ -373,6 +373,7 @@ export class AiChatService {
     return this.database.createAiChatThread({
       id: input.id,
       title: input.title ?? issue?.identifier ?? "New conversation",
+      purpose: input.purpose,
       origin: {
         projectId: resolved.project.id,
         projectName: resolved.project.name,
@@ -382,6 +383,7 @@ export class AiChatService {
       model: model.slug,
       reasoningEffort,
       sandbox,
+      codexThreadId: input.codexThreadId,
     });
   }
 

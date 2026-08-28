@@ -339,6 +339,7 @@ export interface AiChatThread {
   id: string;
   title: string;
   status: AiChatThreadStatus;
+  purpose: "temporary" | "formal";
   origin: AiChatOrigin;
   codexThreadId: string | null;
   model: string;

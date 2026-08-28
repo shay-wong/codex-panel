@@ -126,16 +126,18 @@ export function taskConversations(task: Task, aiThreads: AiChatThread[]) {
       thread.currentRun?.startedAt ?? "",
       thread.latestTodo?.updatedAt ?? "",
     ].reduce(newerTimestamp);
+    const formalThread = thread.purpose === "formal" && Boolean(thread.codexThreadId);
     const candidate: TaskConversationItem = {
       key,
       projectId: task.projectId,
-      kind: "local-ai",
+      kind: formalThread ? "native" : "local-ai",
       title: thread.title || thread.origin.issueIdentifier || task.title,
       source: "local-ai",
       nativeThreadId: current?.nativeThreadId ?? thread.codexThreadId,
       threadBinding: current?.threadBinding ?? null,
-      legacyLocalThreadId: current?.legacyLocalThreadId ?? null,
-      aiThreadId: thread.id,
+      legacyLocalThreadId: current?.legacyLocalThreadId
+        ?? (formalThread ? thread.codexThreadId : null),
+      aiThreadId: formalThread ? null : thread.id,
       updatedAt: current?.kind === "native"
         ? newerTimestamp(current.updatedAt, threadActivityUpdatedAt)
         : threadActivityUpdatedAt,

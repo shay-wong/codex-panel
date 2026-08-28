@@ -1453,6 +1453,10 @@ export function AiChat({
   const openThreadRequestId = openThreadRequest && "threadId" in openThreadRequest
     ? openThreadRequest.requestId
     : null;
+  const visibleThreads = useMemo(
+    () => threads.filter((thread) => thread.purpose === "temporary"),
+    [threads],
+  );
 
   const selectThread = useCallback((threadId: string | null) => {
     selectedThreadRef.current = threadId;
@@ -1705,9 +1709,11 @@ export function AiChat({
       setThreads(next);
       if (next.length === 0) setHistoryOpen(false);
       setSelectedThreadId((current) => {
-        const selected = current && next.some((thread) => thread.id === current)
+        const selected = current && next.some((thread) => (
+          thread.id === current && thread.purpose === "temporary"
+        ))
           ? current
-          : next[0]?.id ?? null;
+          : next.find((thread) => thread.purpose === "temporary")?.id ?? null;
         selectedThreadRef.current = selected;
         return selected;
       });
@@ -1728,6 +1734,12 @@ export function AiChat({
   useEffect(() => {
     onThreadsChange?.(available ? threads : []);
   }, [available, onThreadsChange, threads]);
+
+  useEffect(() => {
+    if (!selectedThreadId || threads.find((thread) => thread.id === selectedThreadId)?.purpose !== "formal") return;
+    setSnapshot(null);
+    selectThread(visibleThreads[0]?.id ?? null);
+  }, [selectThread, selectedThreadId, threads, visibleThreads]);
 
   useEffect(() => {
     setSnapshot(null);
@@ -1784,7 +1796,7 @@ export function AiChat({
     selectedThreadId,
   ]);
 
-  const selectedThreadSummary = threads.find((thread) => thread.id === selectedThreadId) ?? null;
+  const selectedThreadSummary = visibleThreads.find((thread) => thread.id === selectedThreadId) ?? null;
   const catalogProjectId = snapshot?.thread.origin.projectId
     ?? selectedThreadSummary?.origin.projectId
     ?? draftOrigin?.projectId
@@ -2211,9 +2223,9 @@ export function AiChat({
   function restorePersistedConversationFromDraft() {
     if (!draftOrigin) return;
     const previousThreadId = draftReturnThreadIdRef.current;
-    const nextThreadId = previousThreadId && threads.some((thread) => thread.id === previousThreadId)
+    const nextThreadId = previousThreadId && visibleThreads.some((thread) => thread.id === previousThreadId)
       ? previousThreadId
-      : threads[0]?.id ?? null;
+      : visibleThreads[0]?.id ?? null;
     draftReturnThreadIdRef.current = null;
     setDraftOrigin(null);
     setSnapshot(null);
@@ -3292,9 +3304,9 @@ export function AiChat({
             <div className="ai-chat-history" aria-label={text("对话历史", "Chat history")}>
               <div className="ai-chat-history-heading">
                 <strong>{text("对话历史", "Chat history")}</strong>
-                <span>{threads.length}</span>
+                <span>{visibleThreads.length}</span>
               </div>
-              {threads.length > 0 ? threads.map((thread) => (
+              {visibleThreads.length > 0 ? visibleThreads.map((thread) => (
                 <div
                   className={`ai-chat-history-row${thread.id === selectedThreadId ? " is-active" : ""}`}
                   key={thread.id}

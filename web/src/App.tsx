@@ -41,6 +41,7 @@ import {
   moveTask as moveTaskRequest,
   publishHostRuntime,
   removeTaskRelation,
+  resolveJiraLifecycle,
   resolvePanelUrl,
   resolvePanelWebSocketUrl,
   restoreTask as restoreTaskRequest,
@@ -48,6 +49,7 @@ import {
   setCurrentUserActor,
   syncJiraConnection,
   saveJiraSettings,
+  startJiraPlanning,
   uploadAttachment,
   updateTask as updateTaskRequest,
   saveProjectAutomationPolicy,
@@ -127,6 +129,7 @@ import {
 import {
   TASK_STATUSES,
   type ActorIdentity,
+  type AiChatSkill,
   type AiChatThread,
   type CodexProjectIdentity,
   type CodexThreadBinding,
@@ -569,6 +572,9 @@ function LocalRealtimeSync({
         return;
       }
       if (event.type === "claim.updated" || event.type === "automation.updated") {
+        if (event.type === "claim.updated") {
+          setAiThreadsRevision((current) => current + 1);
+        }
         if (affectsSelectedProject) {
           void refreshAutomation();
           scheduleRefresh({ tasks: event.type === "claim.updated" });
@@ -723,6 +729,10 @@ export function App() {
   const [settlingTaskId, setSettlingTaskId] = useState<string | null>(null);
   const [openingProjectId, setOpeningProjectId] = useState<string | null>(null);
   const [openingThreadTaskId, setOpeningThreadTaskId] = useState<string | null>(null);
+  const [pendingExecutionOpen, setPendingExecutionOpen] = useState<{
+    taskId: string;
+    requestedAt: number;
+  } | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState(
     () => panelStorage.getItem(FIRST_USE_COMPLETE_KEY) === null,
   );
@@ -777,6 +787,11 @@ export function App() {
     );
   }
   const pendingRemoteThreadClaimsRef = useRef(new Map<string, PendingRemoteThreadClaim>());
+  const pendingJiraPlanningRef = useRef(new Map<string, {
+    kind: "planning" | "replan";
+    lifecycleVersion?: number;
+    projectId: string | null;
+  }>());
   const legacyAutomationPauseRequestsRef = useRef(new Set<string>());
 
   useEffect(() => {
@@ -1388,6 +1403,11 @@ export function App() {
       }
 
       if (message.type === "panel:thread-prepared" && message.payload) {
+        const payload = message.payload as { taskId?: unknown };
+        if (
+          typeof payload.taskId === "string"
+          && pendingJiraPlanningRef.current.has(payload.taskId)
+        ) return;
         setOpeningThreadTaskId(null);
         return;
       }
@@ -1401,20 +1421,47 @@ export function App() {
         }
         const task = tasksRef.current.find((candidate) => candidate.id === payload.taskId);
         const threadId = payload.threadId.trim();
+        const jiraPlanning = pendingJiraPlanningRef.current.get(payload.taskId);
+        pendingJiraPlanningRef.current.delete(payload.taskId);
+        if (jiraPlanning) setOpeningThreadTaskId(null);
         if (
           !task
           || !threadId
           || task.threadBinding?.threadId === threadId
           || task.legacyLocalThreadId === threadId
         ) return;
-        void updateTaskRequest(task, taskToDraft(task), threadId)
+        void (async () => {
+          let updated = task;
+          if (jiraPlanning?.kind === "replan" && jiraPlanning.lifecycleVersion !== undefined) {
+            const result = await resolveJiraLifecycle(
+              task.id,
+              jiraPlanning.lifecycleVersion,
+              "replan",
+              threadId,
+              jiraPlanning.projectId,
+            );
+            if (result.context.jira) updated = result.context.jira;
+            updated = await updateTaskRequest(updated, taskToDraft(updated), threadId);
+          } else {
+            updated = await updateTaskRequest(updated, taskToDraft(updated), threadId);
+          }
+          if (jiraPlanning?.kind === "planning") {
+            const result = await startJiraPlanning(updated, threadId, jiraPlanning.projectId);
+            if (result.context.jira) updated = result.context.jira;
+          }
+          return updated;
+        })()
           .then((updated) => {
             setTasks((current) => sortTasks(current.map((candidate) => (
               candidate.id === updated.id ? updated : candidate
             ))));
             setAnnouncement(textRef.current(
-              `${updated.identifier} 已关联到新 Codex 对话。`,
-              `${updated.identifier} is linked to the new Codex conversation.`,
+              jiraPlanning
+                ? `${updated.externalKey ?? updated.identifier} 已关联到新的 Jira 规划对话。`
+                : `${updated.identifier} 已关联到新 Codex 对话。`,
+              jiraPlanning
+                ? `${updated.externalKey ?? updated.identifier} is linked to the new Jira planning conversation.`
+                : `${updated.identifier} is linked to the new Codex conversation.`,
             ));
           })
           .catch((error) => {
@@ -1438,6 +1485,9 @@ export function App() {
           threadId?: unknown;
           uncertain?: unknown;
         };
+        if (typeof payload.taskId === "string") {
+          pendingJiraPlanningRef.current.delete(payload.taskId);
+        }
         if (typeof payload.taskId === "string" && pendingRemoteThreadClaimsRef.current.has(payload.taskId)) {
           pendingRemoteThreadClaimsRef.current.delete(payload.taskId);
           setOpeningThreadTaskId(null);
@@ -2670,6 +2720,27 @@ export function App() {
     window.location.assign(`codex://threads/${encodeURIComponent(threadId.trim())}`);
   }
 
+  useEffect(() => {
+    if (!pendingExecutionOpen) return;
+    const thread = [...aiThreads]
+      .filter((candidate) => (
+        candidate.origin.issueId === pendingExecutionOpen.taskId
+        && candidate.codexThreadId
+        && Date.parse(candidate.updatedAt) >= pendingExecutionOpen.requestedAt - 2_000
+    ))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+    if (!thread?.codexThreadId) return;
+    setPendingExecutionOpen(null);
+    if (embedded && window.parent !== window) {
+      postEmbeddedHostMessage({
+        type: "panel:open-thread",
+        payload: { threadId: thread.codexThreadId, legacyLocal: true },
+      });
+    } else {
+      window.location.assign(`codex://threads/${encodeURIComponent(thread.codexThreadId)}`);
+    }
+  }, [aiThreads, embedded, pendingExecutionOpen]);
+
   function openTaskConversation(conversation: TaskConversationItem) {
     if (conversation.kind === "local-ai" && conversation.aiThreadId) {
       setAiOpenThreadRequest((current) => ({
@@ -2875,6 +2946,85 @@ export function App() {
       if (selectedProjectId) void refreshTasks(selectedProjectId, { quiet: true });
     }
   }
+
+  async function openJiraPlanningInThread(
+    task: Task,
+    projectId: string | null,
+    composer: {
+      text: string;
+      skills: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
+      replanLifecycleVersion?: number;
+    },
+  ) {
+    if (!embedded || window.parent === window) {
+      throw new Error(text(
+        "请在 Codex App 中创建 Jira 规划对话。",
+        "Create Jira planning conversations in the Codex app.",
+      ));
+    }
+    if (!managePanelSkillPath) {
+      throw new Error(text(
+        "任务面板还没有读取到 manage-panel Skill 路径，请刷新后重试。",
+        "Panel has not received the manage-panel Skill path. Refresh and try again.",
+      ));
+    }
+    if (openingThreadTaskId) return;
+
+    const targetProject = projectId
+      ? projects.find((project) => project.id === projectId) ?? null
+      : null;
+    const codexProjectContext = projectId
+      ? codexProjectContextForTaskProject(projectId)
+      : null;
+    const workspacePath = projectId
+      ? codexProjectContext?.workspacePath
+        ?? deviceWorkspacePaths[projectId]
+        ?? targetProject?.workspacePath
+        ?? undefined
+      : undefined;
+    if (projectId && !workspacePath) {
+      throw new Error(text(
+        "所选仓库没有可用的本地目录。",
+        "The selected repository has no available local workspace.",
+      ));
+    }
+
+    const skillReferences = [
+      { name: "manage-panel", displayName: "Manage Panel", path: managePanelSkillPath },
+      ...composer.skills.map((skill) => ({
+        name: skill.id,
+        displayName: skill.label,
+        path: skill.path,
+      })),
+    ];
+    pendingJiraPlanningRef.current.set(task.id, composer.replanLifecycleVersion === undefined
+      ? { kind: "planning", projectId }
+      : { kind: "replan", lifecycleVersion: composer.replanLifecycleVersion, projectId });
+    setOpeningThreadTaskId(task.id);
+    setActionError(null);
+    postEmbeddedHostMessage({
+      type: "panel:create-thread",
+      payload: {
+        taskId: task.id,
+        identifier: task.externalKey ?? task.identifier,
+        title: `${task.externalKey ?? task.identifier} · ${composer.replanLifecycleVersion === undefined
+          ? "Jira 规划"
+          : "Jira 重新规划"}`,
+        instruction: composer.text,
+        skillName: skillReferences[0].name,
+        skillDisplayName: skillReferences[0].displayName,
+        skillPath: skillReferences[0].path,
+        skillReferences,
+        projectless: projectId === null,
+        projectName: targetProject?.name,
+        codexProjectId: codexProjectContext?.codexProjectId ?? projectId ?? undefined,
+        codexProjectKind: "local",
+        codexHostId: "local",
+        workspacePath,
+      },
+    });
+  }
+
   async function openTaskInThread(task: Task) {
     const taskProject = projects.find((project) => project.id === task.projectId);
     const savedRemoteIdentity = projectCodexIdentities[task.projectId]?.codexProjectKind === "remote"
@@ -3669,6 +3819,11 @@ export function App() {
               requestId: (current?.requestId ?? 0) + 1,
             }))}
             onOpenInThread={openTaskInThread}
+            onOpenJiraPlanning={openJiraPlanningInThread}
+            onExecutionStarted={(taskId) => setPendingExecutionOpen({
+              taskId,
+              requestedAt: Date.now(),
+            })}
             onCopy={(text, message) => void copyText(text, message)}
             onEnsureJiraProjects={ensureJiraRepositoryProjects}
             openingThread={openingThreadTaskId === detailTask.id}
