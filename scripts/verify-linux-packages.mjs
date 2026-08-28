@@ -4,6 +4,11 @@ import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { verifyRuntimePackages } from "./runtime-packages.mjs";
+
+const projectManifest = (await import("../package.json", {
+  with: { type: "json" },
+})).default;
 
 const debPath = process.argv[2] ? path.resolve(process.argv[2]) : null;
 const appImagePath = process.argv[3] ? path.resolve(process.argv[3]) : null;
@@ -63,9 +68,6 @@ async function verifyPackageRoot(root, label) {
     "app/cli/panelctl.mjs",
     "app/dist/web/index.html",
     "app/inject/codex-panel.user.js",
-    "app/node_modules/remark-parse/package.json",
-    "app/node_modules/smol-toml/package.json",
-    "app/node_modules/unified/package.json",
     "app/scripts/codex-injector.mjs",
     "app/server/app.mjs",
     "app/server/index.mjs",
@@ -82,6 +84,10 @@ async function verifyPackageRoot(root, label) {
     const details = await stat(path.join(resourceRoot, resource));
     if (!details.isFile()) throw new Error(`${label} is missing ${resource}`);
   }
+  await verifyRuntimePackages(
+    path.join(resourceRoot, "app"),
+    projectManifest.dependencies ?? {},
+  );
 
   const wrapper = await readFile(panelctlPath, "utf8");
   if (

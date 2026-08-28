@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { verifyRuntimePackages } from "./runtime-packages.mjs";
 
 const appPath = process.argv[2] ? path.resolve(process.argv[2]) : null;
 if (!appPath) throw new Error("Usage: verify-packaged-taskctl.mjs <App.app>");
@@ -63,9 +64,9 @@ const runtimeFile = path.join(dataDirectory, "launcher-runtime.json");
 const nodePath = path.join(appPath, "Contents", "MacOS", "node");
 const appRoot = path.join(appPath, "Contents", "Resources", "app");
 const wrapperPath = path.join(appPath, "Contents", "Resources", "bin", "panelctl");
-await stat(path.join(appRoot, "node_modules", "smol-toml", "package.json"));
-await stat(path.join(appRoot, "node_modules", "unified", "package.json"));
-await stat(path.join(appRoot, "node_modules", "remark-parse", "package.json"));
+await verifyRuntimePackages(appRoot, (await import("../package.json", {
+  with: { type: "json" },
+})).default.dependencies ?? {});
 const reservation = createServer();
 await new Promise((resolve, reject) => {
   reservation.once("error", reject);
