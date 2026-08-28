@@ -18,6 +18,7 @@ import {
 } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { discoverRuntimePackages } from "./runtime-packages.mjs";
 
 const nodeVersion = "22.23.2";
 const nodeArchitectures = ["arm64", "x64"];
@@ -48,7 +49,6 @@ const binariesDirectory = path.join(tauriRoot, "binaries");
 const resourcesDirectory = path.join(tauriRoot, "resources");
 const runtimeCacheDirectory = path.join(projectRoot, "dist", "tauri-runtime-cache");
 const extractionDirectory = path.join(runtimeCacheDirectory, "extracted");
-const serverRuntimePackages = ["remark-parse", "smol-toml", "unified", "ws"];
 const target = parseTarget(process.argv.slice(2));
 
 if (target === windowsTarget && process.platform !== "win32") {
@@ -305,13 +305,6 @@ async function copyApplicationResources() {
       { recursive: true },
     ),
   ]);
-  const destinationNodeModules = path.join(appResources, "node_modules");
-  await mkdir(destinationNodeModules, { recursive: true });
-  const copiedPackages = new Set();
-  for (const packageName of serverRuntimePackages) {
-    await copyRuntimePackage(packageName, destinationNodeModules, copiedPackages);
-  }
-
   await mkdir(path.join(appResources, "scripts"), { recursive: true });
   for (const fileName of [
     "codex-cdp-pipe.mjs",
@@ -336,6 +329,16 @@ async function copyApplicationResources() {
     path.join(projectRoot, "cli", "panelctl.mjs"),
     path.join(appResources, "cli", "panelctl.mjs"),
   );
+  const destinationNodeModules = path.join(appResources, "node_modules");
+  await mkdir(destinationNodeModules, { recursive: true });
+  const copiedPackages = new Set();
+  const runtimePackages = await discoverRuntimePackages(
+    appResources,
+    projectManifest.dependencies ?? {},
+  );
+  for (const packageName of runtimePackages) {
+    await copyRuntimePackage(packageName, destinationNodeModules, copiedPackages);
+  }
   await writeFile(
     path.join(resourcesDirectory, "codex-panel-launcher.json"),
     `${JSON.stringify({
