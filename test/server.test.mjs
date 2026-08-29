@@ -895,6 +895,67 @@ test("the active local Codex conversation supplies its exact task binding identi
   });
 });
 
+test("an active Codex conversation can explicitly bind an issue without changing its status", async () => {
+  const baseUrl = await startServer();
+  const created = (await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { title: "Bind me", status: "todo" },
+  })).body.task;
+  await request(baseUrl, "/api/local/host-runtime", {
+    method: "PUT",
+    body: {
+      threadId: "manual-thread",
+      threadRunning: true,
+      threadTodoProgress: null,
+      codexProjectId: "local-project",
+      codexProjectKind: "local",
+      codexHostId: "local",
+      workspacePath: "/work/local-project",
+    },
+  });
+
+  const first = await request(baseUrl, `/api/tasks/${created.identifier}/bind-thread`, {
+    method: "POST",
+    headers: { "x-panel-client": "panelctl" },
+    body: { threadId: "manual-thread" },
+  });
+  assert.equal(first.response.status, 200);
+  assert.equal(first.body.task.status, "todo");
+  assert.deepEqual(first.body.task.threadBinding, {
+    threadId: "manual-thread",
+    codexProjectId: "local-project",
+    codexProjectKind: "local",
+    codexHostId: "local",
+    workspacePath: "/work/local-project",
+  });
+
+  const second = await request(baseUrl, `/api/tasks/${created.id}/bind-thread`, {
+    method: "POST",
+    body: { threadId: "manual-thread" },
+  });
+  assert.equal(second.response.status, 200);
+  assert.equal(second.body.task.version, first.body.task.version);
+
+  await request(baseUrl, "/api/local/host-runtime", {
+    method: "PUT",
+    body: {
+      threadId: "other-thread",
+      threadRunning: true,
+      threadTodoProgress: null,
+      codexProjectId: "local-project",
+      codexProjectKind: "local",
+      codexHostId: "local",
+      workspacePath: "/work/local-project",
+    },
+  });
+  const conflict = await request(baseUrl, `/api/tasks/${created.id}/bind-thread`, {
+    method: "POST",
+    body: { threadId: "other-thread" },
+  });
+  assert.equal(conflict.response.status, 409);
+  assert.equal(conflict.body.error.code, "TASK_THREAD_BINDING_CONFLICT");
+});
+
 test("issues support parent, sub-issue, blocking, and related issue relationships", async () => {
   const baseUrl = await startServer();
   const createIssue = async (title, status = "todo", projectId = "local") => {

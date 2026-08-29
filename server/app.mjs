@@ -4340,7 +4340,7 @@ export function createPanelServer(options = {}) {
         return sendJson(response, 200, { tree: database.getTaskTree(id, direction, depth) });
       }
 
-      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move))?$/);
+      const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move|bind-thread))?$/);
       if (taskRoute) {
         let id;
         try {
@@ -4352,6 +4352,75 @@ export function createPanelServer(options = {}) {
           throw new ApiError(400, "INVALID_PATH", "Task id is invalid");
         }
         const action = taskRoute[2];
+        if (action === "bind-thread") {
+          assertNoQuery(url.searchParams, "POST /api/tasks/:id/bind-thread");
+          if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+          const body = await readJson(request);
+          assertPlainObject(body);
+          assertAllowedKeys(body, new Set(["threadId"]));
+          const threadId = parseThreadId(body.threadId);
+          if (!threadId) {
+            throw new ApiError(400, "INVALID_FIELD", "'threadId' is required");
+          }
+          const threadBinding = currentHostThreadBinding(threadId);
+          if (!threadBinding) {
+            throw new ApiError(
+              409,
+              "THREAD_BINDING_IDENTITY_UNAVAILABLE",
+              "当前 Codex 会话没有完整的项目、主机和工作区身份，无法绑定议题",
+            );
+          }
+          let task = database.resolveTaskReference(id);
+          if (!task) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
+          if (task.archivedAt !== null) {
+            throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot bind a conversation");
+          }
+          const existingThreadId = task.threadBinding?.threadId ?? task.legacyLocalThreadId;
+          if (existingThreadId && existingThreadId !== threadId) {
+            throw new ApiError(
+              409,
+              "TASK_THREAD_BINDING_CONFLICT",
+              "该议题已绑定到其他 Codex 会话",
+              { existingThreadId },
+            );
+          }
+          if (task.source === "jira") {
+            const context = database.getJiraContext(task.id);
+            if (context.plan?.threadId && context.plan.threadId !== threadId) {
+              throw new ApiError(
+                409,
+                "JIRA_PLANNING_THREAD_CONFLICT",
+                "该 Jira 需求已绑定到其他规划会话",
+                { existingThreadId: context.plan.threadId },
+              );
+            }
+          }
+          if (!task.threadBinding || JSON.stringify(task.threadBinding) !== JSON.stringify(threadBinding)) {
+            task = database.updateTask(
+              task.id,
+              task.version,
+              {},
+              threadId,
+              threadBinding,
+              actorFromRequest(request),
+            );
+            events.emit("task.updated", { task });
+          }
+          if (task.source === "jira") {
+            const context = database.getJiraContext(task.id);
+            const selectedProjectId = context.projects.length > 1
+              ? context.projects.find((project) => (
+                  project.id === threadBinding.codexProjectId
+                  || project.workspacePath === threadBinding.workspacePath
+                ))?.id
+              : context.projects[0]?.id;
+            const result = await startJiraPlanning(task.id, task.version, threadId, selectedProjectId);
+            task = result.context.jira;
+            events.emit("task.jira.updated", { taskId: task.id, task });
+            return sendJson(response, 200, { task, context: result.context });
+          }
+          return sendJson(response, 200, { task });
+        }
         if (!action && request.method === "GET") {
           if ([...url.searchParams.keys()].length > 0) {
             throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/tasks/:id does not accept query parameters");

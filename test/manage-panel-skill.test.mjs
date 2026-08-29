@@ -37,6 +37,9 @@ test("the Panel skill preserves complete task bindings", () => {
   assert.match(skillSource, /all five explicit `--binding-\*` options/i);
   assert.match(cliReference, /--binding-codex-project-kind local\|remote/i);
   assert.match(cliReference, /`--thread-id` records the conversation performing the mutation; it does not create a complete task binding/i);
+  assert.match(skillSource, /explicitly asks to bind the current conversation[\s\S]*`conversation bind ISSUE_ID`/i);
+  assert.match(cliReference, /panelctl conversation bind ISSUE_ID/);
+  assert.match(cliReference, /refuses to replace another conversation's binding/i);
 });
 
 test("the Panel skill resolves an explicit Jira ID before workspace context", () => {

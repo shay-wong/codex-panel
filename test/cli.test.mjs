@@ -414,6 +414,30 @@ test("an explicit --thread-id overrides CODEX_THREAD_ID on issue writes", async 
   assert.equal(result.stdout.task.threadId, "thread-9");
 });
 
+test("conversation bind explicitly links the current Codex conversation without task fields", async () => {
+  let request;
+  const result = await run(["conversation", "bind", "TAPON-8747"], async (url, init) => {
+    request = { url, init };
+    return response({ task: { id: "jira-task", threadId: "thread-current", version: 2 } });
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(request.url.pathname, "/api/tasks/TAPON-8747/bind-thread");
+  assert.equal(request.init.method, "POST");
+  assert.deepEqual(JSON.parse(request.init.body), { threadId: "thread-current" });
+});
+
+test("conversation bind has command-specific help", async () => {
+  let output = "";
+  const exitCode = await main(["conversation", "bind", "--help"], {
+    stdout: { write(chunk) { output += chunk; } },
+    stderr: { write() {} },
+  });
+  assert.equal(exitCode, 0);
+  assert.match(output, /Usage: panelctl conversation bind ISSUE_ID/);
+  assert.match(output, /without changing its status or fields/);
+});
+
 test("issue restore uses the mutation thread and optimistic version", async () => {
   let requestBody;
   const result = await run(

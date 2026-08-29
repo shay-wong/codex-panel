@@ -133,10 +133,21 @@ if (args[0] === "debug") {
     assert.equal(app.aiChat.listThreads().length, 0);
 
     let planningThreadId = "codex-native-jira-plan";
-    result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
-      version: jira.version,
+    await api(baseUrl, "/api/local/host-runtime", "PUT", {
       threadId: planningThreadId,
+      threadRunning: true,
+      threadTodoProgress: null,
+      codexProjectId: "local",
+      codexProjectKind: "local",
+      codexHostId: "local",
+      workspacePath: path.resolve(new URL("..", import.meta.url).pathname),
     });
+    result = await cli(baseUrl, directory, [
+      "conversation", "bind", "TEST-1", "--thread-id", planningThreadId,
+    ]);
+    jira = result.task;
+    assert.equal(jira.status, "todo");
+    assert.equal(jira.threadBinding.threadId, planningThreadId);
     assert.equal(result.context.plan.status, "planning");
     assert.ok(result.context.plan.promptedAt);
     assert.equal(result.context.plan.threadId, planningThreadId);

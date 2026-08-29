@@ -120,6 +120,14 @@ Use `issue move` to set `in_progress` before implementation and `in_review` afte
 
 `--thread-id` records the conversation performing the mutation; it does not create a complete task binding. `--binding-thread-id` can stand alone only to preserve a legacy local binding. If any binding identity option is present, all four identity options are required. A conversation that claims or continues an issue must pass all five `--binding-*` options together and preserve an existing complete binding exactly. `--clear-binding-thread` conflicts with every `--binding-*` option.
 
+To explicitly bind the current Codex conversation without changing the Issue status or fields:
+
+```bash
+panelctl conversation bind ISSUE_ID [--thread-id ID] [--json]
+```
+
+`ISSUE_ID` may be a Panel ID, Panel identifier, or an unambiguous Jira key. The command requires the running Codex host to provide a complete project, host, and workspace identity. It is idempotent for the current conversation and refuses to replace another conversation's binding. For a Jira requirement it also starts or resumes the local Jira planning record; it never changes Jira fields or status.
+
 Use either `--git-branch` or `--worktree-path`/`--worktree-branch`; an issue has only one development context. Issue JSON stores it as `developmentContext`, either `{ "type": "branch", "branch": "..." }` or `{ "type": "worktree", "path": "...", "branch": "..." }`. Its singular `threadId` is the Codex conversation that most recently created or changed the issue itself. Recurrence requires a due date. Changing only `--project` preserves the issue's existing linked conversation.
 
 ## Issue relations

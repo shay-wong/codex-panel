@@ -4832,6 +4832,22 @@ export class PanelDatabase {
     return attachTaskActivity(task, comments, activities, previewImage);
   }
 
+  resolveTaskReference(reference) {
+    const exact = this.getTask(reference);
+    if (exact) return exact;
+    const matches = this.database.prepare(`
+      SELECT id FROM tasks WHERE external_key = ? ORDER BY created_at, id LIMIT 2
+    `).all(reference);
+    if (matches.length > 1) {
+      throw new ApiError(
+        409,
+        "TASK_REFERENCE_AMBIGUOUS",
+        `Task reference '${reference}' matches more than one external issue`,
+      );
+    }
+    return matches[0] ? this.getTask(matches[0].id) : null;
+  }
+
   getTaskTree(id, direction, depth) {
     const root = this.database.prepare(
       "SELECT * FROM tasks WHERE id = ? OR identifier = ?",
