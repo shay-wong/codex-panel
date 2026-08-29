@@ -20,6 +20,8 @@ In this product, **companion** means the **device-local loopback service** used 
 
 ## Workflow
 
+When any user message supplies an exact Jira task ID, run `jira planning get` with that ID before `context current`, even if the conversation was not opened from Jira. Use the returned `context.issues` as the Jira-linked Panel Issues, then read the relevant Issue, comments, and attachments through the normal workflow. This read-only lookup does not turn the conversation into a Jira planning conversation; `jira planning save` and `jira planning publish` remain limited to the planning workflow below.
+
 1. For an existing issue, first run `issue get`, `comment list`, and `attachment list --task`. On the first handoff, omit `--after`, read the full lists, and keep each response's separate `nextCursor`. When the same task resumes, run `issue get` again and pass each saved cursor to its matching list with `--after` to read only new or modified entries. Comment lists include attachments on returned comments; use `attachment list --comment` with its own cursor when a known comment's attachment list can grow.
 2. Search for an existing issue before creating one. Use `context current`, then list the project issues and compare their identifiers, titles, descriptions, and status.
    - If an issue already tracks the same requirement, append the new requirement or acceptance detail to that issue without discarding its existing scope.

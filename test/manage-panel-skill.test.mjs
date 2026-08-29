@@ -39,6 +39,18 @@ test("the Panel skill preserves complete task bindings", () => {
   assert.match(cliReference, /`--thread-id` records the conversation performing the mutation; it does not create a complete task binding/i);
 });
 
+test("the Panel skill resolves an explicit Jira ID before workspace context", () => {
+  assert.match(
+    skillSource,
+    /any user message supplies an exact Jira task ID[\s\S]*`jira planning get`[\s\S]*before `context current`/i,
+  );
+  assert.match(skillSource, /returned `context\.issues` as the Jira-linked Panel Issues/i);
+  assert.match(
+    skillSource,
+    /read-only lookup does not turn the conversation into a Jira planning conversation/i,
+  );
+});
+
 test("the Panel CLI reference covers help, project README, files, and incremental cursors", () => {
   assert.match(cliReference, /panelctl --help/);
   assert.match(cliReference, /panelctl project readme get/);
