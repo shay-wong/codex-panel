@@ -420,6 +420,10 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.match(source, /requestHostTaskComposerPrefill\(\{/);
   assert.match(source, /requestHost\("prefill-task-composer"/);
   assert.match(source, /function waitForPreparedComposer\(identifier, skills\)/);
+  assert.match(
+    createThreadSource,
+    /await requestHostTaskComposerPrefill\([\s\S]*?await waitForPreparedComposer\(identifier, \[\]\)/,
+  );
   assert.match(source, /\[skill-mention-name\]/);
   assert.match(source, /mention\.getAttribute\("skill-mention-path"\) === skill\.path/);
   assert.doesNotMatch(source, /submit\.click\(\)/);

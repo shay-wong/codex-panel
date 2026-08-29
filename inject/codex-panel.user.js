@@ -1222,7 +1222,7 @@
         skillPath,
         skills: skillReferences,
       });
-      const composer = await waitForPreparedComposer(identifier, skillReferences);
+      const composer = await waitForPreparedComposer(identifier, []);
       const selectedProjectId = projectless
         ? ""
         : (await selectedNativeProjectId()) || payload.codexProjectId;
