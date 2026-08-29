@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { access, chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -954,6 +954,60 @@ test("an active Codex conversation can explicitly bind an issue without changing
   });
   assert.equal(conflict.response.status, 409);
   assert.equal(conflict.body.error.code, "TASK_THREAD_BINDING_CONFLICT");
+});
+
+test("a saved local Codex conversation binds even when another project is currently open", async () => {
+  const threadId = "00000000-0000-4000-8000-000000000123";
+  const projectId = "saved-project";
+  const workspacePath = "/work/saved-project-worktree";
+  const baseUrl = await startServer(async (directory) => {
+    const codexHome = path.join(directory, "codex-home");
+    const codexStatePath = path.join(codexHome, ".codex-global-state.json");
+    const sessionDirectory = path.join(codexHome, "sessions", "2026", "08", "29");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(codexStatePath, JSON.stringify({
+      "thread-project-assignments": {
+        [threadId]: { projectKind: "local", projectId },
+      },
+    }));
+    await writeFile(
+      path.join(sessionDirectory, `rollout-test-${threadId}.jsonl`),
+      `${JSON.stringify({
+        type: "session_meta",
+        payload: { id: threadId, cwd: workspacePath },
+      })}\n`,
+    );
+    return { codexStatePath };
+  });
+  const created = (await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { title: "Bind saved conversation", status: "todo" },
+  })).body.task;
+  await request(baseUrl, "/api/local/host-runtime", {
+    method: "PUT",
+    body: {
+      threadId: "different-thread",
+      threadRunning: false,
+      threadTodoProgress: null,
+      codexProjectId: "different-project",
+      codexProjectKind: "local",
+      codexHostId: "local",
+      workspacePath: "/work/different-project",
+    },
+  });
+
+  const result = await request(baseUrl, `/api/tasks/${created.id}/bind-thread`, {
+    method: "POST",
+    body: { threadId },
+  });
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.body.task.threadBinding, {
+    threadId,
+    codexProjectId: projectId,
+    codexProjectKind: "local",
+    codexHostId: "local",
+    workspacePath,
+  });
 });
 
 test("issues support parent, sub-issue, blocking, and related issue relationships", async () => {

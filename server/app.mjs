@@ -2779,6 +2779,55 @@ export function createPanelServer(options = {}) {
     return null;
   }
 
+  async function savedLocalThreadBinding(threadId) {
+    let state;
+    try {
+      state = JSON.parse(await readFile(resolved.codexStatePath, "utf8"));
+    } catch {
+      return undefined;
+    }
+    const assignment = state["thread-project-assignments"]?.[threadId];
+    if (
+      assignment?.projectKind !== "local"
+      || typeof assignment.projectId !== "string"
+      || !assignment.projectId.trim()
+    ) return undefined;
+
+    const sessionPath = await findCodexSession(threadId);
+    if (!sessionPath) return undefined;
+    const handle = await open(sessionPath, "r");
+    try {
+      const buffer = Buffer.alloc(64 * 1024);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      for (const line of buffer.subarray(0, bytesRead).toString("utf8").split("\n")) {
+        let record;
+        try {
+          record = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        const cwd = record?.type === "session_meta" && record.payload?.id === threadId
+          ? record.payload.cwd
+          : null;
+        if (typeof cwd !== "string" || !path.isAbsolute(cwd)) continue;
+        return {
+          threadId,
+          codexProjectId: assignment.projectId,
+          codexProjectKind: "local",
+          codexHostId: "local",
+          workspacePath: cwd,
+        };
+      }
+    } finally {
+      await handle.close();
+    }
+    return undefined;
+  }
+
+  async function resolveThreadBinding(threadId) {
+    return currentHostThreadBinding(threadId) ?? await savedLocalThreadBinding(threadId);
+  }
+
   async function readCodexSessionState(threadId) {
     const sessionPath = await findCodexSession(threadId);
     if (!sessionPath) return null;
@@ -4362,7 +4411,7 @@ export function createPanelServer(options = {}) {
           if (!threadId) {
             throw new ApiError(400, "INVALID_FIELD", "'threadId' is required");
           }
-          const threadBinding = currentHostThreadBinding(threadId);
+          const threadBinding = await resolveThreadBinding(threadId);
           if (!threadBinding) {
             throw new ApiError(
               409,

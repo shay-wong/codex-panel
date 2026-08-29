@@ -4,6 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed explicit conversation binding so a saved local Codex task resolves its own project and worktree identity instead of depending on whichever task most recently opened Panel.
 - Added `panelctl conversation bind ISSUE_ID` so a user can explicitly associate an independently created Codex conversation with a Panel Issue or Jira requirement without changing its status or remote Jira fields.
 - Fixed Jira planning drafts that already contained valid structured Skills being reported as missing `manage-panel`, which prevented the created Codex task from being linked back to Jira.
 - Changed Jira AI planning to preselect `grill-with-docs` instead of `grill-me`, so requirement clarification also maintains its planning documents.
