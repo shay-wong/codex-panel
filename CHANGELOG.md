@@ -4,6 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed Jira planning conversations so a saved repository selects its Codex project before applying the repository workspace, and kept the repository-management dialog size stable while filtering.
 - Fixed Jira planning conversation setup when Codex returns a namespaced Skill mention and its resolved symlink target instead of Panel's catalog alias and link path.
 - Fixed slow Codex Skill mentions appearing just after Panel's composer timeout and leaving a partially prepared Jira planning conversation.
 - Fixed the packaged desktop service startup after the AI Skill catalog began using `js-yaml` by including that existing production dependency in every Tauri runtime bundle.

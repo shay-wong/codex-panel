@@ -197,6 +197,13 @@ test("Jira repository summary keeps the overflow count and manage action visible
   assert.match(styles, /\.jira-context-repositories > em \{[\s\S]*?flex: 0 0 auto/);
   assert.match(styles, /\.jira-context-manage > b \{[\s\S]*?white-space: nowrap/);
 });
+
+test("Jira repository filtering keeps the management dialog height stable", () => {
+  const dialogStyles = styles.match(/\.jira-manager-dialog:not\(\.jira-planning-project-dialog\) \{([^}]*)\}/)?.[1] ?? "";
+  assert.match(dialogStyles, /grid-template-rows: auto minmax\(0, 1fr\) auto/);
+  assert.match(dialogStyles, /height: min\(720px, calc\(100vh - 48px\)\)/);
+  assert.match(styles, /\.jira-manager-body \{[\s\S]*?min-height: 0/);
+});
 test("comments stage, upload, render and delete their own attachments", () => {
   assert.match(apiSource, /export async function uploadCommentAttachment/);
   assert.match(apiSource, /\/api\/comments\/\$\{encodeURIComponent\(commentId\)\}\/attachments/);
