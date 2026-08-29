@@ -53,7 +53,7 @@ if (args[0] === "debug") {
     while ((index = buffer.indexOf("\\n")) >= 0) { const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
       if (!line.trim()) continue; const message = JSON.parse(line);
       if (message.id === 1) process.stdout.write('{"id":1,"result":{}}\\n');
-      if (message.id === 2) process.stdout.write('{"id":2,"result":{"data":[{"skills":[{"name":"grill-me","enabled":true,"scope":"user","path":"/skills/grill-me/SKILL.md"},{"name":"to-spec","enabled":true,"scope":"user","path":"/skills/to-spec/SKILL.md"},{"name":"to-tickets","enabled":true,"scope":"user","path":"/skills/to-tickets/SKILL.md"}]}]}}\\n');
+      if (message.id === 2) process.stdout.write('{"id":2,"result":{"data":[{"skills":[{"name":"grill-with-docs","enabled":true,"scope":"user","path":"/skills/grill-with-docs/SKILL.md"},{"name":"to-spec","enabled":true,"scope":"user","path":"/skills/to-spec/SKILL.md"},{"name":"to-tickets","enabled":true,"scope":"user","path":"/skills/to-tickets/SKILL.md"}]}]}}\\n');
     }
   });
 } else {
@@ -129,7 +129,7 @@ if (args[0] === "debug") {
     });
     assert.equal(result.context.plan, null);
     assert.match(result.composerText, /请规划下面这个 Jira 需求/);
-    assert.deepEqual(result.skills.map((skill) => skill.id), ["grill-me", "to-spec", "to-tickets"]);
+    assert.deepEqual(result.skills.map((skill) => skill.id), ["grill-with-docs", "to-spec", "to-tickets"]);
     assert.equal(app.aiChat.listThreads().length, 0);
 
     let planningThreadId = "codex-native-jira-plan";
@@ -460,7 +460,7 @@ if (args[0] === "debug") {
     assert.equal(preparedReplan.context.lifecycle.pending.kind, "reopened");
     assert.equal(preparedReplan.context.plan.threadId, previousPlanningThreadId);
     assert.match(preparedReplan.composerText, /Jira 内容或关联仓库已经变化/);
-    assert.deepEqual(preparedReplan.skills.map((skill) => skill.id), ["grill-me", "to-spec", "to-tickets"]);
+    assert.deepEqual(preparedReplan.skills.map((skill) => skill.id), ["grill-with-docs", "to-spec", "to-tickets"]);
     assert.deepEqual(app.aiChat.listThreads().map((thread) => thread.id).sort(), previousThreadIds);
 
     await app.aiChat.createThread({

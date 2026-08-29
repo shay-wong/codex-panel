@@ -4,6 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Changed Jira AI planning to preselect `grill-with-docs` instead of `grill-me`, so requirement clarification also maintains its planning documents.
 - Fixed `$manage-panel` so an exact Jira task ID supplied in any conversation resolves its linked Panel Issues before workspace-based context lookup, without granting Jira planning writes.
 - Fixed Jira planning conversations so a saved repository selects its Codex project before applying the repository workspace, and kept the repository-management dialog size stable while filtering.
 - Fixed Jira planning conversation setup when Codex returns a namespaced Skill mention and its resolved symlink target instead of Panel's catalog alias and link path.

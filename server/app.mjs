@@ -2231,7 +2231,7 @@ export function createPanelServer(options = {}) {
   const pendingJiraSimpleStarts = new Map();
   // ponytail: one in-process reservation per Jira is enough while this server owns all local mutations.
   const pendingJiraReopenActions = new Map();
-  const jiraPlanningSkillIds = ["grill-me", "to-spec", "to-tickets"];
+  const jiraPlanningSkillIds = ["grill-with-docs", "to-spec", "to-tickets"];
 
   function jiraPlanningPrompt(jiraTask, projects, review, plan) {
     const repositories = projects.length > 0
@@ -2260,7 +2260,7 @@ export function createPanelServer(options = {}) {
       "必须保留并纳入新计划约束的已开始成果:",
       preservedWork,
       "",
-      "这是规划会话，不授权修改仓库代码或开始执行 Issue。先使用 grill-me 澄清需求；确认后使用 to-spec 生成本地 Spec，再使用 to-tickets 拆分 tracer-bullet tickets。",
+      "这是规划会话，不授权修改仓库代码或开始执行 Issue。先使用 grill-with-docs 澄清需求并维护相关文档；确认后使用 to-spec 生成本地 Spec，再使用 to-tickets 拆分 tracer-bullet tickets。",
       `保存 Spec 与发布 tickets 时使用 manage-panel 中的 Jira planning 命令，Jira 标识固定为 ${jiraTask.id}。发布前必须让用户确认拆分结果，并确认每个 ticket 都选择了已关联仓库。`,
     ].join("\n");
   }
