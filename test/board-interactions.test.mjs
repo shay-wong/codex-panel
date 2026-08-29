@@ -152,7 +152,7 @@ test("issues expose processing conversations without manual binding", () => {
   assert.doesNotMatch(appSource, /detail-thread-button/);
   assert.doesNotMatch(detailSource, /输入对话 ID|解除 Codex 对话绑定|>绑定</);
   assert.doesNotMatch(editorSource, /对话 ID|linkedThreadId/);
-  assert.match(detailSource, /currentTask\.threadBinding \|\| currentTask\.legacyLocalThreadId/);
+  assert.doesNotMatch(detailSource, /处理此议题的对话|Conversations for this issue/);
   assert.doesNotMatch(detailSource, /currentTask\.threadIds/);
   assert.match(detailSource, /<strong>\{text\("查看对话", "View conversation"\)\}<\/strong>/);
   assert.match(detailSource, /className="conversation-thread-id">\{threadId\}/);
@@ -174,7 +174,11 @@ test("issue activity opens formal execution in Codex and keeps it out of tempora
   assert.match(appSource, /<TaskDetail[\s\S]*?aiChatThreads=\{aiThreads\}/);
   assert.match(detailSource, /aiChatThreads: AiChatThread\[\]/);
   assert.match(detailSource, /const linkedAiChatThreads = aiChatThreads\.filter/);
-  assert.match(detailSource, /\.\.\.linkedAiChatThreads\.map\(\(thread\) => \(\{/);
+  assert.match(detailSource, /const jiraPlanningThread = jiraContext\?\.plan\?\.threadId/);
+  assert.match(detailSource, /for \(const ref of currentTask\.conversationRefs\)/);
+  assert.match(detailSource, /roleLabel: \["Jira 规划会话", "Jira planning conversation"\]/);
+  assert.match(detailSource, /roleLabel: currentTask\.source === "jira" \? \["关联会话", "Linked conversation"\]/);
+  assert.match(detailSource, /\.\.\.\[\.\.\.conversationActivities\.values\(\)\]\.map/);
   assert.match(detailSource, /kind: "ai-conversation" as const/);
   assert.match(detailSource, /const formalThread = item\.thread\.purpose === "formal"/);
   assert.match(detailSource, /formalThread[\s\S]*?onOpenLegacyLocalThread\(item\.thread\.codexThreadId\)/);

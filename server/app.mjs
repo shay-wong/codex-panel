@@ -4433,17 +4433,6 @@ export function createPanelServer(options = {}) {
               { existingThreadId },
             );
           }
-          if (task.source === "jira") {
-            const context = database.getJiraContext(task.id);
-            if (context.plan?.threadId && context.plan.threadId !== threadId) {
-              throw new ApiError(
-                409,
-                "JIRA_PLANNING_THREAD_CONFLICT",
-                "该 Jira 需求已绑定到其他规划会话",
-                { existingThreadId: context.plan.threadId },
-              );
-            }
-          }
           if (!task.threadBinding || JSON.stringify(task.threadBinding) !== JSON.stringify(threadBinding)) {
             task = database.updateTask(
               task.id,
@@ -4454,19 +4443,6 @@ export function createPanelServer(options = {}) {
               actorFromRequest(request),
             );
             events.emit("task.updated", { task });
-          }
-          if (task.source === "jira") {
-            const context = database.getJiraContext(task.id);
-            const selectedProjectId = context.projects.length > 1
-              ? context.projects.find((project) => (
-                  project.id === threadBinding.codexProjectId
-                  || project.workspacePath === threadBinding.workspacePath
-                ))?.id
-              : context.projects[0]?.id;
-            const result = await startJiraPlanning(task.id, task.version, threadId, selectedProjectId);
-            task = result.context.jira;
-            events.emit("task.jira.updated", { taskId: task.id, task });
-            return sendJson(response, 200, { task, context: result.context });
           }
           return sendJson(response, 200, { task });
         }

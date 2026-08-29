@@ -111,6 +111,7 @@ import {
 } from "./IssueRelations";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { buildIssueUrl } from "../issueRoute";
+import { normalizeCodexThreadId } from "../taskConversations";
 import { postEmbeddedHostMessage } from "../embeddedHost.mjs";
 import copyIdIcon from "../assets/figma-taskboard/copy-id.svg";
 import copyLinkIcon from "../assets/figma-taskboard/copy-link.svg";
@@ -445,10 +446,12 @@ function AiConversationActivity({
   thread,
   onOpen,
   native = false,
+  roleLabel,
 }: {
   thread: AiChatThread;
   onOpen: () => void;
   native?: boolean;
+  roleLabel?: readonly [string, string];
 }) {
   const { locale, text } = useTaskboardI18n();
   const statusLabel = {
@@ -478,7 +481,9 @@ function AiConversationActivity({
           <strong>{thread.title}</strong>
           <small>
             <span className={`activity-conversation-state is-${thread.status}`} aria-hidden="true" />
-            <span>{native
+            <span>{roleLabel
+              ? `${text(...roleLabel)} · ${statusLabel}`
+              : native
               ? text(`Codex 对话 · ${statusLabel}`, `Codex conversation · ${statusLabel}`)
               : text(`临时 AI 对话 · ${statusLabel}`, `Temporary AI conversation · ${statusLabel}`)}</span>
             <time title={exactTime(thread.updatedAt, locale)}>{relativeTime(thread.updatedAt, locale)}</time>
@@ -1434,6 +1439,54 @@ export function TaskDetail({
     thread.origin.projectId === currentTask.projectId
     && thread.origin.issueId === currentTask.id
   ));
+  const jiraPlanningThread = jiraContext?.plan?.threadId
+    ? aiChatThreads.find((thread) => thread.id === jiraContext.plan?.threadId) ?? null
+    : null;
+  const conversationActivities = new Map<string, {
+    thread: AiChatThread;
+    roleLabel?: readonly [string, string];
+  }>();
+  for (const thread of linkedAiChatThreads) {
+    const threadId = normalizeCodexThreadId(thread.codexThreadId);
+    conversationActivities.set(threadId ? `codex:${threadId}` : `ai:${thread.id}`, {
+      thread,
+      roleLabel: currentTask.source === "jira" ? ["关联会话", "Linked conversation"] : undefined,
+    });
+  }
+  if (jiraPlanningThread) {
+    const threadId = normalizeCodexThreadId(jiraPlanningThread.codexThreadId);
+    conversationActivities.set(threadId ? `codex:${threadId}` : `ai:${jiraPlanningThread.id}`, {
+      thread: jiraPlanningThread,
+      roleLabel: ["Jira 规划会话", "Jira planning conversation"],
+    });
+  }
+  for (const ref of currentTask.conversationRefs) {
+    const threadId = normalizeCodexThreadId(ref.threadId);
+    if (!threadId || conversationActivities.has(`codex:${threadId}`)) continue;
+    conversationActivities.set(`codex:${threadId}`, {
+      thread: {
+        id: `task-binding:${threadId}`,
+        title: ref.title || currentTask.title,
+        status: "idle",
+        purpose: "formal",
+        origin: {
+          projectId: currentTask.projectId,
+          projectName: "",
+          workspacePath: "workspacePath" in ref ? ref.workspacePath : "",
+          issueId: currentTask.id,
+          issueIdentifier: currentTask.identifier,
+        },
+        codexThreadId: ref.threadId,
+        model: "",
+        reasoningEffort: "",
+        sandbox: "workspace-write",
+        archivedAt: null,
+        createdAt: ref.updatedAt,
+        updatedAt: ref.updatedAt,
+      },
+      roleLabel: currentTask.source === "jira" ? ["关联会话", "Linked conversation"] : undefined,
+    });
+  }
   const linkedJiraProjectIds = new Set(jiraContext?.projects.map((project) => project.id) ?? []);
   const selectedJiraProjectIds = new Set(jiraProjectIds);
   const linkedJiraProjectNames = jiraContext?.projects.map((project) => project.name).join(" · ") ?? "";
@@ -1548,11 +1601,12 @@ export function TaskDetail({
       createdAt: comment.createdAt,
       comment,
     })),
-    ...linkedAiChatThreads.map((thread) => ({
+    ...[...conversationActivities.values()].map(({ thread, roleLabel }) => ({
       kind: "ai-conversation" as const,
       id: thread.id,
       createdAt: thread.updatedAt,
       thread,
+      roleLabel,
     })),
   ].sort((left, right) => (
     left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
@@ -1654,20 +1708,6 @@ export function TaskDetail({
                           onOpenTask={onOpenTask}
                         />
                       : text("添加描述…", "Add description…")}
-                  </div>
-                )}
-                {(currentTask.threadBinding || currentTask.legacyLocalThreadId) && (
-                  <div
-                    className="issue-conversation-list"
-                    aria-label={text("处理此议题的对话", "Conversations for this issue")}
-                  >
-                    <ConversationLink
-                      threadId={currentTask.threadBinding?.threadId ?? currentTask.legacyLocalThreadId!}
-                      onOpen={() => currentTask.threadBinding
-                        ? onOpenThread(currentTask.threadBinding)
-                        : onOpenLegacyLocalThread(currentTask.legacyLocalThreadId!)}
-                      onCopy={onCopy}
-                    />
                   </div>
                 )}
               </div>
@@ -1800,6 +1840,7 @@ export function TaskDetail({
                         key={`ai-conversation-${item.id}`}
                         thread={item.thread}
                         native={formalThread}
+                        roleLabel={item.roleLabel}
                         onOpen={() => formalThread
                           ? item.thread.codexThreadId
                             ? onOpenLegacyLocalThread(item.thread.codexThreadId)

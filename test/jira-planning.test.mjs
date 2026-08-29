@@ -142,18 +142,39 @@ if (args[0] === "debug") {
       codexHostId: "local",
       workspacePath: path.resolve(new URL("..", import.meta.url).pathname),
     });
-    result = await cli(baseUrl, directory, [
-      "conversation", "bind", "TEST-1", "--thread-id", planningThreadId,
-    ]);
-    jira = result.task;
-    assert.equal(jira.status, "todo");
-    assert.equal(jira.threadBinding.threadId, planningThreadId);
+    result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
+      version: jira.version,
+      threadId: planningThreadId,
+    });
     assert.equal(result.context.plan.status, "planning");
     assert.ok(result.context.plan.promptedAt);
     assert.equal(result.context.plan.threadId, planningThreadId);
     assert.equal(app.aiChat.listThreads().length, 1);
     assert.equal(app.database.getAiChatThread(planningThreadId).purpose, "formal");
     assert.equal(app.database.getAiChatThread(planningThreadId).codexThreadId, planningThreadId);
+
+    const linkedThreadId = "codex-related-jira-task";
+    await api(baseUrl, "/api/local/host-runtime", "PUT", {
+      threadId: linkedThreadId,
+      threadRunning: true,
+      threadTodoProgress: null,
+      codexProjectId: "api",
+      codexProjectKind: "local",
+      codexHostId: "local",
+      workspacePath: workspace,
+    });
+    const planningVersion = result.context.plan.version;
+    result = await cli(baseUrl, directory, [
+      "conversation", "bind", "TEST-1", "--thread-id", linkedThreadId,
+    ]);
+    jira = result.task;
+    assert.equal(jira.status, "todo");
+    assert.equal(jira.externalStatus, "todo");
+    assert.equal(jira.threadBinding.threadId, linkedThreadId);
+    const contextAfterBinding = app.database.getJiraContext(jira.id);
+    assert.equal(contextAfterBinding.plan.threadId, planningThreadId);
+    assert.equal(contextAfterBinding.plan.version, planningVersion);
+    assert.equal(app.aiChat.listThreads().length, 1);
 
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-context`, "PUT", {
       version: jira.version,
