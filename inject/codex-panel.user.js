@@ -1180,12 +1180,7 @@
       }
 
       const previousThreadId = normalizeThreadId(threadIdFromLocation() || lastNativeThreadId);
-      if (!projectless && workspacePath) {
-        await bridge.sendMessageFromView({
-          type: "electron-set-active-workspace-root",
-          root: workspacePath,
-        });
-      } else if (!projectless) {
+      if (!projectless) {
         await ensureProjectRows();
         const snapshotProjectId = hostContextSnapshot?.projectId || "";
         const requestedProjectId = typeof payload.codexProjectId === "string"
@@ -1202,6 +1197,12 @@
         const selectProject = row?.querySelector("[data-app-action-sidebar-select-project]");
         selectProject?.click?.();
         if (selectProject) await new Promise((resolve) => window.setTimeout(resolve, 120));
+        if (workspacePath) {
+          await bridge.sendMessageFromView({
+            type: "electron-set-active-workspace-root",
+            root: workspacePath,
+          });
+        }
       }
 
       closePanel(false);

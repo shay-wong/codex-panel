@@ -479,6 +479,13 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.match(bindRemoteThreadSource, /JSON\.stringify\(latestTask\.developmentContext\) !== pending\.developmentContext/);
 });
 
+test("local Jira planning selects the saved Codex project before applying its workspace", () => {
+  assert.match(
+    createThreadSource,
+    /if \(!projectless\) \{[\s\S]*?ensureProjectRows\(\)[\s\S]*?\[data-app-action-sidebar-select-project\][\s\S]*?selectProject\?\.click\?\.\(\)[\s\S]*?if \(workspacePath\) \{[\s\S]*?electron-set-active-workspace-root/,
+  );
+});
+
 test("an unrelated new thread cannot claim an unsent SSH issue draft", async () => {
   const pending = {
     taskId: "task-1",

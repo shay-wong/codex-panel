@@ -5552,6 +5552,12 @@ kbd {
   box-shadow: 0 18px 56px rgba(0, 0, 0, 0.28);
 }
 
+.jira-manager-dialog:not(.jira-planning-project-dialog) {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: min(720px, calc(100vh - 48px));
+}
+
 .jira-planning-project-dialog {
   width: min(420px, calc(100vw - 32px));
 }
@@ -5619,7 +5625,7 @@ kbd {
 .jira-manager-body {
   display: grid;
   grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
-  max-height: calc(min(720px, calc(100vh - 48px)) - 124px);
+  min-height: 0;
   overflow: auto;
 }
 
