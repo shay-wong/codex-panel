@@ -178,15 +178,15 @@ Each comment JSON object independently records the most recent conversation that
 
 ## Jira planning
 
-Use these commands only inside a planning conversation opened from a Jira issue:
+`jira planning get` is a read-only context lookup and may also be used by an execution workflow to resolve its linked Jira. Use `save` and `publish` only inside a planning conversation opened from a Jira issue:
 
 ```bash
-panelctl jira planning get JIRA_ID [--json]
+panelctl jira planning get JIRA_OR_LINKED_ISSUE_ID [--json]
 panelctl jira planning save JIRA_ID --spec-file SPEC.md --if-version N [--json]
 panelctl jira planning publish JIRA_ID --tickets-file TICKETS.json --if-version N [--json]
 ```
 
-`jira planning get` returns the Jira context and `plan.version`. Save the synthesized Spec first. After the user approves the ticket breakdown, publish a JSON manifest in dependency order:
+`jira planning get` accepts a Jira task identity or a linked execution Issue identity and returns the Jira context plus `plan.version`. For a linked execution Issue, read `context.jira.externalKey`; a null `context.jira` means no Jira link exists. Save the synthesized Spec first. After the user approves the ticket breakdown, publish a JSON manifest in dependency order:
 
 ```json
 {

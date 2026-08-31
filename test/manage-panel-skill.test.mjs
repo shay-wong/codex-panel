@@ -54,6 +54,15 @@ test("the Panel skill resolves an explicit Jira ID before workspace context", ()
   );
 });
 
+test("the Panel skill resolves linked Jira from an execution Issue", () => {
+  assert.match(skillSource, /`jira planning get` with the exact Panel Issue ID or identifier/i);
+  assert.match(skillSource, /Return `context\.jira\.externalKey` only when present/i);
+  assert.match(skillSource, /`context\.jira` is null[\s\S]*not linked to Jira/i);
+  assert.match(skillSource, /never substitute the Panel `id` or `identifier` as a Jira key/i);
+  assert.match(cliReference, /`jira planning get` is a read-only context lookup[\s\S]*execution workflow/i);
+  assert.match(cliReference, /Use `save` and `publish` only inside a planning conversation/i);
+});
+
 test("the Panel CLI reference covers help, project README, files, and incremental cursors", () => {
   assert.match(cliReference, /panelctl --help/);
   assert.match(cliReference, /panelctl project readme get/);
