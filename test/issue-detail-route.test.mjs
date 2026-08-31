@@ -48,9 +48,13 @@ test("the app restores issue detail from the URL and follows browser history", (
     appSource.indexOf("function openTaskDetail"),
     appSource.indexOf("function closeTaskDetail"),
   );
+  assert.match(openTaskSource, /task\.projectId !== selectedProjectId && !isAllProjects/);
+  assert.doesNotMatch(openTaskSource, /if \(isAllProjects\) setSelectedProjectId/);
+  assert.match(openTaskSource, /isAllProjects \? ALL_PROJECTS_ID : task\.projectId/);
   assert.match(openTaskSource, /buildIssueUrl\(window\.location\.href, selectedProjectId, null\)/);
   assert.match(openTaskSource, /window\.history\.replaceState/);
   assert.match(openTaskSource, /window\.history\.pushState/);
   assert.match(appSource, /function closeTaskDetail\(\)[\s\S]*?window\.history\.replaceState/);
+  assert.match(appSource, /detailTask && \(selectedProject \|\| isAllProjects\)/);
   assert.match(appSource, /onEdit=\{openTaskDetail\}/);
 });

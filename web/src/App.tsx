@@ -880,12 +880,11 @@ export function App() {
   const contextMenuTask = contextMenu
     ? tasks.find((task) => task.id === contextMenu.taskId) ?? null
     : null;
-  const contextMenuWorkspacePath = contextMenuTask
-    ? deviceWorkspacePaths[contextMenuTask.projectId]
-    : undefined;
-  const availableLabels = isAllProjects
-    ? [...new Set(projects.flatMap((project) => project.labels))]
-    : selectedProject?.labels ?? [];
+  const availableLabels = detailTask
+    ? projects.find((project) => project.id === detailTask.projectId)?.labels ?? []
+    : isAllProjects
+      ? [...new Set(projects.flatMap((project) => project.labels))]
+      : selectedProject?.labels ?? [];
   const projectNames = useMemo(() => Object.fromEntries(projects.map((project) => [
     project.id,
     project.id === GLOBAL_PROJECT_ID ? text("全局", "Global") : project.name,
@@ -1116,7 +1115,7 @@ export function App() {
   ]);
 
   function openTaskDetail(task: Pick<Task, "identifier" | "projectId">) {
-    if (task.projectId !== selectedProjectId) {
+    if (task.projectId !== selectedProjectId && !isAllProjects) {
       setBoardView(readProjectBoardView(task.projectId));
       setListLayout(readProjectListLayout(task.projectId));
       const collapseModes = readProjectListCollapseModes(task.projectId);
@@ -1133,7 +1132,6 @@ export function App() {
     if (fullTask) markTaskRead(fullTask);
     const currentIssue = readIssueIdentifier(window.location.search);
     if (!currentIssue) detailSourceProjectIdRef.current = selectedProjectId;
-    if (isAllProjects) setSelectedProjectId(task.projectId);
     if (boardView === "list" && issueListRef.current) {
       pendingDetailSourceScrollRef.current = {
         projectId: selectedProjectId,
@@ -1161,7 +1159,7 @@ export function App() {
     }
     const detailUrl = buildIssueUrl(
       currentIssue ? window.location.href : boardUrl.href,
-      task.projectId,
+      isAllProjects ? ALL_PROJECTS_ID : task.projectId,
       task.identifier,
     );
     window.history.pushState(window.history.state, "", detailUrl);
@@ -1747,7 +1745,9 @@ export function App() {
   useEffect(() => {
     const standalone = !embedded || window.parent === window;
     const developmentProjectId = isAllProjects
-      ? developmentEditorProjectId ?? (standalone ? contextMenuTask?.projectId : null)
+      ? developmentEditorProjectId
+        ?? detailTask?.projectId
+        ?? (standalone ? contextMenuTask?.projectId : null)
       : selectedProjectId;
     if (!developmentProjectId) {
       setDevelopmentScan({ workspacePath: null, contexts: [] });
@@ -1759,12 +1759,10 @@ export function App() {
       ? hostContext?.projectId
       : developmentProjectId;
     const codexThreadId = hostContext?.threadId
-      ?? (isAllProjects ? contextMenuTask?.threadId : detailTask?.threadId)
+      ?? (isAllProjects ? detailTask?.threadId ?? contextMenuTask?.threadId : detailTask?.threadId)
       ?? undefined;
     const workspacePath = isAllProjects
-      ? developmentEditorProjectId
-        ? deviceWorkspacePaths[developmentEditorProjectId]
-        : contextMenuWorkspacePath
+      ? deviceWorkspacePaths[developmentProjectId]
       : selectedDeviceWorkspacePath;
     setDevelopmentScan({ workspacePath: workspacePath ?? null, contexts: [] });
     setDevelopmentScanLoading(true);
@@ -1791,7 +1789,7 @@ export function App() {
   }, [
     contextMenuTask?.projectId,
     contextMenuTask?.threadId,
-    contextMenuWorkspacePath,
+    detailTask?.projectId,
     detailTask?.threadId,
     deviceWorkspacePaths,
     developmentEditorProjectId,
@@ -2481,10 +2479,10 @@ export function App() {
     }
   }
 
-  async function removeProjectLabel(label: string) {
+  async function removeProjectLabel(label: string, projectId = selectedProjectId) {
     setActionError(null);
     try {
-      const project = await deleteProjectLabelRequest(selectedProjectId, label);
+      const project = await deleteProjectLabelRequest(projectId, label);
       setProjects((current) => current.map((candidate) => (
         candidate.id === project.id ? project : candidate
       )));
@@ -3783,7 +3781,7 @@ export function App() {
           </div>
         )}
 
-        {detailTask && selectedProject ? (
+        {detailTask && (selectedProject || isAllProjects) ? (
           <TaskDetail
             key={detailTask.id}
             task={detailTask}
@@ -3798,8 +3796,8 @@ export function App() {
             developmentScanLoading={developmentScanLoading}
             commentsRevision={commentsRevision}
             attachmentsRevision={attachmentsRevision}
-            onCreateLabel={persistProjectLabel}
-            onDeleteLabel={removeProjectLabel}
+            onCreateLabel={(label) => persistProjectLabel(label, detailTask.projectId)}
+            onDeleteLabel={(label) => removeProjectLabel(label, detailTask.projectId)}
             onUpdate={(current, changes) => updateTaskProperties(current, changes)}
             onOpenTask={openTaskDetail}
             onAddRelation={(current, type, relatedTaskId, origin) => (

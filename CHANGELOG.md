@@ -4,6 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed opening an issue from All projects so its detail keeps the All projects scope while using the issue's own labels and repository development context.
 - Fixed explicit Jira conversation binding so it preserves an existing planning conversation, and unified conversations created by execution, automatic claim, or manual binding in issue activity without a duplicate detail shortcut.
 - Fixed explicit conversation binding so a saved local Codex task resolves its own project and worktree identity instead of depending on whichever task most recently opened Panel.
 - Added `panelctl conversation bind ISSUE_ID` so a user can explicitly associate an independently created Codex conversation with a Panel Issue or Jira requirement without changing its status or remote Jira fields.
