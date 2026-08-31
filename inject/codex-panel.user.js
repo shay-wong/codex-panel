@@ -442,11 +442,11 @@
 
   function requestNativeFetch(path, body) {
     const bridge = window.electronBridge;
-    if (!bridge || typeof bridge.sendMessageFromView !== "function") return Promise.resolve(null);
+    if (!bridge || typeof bridge.sendMessageFromView !== "function") return Promise.resolve(undefined);
     return new Promise((resolve) => {
       const requestId = `panel-native-fetch-${crypto.randomUUID()}`;
       let settled = false;
-      const finish = (value = null) => {
+      const finish = (value) => {
         if (settled) return;
         settled = true;
         window.clearTimeout(timeout);
@@ -461,13 +461,17 @@
           || message.type !== "fetch-response"
           || message.requestId !== requestId
         ) return;
+        if (!Number.isInteger(message.status) || message.status < 200 || message.status >= 300) {
+          finish(undefined);
+          return;
+        }
         try {
           finish(JSON.parse(message.bodyJsonString || "null"));
         } catch (_) {
-          finish();
+          finish(undefined);
         }
       };
-      const timeout = window.setTimeout(finish, 1_000);
+      const timeout = window.setTimeout(() => finish(undefined), 1_000);
       window.addEventListener("message", onMessage);
       try {
         bridge.sendMessageFromView({
@@ -478,7 +482,7 @@
           body: JSON.stringify(body),
         });
       } catch (_) {
-        finish();
+        finish(undefined);
       }
     });
   }
@@ -497,8 +501,14 @@
       (Array.isArray(bootstrap?.globalStateEntries) ? bootstrap.globalStateEntries : [])
         .map((entry) => [entry?.key, entry?.value]),
     );
+    const [currentLocalProjects, currentRemoteProjects] = await Promise.all([
+      requestNativeFetch("get-global-state", { key: "local-projects" }),
+      requestNativeFetch("get-global-state", { key: "remote-projects" }),
+    ]);
     const metadata = new Map();
-    const localProjects = entries.get("local-projects");
+    const localProjects = currentLocalProjects === undefined
+      ? entries.get("local-projects")
+      : currentLocalProjects?.value;
     if (localProjects && typeof localProjects === "object" && !Array.isArray(localProjects)) {
       Object.entries(localProjects).forEach(([projectId, project]) => {
         const id = projectId.trim();
@@ -513,7 +523,9 @@
         });
       });
     }
-    const remoteProjects = entries.get("remote-projects");
+    const remoteProjects = currentRemoteProjects === undefined
+      ? entries.get("remote-projects")
+      : currentRemoteProjects?.value;
     if (Array.isArray(remoteProjects)) {
       remoteProjects.forEach((project) => {
         const id = typeof project?.id === "string" ? project.id.trim() : "";
@@ -522,15 +534,60 @@
           : "";
         const hostId = typeof project?.hostId === "string" ? project.hostId.trim() : "";
         if (!id || !workspacePath || !hostId) return;
-        metadata.set(id, { projectKind: "remote", workspacePath, hostId });
+        metadata.set(id, {
+          projectKind: "remote",
+          workspacePath,
+          hostId,
+          name: typeof project?.label === "string" && project.label.trim()
+            ? project.label.trim()
+            : id,
+        });
       });
     }
     return metadata;
   }
 
+  async function activeNativeWorkspaceRoots() {
+    const response = await requestNativeFetch("active-workspace-roots", {});
+    const roots = response?.roots;
+    // Keep an unavailable endpoint distinct from a successful response with no
+    // workspace roots. The latter must not be treated as a confirmed switch.
+    return {
+      available: Array.isArray(roots),
+      roots: Array.isArray(roots) ? roots.filter((root) => typeof root === "string") : [],
+    };
+  }
+
+  function normalizeNativeRootPath(value) {
+    const path = String(value || "").trim();
+    if (!path) return "";
+    const windowsPath = /^[A-Za-z]:[\\/]/.test(path) || path.includes("\\");
+    const normalizedSlashes = windowsPath ? path.replace(/\\/g, "/") : path;
+    const withoutTrailingSlash = normalizedSlashes.replace(/\/+$/, "")
+      || (normalizedSlashes.startsWith("/") ? "/" : normalizedSlashes);
+    if (!windowsPath || !/^[A-Za-z]:/.test(withoutTrailingSlash)) return withoutTrailingSlash;
+    return `${withoutTrailingSlash[0].toLowerCase()}${withoutTrailingSlash.slice(1)}`;
+  }
+
+  async function canonicalNativeRootPaths(roots) {
+    const normalizedRoots = roots.map((root) => normalizeNativeRootPath(root));
+    const response = await requestNativeFetch("workspace-root-options", {
+      hostId: "local",
+      canonicalizeRoots: roots,
+    });
+    const canonicalPathByRoot = response?.canonicalPathByRoot;
+    if (!canonicalPathByRoot || typeof canonicalPathByRoot !== "object") return normalizedRoots;
+    const canonicalRoots = roots.map((root) => (
+      typeof canonicalPathByRoot[root] === "string"
+        ? normalizeNativeRootPath(canonicalPathByRoot[root])
+        : ""
+    ));
+    return canonicalRoots.every(Boolean) ? canonicalRoots : normalizedRoots;
+  }
+
   function readCodexProjects(metadata = codexProjectMetadata) {
     const seen = new Set();
-    return Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"))
+    const projects = Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"))
       .flatMap((row) => {
         const id = row.getAttribute("data-app-action-sidebar-project-id")?.trim();
         const name = (
@@ -542,6 +599,11 @@
         seen.add(id);
         return [{ id, name, ...metadata.get(id) }];
       });
+    for (const [id, project] of metadata) {
+      if (project.projectKind !== "remote" || seen.has(id)) continue;
+      projects.push({ id, ...project });
+    }
+    return projects;
   }
 
   function findProjectsSection() {
@@ -1018,11 +1080,53 @@
       .find((row) => row.getAttribute("data-app-action-sidebar-project-id") === projectId.trim()) || null;
   }
 
-  function projectRowByLabel(label) {
-    if (typeof label !== "string" || !label.trim()) return null;
-    const expected = normalizedLabel(label);
-    return Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"))
-      .find((row) => normalizedLabel(row.getAttribute("data-app-action-sidebar-project-label")) === expected) || null;
+  async function nativeProjectContext() {
+    const bootstrap = await window.electronBridge?.getInitialSidebarBootstrap?.();
+    const entries = bootstrap?.globalStateEntries ?? [];
+    const currentLocalProjects = await requestNativeFetch(
+      "get-global-state",
+      { key: "local-projects" },
+    );
+    const localProjects = currentLocalProjects === undefined
+      ? entries.find((entry) => entry.key === "local-projects")?.value
+      : currentLocalProjects?.value;
+    const projectEntries = localProjects
+      && typeof localProjects === "object"
+      && !Array.isArray(localProjects)
+      ? Object.entries(localProjects)
+      : [];
+    return {
+      projects: projectEntries.flatMap(([id, project]) => (
+        project && Array.isArray(project.rootPaths)
+          ? [{ ...project, id }]
+          : []
+      )),
+    };
+  }
+
+  async function resolveNativeProject(requestedProjectId, workspacePath) {
+    const context = await nativeProjectContext();
+    const normalizedWorkspacePath = normalizeNativeRootPath(workspacePath);
+    let project = context.projects.find((candidate) => candidate.id === requestedProjectId) ?? null;
+    if (!project && normalizedWorkspacePath) {
+      const projectRoots = context.projects.flatMap((candidate) => candidate.rootPaths.flatMap((root) => (
+        typeof root === "string" && normalizeNativeRootPath(root)
+          ? [{ project: candidate, root }]
+          : []
+      )));
+      const canonicalRoots = await canonicalNativeRootPaths([
+        workspacePath,
+        ...projectRoots.map(({ root }) => root),
+      ]);
+      const matchingRootIndex = canonicalRoots.slice(1).findIndex((root) => (
+        root === canonicalRoots[0]
+      ));
+      if (matchingRootIndex >= 0) project = projectRoots[matchingRootIndex].project;
+    }
+    const targetRoot = normalizedWorkspacePath ? workspacePath : project?.rootPaths[0];
+    return project && typeof targetRoot === "string" && normalizeNativeRootPath(targetRoot)
+      ? { projectId: project.id, targetRoot }
+      : null;
   }
 
   async function ensureProjectRows() {
@@ -1056,6 +1160,32 @@
       await new Promise((resolve) => window.setTimeout(resolve, 80));
     }
     throw new Error("Codex 对话输入框没有生成 manage-panel Skill 引用");
+  }
+
+  async function waitForNativeProject(targetRoot, expectedProjectId) {
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline) {
+      const [projectId, activeWorkspace] = await Promise.all([
+        selectedNativeProjectId(),
+        activeNativeWorkspaceRoots(),
+      ]);
+      if (projectId && projectId === expectedProjectId) {
+        // Some Codex desktop builds no longer expose active-workspace-roots.
+        // A confirmed selected project is still safe when that endpoint is unavailable;
+        // keep rejecting an explicitly reported, mismatched workspace root.
+        if (!activeWorkspace.available) return projectId;
+        const [canonicalTargetRoot, ...canonicalActiveRoots] = await canonicalNativeRootPaths([
+          targetRoot,
+          ...activeWorkspace.roots,
+        ]);
+        if (canonicalActiveRoots.some((root) => root === canonicalTargetRoot)) return projectId;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    }
+    throw new Error(hostText(
+      "Codex 未在限定时间内切换到目标项目或 worktree",
+      "Codex did not switch to the target project or worktree in time",
+    ));
   }
 
   async function selectNativeWorktree() {
@@ -1181,28 +1311,21 @@
 
       const previousThreadId = normalizeThreadId(threadIdFromLocation() || lastNativeThreadId);
       if (!projectless) {
-        await ensureProjectRows();
-        const snapshotProjectId = hostContextSnapshot?.projectId || "";
         const requestedProjectId = typeof payload.codexProjectId === "string"
           ? payload.codexProjectId.trim()
           : "";
-        const row = projectRowByLabel(payload.workspaceLabel)
-          || projectRowById(requestedProjectId)
-          || projectRowById(snapshotProjectId)
-          || projectRowByLabel(payload.projectName);
-        if (row?.getAttribute("data-app-action-sidebar-project-collapsed") === "true") {
-          row.click?.();
-          await new Promise((resolve) => window.setTimeout(resolve, 120));
+        const target = await resolveNativeProject(requestedProjectId, workspacePath);
+        if (!target) {
+          throw new Error(hostText(
+            "Codex 中没有映射目标项目或 worktree",
+            "The target project or worktree is not mapped in Codex",
+          ));
         }
-        const selectProject = row?.querySelector("[data-app-action-sidebar-select-project]");
-        selectProject?.click?.();
-        if (selectProject) await new Promise((resolve) => window.setTimeout(resolve, 120));
-        if (workspacePath) {
-          await bridge.sendMessageFromView({
-            type: "electron-set-active-workspace-root",
-            root: workspacePath,
-          });
-        }
+        bridge.sendMessageFromView({
+          type: "electron-add-new-workspace-root-option",
+          root: target.targetRoot,
+        });
+        lastNativeProjectId = await waitForNativeProject(target.targetRoot, target.projectId);
       }
 
       closePanel(false);
@@ -1366,6 +1489,40 @@
     }
   }
 
+  function handleDatePickerRequest(payload) {
+    const requestId = typeof payload?.requestId === "string" ? payload.requestId : "";
+    const value = typeof payload?.value === "string" ? payload.value : "";
+    const rect = payload?.rect;
+    if (
+      !requestId
+      || !frame
+      || !rect
+      || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)
+    ) return;
+
+    const frameRect = frame.getBoundingClientRect();
+    const input = document.createElement("input");
+    input.type = "date";
+    input.value = value;
+    input.style.position = "fixed";
+    input.style.left = `${frameRect.left + rect.x}px`;
+    input.style.top = `${frameRect.top + rect.y}px`;
+    input.style.width = `${rect.width}px`;
+    input.style.height = `${rect.height}px`;
+    input.style.opacity = "0";
+    input.style.pointerEvents = "none";
+    document.body.append(input);
+    input.addEventListener("change", () => {
+      postToFrame({
+        type: "taskboard:date-picker-response",
+        payload: { requestId, value: input.value },
+      });
+      input.remove();
+    }, { once: true });
+    input.getBoundingClientRect();
+    input.showPicker();
+  }
+
   function challengeFrameDocument(event) {
     if (!frame || event.currentTarget !== frame) return;
     frameReady = false;
@@ -1444,6 +1601,10 @@
     }
     if (message.type === "panel:open-attachment" || message.type === "taskboard:open-attachment") {
       void handleAttachmentOpen(message.payload);
+      return;
+    }
+    if (message.type === "panel:date-picker-request" || message.type === "taskboard:date-picker-request") {
+      handleDatePickerRequest(message.payload);
       return;
     }
     if (message.type === "panel:create-thread" || message.type === "taskboard:create-thread") {
@@ -1876,15 +2037,22 @@
   }
 
   function mountActivePage() {
-    if (!active) return;
+    if (!active) return false;
     if (!page) page = createPage();
     const mount = findPageMount();
-    if (!mount) return;
+    if (!mount) return false;
     const { surface } = mount;
 
+    let remounted = false;
     if (page.parentElement !== surface) {
       restoreNativeContent();
       surface.appendChild(page);
+      // Moving the page rebuilds the frame's browsing context, so the document
+      // the host installed with Page.setDocumentContent is gone for good.
+      if (frame) {
+        frameReady = false;
+        remounted = true;
+      }
     }
     surface.setAttribute(HOST_ATTRIBUTE, "true");
     Array.from(surface.children).forEach((child) => {
@@ -1896,6 +2064,7 @@
     muteNativeSelection();
     page.hidden = false;
     document.documentElement.setAttribute("data-codex-panel-open", "true");
+    return remounted;
   }
 
   function closePanel(restoreFocus = true) {
@@ -2026,7 +2195,7 @@
       reattachTimer = null;
       if (closePanelForNativeThreadChange()) return;
       ensureEntry();
-      mountActivePage();
+      if (mountActivePage()) reloadFrame();
       void publishPendingThreadAssociation();
       postHostContext();
     }, REATTACH_DELAY_MS);
@@ -2034,7 +2203,7 @@
 
   function refresh() {
     ensureEntry();
-    mountActivePage();
+    if (mountActivePage()) reloadFrame();
     void publishPendingThreadAssociation();
     postHostContext();
   }

@@ -94,8 +94,12 @@ import {
   type NewTaskEditorDraft,
 } from "./components/TaskEditor";
 import { TaskFilterMenu } from "./components/TaskFilterMenu";
-import { TaskboardIcon } from "./components/TaskboardIcon";
-import { panelStorage } from "./storage";
+import {
+  PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX,
+  projectBoardDisplaySettingsStorageEntries,
+  refreshProjectBoardDisplaySettingsStorage,
+  panelStorage,
+} from "./storage";
 import {
   installEmbeddedExternalLinkHandler,
   postEmbeddedHostMessage,
@@ -159,7 +163,7 @@ type ListLayout = "horizontal" | "vertical";
 type ListCollapseMode = "always-expanded" | "remember" | "always-collapsed";
 type ListCollapseModes = Record<TaskStatus, ListCollapseMode>;
 type DetailSourceScroll =
-  | { projectId: string; view: "issues"; status: TaskStatus; scrollTop: number }
+  | { projectId: string; view: "issues"; status: TaskStatus; scrollTop: number; scrollLeft: number }
   | { projectId: string; view: "list"; scrollLeft: number; scrollTop: number };
 type GanttZoom = "day" | "week" | "month";
 type ActionError = string | readonly [string, string];
@@ -337,12 +341,24 @@ function initialProjectListCollapsedStatuses(
 }
 
 function readProjectBoardDisplaySettings(): Record<string, BoardDisplaySettings> {
+  let settings: Record<string, BoardDisplaySettings> = {};
   try {
     const value = JSON.parse(panelStorage.getItem(PROJECT_BOARD_DISPLAY_SETTINGS_KEY) ?? "{}");
-    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  } catch {
-    return {};
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      settings = value as Record<string, BoardDisplaySettings>;
+    }
+  } catch {}
+  for (const [key, storedValue] of projectBoardDisplaySettingsStorageEntries()) {
+    const projectId = key.slice(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX.length);
+    if (!projectId) continue;
+    try {
+      const value = JSON.parse(storedValue);
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        settings[projectId] = value as BoardDisplaySettings;
+      }
+    } catch {}
   }
+  return settings;
 }
 
 function readRecentProjectIds(): string[] {
@@ -375,6 +391,7 @@ const EVENT_NAMES = [
   "claim.updated",
   "automation.updated",
   "project.readme.updated",
+  "client-storage.updated",
 ] as const;
 
 function isTheme(value: unknown): value is Theme {
@@ -499,6 +516,7 @@ interface LocalRealtimeSyncProps {
     options?: { quiet?: boolean; signal?: AbortSignal },
   ) => Promise<void>;
   refreshAutomation: () => Promise<void>;
+  refreshProjectBoardDisplaySettings: () => Promise<void>;
   setConnection: Dispatch<SetStateAction<ConnectionState>>;
   setCommentsRevision: Dispatch<SetStateAction<number>>;
   setAttachmentsRevision: Dispatch<SetStateAction<number>>;
@@ -512,6 +530,7 @@ function LocalRealtimeSync({
   refreshProjectList,
   refreshTasks,
   refreshAutomation,
+  refreshProjectBoardDisplaySettings,
   setConnection,
   setCommentsRevision,
   setAttachmentsRevision,
@@ -540,15 +559,23 @@ function LocalRealtimeSync({
 
     const handleEvent = (event: Event) => {
       const message = event as MessageEvent<string>;
-      let payload: { projectId?: string; taskId?: string; project?: Project } = {};
+      let payload: { projectId?: string; taskId?: string; project?: Project; key?: string } = {};
       try {
         payload = JSON.parse(message.data) as {
           projectId?: string;
           taskId?: string;
           project?: Project;
+          key?: string;
         };
       } catch {
         // A malformed event should not interrupt later updates.
+      }
+      if (
+        event.type === "client-storage.updated"
+        && payload.key?.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
+      ) {
+        void refreshProjectBoardDisplaySettings();
+        return;
       }
       const eventProjectId = payload.projectId ?? payload.project?.id;
       const affectsSelectedProject = Boolean(selectedProjectId)
@@ -604,6 +631,7 @@ function LocalRealtimeSync({
     EVENT_NAMES.forEach((name) => source.addEventListener(name, handleEvent));
     source.onopen = () => {
       setConnection("live");
+      void refreshProjectBoardDisplaySettings();
       scheduleRefresh({ projects: true, tasks: Boolean(selectedProjectId) });
       if (selectedProjectId && selectedProjectId !== ALL_PROJECTS_ID) {
         setReadmeRevision((current) => current + 1);
@@ -622,6 +650,7 @@ function LocalRealtimeSync({
     };
   }, [
     detailTaskId,
+    refreshProjectBoardDisplaySettings,
     refreshProjectList,
     refreshAutomation,
     refreshTasks,
@@ -697,6 +726,14 @@ export function App() {
   const [projectBoardDisplaySettings, setProjectBoardDisplaySettings] = useState(
     readProjectBoardDisplaySettings,
   );
+  const refreshProjectBoardDisplaySettings = useCallback(async () => {
+    try {
+      await refreshProjectBoardDisplaySettingsStorage();
+      setProjectBoardDisplaySettings(readProjectBoardDisplaySettings());
+    } catch (error) {
+      console.error(error);
+    }
+  }, []);
   const [dashboardSummaryAnimatedProjectId, setDashboardSummaryAnimatedProjectId] = useState<string | null>(null);
   const [ganttZoom, setGanttZoom] = useState<GanttZoom>("week");
   const [ganttHideCompleted, setGanttHideCompleted] = useState(false);
@@ -765,6 +802,7 @@ export function App() {
   const undoInFlightRef = useRef(false);
   const dragRegionRef = useRef<HTMLDivElement>(null);
   const issueListRef = useRef<HTMLDivElement>(null);
+  const boardScrollRef = useRef<HTMLDivElement>(null);
   const boardColumnScrollRefs = useRef<Partial<Record<TaskStatus, HTMLElement | null>>>({});
   const detailSourceProjectIdRef = useRef<string | null>(null);
   const pendingDetailSourceScrollRef = useRef<DetailSourceScroll | null>(null);
@@ -832,6 +870,10 @@ export function App() {
   }, []);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+  const selectedCodexProjectIdentity = useMemo(
+    () => selectedProject ? codexProjectContextForTaskProject(selectedProject.id) : null,
+    [deviceWorkspacePaths, hostContext, projectCodexIdentities, projects, selectedProject?.id],
+  );
   const isAllProjects = selectedProjectId === ALL_PROJECTS_ID;
   const isJiraProject = selectedProject?.source === "jira";
   const boardDisplaySettings = projectBoardDisplaySettings[selectedProjectId]
@@ -848,13 +890,19 @@ export function App() {
     setAiImportReadyProjectId(null);
     if (!aiImportProjectId) return;
     const controller = new AbortController();
-    void getAiChatCatalog(aiImportProjectId, controller.signal)
+    void getAiChatCatalog(aiImportProjectId, controller.signal, selectedCodexProjectIdentity)
       .then(() => {
         if (!controller.signal.aborted) setAiImportReadyProjectId(aiImportProjectId);
       })
       .catch(() => {});
     return () => controller.abort();
-  }, [aiImportProjectId, selectedProject]);
+  }, [
+    aiImportProjectId,
+    selectedCodexProjectIdentity?.codexHostId,
+    selectedCodexProjectIdentity?.codexProjectId,
+    selectedCodexProjectIdentity?.codexProjectKind,
+    selectedCodexProjectIdentity?.workspacePath,
+  ]);
   useLayoutEffect(() => {
     if (selectedProject) rememberProjectOpen(selectedProject.id);
   }, [rememberProjectOpen, selectedProject]);
@@ -1147,6 +1195,7 @@ export function App() {
           view: "issues",
           status: fullTask.status,
           scrollTop: scrollContainer.scrollTop,
+          scrollLeft: boardScrollRef.current?.scrollLeft ?? 0,
         };
       }
     }
@@ -1185,13 +1234,17 @@ export function App() {
       pendingDetailSourceScrollRef.current = null;
       return;
     }
-    const scrollContainer = pendingScroll.view === "list"
-      ? issueListRef.current
-      : boardColumnScrollRefs.current[pendingScroll.status];
     pendingDetailSourceScrollRef.current = null;
-    if (!scrollContainer) return;
-    if (pendingScroll.view === "list") scrollContainer.scrollLeft = pendingScroll.scrollLeft;
-    scrollContainer.scrollTop = pendingScroll.scrollTop;
+    if (pendingScroll.view === "list") {
+      if (issueListRef.current) {
+        issueListRef.current.scrollLeft = pendingScroll.scrollLeft;
+        issueListRef.current.scrollTop = pendingScroll.scrollTop;
+      }
+      return;
+    }
+    const columnScrollContainer = boardColumnScrollRefs.current[pendingScroll.status];
+    if (columnScrollContainer) columnScrollContainer.scrollTop = pendingScroll.scrollTop;
+    if (boardScrollRef.current) boardScrollRef.current.scrollLeft = pendingScroll.scrollLeft;
   }, [boardView, detailTaskIdentifier, selectedProjectId]);
 
   useEffect(() => {
@@ -1219,6 +1272,7 @@ export function App() {
             view: "issues",
             status: routeTask.status,
             scrollTop: scrollContainer.scrollTop,
+            scrollLeft: boardScrollRef.current?.scrollLeft ?? 0,
           };
         }
       }
@@ -1804,6 +1858,7 @@ export function App() {
 
   const invalidateCloudData = useCallback(() => {
     void refreshProjectList();
+    void refreshProjectBoardDisplaySettings();
     const projectId = taskScopeProjectIdRef.current;
     if (projectId) {
       void refreshTasks(projectId, { quiet: true });
@@ -1811,7 +1866,7 @@ export function App() {
     setReadmeRevision((current) => current + 1);
     setCommentsRevision((current) => current + 1);
     setAttachmentsRevision((current) => current + 1);
-  }, [refreshProjectList, refreshTasks]);
+  }, [refreshProjectList, refreshProjectBoardDisplaySettings, refreshTasks]);
 
   useEffect(() => {
     if (revisionPollingInterval === null) return;
@@ -1998,7 +2053,11 @@ export function App() {
     ) as Record<TaskStatus, Task[]>;
   }, [filteredTasks]);
 
-  const mainBoardItems = boardDisplaySettings.mainStatuses;
+  const mainBoardItems = boardDisplaySettings.mainStatuses.filter(
+    (status) => status !== "blocked"
+      || !hasLoadedTasks
+      || tasks.some((task) => task.status === "blocked"),
+  );
   const mainColumnCount = Math.max(mainBoardItems.length, 1);
   const mainBoardMinWidth = (mainColumnCount * 300) + ((mainColumnCount - 1) * 24);
   const mainBoardMaxWidth = (mainColumnCount * 400) + ((mainColumnCount - 1) * 24);
@@ -2095,7 +2154,10 @@ export function App() {
   function updateProjectBoardDisplaySettings(value: BoardDisplaySettings) {
     setProjectBoardDisplaySettings((current) => {
       const next = { ...current, [selectedProjectId]: value };
-      panelStorage.setItem(PROJECT_BOARD_DISPLAY_SETTINGS_KEY, JSON.stringify(next));
+      panelStorage.setItem(
+        `${PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX}${selectedProjectId}`,
+        JSON.stringify(value),
+      );
       return next;
     });
   }
@@ -2116,7 +2178,9 @@ export function App() {
     setProjectBoardDisplaySettings((current) => {
       const next = { ...current };
       delete next[selectedProjectId];
-      panelStorage.setItem(PROJECT_BOARD_DISPLAY_SETTINGS_KEY, JSON.stringify(next));
+      panelStorage.removeItem(
+        `${PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX}${selectedProjectId}`,
+      );
       return next;
     });
   }
@@ -2664,12 +2728,13 @@ export function App() {
     const codexProject = directCodexProject ?? hostContext?.projects?.find(
       (project) => project.workspacePath === mappedWorkspacePath,
     );
-    if (!codexProject) return null;
+    const workspacePath = mappedWorkspacePath ?? codexProject?.workspacePath;
+    if (!codexProject || !workspacePath) return null;
     return {
       codexProjectId: codexProject.id,
       codexProjectKind: codexProject.projectKind ?? "local" as const,
       codexHostId: codexProject.hostId ?? "local",
-      workspacePath: mappedWorkspacePath ?? codexProject.workspacePath,
+      workspacePath,
     };
   }
 
@@ -3414,6 +3479,7 @@ export function App() {
           refreshProjectList={refreshProjectList}
           refreshTasks={refreshTasks}
           refreshAutomation={reconcileProjectAutomation}
+          refreshProjectBoardDisplaySettings={refreshProjectBoardDisplaySettings}
           setConnection={setConnection}
           setCommentsRevision={setCommentsRevision}
           setAttachmentsRevision={setAttachmentsRevision}
@@ -3947,7 +4013,7 @@ export function App() {
               </div>
             ) : (
               <>
-                <div className="board-scroll" aria-label={text("议题看板", "Issue board")}>
+                <div ref={boardScrollRef} className="board-scroll" aria-label={text("议题看板", "Issue board")}>
                   <div className="board">
                     {mainBoardItems.map((item) => item === "archived" ? (
                       <ArchivedTasksColumn
@@ -3988,7 +4054,7 @@ export function App() {
                         onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
                         onEdit={openTaskDetail}
                         onUpdate={updateTaskProperties}
-                        onComplete={(task) => void moveTask(task, "done")}
+                        onComplete={(task) => moveTask(task, "done")}
                         onContextMenu={openTaskContextMenu}
                         onDragStart={startTaskDrag}
                         onDragEnd={endTaskDrag}
@@ -4320,6 +4386,7 @@ export function App() {
             projectId={selectedProjectId || null}
             issueId={detailTaskId}
             threadsRevision={aiThreadsRevision}
+            codexProjectIdentity={selectedCodexProjectIdentity}
             onThreadsChange={setAiThreads}
             openThreadRequest={aiOpenThreadRequest}
           />

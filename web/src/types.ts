@@ -214,6 +214,10 @@ export interface ComposerCandidatesQuery {
   surface?: ComposerSurface;
   trigger: ComposerTrigger;
   query: string;
+  codexProjectId?: string;
+  codexProjectKind?: "local" | "remote";
+  codexHostId?: string;
+  workspacePath?: string;
 }
 
 export interface ComposerCandidatesResponse {
@@ -314,6 +318,9 @@ export interface AiChatOrigin {
   projectId: string;
   projectName: string;
   workspacePath: string;
+  codexProjectId?: string;
+  codexProjectKind?: "local" | "remote";
+  codexHostId?: string;
   issueId?: string;
   issueIdentifier?: string;
 }

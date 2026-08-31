@@ -473,6 +473,9 @@ function aiChatThreadFromRow(row) {
       projectId: row.origin_project_id,
       projectName: row.origin_project_name,
       workspacePath: row.origin_workspace_path,
+      ...(row.origin_codex_project_id ? { codexProjectId: row.origin_codex_project_id } : {}),
+      ...(row.origin_codex_project_kind ? { codexProjectKind: row.origin_codex_project_kind } : {}),
+      ...(row.origin_codex_host_id ? { codexHostId: row.origin_codex_host_id } : {}),
       ...(row.origin_issue_id ? { issueId: row.origin_issue_id } : {}),
       ...(row.origin_issue_identifier ? { issueIdentifier: row.origin_issue_identifier } : {}),
     },
@@ -750,6 +753,9 @@ export class PanelDatabase {
         origin_project_id TEXT NOT NULL,
         origin_project_name TEXT NOT NULL,
         origin_workspace_path TEXT NOT NULL,
+        origin_codex_project_id TEXT,
+        origin_codex_project_kind TEXT,
+        origin_codex_host_id TEXT,
         origin_issue_id TEXT,
         origin_issue_identifier TEXT,
         codex_thread_id TEXT,
@@ -869,6 +875,15 @@ export class PanelDatabase {
         ADD COLUMN purpose TEXT NOT NULL DEFAULT 'temporary'
         CHECK (purpose IN ('temporary', 'formal'))
       `);
+    }
+    for (const column of [
+      "origin_codex_project_id",
+      "origin_codex_project_kind",
+      "origin_codex_host_id",
+    ]) {
+      if (!aiChatThreadColumns.some((candidate) => candidate.name === column)) {
+        this.database.exec(`ALTER TABLE ai_chat_threads ADD COLUMN ${column} TEXT`);
+      }
     }
     const claimQueueSql = this.database.prepare(`
       SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'issue_claim_queue'
@@ -4030,10 +4045,11 @@ export class PanelDatabase {
       INSERT INTO ai_chat_threads (
         id, title, status, purpose,
         origin_project_id, origin_project_name, origin_workspace_path,
+        origin_codex_project_id, origin_codex_project_kind, origin_codex_host_id,
         origin_issue_id, origin_issue_identifier,
         codex_thread_id, model, reasoning_effort, sandbox,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.title,
@@ -4042,6 +4058,9 @@ export class PanelDatabase {
       input.origin.projectId,
       input.origin.projectName,
       input.origin.workspacePath,
+      input.origin.codexProjectId ?? null,
+      input.origin.codexProjectKind ?? null,
+      input.origin.codexHostId ?? null,
       input.origin.issueId ?? null,
       input.origin.issueIdentifier ?? null,
       input.codexThreadId ?? null,

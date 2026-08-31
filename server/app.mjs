@@ -60,6 +60,7 @@ const INLINE_ATTACHMENT_TYPES = new Set([
   "text/plain",
 ]);
 const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+const PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX = "taskboard.project-board-display-settings.v3.";
 const TRUSTED_EMBED_ORIGINS = new Set(["app://-"]);
 const TRUSTED_ORIGINS_ENV = "CODEX_PANEL_TRUSTED_ORIGINS";
 const LEGACY_TRUSTED_ORIGINS_ENV = "CODEX_TASKBOARD_TRUSTED_ORIGINS";
@@ -1067,6 +1068,43 @@ function parseAiSetting(value, name, maxLength) {
   return setting;
 }
 
+function parseAiExecutionTarget(value) {
+  const fields = [
+    "codexProjectId",
+    "codexProjectKind",
+    "codexHostId",
+    "workspacePath",
+  ];
+  const present = fields.filter((field) => value[field] !== undefined);
+  if (present.length === 0) return undefined;
+  if (present.length !== fields.length) {
+    throw new ApiError(400, "INVALID_CODEX_TARGET", "Codex project identity must contain all four fields");
+  }
+  const codexProjectKind = parseAiSetting(value.codexProjectKind, "codexProjectKind", 16);
+  if (codexProjectKind !== "local" && codexProjectKind !== "remote") {
+    throw new ApiError(400, "INVALID_CODEX_TARGET", "'codexProjectKind' must be local or remote");
+  }
+  const workspacePath = parseAiSetting(value.workspacePath, "workspacePath", 4096);
+  if (workspacePath.includes("\0")) {
+    throw new ApiError(400, "INVALID_CODEX_TARGET", "'workspacePath' cannot contain null bytes");
+  }
+  return {
+    codexProjectId: parseAiSetting(value.codexProjectId, "codexProjectId", 256),
+    codexProjectKind,
+    codexHostId: parseAiSetting(value.codexHostId, "codexHostId", 512),
+    workspacePath,
+  };
+}
+
+function aiExecutionTargetFromQuery(searchParams) {
+  return parseAiExecutionTarget({
+    codexProjectId: searchParams.get("codexProjectId") ?? undefined,
+    codexProjectKind: searchParams.get("codexProjectKind") ?? undefined,
+    codexHostId: searchParams.get("codexHostId") ?? undefined,
+    workspacePath: searchParams.get("workspacePath") ?? undefined,
+  });
+}
+
 function parseAiThreadCreate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
@@ -1076,6 +1114,10 @@ function parseAiThreadCreate(body) {
     "model",
     "reasoningEffort",
     "sandbox",
+    "codexProjectId",
+    "codexProjectKind",
+    "codexHostId",
+    "workspacePath",
   ]));
   return {
     projectId: validateProjectId(body.projectId),
@@ -1084,6 +1126,7 @@ function parseAiThreadCreate(body) {
     model: parseAiSetting(body.model, "model", 128),
     reasoningEffort: parseAiSetting(body.reasoningEffort, "reasoningEffort", 64),
     sandbox: parseAiSandbox(body.sandbox),
+    ...parseAiExecutionTarget(body),
   };
 }
 
@@ -1213,7 +1256,17 @@ function parseAiTurn(body) {
 function parseComposerCandidateQuery(searchParams) {
   assertAllowedQuery(
     searchParams,
-    new Set(["projectId", "threadId", "trigger", "query", "surface"]),
+    new Set([
+      "projectId",
+      "threadId",
+      "trigger",
+      "query",
+      "surface",
+      "codexProjectId",
+      "codexProjectKind",
+      "codexHostId",
+      "workspacePath",
+    ]),
     "GET /api/local/ai/composer/candidates",
   );
   let projectId;
@@ -1243,7 +1296,14 @@ function parseComposerCandidateQuery(searchParams) {
   if (!new Set(["ai-chat", "issue-description", "comment"]).has(surface)) {
     throw new ApiError(400, "INVALID_COMPOSER_QUERY", "Composer surface is invalid");
   }
-  return { projectId, threadId, trigger, query, surface };
+  return {
+    projectId,
+    threadId,
+    trigger,
+    query,
+    surface,
+    ...aiExecutionTargetFromQuery(searchParams),
+  };
 }
 
 function invalidComposerRebindRequest(message) {
@@ -1429,16 +1489,21 @@ async function resolveComposerRebindWorkspace(aiChat, input) {
         "Composer thread does not belong to the selected project",
       );
     }
-    try {
-      if (!(await stat(thread.origin.workspacePath)).isDirectory()) throw new Error("not a directory");
-    } catch {
-      throw new ApiError(
-        409,
-        "PROJECT_WORKSPACE_UNAVAILABLE",
-        "The conversation workspace is not available on this device",
-      );
+    if (thread.origin.codexProjectKind !== "remote") {
+      try {
+        if (!(await stat(thread.origin.workspacePath)).isDirectory()) throw new Error("not a directory");
+      } catch {
+        throw new ApiError(
+          409,
+          "PROJECT_WORKSPACE_UNAVAILABLE",
+          "The conversation workspace is not available on this device",
+        );
+      }
     }
-    return thread.origin.workspacePath;
+    return {
+      workspacePath: thread.origin.workspacePath,
+      composerCatalog: aiChat.composerCatalogForThread(thread),
+    };
   }
   let resolved;
   try {
@@ -1452,7 +1517,7 @@ async function resolveComposerRebindWorkspace(aiChat, input) {
     }
     throw error;
   }
-  return resolved.workspacePath;
+  return { workspacePath: resolved.workspacePath, composerCatalog: aiChat.composerCatalog };
 }
 
 function parseComposerDocument(value) {
@@ -1908,11 +1973,15 @@ export function createPanelServer(options = {}) {
     }
   }
 
-  async function updateClientStorage(body) {
+  function parseClientStorageUpdate(body) {
     assertPlainObject(body);
     assertAllowedKeys(body, new Set(["key", "value"]));
     const key = stringField(body.key, "key", { required: true, maxLength: 512 });
     const value = stringField(body.value, "value", { nullable: true, maxLength: 100_000 });
+    return { key, value };
+  }
+
+  async function updateClientStorage({ key, value }) {
     clientStorageWrite = clientStorageWrite.catch(() => {}).then(async () => {
       const entries = await readClientStorage();
       if (value === null) delete entries[key];
@@ -2031,9 +2100,27 @@ export function createPanelServer(options = {}) {
     return payload;
   }
 
-  async function resolveAiChatContext(projectId, issueId) {
+  async function resolveAiChatContext(projectId, issueId, codexTarget) {
     const config = await cloudConfig.read();
     if (!config.remoteUrl) {
+      if (codexTarget?.codexProjectKind === "remote") {
+        const project = database.getProject(projectId);
+        if (!project) {
+          throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+        }
+        let issue;
+        if (issueId !== undefined) {
+          issue = database.getTask(issueId);
+          if (!issue || issue.projectId !== projectId || issue.archivedAt != null) {
+            throw new ApiError(
+              404,
+              "AI_CHAT_ISSUE_NOT_FOUND",
+              `Task '${issueId}' is not an active task in project '${projectId}'`,
+            );
+          }
+        }
+        return { project, issue, addDirectories: [], ...codexTarget };
+      }
       let resolvedWorkspace;
       try {
         resolvedWorkspace = await resolveAiWorkspace(
@@ -2096,6 +2183,10 @@ export function createPanelServer(options = {}) {
       }
     }
 
+    if (codexTarget?.codexProjectKind === "remote") {
+      return { project, issue, addDirectories: [], ...codexTarget };
+    }
+
     const resolvedWorkspace = await resolveMappedAiWorkspace(
       projectId,
       project,
@@ -2116,6 +2207,7 @@ export function createPanelServer(options = {}) {
     processEnv: codexProcessEnvironment,
     skillsDirectory: resolved.skillsDirectory,
     resolveContext: resolveAiChatContext,
+    remoteAppServerFactory: options.remoteAppServerFactory,
   });
   async function canonicalWorkspace(workspacePath) {
     try {
@@ -3023,10 +3115,41 @@ export function createPanelServer(options = {}) {
       if (pathname === "/api/client-storage") {
         if (request.method === "GET") {
           await clientStorageWrite;
-          return sendJson(response, 200, { entries: await readClientStorage() });
+          const entries = await readClientStorage();
+          const config = await cloudConfig.read();
+          if (config.remoteUrl) {
+            assertLoopbackRequest(request);
+            const shared = await readCloudJson("/api/client-storage");
+            for (const key of Object.keys(entries)) {
+              if (key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)) delete entries[key];
+            }
+            for (const [key, value] of Object.entries(shared.entries)) {
+              if (key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)) entries[key] = value;
+            }
+          }
+          return sendJson(response, 200, { entries });
         }
         if (request.method === "PATCH") {
-          await updateClientStorage(await readJson(request));
+          const update = parseClientStorageUpdate(await readJson(request));
+          const config = await cloudConfig.read();
+          if (
+            config.remoteUrl
+            && update.key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
+          ) {
+            assertLoopbackRequest(request);
+            return sendFetchResponse(
+              response,
+              await cloudProxy.forward(new Request("http://127.0.0.1/api/client-storage", {
+                method: "PATCH",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(update),
+              })),
+            );
+          }
+          await updateClientStorage(update);
+          if (update.key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)) {
+            events.emit("client-storage.updated", { key: update.key });
+          }
           return sendEmpty(response, 204);
         }
         return methodNotAllowed(response, ["GET", "PATCH"]);
@@ -3307,9 +3430,19 @@ export function createPanelServer(options = {}) {
 
       if (pathname === "/api/local/ai/catalog") {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
-        assertAllowedQuery(url.searchParams, new Set(["projectId"]), "GET /api/local/ai/catalog");
+        assertAllowedQuery(url.searchParams, new Set([
+          "projectId",
+          "codexProjectId",
+          "codexProjectKind",
+          "codexHostId",
+          "workspacePath",
+        ]), "GET /api/local/ai/catalog");
         const projectId = validateProjectId(url.searchParams.get("projectId") ?? undefined);
-        return sendJson(response, 200, await aiChat.getCatalog(projectId));
+        return sendJson(
+          response,
+          200,
+          await aiChat.getCatalog(projectId, undefined, aiExecutionTargetFromQuery(url.searchParams)),
+        );
       }
 
       if (pathname === "/api/local/ai/composer/candidates") {
@@ -3329,11 +3462,11 @@ export function createPanelServer(options = {}) {
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
         assertNoQuery(url.searchParams, "POST /api/local/ai/composer/rebind");
         const input = parseComposerRebindRequest(await readJson(request));
-        const workspacePath = await resolveComposerRebindWorkspace(aiChat, input);
+        const { workspacePath, composerCatalog } = await resolveComposerRebindWorkspace(aiChat, input);
         return sendJson(
           response,
           200,
-          await aiChat.composerCatalog.rebindPersistedReferences({
+          await composerCatalog.rebindPersistedReferences({
             workspacePath,
             nodes: input.document.nodes,
           }),
@@ -4333,7 +4466,10 @@ export function createPanelServer(options = {}) {
           `%${character.charCodeAt(0).toString(16).toUpperCase()}`
         ));
         const canOpenInline = attachmentContentRoute[2] === "content"
-          && INLINE_ATTACHMENT_TYPES.has(attachment.contentType);
+          && (
+            INLINE_ATTACHMENT_TYPES.has(attachment.contentType)
+            || attachment.contentType.startsWith("video/")
+          );
         response.writeHead(200, {
           "cache-control": "private, no-store",
           "content-disposition": `${canOpenInline ? "inline" : "attachment"}; filename*=UTF-8''${encodedFilename}`,

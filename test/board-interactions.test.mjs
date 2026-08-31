@@ -14,6 +14,7 @@ const contextMenuSource = await readFile(new URL("../web/src/components/TaskCont
 const cardSource = await readFile(new URL("../web/src/components/TaskCard.tsx", import.meta.url), "utf8");
 const filterSource = await readFile(new URL("../web/src/taskFilters.ts", import.meta.url), "utf8");
 const typesSource = await readFile(new URL("../web/src/types.ts", import.meta.url), "utf8");
+const composerSource = await readFile(new URL("../web/src/components/InlineMediaComposer.tsx", import.meta.url), "utf8");
 
 function taskStatuses() {
   const match = typesSource.match(/export const TASK_STATUSES = (\[[\s\S]*?\]) as const/);
@@ -155,7 +156,7 @@ test("issues expose processing conversations without manual binding", () => {
   assert.doesNotMatch(detailSource, /处理此议题的对话|Conversations for this issue/);
   assert.doesNotMatch(detailSource, /currentTask\.threadIds/);
   assert.match(detailSource, /<strong>\{text\("查看对话", "View conversation"\)\}<\/strong>/);
-  assert.match(detailSource, /className="conversation-thread-id">\{threadId\}/);
+  assert.doesNotMatch(detailSource, /className="conversation-thread-id">\{threadId\}/);
   assert.doesNotMatch(detailSource, /shortThreadId/);
   assert.doesNotMatch(detailSource, /detail-property-label">Codex/);
   assert.match(detailSource, /comment\.threadBinding \|\| comment\.legacyLocalThreadId/);
@@ -208,14 +209,16 @@ test("Jira repository filtering keeps the management dialog height stable", () =
   assert.match(dialogStyles, /height: min\(720px, calc\(100vh - 48px\)\)/);
   assert.match(styles, /\.jira-manager-body \{[\s\S]*?min-height: 0/);
 });
-test("comments stage, upload, render and delete their own attachments", () => {
+test("comments upload and render their own attachments in the content flow", () => {
   assert.match(apiSource, /export async function uploadCommentAttachment/);
   assert.match(apiSource, /\/api\/comments\/\$\{encodeURIComponent\(commentId\)\}\/attachments/);
-  assert.match(detailSource, /pendingCommentFiles/);
-  assert.match(detailSource, /uploadCommentAttachment\(comment\.id, file, "attachment"\)/);
-  assert.match(detailSource, /comment\.attachments\.some\(\(attachment\) => attachment\.kind === "attachment"\)/);
-  assert.match(detailSource, /comment\.attachments[\s\S]*?\.filter\(\(attachment\) => attachment\.kind === "attachment"\)[\s\S]*?\.map\(\(attachment\) =>/);
-  assert.match(detailSource, /setPendingAttachmentDelete\(attachment\)/);
+  assert.match(detailSource, /commentInlineFiles/);
+  assert.match(detailSource, /uploadCommentAttachment\(comment\.id, file\.file, "attachment"\)/);
+  assert.match(detailSource, /resolveInlineAttachmentMarkdown/);
+  assert.match(detailSource, /createInlineMediaSegments\(comment\.body, referenceTasks, comment\.attachments\)/);
+  assert.match(detailSource, /attachments=\{comment\.attachments\}/);
+  assert.match(detailSource, /onOpenAttachment=\{handleAttachmentDownload\}/);
+  assert.match(composerSource, /className="inline-media-attachment"/);
 });
 
 test("issue creation and detail share one searchable, creatable label picker", () => {

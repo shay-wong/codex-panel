@@ -45,7 +45,7 @@ interface TaskCardProps {
   onCreateLabel: (label: string) => Promise<void>;
   onEdit: (task: Task) => void;
   onUpdate: (task: Task, changes: Partial<TaskDraft>) => Promise<Task>;
-  onComplete?: (task: Task) => void;
+  onComplete?: (task: Task) => Promise<void>;
   onContextMenu: (task: Task, position: { x: number; y: number }) => void;
   onDragStart: (task: Task, height: number) => void;
   onDragEnd: () => void;
@@ -446,7 +446,10 @@ export function TaskCard({
   return (
     <article
       className={`task-card task-card-${variant} status-${task.status}${processingCard ? " is-processing-card" : ""}${processingCard && presentation.processing.running ? " is-running-card" : ""}${image ? " has-media" : ""}${presentation.unread ? " is-unread" : ""}${isDragging ? " is-dragging" : ""}${dragShift ? " is-drag-shifted" : ""}${isMoving ? " is-moving" : ""}${isSettling ? " is-settling" : ""}${isContextMenuOpen ? " is-context-open" : ""}${propertyMenu ? " is-property-menu-open" : ""}`}
-      style={dragShift ? { transform: `translate3d(0, ${dragShift}px, 0)` } : undefined}
+      style={{
+        viewTransitionName: task.status === "in_review" ? `review-task-${task.id}` : "none",
+        ...(dragShift ? { transform: `translate3d(0, ${dragShift}px, 0)` } : {}),
+      }}
       draggable={!isMoving}
       aria-labelledby={`task-${task.id}-title`}
       data-task-id={task.id}
@@ -484,7 +487,13 @@ export function TaskCard({
             title={text("完成", "Complete")}
             onClick={(event) => {
               event.stopPropagation();
-              onComplete(task);
+              const card = event.currentTarget.closest<HTMLElement>(".task-card")!;
+              card.style.viewTransitionName = "completing-task";
+              const transition = document.startViewTransition(() => onComplete(task));
+              void transition.finished.then(
+                () => { card.style.viewTransitionName = `review-task-${task.id}`; },
+                () => { card.style.viewTransitionName = `review-task-${task.id}`; },
+              );
             }}
           >
             <img src={completeIcon} alt="" aria-hidden="true" />

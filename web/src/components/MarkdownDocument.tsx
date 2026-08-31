@@ -1,6 +1,8 @@
 import {
   Children,
+  createContext,
   isValidElement,
+  useContext,
   useEffect,
   useId,
   useState,
@@ -12,7 +14,7 @@ import {
 } from "react";
 import { JSON_SCHEMA, load as loadYaml } from "js-yaml";
 import type { UponSanitizeAttributeHook, UponSanitizeElementHook } from "dompurify";
-import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type ExtraProps } from "react-markdown";
 import { decodeString } from "micromark-util-decode-string";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
@@ -502,70 +504,96 @@ function MarkdownPre({ children, ...props }: ComponentPropsWithoutRef<"pre">) {
   return <pre {...props}>{children}</pre>;
 }
 
+interface MarkdownLinkContextValue {
+  value: string;
+  onLinkClick?: (event: MouseEvent<HTMLAnchorElement>, href?: string) => void;
+  renderLink?: (href: string | undefined, children: ReactNode) => ReactNode | null;
+}
+
+const MarkdownLinkContext = createContext<MarkdownLinkContextValue | null>(null);
+
+function MarkdownLink({
+  node,
+  href,
+  children,
+  className,
+  ...props
+}: ComponentPropsWithoutRef<"a"> & ExtraProps) {
+  const { value, onLinkClick, renderLink } = useContext(MarkdownLinkContext)!;
+  const renderedLink = renderLink?.(href, children);
+  const isRenderedLink = renderedLink !== null && renderedLink !== undefined;
+  const start = node?.position?.start.offset;
+  const end = node?.position?.end.offset;
+  const markdown = typeof start === "number" && typeof end === "number"
+    ? value.slice(start, end)
+    : undefined;
+  const isComposerReference = Boolean(
+    markdown && /^\[[\s\S]*\]\(taskboard:\/\/composer-reference\/[^)]+\)$/.test(markdown),
+  );
+  if (isValidElement(renderedLink) && renderedLink.type === "video") {
+    return renderedLink;
+  }
+  return (
+    <a
+      {...props}
+      className={[className, isRenderedLink ? "issue-reference-link" : ""].filter(Boolean).join(" ") || undefined}
+      data-panel-inline-media-markdown={isRenderedLink || isComposerReference ? markdown : undefined}
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      onClick={(event) => onLinkClick?.(event, href)}
+    >
+      {isRenderedLink ? renderedLink : children}
+    </a>
+  );
+}
+
 export function MarkdownDocument({
   value,
   onCopy,
+  onImageClick,
   onLinkClick,
   renderLink,
 }: {
   value: string;
   onCopy?: ClipboardEventHandler<HTMLDivElement>;
+  onImageClick?: (event: MouseEvent<HTMLImageElement>) => void;
   onLinkClick?: (event: MouseEvent<HTMLAnchorElement>, href?: string) => void;
   renderLink?: (href: string | undefined, children: ReactNode) => ReactNode | null;
 }) {
   return (
     <div className="issue-description-document" onCopy={onCopy}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkStripMarkdownComments, remarkBreaks]}
-        urlTransform={(url) => defaultUrlTransform(resolvePersistedAttachmentUrl(url))}
-        components={{
-          a: ({ node, href, children, className, ...props }) => {
-            const renderedLink = renderLink?.(href, children);
-            const isRenderedLink = renderedLink !== null && renderedLink !== undefined;
-            const start = node?.position?.start.offset;
-            const end = node?.position?.end.offset;
-            const markdown = typeof start === "number" && typeof end === "number"
-              ? value.slice(start, end)
-              : undefined;
-            const isComposerReference = Boolean(
-              markdown && /^\[[\s\S]*\]\(taskboard:\/\/composer-reference\/[^)]+\)$/.test(markdown),
-            );
-            return (
-              <a
-                {...props}
-                className={[className, isRenderedLink ? "issue-reference-link" : ""].filter(Boolean).join(" ") || undefined}
-                data-panel-inline-media-markdown={isRenderedLink || isComposerReference ? markdown : undefined}
-                href={href}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(event) => onLinkClick?.(event, href)}
-              >
-                {isRenderedLink ? renderedLink : children}
-              </a>
-            );
-          },
-          img: ({ node, ...props }) => {
-            const start = node?.position?.start.offset;
-            const end = node?.position?.end.offset;
-            const markdown = typeof start === "number" && typeof end === "number"
-              ? value.slice(start, end)
-              : undefined;
-            const selfContainedMarkdown = markdown
-              && /^!\[(?:\\.|[^\]])*\]\(/.test(markdown)
-              ? markdown
-              : undefined;
-            return (
-              <img
-                {...props}
-                data-panel-inline-media-markdown={selfContainedMarkdown}
-              />
-            );
-          },
-          pre: MarkdownPre,
-        }}
-      >
-        {value}
-      </ReactMarkdown>
+      <MarkdownLinkContext.Provider value={{ value, onLinkClick, renderLink }}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkStripMarkdownComments, remarkBreaks]}
+          urlTransform={(url) => defaultUrlTransform(resolvePersistedAttachmentUrl(url))}
+          components={{
+            a: MarkdownLink,
+            img: ({ node, ...props }) => {
+              const start = node?.position?.start.offset;
+              const end = node?.position?.end.offset;
+              const markdown = typeof start === "number" && typeof end === "number"
+                ? value.slice(start, end)
+                : undefined;
+              const selfContainedMarkdown = markdown
+                && /^!\[(?:\\.|[^\]])*\]\(/.test(markdown)
+                ? markdown
+                : undefined;
+              return (
+                <img
+                  {...props}
+                  className={[props.className, onImageClick ? "is-previewable" : ""].filter(Boolean).join(" ") || undefined}
+                  data-panel-inline-media-markdown={selfContainedMarkdown}
+                  onClick={onImageClick}
+                />
+              );
+            },
+            pre: MarkdownPre,
+          }}
+        >
+          {value}
+        </ReactMarkdown>
+      </MarkdownLinkContext.Provider>
     </div>
   );
 }

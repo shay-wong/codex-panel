@@ -7,6 +7,7 @@ const PROJECT_README_BODY_LIMIT = 3 * 1024 * 1024;
 const ATTACHMENT_BODY_LIMIT = 25 * 1024 * 1024;
 const DEFAULT_PROJECT_LABELS_JSON = JSON.stringify(DEFAULT_LABEL_NAMES);
 const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+const PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX = "taskboard.project-board-display-settings.v3.";
 const TASK_STATUSES = [
   "backlog",
   "todo",
@@ -44,6 +45,25 @@ export class RealtimeHub extends DurableObject {
       const [client, server] = Object.values(pair);
       this.ctx.acceptWebSocket(server);
       return new Response(null, { status: 101, webSocket: client });
+    }
+
+    if (url.pathname === "/client-storage") {
+      if (request.method === "GET") {
+        return json(200, {
+          entries: Object.fromEntries(await this.ctx.storage.list({
+            prefix: PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX,
+          })),
+        });
+      }
+      if (request.method === "PATCH") {
+        const { key, value } = await request.json();
+        if (value === null) await this.ctx.storage.delete(key);
+        else await this.ctx.storage.put(key, value);
+        return empty(204);
+      }
+      return json(405, {
+        error: { code: "METHOD_NOT_ALLOWED", message: "Method not allowed" },
+      }, { allow: "GET, PATCH" });
     }
 
     if (url.pathname === "/broadcast" && request.method === "POST") {
@@ -1281,6 +1301,26 @@ function parseProjectCreate(body) {
     }
   }
   return { id, name };
+}
+
+function parseClientStorageUpdate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["key", "value"]));
+  const key = stringField(body.key, "key", { required: true, maxLength: 512 });
+  if (
+    !key.startsWith(PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX)
+    || key.length === PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX.length
+  ) {
+    throw new ApiError(
+      400,
+      "INVALID_FIELD",
+      "'key' must identify project board display settings",
+    );
+  }
+  return {
+    key,
+    value: stringField(body.value, "value", { nullable: true, maxLength: 100_000 }),
+  };
 }
 
 function parseProjectLabel(body) {
@@ -3006,7 +3046,10 @@ async function attachmentContent(env, id, request, download = false) {
     /['()*]/g,
     (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
   );
-  const canOpenInline = !download && INLINE_ATTACHMENT_TYPES.has(attachment.contentType);
+  const canOpenInline = !download && (
+    INLINE_ATTACHMENT_TYPES.has(attachment.contentType)
+    || attachment.contentType.startsWith("video/")
+  );
   return new Response(request.method === "HEAD" ? null : object.body, {
     status: 200,
     headers: {
@@ -3038,6 +3081,30 @@ async function routeApi(request, env, actor, url) {
       },
       localCapabilities: { available: false },
     });
+  }
+
+  if (pathname === "/api/client-storage") {
+    requireNoQuery(url, "/api/client-storage");
+    if (request.method === "GET") {
+      return realtimeHub(env).fetch("https://realtime.internal/client-storage");
+    }
+    if (request.method === "PATCH") {
+      const update = parseClientStorageUpdate(await readJson(request));
+      const response = await realtimeHub(env).fetch(
+        "https://realtime.internal/client-storage",
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(update),
+        },
+      );
+      if (!response.ok) return response;
+      await env.DB.prepare(`
+        UPDATE global_revision SET revision = revision + 1 WHERE singleton = 1
+      `).run();
+      return response;
+    }
+    methodNotAllowed(["GET", "PATCH"]);
   }
 
   if (pathname === "/api/revisions") {
