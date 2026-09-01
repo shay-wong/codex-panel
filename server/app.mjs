@@ -16,9 +16,11 @@ import remarkParse from "remark-parse";
 import {
   DEFAULT_PROJECT_ID,
   JIRA_PROJECT_ID,
+  PROJECT_ISSUE_KEY_PATTERN,
   TASK_STATUSES,
   isTaskPriority,
   isTaskStatus,
+  normalizeProjectIssueKey,
 } from "../shared/domain.mjs";
 import { resolvePanelDataDirectory } from "../shared/panel-paths.mjs";
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
@@ -527,7 +529,7 @@ function validateProjectId(value, { required = true } = {}) {
 
 function parseProjectCreate(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["id", "name", "workspacePath"]));
+  assertAllowedKeys(body, new Set(["id", "name", "issueKey", "workspacePath"]));
   const name = stringField(body.name, "name", { required: true, maxLength: 120 });
   const id = validateProjectId(body.id ?? slugify(name));
   if (!id) {
@@ -540,7 +542,13 @@ function parseProjectCreate(body) {
   if (workspacePath?.includes("\0")) {
     throw new ApiError(400, "INVALID_FIELD", "'workspacePath' cannot contain null bytes");
   }
-  return { id, name, workspacePath };
+  const issueKey = body.issueKey === undefined
+    ? undefined
+    : normalizeProjectIssueKey(stringField(body.issueKey, "issueKey", { required: true, maxLength: 12 }));
+  if (issueKey !== undefined && !PROJECT_ISSUE_KEY_PATTERN.test(issueKey)) {
+    throw new ApiError(400, "INVALID_FIELD", "'issueKey' must contain 1-12 letters or numbers");
+  }
+  return { id, name, issueKey, workspacePath };
 }
 
 function parseProjectLabel(body) {

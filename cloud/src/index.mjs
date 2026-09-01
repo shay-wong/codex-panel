@@ -1,6 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 
-import { DEFAULT_LABEL_NAMES } from "../../shared/domain.mjs";
+import {
+  DEFAULT_LABEL_NAMES,
+  PROJECT_ISSUE_KEY_PATTERN,
+  nextProjectIssueKey,
+  normalizeProjectIssueKey,
+} from "../../shared/domain.mjs";
 
 const JSON_BODY_LIMIT = 1024 * 1024;
 const PROJECT_README_BODY_LIMIT = 3 * 1024 * 1024;
@@ -396,15 +401,6 @@ function validateProjectId(value) {
   return id;
 }
 
-function projectPrefix(project) {
-  const idPrefix = project.id.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 12) || "TASK";
-  const existingPrefix = project.first_identifier?.replace(/-\d+$/, "");
-  if (existingPrefix && /^[A-Z0-9]+$/i.test(existingPrefix) && existingPrefix !== idPrefix) return existingPrefix;
-  if (idPrefix.length <= 5) return idPrefix;
-  const namePrefix = project.name.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 3);
-  return namePrefix || idPrefix.slice(0, 3);
-}
-
 function now() {
   return new Date().toISOString();
 }
@@ -679,6 +675,7 @@ function projectFromRow(row) {
   return {
     id: row.id,
     name: row.name,
+    issueKey: row.issue_key,
     workspacePath: null,
     labels: JSON.parse(row.labels),
     issueCount: Number(row.issue_count ?? 0),
@@ -1288,7 +1285,7 @@ async function taskActivitiesForTasks(env, taskIds) {
 
 function parseProjectCreate(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["id", "name", "workspacePath"]));
+  assertAllowedKeys(body, new Set(["id", "name", "issueKey", "workspacePath"]));
   const name = stringField(body.name, "name", { required: true, maxLength: 120 });
   const id = validateProjectId(body.id ?? slugify(name));
   if (body.workspacePath !== undefined && body.workspacePath !== null) {
@@ -1300,7 +1297,13 @@ function parseProjectCreate(body) {
       throw new ApiError(400, "INVALID_FIELD", "'workspacePath' cannot contain null bytes");
     }
   }
-  return { id, name };
+  const issueKey = body.issueKey === undefined
+    ? undefined
+    : normalizeProjectIssueKey(stringField(body.issueKey, "issueKey", { required: true, maxLength: 12 }));
+  if (issueKey !== undefined && !PROJECT_ISSUE_KEY_PATTERN.test(issueKey)) {
+    throw new ApiError(400, "INVALID_FIELD", "'issueKey' must contain 1-12 letters or numbers");
+  }
+  return { id, name, issueKey };
 }
 
 function parseClientStorageUpdate(body) {
@@ -1557,11 +1560,53 @@ function nextCursor(rows, after) {
   return String(revision);
 }
 
+async function ensureProjectIssueKeys(env) {
+  const projects = await all(env.DB.prepare(`
+    SELECT
+      projects.id,
+      projects.name,
+      projects.issue_key,
+      (
+        SELECT tasks.identifier
+        FROM tasks
+        WHERE tasks.project_id = projects.id
+        ORDER BY tasks.created_at, tasks.id
+        LIMIT 1
+      ) AS first_identifier
+    FROM projects
+    ORDER BY projects.created_at, projects.id
+  `));
+  const unavailable = new Set(projects.map((project) => project.issue_key).filter(Boolean));
+  const updates = [];
+  for (const project of projects) {
+    if (project.issue_key) continue;
+    const issueKey = nextProjectIssueKey({
+      id: project.id,
+      name: project.name,
+      firstIdentifier: project.first_identifier,
+    }, unavailable);
+    unavailable.add(issueKey);
+    updates.push(env.DB.prepare(`
+      UPDATE projects SET issue_key = ? WHERE id = ? AND issue_key IS NULL
+    `).bind(issueKey, project.id));
+  }
+  if (updates.length > 0) await env.DB.batch(updates);
+}
+
+async function availableProjectIssueKey(env, project) {
+  const rows = await all(env.DB.prepare(`
+    SELECT issue_key FROM projects WHERE issue_key IS NOT NULL
+  `));
+  return nextProjectIssueKey(project, new Set(rows.map((row) => row.issue_key)));
+}
+
 async function listProjects(env) {
+  await ensureProjectIssueKeys(env);
   const rows = await all(env.DB.prepare(`
     SELECT
       projects.id,
       projects.name,
+      projects.issue_key,
       projects.workspace_path,
       projects.labels,
       projects.created_at,
@@ -1574,6 +1619,7 @@ async function listProjects(env) {
     GROUP BY
       projects.id,
       projects.name,
+      projects.issue_key,
       projects.workspace_path,
       projects.labels,
       projects.created_at,
@@ -1584,10 +1630,12 @@ async function listProjects(env) {
 }
 
 async function getProject(env, id) {
+  await ensureProjectIssueKeys(env);
   const row = await env.DB.prepare(`
     SELECT
       projects.id,
       projects.name,
+      projects.issue_key,
       projects.workspace_path,
       projects.labels,
       projects.created_at,
@@ -1601,6 +1649,7 @@ async function getProject(env, id) {
     GROUP BY
       projects.id,
       projects.name,
+      projects.issue_key,
       projects.workspace_path,
       projects.labels,
       projects.created_at,
@@ -1610,20 +1659,37 @@ async function getProject(env, id) {
 }
 
 async function createProject(env, input) {
+  await ensureProjectIssueKeys(env);
   const timestamp = now();
-  try {
-    await env.DB.prepare(`
-      INSERT INTO projects (
-        id, name, workspace_path, labels, next_task_number, created_at, updated_at
-      ) VALUES (?, ?, NULL, ?, 1, ?, ?)
-    `).bind(input.id, input.name, DEFAULT_PROJECT_LABELS_JSON, timestamp, timestamp).run();
-  } catch (error) {
-    if (String(error.message).includes("UNIQUE constraint failed")) {
-      throw new ApiError(409, "PROJECT_EXISTS", `Project '${input.id}' already exists`);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const issueKey = input.issueKey ?? await availableProjectIssueKey(env, input);
+    try {
+      await env.DB.prepare(`
+        INSERT INTO projects (
+          id, name, issue_key, workspace_path, labels, next_task_number, created_at, updated_at
+        ) VALUES (?, ?, ?, NULL, ?, 1, ?, ?)
+      `).bind(
+        input.id,
+        input.name,
+        issueKey,
+        DEFAULT_PROJECT_LABELS_JSON,
+        timestamp,
+        timestamp,
+      ).run();
+      return getProject(env, input.id);
+    } catch (error) {
+      const message = String(error.message);
+      if (message.includes("projects.issue_key")) {
+        if (input.issueKey === undefined && attempt < 2) continue;
+        throw new ApiError(409, "PROJECT_ISSUE_KEY_EXISTS", `Project Key '${issueKey}' already exists`);
+      }
+      if (message.includes("UNIQUE constraint failed")) {
+        throw new ApiError(409, "PROJECT_EXISTS", `Project '${input.id}' already exists`);
+      }
+      throw error;
     }
-    throw error;
   }
-  return getProject(env, input.id);
+  throw new ApiError(409, "PROJECT_ISSUE_KEY_EXISTS", "Could not reserve a unique Project Key");
 }
 
 async function addProjectLabel(env, projectId, label) {
@@ -1747,24 +1813,19 @@ async function listTasks(env, filters) {
 }
 
 async function createTask(env, input, actor) {
+  await ensureProjectIssueKeys(env);
   const project = await env.DB.prepare(`
     SELECT
       projects.id,
       projects.name,
-      (
-        SELECT tasks.identifier
-        FROM tasks
-        WHERE tasks.project_id = projects.id
-        ORDER BY tasks.created_at, tasks.id
-        LIMIT 1
-      ) AS first_identifier
+      projects.issue_key
     FROM projects
     WHERE projects.id = ?
   `).bind(input.projectId).first();
   if (!project) {
     throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${input.projectId}' does not exist`);
   }
-  const prefix = projectPrefix(project);
+  const prefix = project.issue_key;
   const suffixStart = prefix.length + 2;
   let sortOrder = input.sortOrder;
   if (sortOrder === undefined) {

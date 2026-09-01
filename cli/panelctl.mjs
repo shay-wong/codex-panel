@@ -31,7 +31,7 @@ const GLOBAL_OPTIONS = new Set(["runtime-file"]);
 
 const COMMAND_OPTIONS = new Map([
   ["project list", new Set(["json"])],
-  ["project create", new Set(["id", "name", "workspace-path", "json"])],
+  ["project create", new Set(["id", "name", "issue-key", "workspace-path", "json"])],
   ["project map", new Set(["workspace-path", "json"])],
   ["project readme", new Set(["content", "file", "if-version", "json"])],
   ["conversation bind", new Set(["thread-id", "json"])],
@@ -127,7 +127,7 @@ const HELP_TEXT = new Map([
 Commands:
   context current [--cwd PATH] [--json]
   project list
-  project create --name NAME [--id ID] [--workspace-path PATH]
+  project create --name NAME [--id ID] [--issue-key KEY] [--workspace-path PATH]
   project map PROJECT_ID --workspace-path PATH
   project readme get [PROJECT_ID]
   project readme set [PROJECT_ID] (--content TEXT | --file FILE) [--if-version N]
@@ -347,6 +347,7 @@ async function execute(parsed, overrides) {
       return api.request("POST", "/api/projects", {
         ...optionalField("id", parsed.options.id),
         name: requiredOption(parsed.options, "name"),
+        ...optionalField("issueKey", parsed.options["issue-key"]),
         ...optionalField(
           "workspacePath",
           parsed.options["workspace-path"] === undefined

@@ -197,10 +197,13 @@ test("CODEX_PANEL_WSL_RUNTIME_FILE overrides WSL automatic discovery", async () 
   );
 });
 
-test("project create sends id, name, and an absolute workspace path", async () => {
+test("project create sends id, name, issue key, and an absolute workspace path", async () => {
   let requestBody;
   const result = await run(
-    ["project", "create", "--id", "docs", "--name", "Docs", "--workspace-path", "./docs"],
+    [
+      "project", "create", "--id", "docs", "--name", "Docs", "--issue-key", "DOCS",
+      "--workspace-path", "./docs",
+    ],
     async (_url, init) => {
       requestBody = JSON.parse(init.body);
       return response({ project: { id: "docs", name: "Docs" } }, 201);
@@ -210,6 +213,7 @@ test("project create sends id, name, and an absolute workspace path", async () =
   assert.equal(result.exitCode, 0);
   assert.equal(requestBody.id, "docs");
   assert.equal(requestBody.name, "Docs");
+  assert.equal(requestBody.issueKey, "DOCS");
   assert.equal(path.basename(requestBody.workspacePath), "docs");
 });
 

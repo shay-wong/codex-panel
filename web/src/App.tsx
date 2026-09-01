@@ -776,6 +776,8 @@ export function App() {
   const [projectContextMenu, setProjectContextMenu] = useState<ProjectContextMenuState | null>(null);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
+  const [projectIssueKey, setProjectIssueKey] = useState("");
+  const [projectIssueKeyEdited, setProjectIssueKeyEdited] = useState(false);
   const [jiraDialogOpen, setJiraDialogOpen] = useState(false);
   const [jiraConnection, setJiraConnection] = useState<JiraConnection | null>(null);
   const [jiraSaving, setJiraSaving] = useState(false);
@@ -3385,6 +3387,8 @@ export function App() {
     setProjectMenuOpen(false);
     setProjectContextMenu(null);
     setProjectName("");
+    setProjectIssueKey("");
+    setProjectIssueKeyEdited(false);
     setActionError(null);
     setProjectCreateOpen(true);
   }
@@ -3398,7 +3402,8 @@ export function App() {
   async function createTemporaryProject() {
     if (openingProjectId) return;
     const name = projectName.trim();
-    if (!name) return;
+    const issueKey = projectIssueKey.trim();
+    if (!name || !issueKey) return;
     const projectId = `temp-${window.crypto.randomUUID()}`;
     setOpeningProjectId(projectId);
     setActionError(null);
@@ -3406,6 +3411,7 @@ export function App() {
       const project = await createProjectRequest({
         id: projectId,
         name,
+        issueKey,
         workspacePath: null,
       });
       setProjects((current) => [...current, project]);
@@ -4184,7 +4190,26 @@ export function App() {
                 maxLength={120}
                 required
                 value={projectName}
-                onChange={(event) => setProjectName(event.target.value)}
+                onChange={(event) => {
+                  const name = event.target.value;
+                  setProjectName(name);
+                  if (!projectIssueKeyEdited) {
+                    setProjectIssueKey(name.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 3));
+                  }
+                }}
+              />
+            </label>
+            <label>
+              <span>{text("项目 Key", "Project Key")}</span>
+              <input
+                maxLength={12}
+                pattern="[A-Z0-9]{1,12}"
+                required
+                value={projectIssueKey}
+                onChange={(event) => {
+                  setProjectIssueKeyEdited(true);
+                  setProjectIssueKey(event.target.value.toUpperCase().replace(/[^A-Z0-9]+/g, ""));
+                }}
               />
             </label>
             {actionErrorText && <p className="project-dialog-error">{actionErrorText}</p>}
@@ -4200,7 +4225,7 @@ export function App() {
               <button
                 className="button primary"
                 type="submit"
-                disabled={!projectName.trim() || openingProjectId !== null}
+                disabled={!projectName.trim() || !projectIssueKey.trim() || openingProjectId !== null}
               >
                 {openingProjectId
                   ? text("创建中…", "Creating…")

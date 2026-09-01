@@ -533,6 +533,7 @@ export async function uploadProjectReadmeAttachment(
 export async function createProject(input: {
   id: string;
   name: string;
+  issueKey?: string;
   workspacePath: string | null;
 }): Promise<Project> {
   const data = await request<{ project: Project }>("/api/projects", {

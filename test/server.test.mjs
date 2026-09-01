@@ -696,10 +696,11 @@ test("project and task CRUD flow", async () => {
 
   const projectResult = await request(baseUrl, "/api/projects", {
     method: "POST",
-    body: { id: "website", name: "Website", workspacePath: "/work/website" },
+    body: { id: "website", name: "Website", issueKey: "WEB", workspacePath: "/work/website" },
   });
   assert.equal(projectResult.response.status, 201);
   assert.equal(projectResult.body.project.id, "website");
+  assert.equal(projectResult.body.project.issueKey, "WEB");
   assert.equal(projectResult.body.project.workspacePath, "/work/website");
 
   const createResult = await request(baseUrl, "/api/tasks", {

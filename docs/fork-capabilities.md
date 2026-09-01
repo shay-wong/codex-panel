@@ -6,6 +6,12 @@ This page indexes the user-visible differences maintained by `shay-wong/codex-pa
 
 The browser title and repository entry points use the `Codex Panel` name, and the repository is named `codex-panel`. The canonical Skill, CLI, environment, integration protocol, local storage, SQLite, and undeployed Cloudflare identifiers now use `manage-panel`, `panelctl`, `CODEX_PANEL_*`, and `panel`. Browser keys, environment variables, automation names, and repository-managed links are migrated or accepted as fallbacks so the rename does not discard existing state. The completed local database rename is represented only by `panel.sqlite`; the one-time legacy file migration is no longer retained.
 
+## Stable Project Keys and Issue identifiers
+
+Each project stores one immutable, globally unique Project Key containing 1-12 letters or numbers. New Issues use that Key as their `KEY-N` prefix, so similarly named projects never share a prefix or numbering sequence. The create-project UI accepts an explicit Key; CLI and automatic repository registration can allocate one when omitted.
+
+Existing Issue identifiers are never rewritten. During local or Cloud migration, Panel keeps a project's first valid historical prefix when possible and gives later collisions a deterministic numeric suffix. The same Key is included in local-to-Cloud migration bundles.
+
 ## Board-style horizontal list
 
 The list view supports horizontal and vertical layouts. Horizontal layout uses the issue board's status colors, workflow arrows, column spacing, scrollable column bodies, and card hierarchy so statuses remain easy to scan. Jira issues show their external key when available, with the title on a separate line and metadata wrapping inside the card. Vertical layout keeps the existing compact rows.

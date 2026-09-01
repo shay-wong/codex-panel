@@ -52,6 +52,18 @@
 
 ## 活跃 Fork 能力
 
+### 持久化项目 Key 与稳定 Issue ID
+
+- 生命周期：`等待上游吸收`
+- 原始目的：让 Issue 编号来自项目级持久字段，而不是每次按项目名称临时推导，避免同名前缀项目共享编号序列。
+- 行为不变量：每个项目保存一个由 1-12 位大写字母或数字组成、全局唯一且创建后不可修改的 Project Key；新 Issue 使用 `KEY-N`，历史 Issue identifier 不重编号。旧项目迁移优先保留首个合法历史前缀；冲突项目按项目创建顺序获得确定性的数字后缀。本地 SQLite、Cloud D1 和一次性 Cloud 数据迁移保持一致。
+- 代码和测试路径：`shared/domain.mjs`、`server/database.mjs`、`server/app.mjs`、`cloud/src/index.mjs`、`cloud/migrations/0012_project_issue_key.sql`、`scripts/migrate-to-cloud.mjs`、`cli/panelctl.mjs`、`web/src/App.tsx` 和 `test/cloud-migration.test.mjs`。
+- 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
+- 来源：本次 Fork 改造；提交后可用 `git log -S'issue_key' -- server/database.mjs cloud/src/index.mjs` 定位。
+- 合并指引：上游修改项目 schema、项目创建或 Issue identifier 分配时，保留持久且不可变的全局唯一 Key、历史 identifier 不变、本地与 Cloud 行为一致；不要恢复按项目名称即时推导。
+- 移除条件：上游提供等价的项目级稳定 Key、冲突迁移和本地/Cloud 一致性后同步移除。
+- 针对性验证：在隔离数据目录创建两个同前三字母项目并确认 Key 不同；确认重复显式 Key 返回 409、历史 identifier 升级后不变，并运行 `node --test test/server.test.mjs test/cloud-shared-worker.test.mjs test/cloud-migration.test.mjs`、`npm run typecheck` 和 `npm run build:web`。
+
 ### 使用 Codex Panel 产品与仓库名
 
 - 生命周期：`长期保留`

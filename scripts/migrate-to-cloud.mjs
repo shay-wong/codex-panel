@@ -15,9 +15,12 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
-import { DEFAULT_LABEL_NAMES } from "../shared/domain.mjs";
+import {
+  DEFAULT_LABEL_NAMES,
+  nextProjectIssueKey,
+} from "../shared/domain.mjs";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const WRANGLER_D1_STATEMENT_MAX_BYTES = 90_000;
 const PROJECT_README_D1_CHUNK_CHARACTERS = 10_000;
 const TABLE_ORDER = [
@@ -74,6 +77,36 @@ function projectRowsWithLabels(tables) {
   return tables.projects.map((project) => ({
     ...project,
     labels: JSON.stringify(labelsByProject.get(project.id)),
+  }));
+}
+
+function projectRowsForCloud(tables) {
+  const projects = projectRowsWithLabels(tables);
+  const firstIdentifiers = new Map();
+  for (const task of [...tables.tasks].sort((left, right) => (
+    compareValues(left.created_at, right.created_at) || compareValues(left.id, right.id)
+  ))) {
+    if (!firstIdentifiers.has(task.project_id)) {
+      firstIdentifiers.set(task.project_id, task.identifier);
+    }
+  }
+  const unavailable = new Set(projects.map((project) => project.issue_key).filter(Boolean));
+  const generated = new Map();
+  for (const project of [...projects].sort((left, right) => (
+    compareValues(left.created_at, right.created_at) || compareValues(left.id, right.id)
+  ))) {
+    if (project.issue_key) continue;
+    const issueKey = nextProjectIssueKey({
+      id: project.id,
+      name: project.name,
+      firstIdentifier: firstIdentifiers.get(project.id),
+    }, unavailable);
+    unavailable.add(issueKey);
+    generated.set(project.id, issueKey);
+  }
+  return projects.map((project) => ({
+    ...project,
+    issue_key: project.issue_key ?? generated.get(project.id),
   }));
 }
 
@@ -377,7 +410,7 @@ export async function createCloudMigrationBundle({
 }) {
   const tables = await readSnapshot(databasePath);
   fillMissingAttachmentKinds(tables);
-  tables.projects = projectRowsWithLabels(tables).map((project) => ({
+  tables.projects = projectRowsForCloud(tables).map((project) => ({
     ...project,
     workspace_path: null,
   }));
@@ -398,7 +431,7 @@ export async function createCloudMigrationBundle({
 
 const CLOUD_COLUMNS = {
   projects: [
-    "id", "name", "workspace_path", "labels", "next_task_number", "created_at", "updated_at",
+    "id", "name", "issue_key", "workspace_path", "labels", "next_task_number", "created_at", "updated_at",
   ],
   project_readmes: ["project_id", "content", "version", "created_at", "updated_at"],
   project_readme_attachments: [
@@ -442,7 +475,7 @@ function cloudTaskRow(task) {
 }
 
 function cloudRows(table, tables) {
-  if (table === "projects") return projectRowsWithLabels(tables);
+  if (table === "projects") return projectRowsForCloud(tables);
   return table === "tasks" ? tables.tasks.map(cloudTaskRow) : tables[table];
 }
 
