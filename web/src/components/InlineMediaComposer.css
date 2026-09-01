@@ -26,24 +26,30 @@
   font-weight: 620;
 }
 
-.issue-description-composer .inline-media-composer.ProseMirror h1 {
+.issue-description-composer .inline-media-composer.ProseMirror h1,
+.inline-media-description.ProseMirror h1 {
   font-size: 20px;
   line-height: 28px;
 }
 
-.issue-description-composer .inline-media-composer.ProseMirror h2 {
+.issue-description-composer .inline-media-composer.ProseMirror h2,
+.inline-media-description.ProseMirror h2 {
   font-size: 18px;
   line-height: 26px;
 }
 
-.issue-description-composer .inline-media-composer.ProseMirror h3 {
+.issue-description-composer .inline-media-composer.ProseMirror h3,
+.inline-media-description.ProseMirror h3 {
   font-size: 16px;
   line-height: 24px;
 }
 
 .issue-description-composer .inline-media-composer.ProseMirror h4,
 .issue-description-composer .inline-media-composer.ProseMirror h5,
-.issue-description-composer .inline-media-composer.ProseMirror h6 {
+.issue-description-composer .inline-media-composer.ProseMirror h6,
+.inline-media-description.ProseMirror h4,
+.inline-media-description.ProseMirror h5,
+.inline-media-description.ProseMirror h6 {
   font-size: 15px;
   line-height: 24px;
 }
@@ -72,7 +78,8 @@
   line-height: 24px;
 }
 
-.issue-description-composer .inline-media-composer.ProseMirror p {
+.issue-description-composer .inline-media-composer.ProseMirror p,
+.inline-media-description.ProseMirror p {
   margin: 0 0 10px;
 }
 
@@ -189,6 +196,10 @@
 .issue-description-composer .inline-media-composer.ProseMirror li > p,
 .comment-inline-media.ProseMirror li > p {
   margin-bottom: 3px;
+}
+
+.inline-media-description.ProseMirror li > p {
+  margin-bottom: 4px;
 }
 
 .inline-media-composer.ProseMirror ul:has(> li.task-list-item),

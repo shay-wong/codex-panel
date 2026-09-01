@@ -133,7 +133,7 @@ test("embedded page supports ordinary loopback and authenticated opaque modes", 
 });
 
 test("entry clones the native Plugins row and the page covers the complete Codex workspace", () => {
-  assert.match(source, /const PLUGIN_LABELS = \["插件", "外掛程式", "plugins"\]/);
+  assert.match(source, /const PLUGIN_LABELS = \["插件", "外掛程式", "plugins", "プラグイン"\]/);
   assert.match(source, /if \(plugin\) return plugin;/);
   assert.match(source, /return directButtons\.length >= 3/);
   assert.match(source, /const button = reference\.cloneNode\(true\)/);

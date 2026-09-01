@@ -606,7 +606,9 @@ export function DashboardView({
                   onClick={() => onOpenTask(task)}
                   key={task.id}
                 >
-                  <span className="dashboard-attention-mark" aria-hidden="true"><i /></span>
+                  <span className="dashboard-attention-mark" aria-hidden="true">
+                    {presentations[task.id]?.unread && <i />}
+                  </span>
                   <strong>{task.title}</strong>
                   <small>ID: {task.externalKey ?? task.identifier}</small>
                 </button>

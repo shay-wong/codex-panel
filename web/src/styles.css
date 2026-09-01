@@ -3293,16 +3293,18 @@ kbd {
 }
 
 .issue-description-document .task-list-item {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  column-gap: 7px;
   list-style: none;
 }
 
 .issue-description-document input[type="checkbox"] {
   width: 14px;
   height: 14px;
-  margin: 0 7px 0 0;
+  margin: 4px 0 0;
   accent-color: var(--accent);
   pointer-events: none;
-  vertical-align: -2px;
 }
 
 .issue-description-document blockquote {
@@ -6789,10 +6791,6 @@ kbd {
   padding: 6px 0 12px;
   font-size: 15px;
   line-height: 27px;
-}
-
-.inline-media-description[data-empty="true"] {
-  min-height: 100px;
 }
 
 .composer-title textarea::placeholder,

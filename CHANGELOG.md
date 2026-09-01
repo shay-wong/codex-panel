@@ -4,7 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
-- Merged upstream `1.1.14`, including the ProseMirror composer, canonical workspace resolution, live Codex project identity, SSH Host App Server IPC, request forwarding, notifications, and `js-yaml 4.3.1`, while retaining Jira activity and formal conversations, stable Panel clipboard references, desktop behavior, and the persistent claim queue instead of remote Scheduled Task execution.
+- Merged upstream through `1.1.20`, including stable Codex user identity and avatar recovery, exact trusted public Hosts, all-project backlog migration, per-issue unread persistence, Dashboard attention state, localized Plugins detection, Issue description layout, and property picker fixes, while retaining Jira activity and formal conversations, stable Panel clipboard references, desktop behavior, and the persistent claim queue instead of remote Scheduled Task execution.
 - Fixed opening an issue from All projects so its detail keeps the All projects scope while using the issue's own labels and repository development context.
 - Fixed explicit Jira conversation binding so it preserves an existing planning conversation, and unified conversations created by execution, automatic claim, or manual binding in issue activity without a duplicate detail shortcut.
 - Fixed explicit conversation binding so a saved local Codex task resolves its own project and worktree identity instead of depending on whichever task most recently opened Panel.

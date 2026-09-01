@@ -958,6 +958,10 @@ export class PanelDatabase {
         this.database.exec(`ALTER TABLE tasks ADD COLUMN ${column} TEXT`);
       }
     }
+    this.database.exec(`
+      DROP TRIGGER IF EXISTS tasks_todo_execution_target_insert;
+      DROP TRIGGER IF EXISTS tasks_todo_execution_target_update;
+    `);
     if (hasLinkedThreadId) {
       this.database.exec(`
         UPDATE tasks

@@ -337,7 +337,7 @@ function DueDateControl({
 
 function AssigneeControl({
   task,
-  participants,
+  participants: persistedParticipants,
   currentUser,
   disabled,
   open,
@@ -354,7 +354,12 @@ function AssigneeControl({
 }) {
   const { text } = useTaskboardI18n();
   const displayIdentifier = task.externalKey ?? task.identifier;
-  const options = [task.assignee, currentUser, CODEX_AGENT_ACTOR]
+  const currentUserKey = actorKey(currentUser);
+  const assignee = actorKey(task.assignee) === currentUserKey ? currentUser : task.assignee;
+  const participants = persistedParticipants.map((participant) => (
+    actorKey(participant) === currentUserKey ? currentUser : participant
+  ));
+  const options = [assignee, currentUser, CODEX_AGENT_ACTOR]
     .filter((actor, index, actors) => (
       actors.findIndex((candidate) => actorKey(candidate) === actorKey(actor)) === index
     ));
@@ -363,7 +368,7 @@ function AssigneeControl({
       value={actorKey(task.assignee)}
       options={options.map((actor) => ({
         value: actorKey(actor),
-        label: actor.id === currentUser.id ? text(`${actor.name}（我）`, `${actor.name} (me)`) : actor.name,
+        label: actorKey(actor) === currentUserKey ? text(`${actor.name}（我）`, `${actor.name} (me)`) : actor.name,
         icon: <ActorAvatar actor={actor} className="task-property-assignee-avatar" />,
       }))}
       open={open}
@@ -372,7 +377,7 @@ function AssigneeControl({
       triggerClassName="task-assignee-trigger"
       triggerContent={<ParticipantAvatars participants={participants} />}
       ariaLabel={text(`${displayIdentifier} 负责人`, `${displayIdentifier} assignee`)}
-      title={text(`负责人：${task.assignee.name}`, `Assignee: ${task.assignee.name}`)}
+      title={text(`负责人：${assignee.name}`, `Assignee: ${assignee.name}`)}
       onOpenChange={onOpenChange}
       onChange={(value) => {
         const selected = options.find((actor) => actorKey(actor) === value);

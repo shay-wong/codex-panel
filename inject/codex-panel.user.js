@@ -31,7 +31,7 @@
   const THREAD_ASSOCIATION_TIMEOUT_MS = 10 * 60_000;
   const MACOS_TITLEBAR_SAFE_LEFT = 80;
   const FRAME_REFRESH_PARAM = "__codex_panel_refresh";
-  const PLUGIN_LABELS = ["插件", "外掛程式", "plugins"];
+  const PLUGIN_LABELS = ["插件", "外掛程式", "plugins", "プラグイン"];
   const NATIVE_PAGE_LABELS = [
     "新建任务",
     "新聊天",
@@ -137,6 +137,7 @@
   let lastNativeThreadId = "";
   let panelNativeThreadId = "";
   let lastNativeProjectId = "";
+  let currentCodexUserId = "";
   let codexProjectMetadata = new Map();
   let suspendedNativeBrowserPanel = null;
   let active = false;
@@ -627,10 +628,12 @@
 
   async function captureHostContext() {
     const todoProgress = nativeTodoProgress();
-    const [selectedProjectId, metadata] = await Promise.all([
+    const [selectedProjectId, metadata, currentUser] = await Promise.all([
       selectedNativeProjectId(),
       readCodexProjectMetadata(),
+      requestHost("read-current-user"),
     ]);
+    currentCodexUserId = typeof currentUser.userId === "string" ? currentUser.userId : "";
     codexProjectMetadata = metadata;
     if (selectedProjectId) lastNativeProjectId = selectedProjectId;
     let projects = readCodexProjects();
@@ -767,35 +770,18 @@
     window.setTimeout(postHostContext, REATTACH_DELAY_MS);
   }
 
-  function userIdFromName(name) {
-    const slug = name.normalize("NFKD")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 96);
-    if (slug) return slug;
-    let hash = 2166136261;
-    for (const character of name) {
-      hash ^= character.codePointAt(0);
-      hash = Math.imul(hash, 16777619);
-    }
-    return `codex-user-${(hash >>> 0).toString(36)}`;
-  }
-
   function readCodexUser() {
-    const avatar = Array.from(document.querySelectorAll("img"))
-      .find((image) => image.src.includes("cdn.auth0.com/avatars/"));
-    const profileButton = avatar?.closest("button")
-      || Array.from(document.querySelectorAll('button[aria-haspopup="menu"]')).find((button) => (
-        normalizedLabel(button.getAttribute("aria-label")).includes("profile")
-        || normalizedLabel(button.getAttribute("aria-label")).includes("个人资料")
-      ));
+    const profileButton = Array.from(document.querySelectorAll('button[aria-haspopup="menu"]')).find((button) => (
+      normalizedLabel(button.getAttribute("aria-label")).includes("profile")
+      || normalizedLabel(button.getAttribute("aria-label")).includes("个人资料")
+    ));
     const name = profileButton?.textContent?.replace(/\s+/g, " ").trim();
-    if (!name) return null;
+    if (!currentCodexUserId || !name) return null;
+    const avatar = profileButton.querySelector("img");
     const avatarUrl = avatar?.currentSrc || avatar?.src || null;
     return {
       type: "user",
-      id: userIdFromName(name),
+      id: currentCodexUserId,
       name,
       avatarUrl,
     };

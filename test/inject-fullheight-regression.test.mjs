@@ -149,6 +149,7 @@ function fixtureHtml(origin) {
             window.__statusHiddenBeforeNavigation = document.getElementById("codex-panel-status")?.hidden === true;
             frame?.addEventListener("load", () => {
               window.__hostileNavigationLoaded = true;
+              window.__resolveHostileNavigationLoaded();
             }, { once: true });
             frame.removeAttribute("srcdoc");
             frame.src = ${JSON.stringify(`${origin}/attacker`)};
@@ -187,14 +188,11 @@ function fixtureHtml(origin) {
         const entry = document.getElementById("codex-panel-entry");
         const panel = document.querySelector("[data-browser-sidebar-webview]");
         const panelVisibleBefore = getComputedStyle(panel).visibility !== "hidden";
+        const hostileNavigationLoaded = new Promise((resolve) => {
+          window.__resolveHostileNavigationLoaded = resolve;
+        });
         entry?.click();
-
-        for (let attempt = 0; attempt < 500; attempt += 1) {
-          const frame = document.getElementById("codex-panel-frame");
-          if (frame && window.__externalOpenUrl && window.__hostileNavigationLoaded) break;
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        await new Promise((resolve) => setTimeout(resolve, 250));
+        await hostileNavigationLoaded;
 
         const page = document.getElementById("codex-panel-page");
         const frame = document.getElementById("codex-panel-frame");

@@ -216,7 +216,7 @@ npm run codex:inject -- --port 9229 --open
 
 局域网模式没有账户认证：受信任局域网中任何能够访问该 URL 的人都可以读写 Panel。通过公网访问或部署到云端时，必须设置经过认证的访问边界。
 
-连接本地监听器的反向隧道必须把公网 HTTPS 来源配置到 `CODEX_PANEL_TRUSTED_ORIGINS`，例如 `https://board.example.test`；多个来源使用逗号分隔。每项必须是无路径、查询、片段、凭据或通配符的精确 HTTPS 来源，空值和规范化后重复的来源会在启动时被拒绝。代理或隧道必须保持回环 socket 连接、把 `Host` 改写为本地或私有地址，并保留浏览器提供的 `Origin`；只有请求没有该头时才能补入已配置的来源，且不能依赖 forwarded headers。可信来源可以访问普通 Panel HTTP 和实时接口，但不能获得设备本地能力。旧名称 `CODEX_TASKBOARD_TRUSTED_ORIGINS` 仅保留兼容读取。
+连接本地监听器的反向隧道必须把公网 HTTPS 来源配置到 `CODEX_PANEL_TRUSTED_ORIGINS`，例如 `https://board.example.test`；多个来源使用逗号分隔。每项必须是无路径、查询、片段、凭据或通配符的精确 HTTPS 来源，空值和规范化后重复的来源会在启动时被拒绝。代理或隧道必须保持回环 socket 连接，并保留与配置完全匹配的公网 `Host`，或把它改写为本地或私有地址。代理必须保留浏览器提供的 `Origin`；只有请求没有该头时才能补入已配置的公网 HTTPS 来源，且不能依赖 forwarded headers。使用已配置公网 Host 或 Origin 的请求可以访问普通 Panel HTTP 和实时接口，但不能获得设备本地能力。旧名称 `CODEX_TASKBOARD_TRUSTED_ORIGINS` 仅保留兼容读取。
 
 ## 通过 Cloudflare 共享
 

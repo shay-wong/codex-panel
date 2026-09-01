@@ -97,7 +97,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (method !== "GET" && method !== "HEAD") {
     headers.set("X-Panel-User-Id", currentUserActor.id);
     headers.set("X-Panel-User-Name", encodeURIComponent(currentUserActor.name));
-    if (currentUserActor.avatarUrl) {
+    if (
+      currentUserActor.avatarUrl
+      && currentUserActor.avatarUrl.length <= 2048
+      && (
+        currentUserActor.avatarUrl.startsWith("https://")
+        || currentUserActor.avatarUrl.startsWith("http://")
+      )
+    ) {
       headers.set("X-Panel-User-Avatar", currentUserActor.avatarUrl);
     }
   }

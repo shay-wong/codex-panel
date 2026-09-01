@@ -387,7 +387,11 @@ exec "$RESOURCE_DIR/../../bin/codex-panel-node" "$RESOURCE_DIR/app/cli/panelctl.
   const taskctlWrapper = `#!/bin/zsh
 set -u
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_PATH="$0"
+if [ -L "$SCRIPT_PATH" ]; then
+  SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+fi
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 CONTENTS_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 export CODEX_PANEL_DATA_DIR="$HOME/Library/Application Support/Codex Panel/data"
 export CODEX_PANEL_RUNTIME_FILE="$CODEX_PANEL_DATA_DIR/launcher-runtime.json"

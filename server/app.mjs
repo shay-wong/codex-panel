@@ -208,31 +208,53 @@ function parseTrustedOrigins(value) {
   return origins;
 }
 
-function assertTrustedNetworkRequest(request, allowOpaqueOrigin = false, trustedOrigins = new Set()) {
-  let host;
-  try {
-    host = new URL(`http://${request.headers.host ?? ""}`).hostname;
-  } catch {
-    throw new ApiError(403, "INVALID_HOST", "Request Host must be local or private");
+function parseRequestHost(value) {
+  if (typeof value !== "string" || !value || value !== value.trim()) {
+    throw new ApiError(403, "INVALID_HOST", "Request Host must be local, private, or explicitly trusted");
   }
-  if (!isTrustedNetworkHost(host)) {
-    throw new ApiError(403, "INVALID_HOST", "Request Host must be local or private");
+  let url;
+  try {
+    url = new URL(`https://${value}`);
+  } catch {
+    throw new ApiError(403, "INVALID_HOST", "Request Host must be local, private, or explicitly trusted");
+  }
+  if (
+    url.username
+    || url.password
+    || url.pathname !== "/"
+    || url.search
+    || url.hash
+    || !url.hostname
+  ) {
+    throw new ApiError(403, "INVALID_HOST", "Request Host must be local, private, or explicitly trusted");
+  }
+  return { hostname: url.hostname, httpsOrigin: url.origin };
+}
+
+function assertTrustedNetworkRequest(request, allowOpaqueOrigin = false, trustedOrigins = new Set()) {
+  const host = parseRequestHost(request.headers.host);
+  const trustedNetworkHost = isTrustedNetworkHost(host.hostname);
+  const configuredTrustedHost = !trustedNetworkHost && trustedOrigins.has(host.httpsOrigin);
+  if (!trustedNetworkHost && !configuredTrustedHost) {
+    throw new ApiError(403, "INVALID_HOST", "Request Host must be local, private, or explicitly trusted");
   }
 
   const origin = request.headers.origin;
-  if (!origin) return;
-  if (TRUSTED_EMBED_ORIGINS.has(origin)) return;
-  if (allowOpaqueOrigin && origin === "null") return;
-  if (trustedOrigins.has(origin)) return;
-  let originHost;
-  try {
-    originHost = new URL(origin).hostname;
-  } catch {
-    throw new ApiError(403, "INVALID_ORIGIN", "Request Origin must be local or private");
+  const configuredTrustedOrigin = trustedOrigins.has(origin);
+  if (origin && !configuredTrustedOrigin && !TRUSTED_EMBED_ORIGINS.has(origin)) {
+    if (!(allowOpaqueOrigin && origin === "null")) {
+      let originHost;
+      try {
+        originHost = new URL(origin).hostname;
+      } catch {
+        throw new ApiError(403, "INVALID_ORIGIN", "Request Origin must be local or private");
+      }
+      if (!isTrustedNetworkHost(originHost)) {
+        throw new ApiError(403, "INVALID_ORIGIN", "Request Origin must be local or private");
+      }
+    }
   }
-  if (!isTrustedNetworkHost(originHost)) {
-    throw new ApiError(403, "INVALID_ORIGIN", "Request Origin must be local or private");
-  }
+  return configuredTrustedHost || configuredTrustedOrigin;
 }
 
 function assertLoopbackRequest(request) {
@@ -3025,7 +3047,7 @@ export function createPanelServer(options = {}) {
         request.url = `${incomingUrl.pathname.slice(routePrefix.length) || "/"}${incomingUrl.search}`;
       }
 
-      assertTrustedNetworkRequest(
+      const configuredTrustedRequest = assertTrustedNetworkRequest(
         request,
         Boolean(resolved.instanceToken),
         resolved.trustedOrigins,
@@ -3062,11 +3084,10 @@ export function createPanelServer(options = {}) {
       }
       const url = new URL(request.url, "http://127.0.0.1");
       const pathname = url.pathname;
-      const configuredTrustedOrigin = resolved.trustedOrigins.has(origin);
       const isLocalAiRoute = pathname === "/api/local/ai" || pathname.startsWith("/api/local/ai/");
       const isDevelopmentContextsRoute = /^\/api\/projects\/[^/]+\/development-contexts$/.test(pathname);
       if (
-        configuredTrustedOrigin
+        configuredTrustedRequest
         && (
           pathname.startsWith("/api/local/")
           || pathname === "/api/device-workspaces"
@@ -3410,9 +3431,9 @@ export function createPanelServer(options = {}) {
           throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/meta does not accept query parameters");
         }
         return sendJson(response, 200, {
-          ...(configuredTrustedOrigin ? {} : { managePanelSkillPath: resolved.nativeSkillPath }),
+          ...(configuredTrustedRequest ? {} : { managePanelSkillPath: resolved.nativeSkillPath }),
           capabilities: {
-            localAiChat: !configuredTrustedOrigin
+            localAiChat: !configuredTrustedRequest
               && isLoopbackAddress(request.socket.remoteAddress),
           },
           ...(capabilityCloudConfig?.remoteUrl
@@ -3422,7 +3443,7 @@ export function createPanelServer(options = {}) {
                 transport: "websocket",
                 endpoint: "/api/events",
               },
-              localCapabilities: { available: !configuredTrustedOrigin },
+              localCapabilities: { available: !configuredTrustedRequest },
             }
             : {}),
         });

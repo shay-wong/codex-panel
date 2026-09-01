@@ -122,6 +122,19 @@ let quotaPoliciesLoadPromise = null;
 let quotaPoliciesWritePromise = Promise.resolve();
 const taskConversationAppServerTimeoutMs = 30_000;
 
+function stableCodexUserId(account) {
+  const email = account?.account?.type === "chatgpt"
+    && typeof account.account.email === "string"
+    ? account.account.email.trim().toLowerCase()
+    : "";
+  if (!email) return "";
+  const digest = createHash("sha256")
+    .update("codex-taskboard-user\0")
+    .update(email)
+    .digest("hex");
+  return `codex-user-${digest}`;
+}
+
 function parseArgs(argv) {
   const options = {
     port: defaultCodexDebuggingPort,
@@ -1910,6 +1923,31 @@ function installPanelHostBinding(
       isAuthorizedContext: (executionContextId) => executionContextId === activeContextId,
       parseAutomationRequest: parsePanelAutomationHostRequest,
       ensure: () => supervisor.ensure({ force: true }),
+      readCurrentUser: async () => {
+        let account = await requestCodexAppServerViaCdp(
+          cdp,
+          undefined,
+          "local",
+          "account/read",
+          { refreshToken: false },
+        );
+        if (
+          account?.account?.type === "chatgpt"
+          && (
+            typeof account.account.email !== "string"
+            || !account.account.email.trim()
+          )
+        ) {
+          account = await requestCodexAppServerViaCdp(
+            cdp,
+            undefined,
+            "local",
+            "account/read",
+            { refreshToken: true },
+          );
+        }
+        return { userId: stableCodexUserId(account) };
+      },
       loadFrame: (request) => loadPanelFrameViaCdp(
         cdp,
         request.frameName,
