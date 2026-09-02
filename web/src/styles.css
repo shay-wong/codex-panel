@@ -3293,18 +3293,16 @@ kbd {
 }
 
 .issue-description-document .task-list-item {
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
-  column-gap: 7px;
   list-style: none;
 }
 
 .issue-description-document input[type="checkbox"] {
   width: 14px;
   height: 14px;
-  margin: 4px 0 0;
+  margin: 0 7px 0 0;
   accent-color: var(--accent);
   pointer-events: none;
+  vertical-align: -2px;
 }
 
 .issue-description-document blockquote {
@@ -4323,6 +4321,18 @@ kbd {
   margin: 0 4px;
   color: var(--text-primary);
   white-space: pre-wrap;
+}
+
+button.activity-change-value {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  text-align: left;
+}
+
+button.activity-change-value:hover {
+  text-decoration: underline;
 }
 
 .activity-ai-conversation {

@@ -24,15 +24,17 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`e6c17819d6e4c5f3dccca1aa1cba350200fa51a7`
-- 精确已合并上游基线：`e6c17819d6e4c5f3dccca1aa1cba350200fa51a7`
-- 比较范围：`e6c17819d6e4c5f3dccca1aa1cba350200fa51a7..HEAD`
+- 本次合并的上游父提交：`cedb6ec601e6c8633203c57e199cb69414aa6275`
+- 精确已合并上游基线：`cedb6ec601e6c8633203c57e199cb69414aa6275`
+- 比较范围：`cedb6ec601e6c8633203c57e199cb69414aa6275..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
-本次上游合并将基线从 `1.1.14` 更新到 `1.1.20`，吸收稳定 Codex 用户身份、账号邮箱回退、评论与负责人头像刷新、日文 Plugins 标签、精确可信公网 Host、全项目 backlog 迁移、逐 Issue 未读状态、Dashboard 未读提示、Issue 描述排版和属性菜单修复。Fork 保留 Jira 活动与正式会话、Panel 稳定剪贴板引用、桌面端能力以及持久化自动认领队列；上游远程 Scheduled Task 自动化不重新成为 Fork 的执行入口。桌面端产品名仍为 `Codex Panel`，私有实例鉴权、bundle ID、包名和当前 `0.1.0` 应用版本保持不变。
+本次上游合并将基线从 `1.1.14` 更新到 `1.1.21`，吸收稳定 Codex 用户身份、账号邮箱回退、评论与负责人头像刷新、跨语言 Plugins 入口定位、精确可信公网 Host、全项目 backlog 迁移、逐 Issue 未读状态、Dashboard 未读提示、Issue 描述排版、媒体操作和属性菜单修复。Fork 保留 Jira 活动与正式会话、Panel 稳定剪贴板引用、桌面端能力以及持久化自动认领队列；上游远程 Scheduled Task 自动化不重新成为 Fork 的执行入口。桌面端产品名仍为 `Codex Panel`，私有实例鉴权、bundle ID、包名和当前 `0.1.0` 应用版本保持不变。
 
 上游 `e6c1781` 的“确认前预下载并验签、确认后自动安装”更新流程不适用于 Fork。Fork 继续只检查 `shay-wong/codex-panel` 的 GitHub Release 并打开可信发布页，不在 App 内下载或安装更新。
+
+上游 `1.1.21` 的 Beta updater、Beta 发布通道和对应发布工作流同样不适用于 Fork，因此不恢复已删除的自动更新脚本或上游发布工作流。
 
 本轮继续吸收精确 HTTPS trusted-origin 边界、确定性的 Issue 树查询、Markdown 图片边界修复、Issue 详情控件改进，以及 WSL CLI 发现并访问 Windows launcher runtime 的能力；这些属于上游能力，不新增 Fork 能力条目。Fork 继续使用 `Codex Panel`、`panelctl` 和 `manage-panel` 主命名，并保留 Jira、桌面端、自动化和 Cloud 扩展的不变量。
 
@@ -40,13 +42,13 @@
 
 - 权威上游版本来源：精确合并基线中的 `package.json`
 - 当前 Fork 版本来源：`package.json` 和 `package-lock.json` 的根包条目
-- 精确基线的上游版本：`1.1.20`
+- 精确基线的上游版本：`1.1.21`
 - 当前 Fork 版本：`0.1.0`
 - 匹配的 Fork 标签或 GitHub Release：无
 
 每个 Fork 发布版本都必须使用 `<upstream-version>-fork.<N>`。上游版本变化时从 `fork.1` 开始；同一上游版本的后续 Fork 发布递增 `N`。已准备但尚未发布的版本号在未被占用时可以保留。
 
-当前 Fork 版本 `0.1.0` 与精确上游基线版本不一致，也不符合 Fork 发布格式。下一个规范化 Fork 发布版本是 `1.1.20-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
+当前 Fork 版本 `0.1.0` 与精确上游基线版本不一致，也不符合 Fork 发布格式。下一个规范化 Fork 发布版本是 `1.1.21-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
 
 ## 活跃 Fork 能力
 
@@ -218,17 +220,18 @@
 - 生命周期：`等待上游吸收`
 - 原始目的：把 Jira 保持为独立外部需求，同时允许一个需求跨多个仓库拆成多个本地执行 Issue，避免 Jira 刷新覆盖仓库内的实施内容。
 - 行为不变量：一个 Jira 可以选择一个或多个具有本地 workspace 的项目并关联其中多个执行 Issue；每个执行 Issue 最多关联一个 Jira。仓库候选必须合并本机 Codex workspace 映射与已有 Panel 项目，使用与顶部项目菜单相同的可搜索、独立滚动选择组件；搜索过滤只能改变内部候选列表，不能改变管理弹窗的外框尺寸。尚未持久化的候选只能在用户显式保存关联时按需创建 Panel 项目。执行 Issue 的关联卡片必须返回 Panel 内的 Jira 需求，外部 Jira 入口保留在需求详情页。仓库变更必须先展示差异并等待显式保存，活动记录必须优先显示项目名称而不是内部 ID；普通关联不自动创建、迁移或删除 Issue。详情摘要关联多个仓库时必须稳定显示首个仓库和 `+N`，完整列表保留在悬停提示中。只有已保存至少一个仓库的待认领 Jira 才可一键创建并开始：Jira 先回写为进行中，每仓库复用唯一执行 Issue 或创建一个 backlog Issue 及独立正式 Codex 任务，全部仓库就绪后才统一释放到待认领。部分失败必须持久化保留进度，重试复用预留 Issue 与会话 ID、已有关联和对话，不重复回写或创建。右下角内嵌聊天只承载 `temporary` 临时问答；Jira 新建或重新规划、简单创建和队列执行必须登记为 `formal` 原生 Codex 任务并通过原生路由打开，不得回退到内嵌聊天或出现在临时聊天历史。规划未关联仓库时创建无项目任务，关联一个仓库时必须先选择对应的 Codex 项目再应用仓库 workspace，关联多个仓库时必须先选择目标项目；仅设置活动 workspace 不等同于关联 Codex 项目。新建与重新规划任务默认使用“帮我批准”（`workspace-write`）权限，已有规划任务继续复用其已保存权限。Panel 必须把 `grill-with-docs`、`to-spec`、`to-tickets` 和规划 prompt 填入可编辑输入框并保持未发送，只有用户手动发送后才启动 Codex；宿主预填确认成功后，injector 不得以重复且更严格的 DOM Skill mention 校验否定该结果或丢失 Jira 会话关联。Codex `skills/list` 漏掉 `~/.agents/skills` 下的直接符号链接目录时，Panel 必须从有效 `SKILL.md` 补齐本地 catalog；Codex 已返回的同名 Skill 保持优先，补齐项必须继续作为结构化 Skill 引用发送，不能退化为普通 `$名称` 文本。Spec 属于 Jira 的本地规划产物，发布前必须获得用户确认并为每个 ticket 选择已关联仓库。发布后的 Issue 以 backlog 创建，保留跨仓库阻塞关系并关联同一 Jira；规划不授权执行，与一键创建互斥。Jira 标题、描述、需求链接或仓库变化后必须复核，未开始 Issue 在此期间不得进入 `in_progress`；重新发布只取消被替代的 backlog 或 todo，保留 `in_progress`、`in_review`、`done` 和 `blocked` 成果、关系和可见告警，并把这些成果继续作为新规划约束。关联 Issue 只能移动到该 Jira 已选项目；归档保留关系，永久删除前必须解除。Jira 同步只更新外部需求镜像的 key、标题、原始状态、URL、同步时间和错误，不修改关联执行 Issue 的本地字段。
+- 活动跳转不变量：Jira 活动中的 Issue 关联和解除记录必须按保存的 Issue 编号直接打开对应 Panel Issue，即使当前 Jira 项目没有加载目标仓库的任务。
 - Jira ID 路由不变量：任何对话收到完整 Jira ID 后都必须先通过 `jira planning get` 解析 `context.issues`，不得先用工作目录和 `context current` 猜测关联 Issue；该只读解析不授权 `jira planning save` 或 `jira planning publish`。
 - 所有项目详情不变量：从“所有项目”打开 Issue 时必须保留“所有项目”作为当前范围和返回位置，不得自动切换顶部项目；详情中的标签与开发上下文仍使用该 Issue 自身所属项目。
 - 显式会话绑定不变量：主动创建的 Codex 会话只有在用户明确要求时才可通过 `panelctl conversation bind ISSUE_ID` 绑定 Panel Issue 或 Jira 需求；调用 Skill、提及或读取 Issue、评论 Issue、处于相同仓库均不得隐式绑定。本地已保存会话必须从其 Codex project assignment 与 session metadata 解析完整项目、主机和实际 worktree 身份，不得依赖当前打开 Panel 的其他会话；远端会话仍必须使用宿主提供的完整身份。普通 Issue 禁止覆盖其他会话；绑定 Jira 时只写需求自身的关联会话，不得新建、替换或恢复规划记录，也不修改 Jira 字段或状态。立即执行、自动认领和手动绑定产生的任务级对话统一显示在活动区，不得在详情正文重复提供固定入口；Jira 活动必须按真实 Codex thread ID 去重并同时显示规划会话与关联会话。
-- 描述格式不变量：Jira 纯文本描述中以 `#` 开始的编号项必须按有序列表显示，普通 Panel Issue 的 Markdown 不得被改写。
+- 描述格式不变量：Jira 纯文本描述中以 `#` 开始的编号项必须按有序列表显示，普通 Panel Issue 的 Markdown 不得被改写；只读 Issue 描述和评论的任务列表必须让正文与行内代码保持在 checkbox 右侧的同一文本流中，编辑器已有内容容器的 Grid 布局保持不变。
 - 规划启动与诊断不变量：即使尚未关联仓库，也必须允许规划会话在 Panel 管理的非 Git 工作目录启动；Codex 无法启动时必须显示其实际诊断，而不是只显示退出码。
 - 生命周期控制不变量：Jira 进入进行中时只释放没有未完成前置依赖的 backlog frontier；回到待认领或在关联工作未完成时提前结束必须生成非破坏性确认。确认暂停后，`todo` 回到 `backlog`、`in_progress` 进入 `blocked`，macOS 和 Windows 上的活动 Codex turn 都会尝试中断，但代码、对话和 worktree 保留；个别 turn 中断失败不得回滚 Issue 暂停，必须显示失败数量供用户处理。Jira 再次进行中时恢复符合依赖条件的暂停 Issue。已完成 Jira 重新打开时保留历史 Issue 和对话，允许创建新的返工 Issue 与独立对话，既有复杂规划还可选择新的默认“帮我批准”规划会话；重新规划只有在新会话与可编辑草稿成功准备后才能替换旧计划并清除提醒，准备失败必须保留旧计划且允许重试，准备草稿不得自动启动 Codex。执行期间必须拒绝同一 Jira 的同步、仓库、关联和生命周期并发写入。重复 Jira 必须记录 canonical Jira，禁止一键执行与规划；已关闭但仍有关联且等待确认的重复 Jira 保持可见，迁移已有仓库和 Issue 关系必须显式确认，canonical 在当前同步账号不可访问时保留原关系。
 - 自动完成不变量：Jira 设置中的自动完成默认关闭；只有至少一个关联 Issue 且所有关联 Issue 均为未归档的 `done` 时才可触发。Panel 必须先按 Jira `fields.updated` 重新读取远端，只有版本未变化且实时 transitions 中恰好一个操作映射到 `done` 时才回写，成功后再次读取确认。远端变化必须保留本地 `done` 并让用户选择接受完整远端状态或按最新远端版本仍然完成；transition 缺失、歧义或最终失败不得猜测或回滚本地 Issue。5xx、超时与 429 最多按 30 秒、2 分钟重试两次，最终错误和手动重试入口持久化可见。
 - 对话归档不变量：Jira 设置中的自动归档默认关闭，只有开启后才在完成、同步或关联变化时自动执行；手动归档不受该开关影响。自动与手动都必须要求 Jira 为 `done`、至少关联一个执行 Issue、全部关联 Issue 都是未归档的 `done`，且仍存在未归档的相关对话，并统一归档该 Jira 的规划对话以及通过简单创建、自动认领或返工建立的执行对话。归档只把本地 AI 对话移出活跃列表，必须保留 thread、run、event 和 Codex thread ID；运行中的 turn 保留可见直到收尾，归档对话不得再启动新 turn。关闭开关不恢复已归档对话；Jira 重开后的返工或重新规划必须创建新的未归档对话，不能复用历史线程。
-- 代码和测试路径：`shared/domain.mjs`、`server/database.mjs`、`server/ai-chat-catalog.mjs`、`server/ai-chat.mjs`、`server/ai-chat-process.mjs`、`server/app.mjs`、`server/jira-auto-complete.mjs`、`server/jira-integration.mjs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-control.mjs`、`scripts/codex-injector-runtime.mjs`、`cli/panelctl.mjs`、`skills/manage-panel`、`web/src/App.tsx`、`web/src/api.ts`、`web/src/components/AiChat.tsx`、`web/src/components/JiraConnectionDialog.tsx`、`web/src/components/ProjectSelectionMenu.tsx`、`web/src/components/TaskDetail.tsx`、`web/src/styles.css`、`web/src/types.ts`、`test/ai-chat-runner.test.mjs`、`test/injector-control.test.mjs`、`test/injector-host-runtime.test.mjs`、`test/jira-auto-complete.test.mjs`、`test/jira-integration.test.mjs`、`test/jira-lifecycle.test.mjs` 和 `test/jira-planning.test.mjs`。
+- 代码和测试路径：`shared/domain.mjs`、`server/database.mjs`、`server/ai-chat-catalog.mjs`、`server/ai-chat.mjs`、`server/ai-chat-process.mjs`、`server/app.mjs`、`server/jira-auto-complete.mjs`、`server/jira-integration.mjs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-control.mjs`、`scripts/codex-injector-runtime.mjs`、`cli/panelctl.mjs`、`skills/manage-panel`、`web/src/App.tsx`、`web/src/api.ts`、`web/src/components/AiChat.tsx`、`web/src/components/JiraConnectionDialog.tsx`、`web/src/components/MarkdownDocument.tsx`、`web/src/components/ProjectSelectionMenu.tsx`、`web/src/components/TaskDetail.tsx`、`web/src/styles.css`、`web/src/types.ts`、`test/ai-chat-runner.test.mjs`、`test/board-interactions.test.mjs`、`test/injector-control.test.mjs`、`test/injector-host-runtime.test.mjs`、`test/issue-detail-markdown.test.mjs`、`test/jira-auto-complete.test.mjs`、`test/jira-integration.test.mjs`、`test/jira-lifecycle.test.mjs` 和 `test/jira-planning.test.mjs`。
 - 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
-- 来源：当前 Jira 外部需求关联、AI 规划与生命周期控制能力；提交后可用 `git log -S'jira_lifecycles' -- server/database.mjs` 定位生命周期扩展。
+- 来源：当前 Jira 外部需求关联、AI 规划与生命周期控制能力；提交后可用 `git log -S'jira_lifecycles' -- server/database.mjs` 定位生命周期扩展，用 `git log -S'vertical-align: -2px' -- web/src/styles.css` 定位只读任务列表修复。
 - 合并指引：上游调整 Jira 同步、Skill catalog、任务 schema、AI 对话列表、项目移动或详情侧栏时，保留外部需求与本地执行单元的边界、Jira 对执行 Issue 的一对多关系、执行 Issue 对 Jira 的至多一关系、仓库约束和显式保存，以及一键创建的幂等重试、正式任务与临时聊天隔离、0/1/多仓库规划选路、符号链接用户 Skill 的结构化引用、规划默认“帮我批准”但必须由用户发送草稿并显式发布、依赖 frontier 授权、非破坏性暂停和恢复、默认关闭的自动归档与独立手动入口、完成后仅隐藏活跃对话而不删除历史、重新打开后的新对话、重复任务 canonical 确认迁移、默认关闭且带远端版本检查的自动完成行为；不得把正式任务回退到内嵌聊天、把专用关系退化为同项目 Issue 关系、把显式 Skill 退化为普通文本、让规划隐式授权执行、让 Jira 回退删除本地状态，或让同步写入执行 Issue。
 - 移除条件：上游提供等价的跨仓库 Jira 需求关联、双向详情维护、同步隔离和生命周期约束后同步移除。
 - 针对性验证：运行 `node --test test/inject.test.mjs test/board-interactions.test.mjs test/jira-auto-complete.test.mjs test/jira-integration.test.mjs test/jira-lifecycle.test.mjs test/jira-planning.test.mjs test/server.test.mjs`、`npm run typecheck` 和 `npm run build:web`；在 Jira 详情选择多个仓库、保存并关联执行 Issue，确认双方详情可打开和解除关系，仓库差异不会在保存前生效，普通 Issue 详情保持紧凑。使用本地 Jira 响应端让第二个仓库首次失败并重试，确认 Jira 只转换一次、每仓库只有一个 Issue 和一个对话，而且首次失败时没有 Issue 提前进入待认领。在隔离预览中验证 Jira 规划会话、Spec、生命周期提醒和 390px 关联弹窗；确认单仓库规划会话同时选中对应 Codex 项目并使用其 workspace，仓库搜索前后弹窗外框尺寸不变。确认 Jira 回退后的暂停会中断活动 turn 并保留本地状态，再次进行中只释放依赖 frontier，重新打开可创建返工 Issue 或新的规划会话，重复任务迁移前要求确认且 canonical 不可访问时保留原关联。开启 Jira 自动完成后，验证全部关联 Issue 为 `done` 才触发唯一完成 transition，远端变化显示接受远端与仍然完成，失败保留本地 `done` 和重试入口。自动归档保持默认关闭，手动按钮只在完成条件满足时可用；开启后立即扫描既有资格项，关闭后不恢复历史。整体验收使用全新隔离 Panel 数据、Codex 状态、临时仓库和进程内 Jira fake，实测一个待认领 Jira 一次创建两个仓库 Issue 和两个不同对话，暂停与恢复保留关联 worktree，重复 Jira 禁止规划与执行，自动完成冲突保留本地完成状态并显示远端/Panel 版本；在 `1280x720` 深浅主题和 `390x844` 窄视口确认关键状态、操作和提示无横向溢出。

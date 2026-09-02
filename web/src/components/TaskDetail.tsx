@@ -1579,6 +1579,13 @@ export function TaskDetail({
                 : currentTask.status === "todo"
                   ? text("立即执行", "Run now")
                   : text("仅待认领可执行", "Available only while waiting");
+  async function openActivityTask(identifier: string) {
+    try {
+      onOpenTask(await getTask(identifier));
+    } catch (error) {
+      onError(messageFor(error));
+    }
+  }
   const activityTimeline = [
     ...taskActivities.flatMap((activity) => activity.changes.map((change, index) => ({
       kind: "change" as const,
@@ -1642,6 +1649,14 @@ export function TaskDetail({
                 {editingDescription ? (
                   <div
                     className="issue-description-composer"
+                    onMouseDownCapture={(event) => {
+                      if (
+                        event.target instanceof Element
+                        && event.target.closest(
+                          ".inline-media-image > button, .inline-media-attachment > button, .issue-description-attach-button",
+                        )
+                      ) event.preventDefault();
+                    }}
                     onBlur={(event) => {
                       if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
                       void saveDescription();
@@ -1858,6 +1873,24 @@ export function TaskDetail({
                       text,
                       projects,
                     );
+                    const taskIdentifierForActivityValue = (value: unknown) => {
+                      if (change.field !== "jiraIssue" || value === null || typeof value !== "object") return null;
+                      const identifier = (value as { identifier?: unknown }).identifier;
+                      return typeof identifier === "string" ? identifier : null;
+                    };
+                    const beforeTask = taskIdentifierForActivityValue(change.before);
+                    const afterTask = taskIdentifierForActivityValue(change.after);
+                    const renderActivityValue = (value: string, target: string | null) => target ? (
+                      <button
+                        className="activity-change-value"
+                        type="button"
+                        aria-label={text(
+                          `打开议题 ${target}`,
+                          `Open issue ${target}`,
+                        )}
+                        onClick={() => void openActivityTask(target)}
+                      >{value}</button>
+                    ) : <span className="activity-change-value">{value}</span>;
                     return (
                       <article
                         className={`activity-entry activity-change is-${activity.actorType}`}
@@ -1876,22 +1909,22 @@ export function TaskDetail({
                           {change.field === "description" ? (
                             <>{text("更新了描述", "updated the description")}</>
                           ) : change.field === "relation" && change.before === null ? (
-                            <>{text("添加了 ", "added ")}<span className="activity-change-value">{afterValue}</span></>
+                            <>{text("添加了 ", "added ")}{renderActivityValue(afterValue, afterTask)}</>
                           ) : change.field === "relation" && change.after === null ? (
-                            <>{text("移除了 ", "removed ")}<span className="activity-change-value">{beforeValue}</span></>
+                            <>{text("移除了 ", "removed ")}{renderActivityValue(beforeValue, beforeTask)}</>
                           ) : language === "zh" ? (
                             <>
                               将{fieldLabel}从
-                              <span className="activity-change-value">{beforeValue}</span>
+                              {renderActivityValue(beforeValue, beforeTask)}
                               改为
-                              <span className="activity-change-value">{afterValue}</span>
+                              {renderActivityValue(afterValue, afterTask)}
                             </>
                           ) : (
                             <>
                               {`changed ${fieldLabel} from `}
-                              <span className="activity-change-value">{beforeValue}</span>
+                              {renderActivityValue(beforeValue, beforeTask)}
                               {" to "}
-                              <span className="activity-change-value">{afterValue}</span>
+                              {renderActivityValue(afterValue, afterTask)}
                             </>
                           )}
                           <time title={exactTime(activity.createdAt, locale)}>{relativeTime(activity.createdAt, locale)}</time>

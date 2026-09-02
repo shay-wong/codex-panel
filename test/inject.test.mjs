@@ -135,7 +135,8 @@ test("embedded page supports ordinary loopback and authenticated opaque modes", 
 test("entry clones the native Plugins row and the page covers the complete Codex workspace", () => {
   assert.match(source, /const PLUGIN_LABELS = \["插件", "外掛程式", "plugins", "プラグイン"\]/);
   assert.match(source, /if \(plugin\) return plugin;/);
-  assert.match(source, /return directButtons\.length >= 3/);
+  assert.match(source, /button\.getAttribute\(OWNED_ATTRIBUTE\) !== "true"/);
+  assert.match(source, /rect\.bottom <= sectionTop/);
   assert.match(source, /const button = reference\.cloneNode\(true\)/);
   assert.match(source, /reference\.after\(entry\)/);
   assert.match(source, /document\.querySelector\("\.app-shell-main-content-frame"\)/);
@@ -176,6 +177,60 @@ test("conversation content frames can host Panel when they include the native he
   const findPageHost = vm.runInNewContext(`(${findPageHostSource})`, { document });
 
   assert.equal(findPageHost().kind, "conversation-frame");
+});
+
+test("entry recognizes known Plugins labels and structurally anchors an unenumerated locale", () => {
+  const normalizedLabelSource = source.slice(
+    source.indexOf("function normalizedLabel"),
+    source.indexOf("\n\n  function normalizeThreadId"),
+  );
+  const referenceSource = source.slice(
+    source.indexOf("function buttonMatches"),
+    source.indexOf("\n\n  function replaceEntryIcon"),
+  );
+  let currentButtons;
+  let currentSection;
+  const scroll = {
+    querySelector: (selector) => selector === "[data-app-action-sidebar-section]" ? currentSection : null,
+    querySelectorAll: (selector) => selector === "button" ? currentButtons : [],
+  };
+  const findReferenceButton = vm.runInNewContext(`(() => {
+    const PLUGIN_LABELS = ["插件", "外掛程式", "plugins", "プラグイン"];
+    const OWNED_ATTRIBUTE = "data-codex-panel-owned";
+    ${normalizedLabelSource}
+    ${referenceSource}
+    return findReferenceButton;
+  })()`, {
+    document: { querySelector: () => scroll },
+  });
+
+  for (const textContent of ["插件", "外掛程式", "プラグイン", "Plugins"]) {
+    const currentButton = {
+      textContent,
+      getAttribute: () => null,
+      parentElement: {},
+    };
+    currentButtons = [currentButton];
+    currentSection = null;
+    assert.equal(findReferenceButton(), currentButton);
+  }
+
+  const topButton = (textContent, top, owned = false) => ({
+    textContent,
+    getAttribute: (name) => name === "data-codex-panel-owned" && owned ? "true" : null,
+    getBoundingClientRect: () => ({ top, bottom: top + 30, height: 30 }),
+    parentElement: {},
+  });
+  const unenumeratedPlugin = topButton("Приклучоци", 160);
+  currentButtons = [
+    topButton("Барања за повлекување", 100),
+    topButton("Локации", 120),
+    topButton("Закажано", 140),
+    unenumeratedPlugin,
+    topButton("Panel", 180, true),
+  ];
+  currentSection = { getBoundingClientRect: () => ({ top: 200 }) };
+  assert.equal(findReferenceButton(), unenumeratedPlugin);
 });
 
 test("opening Panel suppresses native selection and contextual header until close", () => {

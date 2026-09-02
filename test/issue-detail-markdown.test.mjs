@@ -114,3 +114,21 @@ test("the configured markdown renderer produces CommonMark and GFM elements", ()
     assert.match(html, new RegExp(`<${element}(?: |>)`));
   }
 });
+
+test("read-only task lists keep inline code in the text flow", () => {
+  const html = renderToStaticMarkup(
+    createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, (
+      "- [ ] Receives `subscription_products=[]`, including `iap` products"
+    )),
+  );
+  assert.match(
+    html,
+    /<li class="task-list-item"><input[^>]*\/> Receives <code>subscription_products=\[\]<\/code>, including <code>iap<\/code> products<\/li>/,
+  );
+
+  const taskItemRule = styles.match(
+    /\.issue-description-document \.task-list-item\s*\{([^}]+)\}/,
+  )?.[1] ?? "";
+  assert.doesNotMatch(taskItemRule, /display:\s*grid/);
+  assert.match(styles, /\.issue-description-document input\[type="checkbox"\][\s\S]*?margin:\s*0 7px 0 0;[\s\S]*?vertical-align:\s*-2px;/);
+});

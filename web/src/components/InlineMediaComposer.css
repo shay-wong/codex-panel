@@ -224,6 +224,10 @@
   cursor: pointer;
 }
 
+.inline-media-description.ProseMirror li.task-list-item > input[type="checkbox"] {
+  margin-top: 6.5px;
+}
+
 .inline-media-composer.ProseMirror .inline-media-task-content {
   min-width: 0;
 }
