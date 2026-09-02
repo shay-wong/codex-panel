@@ -577,6 +577,7 @@ export function TaskDetail({
   const editingComposerRef = useRef<InlineMediaComposerHandle>(null);
   const editingCommentScrollPositionRef = useRef<{ element: HTMLElement; top: number } | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const descriptionAttachmentPickerOpenRef = useRef(false);
   const commentAttachmentInputRef = useRef<HTMLInputElement>(null);
   const editCommentAttachmentInputRef = useRef<HTMLInputElement>(null);
   const editingUploadedAttachmentsRef = useRef<Map<string, Attachment>>(new Map());
@@ -1658,6 +1659,7 @@ export function TaskDetail({
                       ) event.preventDefault();
                     }}
                     onBlur={(event) => {
+                      if (descriptionAttachmentPickerOpenRef.current) return;
                       if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
                       void saveDescription();
                     }}
@@ -1696,20 +1698,34 @@ export function TaskDetail({
                       disabled={savingProperty === "description"}
                       aria-label={text("添加描述附件", "Add description attachments")}
                       title={text("添加附件", "Add attachments")}
-                      onClick={() => attachmentInputRef.current?.click()}
+                      onClick={() => {
+                        const input = attachmentInputRef.current;
+                        if (!input) return;
+                        descriptionAttachmentPickerOpenRef.current = true;
+                        input.click();
+                      }}
                     >
                       <AttachmentIcon color="currentColor" />
                     </button>
                     <input
-                      ref={attachmentInputRef}
+                      ref={(input) => {
+                        attachmentInputRef.current = input;
+                        if (!input) return;
+                        input.oncancel = () => {
+                          descriptionAttachmentPickerOpenRef.current = false;
+                          requestAnimationFrame(() => descriptionComposerRef.current?.focus());
+                        };
+                      }}
                       type="file"
                       multiple
                       hidden
                       onChange={(event) => {
+                        descriptionAttachmentPickerOpenRef.current = false;
                         if (event.currentTarget.files) {
                           descriptionComposerRef.current?.addFiles(event.currentTarget.files);
                         }
                         event.currentTarget.value = "";
+                        requestAnimationFrame(() => descriptionComposerRef.current?.focus());
                       }}
                     />
                   </div>
