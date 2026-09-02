@@ -28,10 +28,12 @@
   const COMPOSER_PREFILL_REQUEST_TIMEOUT_MS = 60_000;
   const TASK_CONVERSATION_REQUEST_TIMEOUT_MS = 75_000;
   const HOST_HEARTBEAT_MAX_AGE_MS = 8_000;
+  const HOST_BINDING_READY_TIMEOUT_MS = 4_000;
   const THREAD_ASSOCIATION_TIMEOUT_MS = 10 * 60_000;
+  const PENDING_THREAD_ASSOCIATION_KEY = "codex-panel.pending-thread-association.v1";
   const MACOS_TITLEBAR_SAFE_LEFT = 80;
   const FRAME_REFRESH_PARAM = "__codex_panel_refresh";
-  const PLUGIN_LABELS = ["插件", "外掛程式", "plugins"];
+  const PLUGIN_LABELS = ["插件", "外掛程式", "plugins", "プラグイン"];
   const NATIVE_PAGE_LABELS = [
     "新建任务",
     "新聊天",
@@ -56,7 +58,6 @@
   const TASK_SECTION_LABELS = ["tasks", "任务", "chats", "对话"];
   const SEND_LABELS = ["send", "发送", "傳送"];
   const NATIVE_WORKTREE_LABELS = ["新建本地工作树", "新增本機工作樹", "new local worktree"];
-  const LOCAL_RUN_LABELS = ["本地", "本機", "local"];
   const NATIVE_HEADER_DESTINATION_LABELS = [
     "查看活动",
     "查看活动，需要关注",
@@ -137,13 +138,84 @@
   let lastNativeThreadId = "";
   let panelNativeThreadId = "";
   let lastNativeProjectId = "";
+  let currentCodexUserId = "";
   let codexProjectMetadata = new Map();
   let suspendedNativeBrowserPanel = null;
   let active = false;
   let destroyed = false;
 
+  function persistPendingThreadAssociation() {
+    try {
+      if (!pendingThreadAssociation) {
+        window.localStorage.removeItem(PENDING_THREAD_ASSOCIATION_KEY);
+        return;
+      }
+      window.localStorage.setItem(PENDING_THREAD_ASSOCIATION_KEY, JSON.stringify({
+        taskId: pendingThreadAssociation.taskId,
+        identifier: pendingThreadAssociation.identifier,
+        existingThreadIds: [...pendingThreadAssociation.existingThreadIds],
+        title: pendingThreadAssociation.title,
+        projectId: pendingThreadAssociation.projectId,
+        codexHostId: pendingThreadAssociation.codexHostId,
+        workspacePath: pendingThreadAssociation.workspacePath,
+        submitted: pendingThreadAssociation.submitted,
+        expiresAt: pendingThreadAssociation.expiresAt,
+      }));
+    } catch {}
+  }
+
+  function setPendingThreadAssociation(value) {
+    pendingThreadAssociation = value;
+    persistPendingThreadAssociation();
+  }
+
+  function restorePendingThreadAssociation() {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(PENDING_THREAD_ASSOCIATION_KEY) || "null");
+      if (
+        typeof stored?.taskId !== "string"
+        || typeof stored?.identifier !== "string"
+        || !Array.isArray(stored?.existingThreadIds)
+        || typeof stored?.expiresAt !== "number"
+        || stored.expiresAt <= Date.now()
+      ) {
+        window.localStorage.removeItem(PENDING_THREAD_ASSOCIATION_KEY);
+        return;
+      }
+      pendingThreadAssociation = {
+        ...stored,
+        title: typeof stored.title === "string" && stored.title.trim()
+          ? stored.title.trim()
+          : stored.identifier,
+        composer: null,
+        existingThreadIds: new Set(stored.existingThreadIds),
+        confirming: false,
+      };
+    } catch {
+      window.localStorage.removeItem(PENDING_THREAD_ASSOCIATION_KEY);
+    }
+  }
+
+  restorePendingThreadAssociation();
+
   function normalizedLabel(value) {
     return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function isInteractiveElement(element) {
+    const rect = element?.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+    const style = window.getComputedStyle(element);
+    const opacity = Number.parseFloat(style.opacity);
+    if (
+      style.display === "none"
+      || style.visibility === "hidden"
+      || style.visibility === "collapse"
+      || style.pointerEvents === "none"
+      || (Number.isFinite(opacity) && opacity <= 0)
+    ) return false;
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return Boolean(hit && (hit === element || element.contains(hit)));
   }
 
   function normalizeThreadId(value) {
@@ -280,18 +352,19 @@
   function findReferenceButton() {
     const scroll = document.querySelector("[data-app-action-sidebar-scroll]");
     if (!scroll) return null;
-    const buttons = Array.from(scroll.querySelectorAll("button"));
+    const buttons = Array.from(scroll.querySelectorAll("button"))
+      .filter((button) => button.getAttribute(OWNED_ATTRIBUTE) !== "true");
     const plugin = buttons.find((button) => buttonMatches(button, PLUGIN_LABELS));
     if (plugin) return plugin;
 
     const firstSection = scroll.querySelector("[data-app-action-sidebar-section]");
-    const sectionTop = firstSection?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY;
-    const groups = Array.from(scroll.querySelectorAll("div")).filter((element) => {
-      const directButtons = Array.from(element.children).filter((child) => child.tagName === "BUTTON");
-      return directButtons.length >= 3 && element.getBoundingClientRect().top < sectionTop;
-    });
-    const group = groups.sort((left, right) => right.children.length - left.children.length)[0];
-    return Array.from(group?.children || []).filter((child) => child.tagName === "BUTTON").at(-1) || null;
+    if (!firstSection) return null;
+    const sectionTop = firstSection.getBoundingClientRect().top;
+    return buttons.filter((button) => {
+      const rect = button.getBoundingClientRect();
+      return rect.height > 0
+        && rect.bottom <= sectionTop;
+    }).at(-1) || null;
   }
 
   function replaceEntryIcon(button) {
@@ -442,11 +515,11 @@
 
   function requestNativeFetch(path, body) {
     const bridge = window.electronBridge;
-    if (!bridge || typeof bridge.sendMessageFromView !== "function") return Promise.resolve(null);
+    if (!bridge || typeof bridge.sendMessageFromView !== "function") return Promise.resolve(undefined);
     return new Promise((resolve) => {
       const requestId = `panel-native-fetch-${crypto.randomUUID()}`;
       let settled = false;
-      const finish = (value = null) => {
+      const finish = (value) => {
         if (settled) return;
         settled = true;
         window.clearTimeout(timeout);
@@ -461,13 +534,17 @@
           || message.type !== "fetch-response"
           || message.requestId !== requestId
         ) return;
+        if (!Number.isInteger(message.status) || message.status < 200 || message.status >= 300) {
+          finish(undefined);
+          return;
+        }
         try {
           finish(JSON.parse(message.bodyJsonString || "null"));
         } catch (_) {
-          finish();
+          finish(undefined);
         }
       };
-      const timeout = window.setTimeout(finish, 1_000);
+      const timeout = window.setTimeout(() => finish(undefined), 1_000);
       window.addEventListener("message", onMessage);
       try {
         bridge.sendMessageFromView({
@@ -478,7 +555,7 @@
           body: JSON.stringify(body),
         });
       } catch (_) {
-        finish();
+        finish(undefined);
       }
     });
   }
@@ -497,8 +574,14 @@
       (Array.isArray(bootstrap?.globalStateEntries) ? bootstrap.globalStateEntries : [])
         .map((entry) => [entry?.key, entry?.value]),
     );
+    const [currentLocalProjects, currentRemoteProjects] = await Promise.all([
+      requestNativeFetch("get-global-state", { key: "local-projects" }),
+      requestNativeFetch("get-global-state", { key: "remote-projects" }),
+    ]);
     const metadata = new Map();
-    const localProjects = entries.get("local-projects");
+    const localProjects = currentLocalProjects === undefined
+      ? entries.get("local-projects")
+      : currentLocalProjects?.value;
     if (localProjects && typeof localProjects === "object" && !Array.isArray(localProjects)) {
       Object.entries(localProjects).forEach(([projectId, project]) => {
         const id = projectId.trim();
@@ -513,7 +596,9 @@
         });
       });
     }
-    const remoteProjects = entries.get("remote-projects");
+    const remoteProjects = currentRemoteProjects === undefined
+      ? entries.get("remote-projects")
+      : currentRemoteProjects?.value;
     if (Array.isArray(remoteProjects)) {
       remoteProjects.forEach((project) => {
         const id = typeof project?.id === "string" ? project.id.trim() : "";
@@ -522,15 +607,60 @@
           : "";
         const hostId = typeof project?.hostId === "string" ? project.hostId.trim() : "";
         if (!id || !workspacePath || !hostId) return;
-        metadata.set(id, { projectKind: "remote", workspacePath, hostId });
+        metadata.set(id, {
+          projectKind: "remote",
+          workspacePath,
+          hostId,
+          name: typeof project?.label === "string" && project.label.trim()
+            ? project.label.trim()
+            : id,
+        });
       });
     }
     return metadata;
   }
 
+  async function activeNativeWorkspaceRoots() {
+    const response = await requestNativeFetch("active-workspace-roots", {});
+    const roots = response?.roots;
+    // Keep an unavailable endpoint distinct from a successful response with no
+    // workspace roots. The latter must not be treated as a confirmed switch.
+    return {
+      available: Array.isArray(roots),
+      roots: Array.isArray(roots) ? roots.filter((root) => typeof root === "string") : [],
+    };
+  }
+
+  function normalizeNativeRootPath(value) {
+    const path = String(value || "").trim();
+    if (!path) return "";
+    const windowsPath = /^[A-Za-z]:[\\/]/.test(path) || path.includes("\\");
+    const normalizedSlashes = windowsPath ? path.replace(/\\/g, "/") : path;
+    const withoutTrailingSlash = normalizedSlashes.replace(/\/+$/, "")
+      || (normalizedSlashes.startsWith("/") ? "/" : normalizedSlashes);
+    if (!windowsPath || !/^[A-Za-z]:/.test(withoutTrailingSlash)) return withoutTrailingSlash;
+    return `${withoutTrailingSlash[0].toLowerCase()}${withoutTrailingSlash.slice(1)}`;
+  }
+
+  async function canonicalNativeRootPaths(roots) {
+    const normalizedRoots = roots.map((root) => normalizeNativeRootPath(root));
+    const response = await requestNativeFetch("workspace-root-options", {
+      hostId: "local",
+      canonicalizeRoots: roots,
+    });
+    const canonicalPathByRoot = response?.canonicalPathByRoot;
+    if (!canonicalPathByRoot || typeof canonicalPathByRoot !== "object") return normalizedRoots;
+    const canonicalRoots = roots.map((root) => (
+      typeof canonicalPathByRoot[root] === "string"
+        ? normalizeNativeRootPath(canonicalPathByRoot[root])
+        : ""
+    ));
+    return canonicalRoots.every(Boolean) ? canonicalRoots : normalizedRoots;
+  }
+
   function readCodexProjects(metadata = codexProjectMetadata) {
     const seen = new Set();
-    return Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"))
+    const projects = Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"))
       .flatMap((row) => {
         const id = row.getAttribute("data-app-action-sidebar-project-id")?.trim();
         const name = (
@@ -542,6 +672,11 @@
         seen.add(id);
         return [{ id, name, ...metadata.get(id) }];
       });
+    for (const [id, project] of metadata) {
+      if (project.projectKind !== "remote" || seen.has(id)) continue;
+      projects.push({ id, ...project });
+    }
+    return projects;
   }
 
   function findProjectsSection() {
@@ -565,10 +700,12 @@
 
   async function captureHostContext() {
     const todoProgress = nativeTodoProgress();
-    const [selectedProjectId, metadata] = await Promise.all([
+    const [selectedProjectId, metadata, currentUser] = await Promise.all([
       selectedNativeProjectId(),
       readCodexProjectMetadata(),
+      requestHost("read-current-user"),
     ]);
+    currentCodexUserId = typeof currentUser.userId === "string" ? currentUser.userId : "";
     codexProjectMetadata = metadata;
     if (selectedProjectId) lastNativeProjectId = selectedProjectId;
     let projects = readCodexProjects();
@@ -705,35 +842,18 @@
     window.setTimeout(postHostContext, REATTACH_DELAY_MS);
   }
 
-  function userIdFromName(name) {
-    const slug = name.normalize("NFKD")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 96);
-    if (slug) return slug;
-    let hash = 2166136261;
-    for (const character of name) {
-      hash ^= character.codePointAt(0);
-      hash = Math.imul(hash, 16777619);
-    }
-    return `codex-user-${(hash >>> 0).toString(36)}`;
-  }
-
   function readCodexUser() {
-    const avatar = Array.from(document.querySelectorAll("img"))
-      .find((image) => image.src.includes("cdn.auth0.com/avatars/"));
-    const profileButton = avatar?.closest("button")
-      || Array.from(document.querySelectorAll('button[aria-haspopup="menu"]')).find((button) => (
-        normalizedLabel(button.getAttribute("aria-label")).includes("profile")
-        || normalizedLabel(button.getAttribute("aria-label")).includes("个人资料")
-      ));
+    const profileButton = Array.from(document.querySelectorAll('button[aria-haspopup="menu"]')).find((button) => (
+      normalizedLabel(button.getAttribute("aria-label")).includes("profile")
+      || normalizedLabel(button.getAttribute("aria-label")).includes("个人资料")
+    ));
     const name = profileButton?.textContent?.replace(/\s+/g, " ").trim();
-    if (!name) return null;
+    if (!currentCodexUserId || !name) return null;
+    const avatar = profileButton.querySelector("img");
     const avatarUrl = avatar?.currentSrc || avatar?.src || null;
     return {
       type: "user",
-      id: userIdFromName(name),
+      id: currentCodexUserId,
       name,
       avatarUrl,
     };
@@ -806,6 +926,7 @@
       && !event.isComposing
     ) {
       pending.submitted = true;
+      persistPendingThreadAssociation();
       return;
     }
     const button = event.target?.closest?.("button");
@@ -816,6 +937,7 @@
       && SEND_LABELS.includes(normalizedLabel(button.getAttribute("aria-label")))
     ) {
       pending.submitted = true;
+      persistPendingThreadAssociation();
     }
   }
 
@@ -824,7 +946,7 @@
     const pending = pendingThreadAssociation;
     if (!pending) return;
     if (Date.now() > pending.expiresAt) {
-      pendingThreadAssociation = null;
+      setPendingThreadAssociation(null);
       return;
     }
     if (!pending.submitted || pending.confirming) return;
@@ -842,9 +964,10 @@
         codexHostId: pending.codexHostId || "local",
         targetRoot: pending.workspacePath,
         identifier: pending.identifier,
+        title: pending.title || pending.identifier,
       }, TASK_CONVERSATION_REQUEST_TIMEOUT_MS);
       if (pendingThreadAssociation !== pending) return;
-      pendingThreadAssociation = null;
+      setPendingThreadAssociation(null);
       lastNativeThreadId = threadId;
       postToFrame({
         type: "panel:thread-created",
@@ -852,7 +975,7 @@
       });
     } catch (error) {
       if (pendingThreadAssociation !== pending) return;
-      pendingThreadAssociation = null;
+      setPendingThreadAssociation(null);
       postToFrame({
         type: "panel:thread-create-error",
         payload: {
@@ -1018,11 +1141,53 @@
       .find((row) => row.getAttribute("data-app-action-sidebar-project-id") === projectId.trim()) || null;
   }
 
-  function projectRowByLabel(label) {
-    if (typeof label !== "string" || !label.trim()) return null;
-    const expected = normalizedLabel(label);
-    return Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"))
-      .find((row) => normalizedLabel(row.getAttribute("data-app-action-sidebar-project-label")) === expected) || null;
+  async function nativeProjectContext() {
+    const bootstrap = await window.electronBridge?.getInitialSidebarBootstrap?.();
+    const entries = bootstrap?.globalStateEntries ?? [];
+    const currentLocalProjects = await requestNativeFetch(
+      "get-global-state",
+      { key: "local-projects" },
+    );
+    const localProjects = currentLocalProjects === undefined
+      ? entries.find((entry) => entry.key === "local-projects")?.value
+      : currentLocalProjects?.value;
+    const projectEntries = localProjects
+      && typeof localProjects === "object"
+      && !Array.isArray(localProjects)
+      ? Object.entries(localProjects)
+      : [];
+    return {
+      projects: projectEntries.flatMap(([id, project]) => (
+        project && Array.isArray(project.rootPaths)
+          ? [{ ...project, id }]
+          : []
+      )),
+    };
+  }
+
+  async function resolveNativeProject(requestedProjectId, workspacePath) {
+    const context = await nativeProjectContext();
+    const normalizedWorkspacePath = normalizeNativeRootPath(workspacePath);
+    let project = context.projects.find((candidate) => candidate.id === requestedProjectId) ?? null;
+    if (!project && normalizedWorkspacePath) {
+      const projectRoots = context.projects.flatMap((candidate) => candidate.rootPaths.flatMap((root) => (
+        typeof root === "string" && normalizeNativeRootPath(root)
+          ? [{ project: candidate, root }]
+          : []
+      )));
+      const canonicalRoots = await canonicalNativeRootPaths([
+        workspacePath,
+        ...projectRoots.map(({ root }) => root),
+      ]);
+      const matchingRootIndex = canonicalRoots.slice(1).findIndex((root) => (
+        root === canonicalRoots[0]
+      ));
+      if (matchingRootIndex >= 0) project = projectRoots[matchingRootIndex].project;
+    }
+    const targetRoot = normalizedWorkspacePath ? workspacePath : project?.rootPaths[0];
+    return project && typeof targetRoot === "string" && normalizeNativeRootPath(targetRoot)
+      ? { projectId: project.id, targetRoot }
+      : null;
   }
 
   async function ensureProjectRows() {
@@ -1058,16 +1223,59 @@
     throw new Error("Codex 对话输入框没有生成 manage-panel Skill 引用");
   }
 
+  async function waitForNativeProject(targetRoot, expectedProjectId) {
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline) {
+      const [projectId, activeWorkspace] = await Promise.all([
+        selectedNativeProjectId(),
+        activeNativeWorkspaceRoots(),
+      ]);
+      if (projectId) {
+        // Some Codex desktop builds no longer expose active-workspace-roots.
+        // A confirmed selected project is still safe when that endpoint is unavailable;
+        // keep rejecting an explicitly reported, mismatched workspace root.
+        if (!activeWorkspace.available) {
+          if (projectId === expectedProjectId) return projectId;
+          await new Promise((resolve) => window.setTimeout(resolve, 80));
+          continue;
+        }
+        const [canonicalTargetRoot, ...canonicalActiveRoots] = await canonicalNativeRootPaths([
+          targetRoot,
+          ...activeWorkspace.roots,
+        ]);
+        if (canonicalActiveRoots.some((root) => root === canonicalTargetRoot)) return projectId;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    }
+    throw new Error(hostText(
+      "Codex 未在限定时间内切换到目标项目或 worktree",
+      "Codex did not switch to the target project or worktree in time",
+    ));
+  }
+
   async function selectNativeWorktree() {
     const trigger = Array.from(document.querySelectorAll(
       '[data-composer-navigation-target="run-location"]',
-    )).find((candidate) => candidate.getClientRects().length > 0);
+    )).find(isInteractiveElement);
     if (!trigger) throw new Error("Codex 没有显示运行位置选择器");
     trigger.click();
     const deadline = Date.now() + 4_000;
     while (Date.now() < deadline) {
+      const expanded = Array.from(document.querySelectorAll(
+        '[data-composer-navigation-target="run-location"]',
+      )).some((candidate) => (
+        isInteractiveElement(candidate)
+        && (
+          candidate.getAttribute("aria-expanded") === "true"
+          || candidate.getAttribute("data-state") === "open"
+        )
+      ));
+      if (!expanded) {
+        await new Promise((resolve) => window.setTimeout(resolve, 40));
+        continue;
+      }
       const item = Array.from(document.querySelectorAll('[role="menuitem"]')).find((candidate) => (
-        candidate.getClientRects().length > 0
+        isInteractiveElement(candidate)
         && NATIVE_WORKTREE_LABELS.includes(normalizedLabel(candidate.textContent))
       ));
       if (!item) {
@@ -1078,8 +1286,8 @@
       while (Date.now() < deadline) {
         const selected = Array.from(document.querySelectorAll(
           '[data-composer-navigation-target="run-location"]',
-        )).find((candidate) => candidate.getClientRects().length > 0);
-        if (selected && !LOCAL_RUN_LABELS.includes(normalizedLabel(selected.textContent))) return;
+        )).find(isInteractiveElement);
+        if (selected && NATIVE_WORKTREE_LABELS.includes(normalizedLabel(selected.textContent))) return;
         await new Promise((resolve) => window.setTimeout(resolve, 40));
       }
     }
@@ -1134,8 +1342,33 @@
       || pendingThreadCreation
     ) return;
     pendingThreadCreation = taskId;
-    pendingThreadAssociation = null;
+    setPendingThreadAssociation(null);
     try {
+      if (payload?.recoverExisting === true && !autoSubmit) {
+        const codexHostId = typeof payload?.codexHostId === "string"
+          ? payload.codexHostId.trim() || "local"
+          : "local";
+        const recovery = await requestHost("find-task-conversations", {
+          codexHostId,
+          identifier,
+        }, TASK_CONVERSATION_REQUEST_TIMEOUT_MS);
+        const matches = Array.isArray(recovery?.matches) ? recovery.matches : [];
+        const currentThreadId = normalizeThreadId(threadIdFromLocation() || lastNativeThreadId);
+        const recovered = matches.find((match) => (
+          normalizeThreadId(match?.threadId) === currentThreadId
+        )) ?? (matches.length === 1 ? matches[0] : null);
+        if (matches.length > 1 && !recovered) {
+          throw new Error(`发现多个 ${identifier} 对话，请先打开要关联的对话后重试`);
+        }
+        if (typeof recovered?.threadId === "string" && recovered.threadId.trim()) {
+          postToFrame({
+            type: "panel:thread-created",
+            payload: { taskId, threadId: recovered.threadId.trim() },
+          });
+          return;
+        }
+      }
+
       const bridge = window.electronBridge;
       if (!bridge || typeof bridge.sendMessageFromView !== "function") {
         throw new Error("当前 Codex 版本没有提供原生对话导航能力");
@@ -1163,9 +1396,10 @@
           },
         });
         const composer = await waitForPreparedComposer(identifier, []);
-        pendingThreadAssociation = {
+        setPendingThreadAssociation({
           taskId,
           identifier,
+          title,
           composer,
           existingThreadIds,
           projectId: requestedProjectId,
@@ -1174,35 +1408,34 @@
           submitted: false,
           confirming: false,
           expiresAt: Date.now() + THREAD_ASSOCIATION_TIMEOUT_MS,
-        };
+        });
         postToFrame({ type: "panel:thread-prepared", payload: { taskId } });
         return;
       }
 
       const previousThreadId = normalizeThreadId(threadIdFromLocation() || lastNativeThreadId);
       if (!projectless) {
-        await ensureProjectRows();
-        const snapshotProjectId = hostContextSnapshot?.projectId || "";
         const requestedProjectId = typeof payload.codexProjectId === "string"
           ? payload.codexProjectId.trim()
           : "";
-        const row = projectRowByLabel(payload.workspaceLabel)
-          || projectRowById(requestedProjectId)
-          || projectRowById(snapshotProjectId)
-          || projectRowByLabel(payload.projectName);
-        if (row?.getAttribute("data-app-action-sidebar-project-collapsed") === "true") {
+        const target = await resolveNativeProject(requestedProjectId, workspacePath);
+        if (!target) {
+          throw new Error(hostText(
+            "Codex 中没有映射目标项目或 worktree",
+            "The target project or worktree is not mapped in Codex",
+          ));
+        }
+        await ensureProjectRows();
+        const row = projectRowById(target.projectId);
+        if (!row) throw new Error("Codex 中找不到对应的本地项目");
+        if (row.getAttribute("data-app-action-sidebar-project-collapsed") === "true") {
           row.click?.();
           await new Promise((resolve) => window.setTimeout(resolve, 120));
         }
-        const selectProject = row?.querySelector("[data-app-action-sidebar-select-project]");
-        selectProject?.click?.();
-        if (selectProject) await new Promise((resolve) => window.setTimeout(resolve, 120));
-        if (workspacePath) {
-          await bridge.sendMessageFromView({
-            type: "electron-set-active-workspace-root",
-            root: workspacePath,
-          });
-        }
+        const selectProject = row.querySelector("[data-app-action-sidebar-select-project]");
+        if (!selectProject) throw new Error("Codex 中找不到对应的本地项目");
+        selectProject.click?.();
+        lastNativeProjectId = await waitForNativeProject(target.targetRoot, target.projectId);
       }
 
       closePanel(false);
@@ -1222,7 +1455,7 @@
         skillPath,
         skills: skillReferences,
       });
-      const composer = await waitForPreparedComposer(identifier, skillReferences);
+      const composer = await waitForPreparedComposer(identifier, []);
       const selectedProjectId = projectless
         ? ""
         : (await selectedNativeProjectId()) || payload.codexProjectId;
@@ -1247,9 +1480,10 @@
         });
         return;
       }
-      pendingThreadAssociation = {
+      setPendingThreadAssociation({
         taskId,
         identifier,
+        title,
         composer,
         existingThreadIds,
         projectId: selectedProjectId,
@@ -1258,7 +1492,7 @@
         submitted: false,
         confirming: false,
         expiresAt: Date.now() + THREAD_ASSOCIATION_TIMEOUT_MS,
-      };
+      });
       postToFrame({ type: "panel:thread-prepared", payload: { taskId } });
     } catch (error) {
       if (autoSubmit && reservationId) {
@@ -1366,6 +1600,40 @@
     }
   }
 
+  function handleDatePickerRequest(payload) {
+    const requestId = typeof payload?.requestId === "string" ? payload.requestId : "";
+    const value = typeof payload?.value === "string" ? payload.value : "";
+    const rect = payload?.rect;
+    if (
+      !requestId
+      || !frame
+      || !rect
+      || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)
+    ) return;
+
+    const frameRect = frame.getBoundingClientRect();
+    const input = document.createElement("input");
+    input.type = "date";
+    input.value = value;
+    input.style.position = "fixed";
+    input.style.left = `${frameRect.left + rect.x}px`;
+    input.style.top = `${frameRect.top + rect.y}px`;
+    input.style.width = `${rect.width}px`;
+    input.style.height = `${rect.height}px`;
+    input.style.opacity = "0";
+    input.style.pointerEvents = "none";
+    document.body.append(input);
+    input.addEventListener("change", () => {
+      postToFrame({
+        type: "taskboard:date-picker-response",
+        payload: { requestId, value: input.value },
+      });
+      input.remove();
+    }, { once: true });
+    input.getBoundingClientRect();
+    input.showPicker();
+  }
+
   function challengeFrameDocument(event) {
     if (!frame || event.currentTarget !== frame) return;
     frameReady = false;
@@ -1444,6 +1712,10 @@
     }
     if (message.type === "panel:open-attachment" || message.type === "taskboard:open-attachment") {
       void handleAttachmentOpen(message.payload);
+      return;
+    }
+    if (message.type === "panel:date-picker-request" || message.type === "taskboard:date-picker-request") {
+      handleDatePickerRequest(message.payload);
       return;
     }
     if (message.type === "panel:create-thread" || message.type === "taskboard:create-thread") {
@@ -1657,11 +1929,18 @@
       && Date.now() - hostHeartbeatAt <= HOST_HEARTBEAT_MAX_AGE_MS;
   }
 
-  function requestHost(action, payload = {}, timeoutMs = HOST_REQUEST_TIMEOUT_MS) {
-    if (!hasLiveHostBinding()) {
-      return Promise.reject(new Error("Panel 启动器未运行，无法操作 Codex 对话输入框"));
+  async function waitForLiveHostBinding() {
+    const deadline = Date.now() + HOST_BINDING_READY_TIMEOUT_MS;
+    while (!hasLiveHostBinding() && Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
     }
+    if (!hasLiveHostBinding()) {
+      throw new Error("Codex 桥接尚未就绪，请稍后重试");
+    }
+  }
 
+  async function requestHost(action, payload = {}, timeoutMs = HOST_REQUEST_TIMEOUT_MS) {
+    await waitForLiveHostBinding();
     const id = `${Date.now().toString(36)}-${(++hostRequestSequence).toString(36)}`;
     return new Promise((resolve, reject) => {
       const timeout = timeoutMs === null
@@ -1876,15 +2155,22 @@
   }
 
   function mountActivePage() {
-    if (!active) return;
+    if (!active) return false;
     if (!page) page = createPage();
     const mount = findPageMount();
-    if (!mount) return;
+    if (!mount) return false;
     const { surface } = mount;
 
+    let remounted = false;
     if (page.parentElement !== surface) {
       restoreNativeContent();
       surface.appendChild(page);
+      // Moving the page rebuilds the frame's browsing context, so the document
+      // the host installed with Page.setDocumentContent is gone for good.
+      if (frame) {
+        frameReady = false;
+        remounted = true;
+      }
     }
     surface.setAttribute(HOST_ATTRIBUTE, "true");
     Array.from(surface.children).forEach((child) => {
@@ -1896,6 +2182,7 @@
     muteNativeSelection();
     page.hidden = false;
     document.documentElement.setAttribute("data-codex-panel-open", "true");
+    return remounted;
   }
 
   function closePanel(restoreFocus = true) {
@@ -2026,7 +2313,7 @@
       reattachTimer = null;
       if (closePanelForNativeThreadChange()) return;
       ensureEntry();
-      mountActivePage();
+      if (mountActivePage()) reloadFrame();
       void publishPendingThreadAssociation();
       postHostContext();
     }, REATTACH_DELAY_MS);
@@ -2034,7 +2321,7 @@
 
   function refresh() {
     ensureEntry();
-    mountActivePage();
+    if (mountActivePage()) reloadFrame();
     void publishPendingThreadAssociation();
     postHostContext();
   }

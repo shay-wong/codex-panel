@@ -448,12 +448,17 @@ export function DashboardView({
         `Across all projects, ${tasks.length} issues are tracked: ${completedTasks.length} completed and ${activeTasks.length} still open; ${tasks.filter((task) => task.status === "blocked").length} are blocked and ${overdueTasks.length} overdue.`,
       )
     : projectSummary?.summary
-      ?? (summaryLoadFailed || projectSummary?.error
-        ? text("Codex 暂时无法生成项目总结。", "Codex cannot generate the project summary now.")
-        : text(
+      ?? (projectSummary?.refreshing
+        ? text(
             "Codex 正在整理当前项目的进展、风险和下一步重点…",
             "Codex is reviewing the project's progress, risks, and next steps…",
-          ));
+          )
+        : summaryLoadFailed || projectSummary?.error
+          ? text("Codex 暂时无法生成项目总结。", "Codex cannot generate the project summary now.")
+          : text(
+              "Codex 正在整理当前项目的进展、风险和下一步重点…",
+              "Codex is reviewing the project's progress, risks, and next steps…",
+            ));
   const hour = new Date().getHours();
   const greeting = hour < 12
     ? text("上午好", "Good morning")
@@ -601,7 +606,9 @@ export function DashboardView({
                   onClick={() => onOpenTask(task)}
                   key={task.id}
                 >
-                  <span className="dashboard-attention-mark" aria-hidden="true"><i /></span>
+                  <span className="dashboard-attention-mark" aria-hidden="true">
+                    {presentations[task.id]?.unread && <i />}
+                  </span>
                   <strong>{task.title}</strong>
                   <small>ID: {task.externalKey ?? task.identifier}</small>
                 </button>

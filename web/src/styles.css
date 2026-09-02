@@ -2562,6 +2562,38 @@ kbd {
   animation: task-card-settle 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
+.board-column.status-in_review .column-list {
+  view-transition-name: review-task-list;
+  view-transition-group: contain;
+}
+
+::view-transition-group-children(review-task-list) {
+  overflow: clip;
+}
+
+::view-transition-group(*) {
+  animation-duration: 220ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+::view-transition-group(root),
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+::view-transition-old(completing-task) {
+  animation: task-card-complete-exit 180ms ease-out both;
+  transform-origin: center;
+}
+
+@keyframes task-card-complete-exit {
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
 @keyframes task-card-settle {
   from {
     opacity: 0.38;
@@ -3091,6 +3123,10 @@ kbd {
   min-height: 42px;
 }
 
+.issue-description-attach-button {
+  margin-top: 4px;
+}
+
 .issue-description-read {
   border: var(--border-hairline) solid transparent;
   border-radius: 7px;
@@ -3179,6 +3215,13 @@ kbd {
   text-decoration: none;
 }
 
+.issue-description-document a.issue-reference-link:has(> .document-attachment-card) {
+  display: block;
+  width: 100%;
+  margin: 0;
+  color: inherit;
+}
+
 .issue-reference-inline {
   display: inline;
   padding: 0 2px;
@@ -3225,7 +3268,7 @@ kbd {
 }
 
 .issue-reference-title {
-  color: var(--text-primary);
+  color: var(--column-status-color, var(--text-secondary));
   overflow-wrap: anywhere;
   white-space: normal;
 }
@@ -3300,7 +3343,8 @@ kbd {
   font-size: inherit;
 }
 
-.issue-description-document .markdown-mermaid {
+.issue-description-document .markdown-mermaid,
+.inline-media-mermaid-preview .markdown-mermaid {
   display: grid;
   place-items: center;
   width: 100%;
@@ -3313,32 +3357,38 @@ kbd {
   background: var(--surface-muted);
 }
 
-.issue-description-document .markdown-mermaid svg {
+.issue-description-document .markdown-mermaid svg,
+.inline-media-mermaid-preview .markdown-mermaid svg {
   display: block;
   max-width: 100%;
   height: auto;
 }
 
-.issue-description-document .markdown-mermaid-fallback {
+.issue-description-document .markdown-mermaid-fallback,
+.inline-media-mermaid-preview .markdown-mermaid-fallback {
   width: 100%;
   color: var(--text-secondary);
 }
 
-.issue-description-document .markdown-mermaid-fallback p {
+.issue-description-document .markdown-mermaid-fallback p,
+.inline-media-mermaid-preview .markdown-mermaid-fallback p {
   margin: 0 0 8px;
   color: var(--danger);
 }
 
-.issue-description-document .markdown-mermaid-fallback summary {
+.issue-description-document .markdown-mermaid-fallback summary,
+.inline-media-mermaid-preview .markdown-mermaid-fallback summary {
   cursor: pointer;
   color: var(--text-secondary);
 }
 
-.issue-description-document .markdown-mermaid-fallback pre {
+.issue-description-document .markdown-mermaid-fallback pre,
+.inline-media-mermaid-preview .markdown-mermaid-fallback pre {
   margin-bottom: 0;
 }
 
-:root[data-theme="dark"] .issue-description-document .markdown-mermaid {
+:root[data-theme="dark"] .issue-description-document .markdown-mermaid,
+:root[data-theme="dark"] .inline-media-mermaid-preview .markdown-mermaid {
   background: var(--surface-active);
 }
 
@@ -3380,7 +3430,8 @@ kbd {
   border-top: var(--border-hairline) solid var(--border);
 }
 
-.issue-description-document img {
+.issue-description-document img,
+.issue-description-document video {
   display: block;
   max-width: 100%;
   max-height: 600px;
@@ -3390,7 +3441,51 @@ kbd {
   object-fit: contain;
 }
 
+.issue-description-document video,
+.inline-media-image video {
+  width: min(640px, 100%);
+  aspect-ratio: auto 16 / 9;
+}
+
+.issue-description-document img.is-previewable {
+  cursor: zoom-in;
+}
+
+.image-preview-dialog {
+  position: relative;
+  display: grid;
+  place-items: center;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.image-preview-dialog > img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 48px);
+  border-radius: 8px;
+  object-fit: contain;
+  box-shadow: var(--dialog-shadow);
+}
+
+.image-preview-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: var(--border-hairline) solid var(--border);
+  background: var(--surface-raised);
+  box-shadow: var(--menu-shadow);
+}
+
 .issue-description-document img[src*="/api/attachments/"] + br {
+  display: none;
+}
+
+.issue-description-document video + br {
+  display: none;
+}
+
+.issue-description-document a.issue-reference-link:has(> .document-attachment-card) + br {
   display: none;
 }
 
@@ -3911,6 +4006,55 @@ kbd {
   background: color-mix(in srgb, var(--surface-active) 64%, var(--surface-muted));
 }
 
+.document-attachment-card,
+.inline-media-attachment {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  margin: 8px 0;
+  min-width: 0;
+  min-height: 44px;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 7px;
+  background: var(--surface);
+  transition: border-color 100ms ease, background 100ms ease;
+}
+
+.document-attachment-card:hover,
+.issue-description-document a.issue-reference-link:focus-visible > .document-attachment-card,
+.inline-media-attachment:hover,
+.inline-media-attachment:focus-within {
+  border-color: var(--border);
+  background: var(--surface-hover);
+}
+
+.document-attachment-card .composer-attachment-file-icon,
+.inline-media-attachment .composer-attachment-file-icon {
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  color: var(--text-tertiary);
+}
+
+.document-attachment-card .composer-attachment-file-icon svg,
+.inline-media-attachment .composer-attachment-file-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.document-attachment-card .composer-attachment-copy,
+.inline-media-attachment .composer-attachment-copy {
+  gap: 2px;
+}
+
+.document-attachment-card .composer-attachment-copy strong,
+.inline-media-attachment .composer-attachment-copy strong {
+  font-size: 11px;
+}
+
 .attachment-link {
   display: flex;
   align-items: center;
@@ -3928,7 +4072,7 @@ kbd {
   width: 30px;
   height: 30px;
   border-radius: 5px;
-  background: #b489f6;
+  background: #cacaca;
   color: #fff;
 }
 
@@ -4177,6 +4321,18 @@ kbd {
   margin: 0 4px;
   color: var(--text-primary);
   white-space: pre-wrap;
+}
+
+button.activity-change-value {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  text-align: left;
+}
+
+button.activity-change-value:hover {
+  text-decoration: underline;
 }
 
 .activity-ai-conversation {
@@ -4520,6 +4676,10 @@ kbd {
 
 .comment-body .issue-description-document p {
   margin-bottom: 6px;
+}
+
+.comment-body .issue-description-document blockquote > :last-child {
+  margin-bottom: 0;
 }
 
 .comment-attachment-list {
@@ -6643,10 +6803,6 @@ kbd {
   line-height: 27px;
 }
 
-.inline-media-description[data-empty="true"] {
-  min-height: 100px;
-}
-
 .composer-title textarea::placeholder,
 .composer-description textarea::placeholder,
 .property-control input::placeholder,
@@ -6877,6 +7033,7 @@ kbd {
   min-width: 0;
   flex-direction: column;
   gap: 1px;
+  line-height: normal;
 }
 
 .composer-attachment-copy strong {
@@ -6938,6 +7095,10 @@ kbd {
   display: block;
 }
 
+.inline-media-attachment-atom {
+  display: block;
+}
+
 .inline-media-atom.is-range-selected > .inline-media-issue-reference {
   background: color-mix(in srgb, var(--accent) 14%, var(--surface));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 58%, transparent);
@@ -6948,11 +7109,48 @@ kbd {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 62%, transparent);
 }
 
-.inline-media-image-atom.is-range-selected > .inline-media-image {
+.inline-media-image-atom.is-range-selected > .inline-media-image,
+.inline-media-attachment-atom.is-range-selected > .inline-media-video {
   border-radius: 8px;
   outline: 1px solid color-mix(in srgb, var(--accent) 72%, transparent);
   outline-offset: 2px;
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.inline-media-attachment-atom.is-range-selected > .inline-media-attachment {
+  outline: 1px solid color-mix(in srgb, var(--accent) 64%, transparent);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.inline-media-attachment > button {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-tertiary);
+  opacity: 0;
+  visibility: hidden;
+}
+
+.inline-media-attachment:hover > button {
+  opacity: 1;
+  visibility: visible;
+}
+
+.inline-media-attachment > button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.inline-media-attachment > button svg {
+  width: 14px;
+  height: 14px;
 }
 
 .inline-media-issue-reference {
@@ -6997,7 +7195,8 @@ kbd {
   margin: 6px 0;
 }
 
-.inline-media-image img {
+.inline-media-image img,
+.inline-media-image video {
   display: block;
   max-width: 100%;
   max-height: 600px;
@@ -7020,6 +7219,13 @@ kbd {
   border-radius: 50%;
   background: color-mix(in srgb, var(--text-primary) 82%, transparent);
   color: var(--surface);
+  opacity: 0;
+  visibility: hidden;
+}
+
+.inline-media-image:hover > button {
+  opacity: 1;
+  visibility: visible;
 }
 
 .inline-media-image button svg {
@@ -10054,7 +10260,8 @@ kbd {
   background: transparent;
 }
 
-.board-column.status-backlog {
+.board-column.status-backlog,
+.issue-reference-inline.issue-reference-status-backlog {
   --column-status-color: var(--status-backlog);
   --column-status-background: color-mix(in srgb, var(--status-backlog) 10%, transparent);
 }
@@ -10062,7 +10269,6 @@ kbd {
 .board-column.status-todo,
 .issue-list-view.layout-horizontal .issue-list-group.status-backlog,
 .issue-list-view.layout-horizontal .issue-list-group.status-todo,
-.issue-reference-inline.issue-reference-status-backlog,
 .issue-reference-inline.issue-reference-status-todo {
   --column-status-color: #9747ff;
   --column-status-background: rgba(151, 71, 255, .1);

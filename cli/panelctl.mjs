@@ -31,9 +31,10 @@ const GLOBAL_OPTIONS = new Set(["runtime-file"]);
 
 const COMMAND_OPTIONS = new Map([
   ["project list", new Set(["json"])],
-  ["project create", new Set(["id", "name", "workspace-path", "json"])],
+  ["project create", new Set(["id", "name", "issue-key", "workspace-path", "json"])],
   ["project map", new Set(["workspace-path", "json"])],
   ["project readme", new Set(["content", "file", "if-version", "json"])],
+  ["conversation bind", new Set(["thread-id", "json"])],
   ["cloud login", new Set(["url", "actor-name", "json"])],
   ["cloud status", new Set(["json"])],
   ["cloud logout", new Set(["json"])],
@@ -126,10 +127,11 @@ const HELP_TEXT = new Map([
 Commands:
   context current [--cwd PATH] [--json]
   project list
-  project create --name NAME [--id ID] [--workspace-path PATH]
+  project create --name NAME [--id ID] [--issue-key KEY] [--workspace-path PATH]
   project map PROJECT_ID --workspace-path PATH
   project readme get [PROJECT_ID]
   project readme set [PROJECT_ID] (--content TEXT | --file FILE) [--if-version N]
+  conversation bind ISSUE_ID [--thread-id ID]
   cloud login --url URL --actor-name NAME
   cloud status|logout
   issue list|get|create|update|move|archive|restore|tree|relation
@@ -190,6 +192,14 @@ Priorities: none, urgent, high, medium, low
 
 Example:
   panelctl issue get LOCAL-275 --json`],
+  ["conversation bind", `Usage: panelctl conversation bind ISSUE_ID [--thread-id ID] [--json]
+
+Bind the current Codex conversation to one Panel Issue or Jira requirement without changing its status or fields.
+
+Options:
+  --thread-id ID  Override CODEX_THREAD_ID
+  --json          Make the JSON output contract explicit
+  --help          Show this help`],
   ["comment list", `Usage: panelctl comment list ISSUE_ID [--after CURSOR] [--json]
 
 Options:
@@ -282,7 +292,7 @@ export async function main(argv = process.argv.slice(2), overrides = {}) {
       const scope = `${parsed.resource ?? ""} ${parsed.action ?? ""}`.trim();
       const help = HELP_TEXT.get(scope);
       if (!help || parsed.operands.length > 0 || Object.keys(parsed.options).length !== 1) {
-        throw usageError("Help is available for panelctl, panelctl issue, and panelctl comment list");
+        throw usageError("Help is not available for this command level");
       }
       stdout.write(`${help}\n`);
       return 0;
@@ -312,7 +322,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map/readme, cloud login/status/logout, issue list/get/create/update/move/archive/restore/tree/relation, jira planning, comment list/add/update/delete, attachment list/download/upload, context current",
+      "Expected one of: project list/create/map/readme, conversation bind, cloud login/status/logout, issue list/get/create/update/move/archive/restore/tree/relation, jira planning, comment list/add/update/delete, attachment list/download/upload, context current",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -337,6 +347,7 @@ async function execute(parsed, overrides) {
       return api.request("POST", "/api/projects", {
         ...optionalField("id", parsed.options.id),
         name: requiredOption(parsed.options, "name"),
+        ...optionalField("issueKey", parsed.options["issue-key"]),
         ...optionalField(
           "workspacePath",
           parsed.options["workspace-path"] === undefined
@@ -358,6 +369,11 @@ async function execute(parsed, overrides) {
       );
     case "project readme":
       return executeProjectReadme(api, parsed, overrides);
+    case "conversation bind":
+      expectOperandCount(parsed, 1);
+      return api.request("POST", `${taskPath(parsed.operands[0])}/bind-thread`, {
+        threadId: resolveThreadId(parsed.options, overrides),
+      });
     case "cloud login":
       expectOperandCount(parsed, 0);
       return cloudLogin(

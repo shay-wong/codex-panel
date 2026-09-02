@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useState, type KeyboardEventHandler } from "react";
+import { useRef, useState, type KeyboardEventHandler } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComposerCandidatesResponse, Task } from "../types";
 import {
@@ -8,6 +8,7 @@ import {
   InlineMediaComposer,
   serializeInlineMedia,
   writeInlineMediaClipboard,
+  type InlineMediaComposerHandle,
   type InlineMediaSegment,
 } from "./InlineMediaComposer";
 
@@ -34,12 +35,14 @@ function TestComposer({
   onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
   projectId?: string;
 }) {
+  const composerRef = useRef<InlineMediaComposerHandle>(null);
   const [segments, setSegments] = useState<InlineMediaSegment[]>(() => (
     createInlineMediaSegments(initial, mentionTasks)
   ));
   return (
     <>
       <InlineMediaComposer
+        ref={composerRef}
         segments={segments}
         mentionTasks={mentionTasks}
         referenceTasks={mentionTasks}
@@ -50,29 +53,24 @@ function TestComposer({
         onError={() => {}}
         onKeyDown={onKeyDown}
       />
+      <button
+        type="button"
+        hidden
+        data-testid="focus-editor-end"
+        onClick={() => composerRef.current?.focus()}
+      />
       <output data-testid="serialized">{serializeInlineMedia(segments)}</output>
     </>
   );
 }
 
 function placeCaretAtEnd(editor: HTMLElement) {
-  const text = editor.querySelector(".inline-media-text")?.firstChild;
-  if (!(text instanceof Text)) throw new Error("Expected an inline text node");
-  const range = document.createRange();
-  range.setStart(text, text.length);
-  range.collapse(true);
-  const selection = window.getSelection()!;
-  selection.removeAllRanges();
-  selection.addRange(range);
+  if (!editor.matches("[contenteditable='true']")) throw new Error("Expected an editable composer");
+  fireEvent.click(screen.getByTestId("focus-editor-end"));
 }
 
 function placeCaretAtRootEnd(editor: HTMLElement) {
-  const range = document.createRange();
-  range.setStart(editor, editor.childNodes.length);
-  range.collapse(true);
-  const selection = window.getSelection()!;
-  selection.removeAllRanges();
-  selection.addRange(range);
+  placeCaretAtEnd(editor);
 }
 
 function response(candidates: ComposerCandidatesResponse["candidates"]): ComposerCandidatesResponse {
@@ -89,6 +87,10 @@ describe("InlineMediaComposer completion references", () => {
     Object.defineProperty(Range.prototype, "getBoundingClientRect", {
       configurable: true,
       value: () => new DOMRect(20, 20, 1, 18),
+    });
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [new DOMRect(20, 20, 1, 18)],
     });
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
@@ -151,7 +153,12 @@ describe("InlineMediaComposer completion references", () => {
     const restored = createInlineMediaSegmentsFromHtml(values.get("text/html") ?? "", [issue]);
 
     expect(restored).not.toBeNull();
-    expect(serializeInlineMedia(restored!)).toBe(value);
+    expect(serializeInlineMedia(restored!)).toBe([
+      "[$Manage Taskboard](taskboard://composer-reference/v1/skill/bWFuYWdlLXRhc2tib2FyZA)",
+      " [@LOCAL-1](?project=project-1&issue=LOCAL-1) \n",
+      "![proof](api/attachments/attachment-1/content)\n ",
+      "[@任务总管](taskboard://composer-reference/v1/agent/bWFzdGVy)",
+    ].join(""));
   });
 
   it("keeps service candidates and Panel issues in separate groups with one keyboard index", async () => {
@@ -231,7 +238,7 @@ describe("InlineMediaComposer completion references", () => {
     fireEvent.keyDown(editor, { key: "Tab" });
 
     await waitFor(() => expect(screen.getByTestId("serialized").textContent).toBe(
-      "![proof](api/attachments/attachment-1/content) E2 "
+      "![proof](api/attachments/attachment-1/content)\nE2 "
       + "[@任务总管](taskboard://composer-reference/v1/agent/bWFzdGVy) ",
     ));
   });
@@ -264,7 +271,7 @@ describe("InlineMediaComposer completion references", () => {
     fireEvent.keyDown(editor, { key: "Enter" });
 
     await waitFor(() => expect(screen.getByTestId("serialized").textContent).toBe(
-      "![proof](api/attachments/attachment-1/content) /review ",
+      "![proof](api/attachments/attachment-1/content)\n/review",
     ));
   });
 
@@ -368,7 +375,7 @@ describe("InlineMediaComposer completion references", () => {
     expect(screen.getByTestId("serialized").textContent).toBe("/rev");
 
     fireEvent.keyDown(editor, { key: "Enter" });
-    await waitFor(() => expect(screen.getByTestId("serialized").textContent).toBe("/review "));
+    await waitFor(() => expect(screen.getByTestId("serialized").textContent).toBe("/review"));
 
     fireEvent.keyDown(editor, { key: "Enter" });
     expect(parentKeyDown).toHaveBeenCalledTimes(2);

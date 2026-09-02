@@ -19,6 +19,7 @@ import {
   panelAutomationPolicyOperation,
 } from "../shared/panel-automation.mjs";
 import {
+  findTaskConversations,
   findResidentInjectorPids,
   handleHostBindingPayload,
   injectionReadinessMatches,
@@ -97,6 +98,7 @@ const hostRequestMessage = "__codexPanelHostRequestV1";
 const hostResponseMessage = "__codexPanelHostResponseV1";
 const hostHeartbeatMessage = "__codexPanelHostHeartbeatV1";
 const hostStartupTokenName = "__codexPanelHostStartupTokenV1";
+const codexNotificationBindingName = "__codexPanelCodexNotificationV1";
 const hostCapability = randomUUID();
 const injectionSourceHashName = "__CODEX_PANEL_SOURCE_HASH__";
 const injectionScriptIdentifierName = "__CODEX_PANEL_SCRIPT_IDENTIFIER__";
@@ -120,6 +122,19 @@ const quotaPolicyRestorePromises = new WeakMap();
 let quotaPoliciesLoadPromise = null;
 let quotaPoliciesWritePromise = Promise.resolve();
 const taskConversationAppServerTimeoutMs = 30_000;
+
+function stableCodexUserId(account) {
+  const email = account?.account?.type === "chatgpt"
+    && typeof account.account.email === "string"
+    ? account.account.email.trim().toLowerCase()
+    : "";
+  if (!email) return "";
+  const digest = createHash("sha256")
+    .update("codex-taskboard-user\0")
+    .update(email)
+    .digest("hex");
+  return `codex-user-${digest}`;
+}
 
 function parseArgs(argv) {
   const options = {
@@ -273,14 +288,14 @@ async function assertPanelServiceModeAvailable() {
   }
 }
 
-function startPanel({ detached }) {
-  const stdio = panelListenFd === null
-    ? (detached ? "ignore" : "inherit")
+function startPanel({ detached, onCodexAppServerRequest }) {
+  const baseStdio = panelListenFd === null
+    ? Array(3).fill(detached ? "ignore" : "inherit")
     : Array.from(
       { length: panelListenFd + 1 },
       (_, fd) => (fd === panelListenFd ? "inherit" : (fd < 3 && !detached ? "inherit" : "ignore")),
     );
-  return spawn(process.execPath, [path.join(projectRoot, "server", "index.mjs")], {
+  const child = spawn(process.execPath, [path.join(projectRoot, "server", "index.mjs")], {
     cwd: projectRoot,
     detached,
     env: privatePanelMode ? {
@@ -289,8 +304,32 @@ function startPanel({ detached }) {
       CODEX_PANEL_INSTANCE_SECRET: panelInstanceSecret,
       CODEX_PANEL_VERSION: panelVersion,
     } : process.env,
-    stdio,
+    stdio: [...baseStdio, "ipc"],
   });
+  child.on("message", (message) => {
+    if (message?.type !== "panel:codex-app-server-request") return;
+    void Promise.resolve(onCodexAppServerRequest(message)).then(
+      (result) => {
+        if (!child.connected) return;
+        child.send({
+          type: "panel:codex-app-server-response",
+          requestId: message.requestId,
+          hostId: message.hostId,
+          result,
+        });
+      },
+      (error) => {
+        if (!child.connected) return;
+        child.send({
+          type: "panel:codex-app-server-response",
+          requestId: message.requestId,
+          hostId: message.hostId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      },
+    );
+  });
+  return child;
 }
 
 function codexIsRunning() {
@@ -1015,7 +1054,6 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
 
 async function requestCodexAppServerViaCdp(
   cdp,
-  executionContextId,
   hostId,
   method,
   params,
@@ -1086,7 +1124,6 @@ async function requestCodexAppServerViaCdp(
         });
       });
     }))()`,
-    ...(Number.isInteger(executionContextId) ? { contextId: executionContextId } : {}),
     awaitPromise: true,
     returnByValue: true,
   });
@@ -1420,13 +1457,15 @@ function nativeDevelopmentContext(workspacePath, targetRoot, useWorktree) {
   };
 }
 
-async function confirmTaskConversationViaCdp(cdp, executionContextId, request) {
+async function confirmTaskConversationViaCdp(cdp, request) {
+  const title = typeof request.title === "string" && request.title.trim()
+    ? request.title.trim()
+    : request.identifier;
   const deadline = Date.now() + 12_000;
   while (Date.now() < deadline) {
     try {
       const result = await requestCodexAppServerViaCdp(
         cdp,
-        executionContextId,
         request.codexHostId,
         "thread/read",
         { threadId: request.threadId, includeTurns: true },
@@ -1446,6 +1485,26 @@ async function confirmTaskConversationViaCdp(cdp, executionContextId, request) {
         )
         && firstUserText.includes(request.identifier)
       ) {
+        try {
+          await requestCodexAppServerViaCdp(
+            cdp,
+            request.codexHostId,
+            "thread/name/set",
+            { threadId: request.threadId, name: title },
+            10_000,
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+          if (!message.includes("rollout") || !message.includes("is empty")) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          await requestCodexAppServerViaCdp(
+            cdp,
+            request.codexHostId,
+            "thread/name/set",
+            { threadId: request.threadId, name: title },
+            10_000,
+          );
+        }
         return { confirmed: true };
       }
     } catch {}
@@ -1542,7 +1601,6 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
         try {
           const result = await requestCodexAppServerViaCdp(
             cdp,
-            executionContextId,
             codexHostId,
             "thread/read",
             { threadId, includeTurns: false },
@@ -1572,7 +1630,6 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
       try {
         await requestCodexAppServerViaCdp(
           cdp,
-          executionContextId,
           codexHostId,
           "thread/name/set",
           { threadId, name: title },
@@ -1584,7 +1641,6 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
         await new Promise((resolve) => setTimeout(resolve, 500));
         await requestCodexAppServerViaCdp(
           cdp,
-          executionContextId,
           codexHostId,
           "thread/name/set",
           { threadId, name: title },
@@ -1598,7 +1654,6 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
         try {
           result = await requestCodexAppServerViaCdp(
             cdp,
-            executionContextId,
             codexHostId,
             "thread/read",
             { threadId, includeTurns: false },
@@ -1857,17 +1912,57 @@ async function sendHostResponse(cdp, executionContextId, response) {
   });
 }
 
-function installPanelHostBinding(cdp, supervisor, startupToken) {
+function installPanelHostBinding(
+  cdp,
+  supervisor,
+  startupToken,
+  onCodexAppServerNotification,
+  onCodexAppServerReady,
+) {
   let activeContextId = null;
   let installInFlight = null;
 
   cdp.on("Runtime.bindingCalled", async (params) => {
-    if (params.name !== hostBindingName) return;
     if (params.executionContextId !== activeContextId) return;
+    if (params.name === codexNotificationBindingName) {
+      try {
+        const notification = JSON.parse(params.payload);
+        if (
+          notification
+          && typeof notification.hostId === "string"
+          && typeof notification.method === "string"
+        ) onCodexAppServerNotification(cdp, notification);
+      } catch {}
+      return;
+    }
+    if (params.name !== hostBindingName) return;
     await handleHostBindingPayload(params, {
       isAuthorizedContext: (executionContextId) => executionContextId === activeContextId,
       parseAutomationRequest: parsePanelAutomationHostRequest,
       ensure: () => supervisor.ensure({ force: true }),
+      readCurrentUser: async () => {
+        let account = await requestCodexAppServerViaCdp(
+          cdp,
+          "local",
+          "account/read",
+          { refreshToken: false },
+        );
+        if (
+          account?.account?.type === "chatgpt"
+          && (
+            typeof account.account.email !== "string"
+            || !account.account.email.trim()
+          )
+        ) {
+          account = await requestCodexAppServerViaCdp(
+            cdp,
+            "local",
+            "account/read",
+            { refreshToken: true },
+          );
+        }
+        return { userId: stableCodexUserId(account) };
+      },
       loadFrame: (request) => loadPanelFrameViaCdp(
         cdp,
         request.frameName,
@@ -1887,8 +1982,18 @@ function installPanelHostBinding(cdp, supervisor, startupToken) {
         taskId: request.taskId,
         error: request.error,
       }),
-      confirmConversation: (request, executionContextId) => (
-        confirmTaskConversationViaCdp(cdp, executionContextId, request)
+      confirmConversation: (request) => (
+        confirmTaskConversationViaCdp(cdp, request)
+      ),
+      findConversations: (request) => findTaskConversations(
+        request,
+        (method, body) => requestCodexAppServerViaCdp(
+          cdp,
+          request.codexHostId,
+          method,
+          body,
+          10_000,
+        ),
       ),
       runAutomation: (request) => (
         (async () => {
@@ -1935,6 +2040,10 @@ function installPanelHostBinding(cdp, supervisor, startupToken) {
         name: hostBindingName,
         executionContextId: activeContextId,
       });
+      await cdp.send("Runtime.addBinding", {
+        name: codexNotificationBindingName,
+        executionContextId: activeContextId,
+      });
       await cdp.send("Runtime.evaluate", {
         contextId: activeContextId,
         expression: `(() => {
@@ -1944,10 +2053,24 @@ function installPanelHostBinding(cdp, supervisor, startupToken) {
           window.addEventListener("message", (event) => {
             const message = event.data;
             if (
+              !message
+              || typeof message !== "object"
+            ) return;
+            if (
+              message.type === "mcp-notification"
+              && typeof message.hostId === "string"
+              && typeof message.method === "string"
+            ) {
+              globalThis[${JSON.stringify(codexNotificationBindingName)}](JSON.stringify({
+                hostId: message.hostId,
+                method: message.method,
+                params: message.params
+              }));
+              return;
+            }
+            if (
               event.source !== window
               || event.origin !== window.location.origin
-              || !message
-              || typeof message !== "object"
               || message.type !== ${JSON.stringify(hostRequestMessage)}
               || message.capability !== capability
             ) return;
@@ -1956,6 +2079,7 @@ function installPanelHostBinding(cdp, supervisor, startupToken) {
         })()`,
         returnByValue: true,
       });
+      onCodexAppServerReady(cdp);
       await restoreQuotaPolicies(cdp);
       return activeContextId;
     })();
@@ -1967,17 +2091,32 @@ function installPanelHostBinding(cdp, supervisor, startupToken) {
   }
 
   async function publishHeartbeat() {
-    const executionContextId = await install();
-    await cdp.send("Runtime.evaluate", {
-      contextId: executionContextId,
-      expression: `window.postMessage({
-        type: ${JSON.stringify(hostHeartbeatMessage)},
-        capability: ${JSON.stringify(hostCapability)},
-        at: Date.now(),
-        startupToken: ${JSON.stringify(startupToken)}
-      }, window.location.origin)`,
-      returnByValue: true,
-    });
+    let timeout;
+    try {
+      await Promise.race([
+        (async () => {
+          const executionContextId = await install();
+          await cdp.send("Runtime.evaluate", {
+            contextId: executionContextId,
+            expression: `window.postMessage({
+              type: ${JSON.stringify(hostHeartbeatMessage)},
+              capability: ${JSON.stringify(hostCapability)},
+              at: Date.now(),
+              startupToken: ${JSON.stringify(startupToken)}
+            }, window.location.origin)`,
+            returnByValue: true,
+          });
+        })(),
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => {
+            cdp.close();
+            reject(new Error("Timed out publishing the Panel host heartbeat"));
+          }, 3_000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   return { install, publishHeartbeat };
@@ -2127,11 +2266,20 @@ async function injectTarget(
   supervisor,
   attachExisting,
   startupToken,
+  onCodexAppServerNotification,
+  onCodexAppServerReady,
+  onCodexAppServerUnavailable,
 ) {
   const cdp = await runtime.connect(target);
   let retained = false;
   const hostBridge = keepAlive
-    ? installPanelHostBinding(cdp, supervisor, startupToken)
+    ? installPanelHostBinding(
+        cdp,
+        supervisor,
+        startupToken,
+        onCodexAppServerNotification,
+        onCodexAppServerReady,
+      )
     : null;
   cdp.hostBridge = hostBridge;
   try {
@@ -2233,6 +2381,7 @@ async function injectTarget(
     return { result, connection: retained ? cdp : null };
   } finally {
     if (!retained) {
+      onCodexAppServerUnavailable(cdp);
       unregisterQuotaPolicyCdp(cdp);
       cdp.close();
     }
@@ -2250,6 +2399,9 @@ async function injectAll(
   supervisor,
   attachExisting,
   startupToken,
+  onCodexAppServerNotification,
+  onCodexAppServerReady,
+  onCodexAppServerUnavailable,
 ) {
   const targets = await runtime.targets();
   if (targets.length === 0) {
@@ -2260,6 +2412,7 @@ async function injectAll(
   const activeIds = new Set(targets.map((target) => target.id));
   for (const [id, connection] of injectedTargets) {
     if (!activeIds.has(id) || connection.closed) {
+      onCodexAppServerUnavailable(connection);
       unregisterQuotaPolicyCdp(connection);
       connection.close();
       injectedTargets.delete(id);
@@ -2281,6 +2434,9 @@ async function injectAll(
       supervisor,
       attachExisting,
       startupToken,
+      onCodexAppServerNotification,
+      onCodexAppServerReady,
+      onCodexAppServerUnavailable,
     );
     if (connection) injectedTargets.set(target.id, connection);
     results.push({ targetId: target.id, title: target.title, url: target.url, ...result });
@@ -2445,6 +2601,27 @@ async function main() {
   let openControl = null;
   let openSignalHandler = null;
   const injectedTargets = new Map();
+  const remoteCodexConnections = new Map();
+  const routableCodexConnections = new Set();
+  const codexRendererWaiters = new Set();
+  const waitForCodexRenderer = () => new Promise((resolve) => {
+    codexRendererWaiters.add(resolve);
+  });
+  const wakeCodexRendererRequests = () => {
+    for (const resolve of codexRendererWaiters) resolve();
+    codexRendererWaiters.clear();
+  };
+  const registerRoutableCodexConnection = (connection) => {
+    routableCodexConnections.add(connection);
+    wakeCodexRendererRequests();
+  };
+  const unregisterRoutableCodexConnection = (connection) => {
+    routableCodexConnections.delete(connection);
+    for (const [hostId, current] of remoteCodexConnections) {
+      if (current === connection) remoteCodexConnections.delete(hostId);
+    }
+  };
+  let panelChild = null;
   let idleAfterNormalExit = false;
   let openRequestGeneration = options.open ? 1 : 0;
   let openedRequestGeneration = 0;
@@ -2458,6 +2635,7 @@ async function main() {
   const requestStop = () => {
     if (stopping) return;
     stopping = true;
+    wakeCodexRendererRequests();
     wakeStop();
   };
   if (options.watch) {
@@ -2465,11 +2643,63 @@ async function main() {
     process.once("SIGTERM", requestStop);
   }
   const detached = !options.watch;
+  const codexConnectionForHost = async (hostId) => {
+    while (!stopping) {
+      for (const connection of routableCodexConnections) {
+        if (connection.closed) routableCodexConnections.delete(connection);
+      }
+      const current = remoteCodexConnections.get(hostId);
+      if (current && routableCodexConnections.has(current)) {
+        return current;
+      }
+      const connection = routableCodexConnections.values().next().value;
+      if (connection) {
+        remoteCodexConnections.set(hostId, connection);
+        return connection;
+      }
+      await waitForCodexRenderer();
+    }
+    throw new Error("Codex renderer stopped before the remote request was sent");
+  };
+  const handleCodexAppServerRequest = async (message) => {
+    if (
+      typeof message.requestId !== "string"
+      || typeof message.hostId !== "string"
+      || typeof message.method !== "string"
+    ) throw new Error("Invalid Codex host request");
+    const connection = await codexConnectionForHost(message.hostId);
+    return requestCodexAppServerViaCdp(
+      connection,
+      message.hostId,
+      message.method,
+      message.params,
+    );
+  };
+  const forwardCodexAppServerNotification = (cdp, notification) => {
+    if (remoteCodexConnections.get(notification.hostId) !== cdp) return;
+    if (!panelChild?.connected) return;
+    panelChild.send({
+      type: "panel:codex-app-server-notification",
+      hostId: notification.hostId,
+      method: notification.method,
+      params: notification.params,
+    });
+  };
   const supervisor = createPanelSupervisor({
     detached,
     isReachable: isPanelReachable,
     waitUntilReachable: waitUntilPanelReachable,
-    start: () => startPanel({ detached }),
+    start: () => {
+      const child = startPanel({
+        detached,
+        onCodexAppServerRequest: handleCodexAppServerRequest,
+      });
+      panelChild = child;
+      child.once("exit", () => {
+        if (panelChild === child) panelChild = null;
+      });
+      return child;
+    },
     onProcessError: (error) => {
       console.error(`Panel process error: ${error.message}`);
     },
@@ -2483,6 +2713,7 @@ async function main() {
     if (cleanupPromise) return cleanupPromise;
     cleanupPromise = (async () => {
       injectedTargets.forEach((connection) => {
+        unregisterRoutableCodexConnection(connection);
         unregisterQuotaPolicyCdp(connection);
         connection.close();
       });
@@ -2548,6 +2779,9 @@ async function main() {
           cdpRuntime,
           sourceHash,
           options.startupToken,
+          forwardCodexAppServerNotification,
+          registerRoutableCodexConnection,
+          unregisterRoutableCodexConnection,
         );
         if (!opened) return false;
         openedRequestGeneration = Math.max(openedRequestGeneration, generation);
@@ -2633,7 +2867,6 @@ async function main() {
               { threadId, codexHostId },
               (method, params) => requestCodexAppServerViaCdp(
                 cdp,
-                undefined,
                 codexHostId,
                 method,
                 params,
@@ -2781,6 +3014,9 @@ async function main() {
           supervisor,
           options.attachExisting,
           options.startupToken,
+          forwardCodexAppServerNotification,
+          registerRoutableCodexConnection,
+          unregisterRoutableCodexConnection,
         );
         if (results.length > 0) {
           console.log(JSON.stringify({ injected: results }, null, 2));
@@ -2806,6 +3042,7 @@ async function main() {
           }
           if (launchedCodex?.exitCode === 0) {
             injectedTargets.forEach((connection) => {
+              unregisterRoutableCodexConnection(connection);
               unregisterQuotaPolicyCdp(connection);
               connection.close();
             });
@@ -2825,6 +3062,7 @@ async function main() {
           && (codexProcess.exitCode !== null || codexProcess.signalCode !== null);
         if (launchedCodexExited) {
           injectedTargets.forEach((connection) => {
+            unregisterRoutableCodexConnection(connection);
             unregisterQuotaPolicyCdp(connection);
             connection.close();
           });

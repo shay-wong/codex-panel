@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { access, chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -48,16 +48,22 @@ async function request(baseUrl, pathname, options = {}) {
   };
 }
 
-async function requestWithHost(baseUrl, host, headers = {}) {
-  const target = new URL("/health", baseUrl);
+async function requestWithHost(baseUrl, host, headers = {}, pathname = "/health") {
+  const target = new URL(pathname, baseUrl);
   return new Promise((resolve, reject) => {
     const outgoing = httpRequest(target, { headers: { host, ...headers } }, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
-      response.on("end", () => resolve({
-        status: response.statusCode,
-        body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
-      }));
+      response.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        let body;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          body = undefined;
+        }
+        resolve({ status: response.statusCode, body, text });
+      });
     });
     outgoing.on("error", reject);
     outgoing.end();
@@ -468,11 +474,15 @@ test("accepts private LAN requests and rejects public Host and Origin headers", 
   assert.equal(originResult.body.error.code, "INVALID_ORIGIN");
 });
 
-test("trusted HTTPS origins allow a loopback reverse tunnel for HTTP and SSE only", async () => {
+test("trusted HTTPS origins allow their exact public Host without trusting forwarded headers", async () => {
   const trustedOrigin = "https://board.example.test";
-  const baseUrl = await startServer(() => ({
-    processEnv: { ...process.env, CODEX_PANEL_TRUSTED_ORIGINS: trustedOrigin },
-  }));
+  const baseUrl = await startServer(async (directory) => {
+    await writeFile(path.join(directory, "index.html"), "<!doctype html><title>Panel</title>");
+    return {
+      staticDirectory: directory,
+      processEnv: { ...process.env, CODEX_PANEL_TRUSTED_ORIGINS: trustedOrigin },
+    };
+  });
   const host = "127.0.0.1";
 
   for (const [origin, expectedStatus] of [
@@ -488,11 +498,28 @@ test("trusted HTTPS origins allow a loopback reverse tunnel for HTTP and SSE onl
     assert.equal(events.status, expectedStatus);
   }
 
-  const publicHost = await requestWithHost(baseUrl, "board.example.test", {
+  const publicPage = await requestWithHost(baseUrl, "board.example.test", {}, "/");
+  assert.equal(publicPage.status, 200);
+  assert.match(publicPage.text, /<title>Panel<\/title>/);
+
+  const publicApi = await requestWithHost(baseUrl, "board.example.test", {}, "/api/projects");
+  assert.equal(publicApi.status, 200);
+  assert.equal(publicApi.body.projects.length, 1);
+
+  const publicHostAndOrigin = await requestWithHost(baseUrl, "board.example.test", {
     origin: trustedOrigin,
   });
-  assert.equal(publicHost.status, 403);
-  assert.equal(publicHost.body.error.code, "INVALID_HOST");
+  assert.equal(publicHostAndOrigin.status, 200);
+
+  const publicHostWithForeignOrigin = await requestWithHost(baseUrl, "board.example.test", {
+    origin: "https://other.example.test",
+  });
+  assert.equal(publicHostWithForeignOrigin.status, 403);
+  assert.equal(publicHostWithForeignOrigin.body.error.code, "INVALID_ORIGIN");
+
+  const publicHostWithWrongPort = await requestWithHost(baseUrl, "board.example.test:8443");
+  assert.equal(publicHostWithWrongPort.status, 403);
+  assert.equal(publicHostWithWrongPort.body.error.code, "INVALID_HOST");
 
   const forwardedHost = await requestWithHost(baseUrl, "untrusted.example.test", {
     origin: trustedOrigin,
@@ -501,6 +528,12 @@ test("trusted HTTPS origins allow a loopback reverse tunnel for HTTP and SSE onl
   });
   assert.equal(forwardedHost.status, 403);
   assert.equal(forwardedHost.body.error.code, "INVALID_HOST");
+
+  const wrongOriginPort = await requestWithHost(baseUrl, host, {
+    origin: "https://board.example.test:8443",
+  });
+  assert.equal(wrongOriginPort.status, 403);
+  assert.equal(wrongOriginPort.body.error.code, "INVALID_ORIGIN");
 });
 
 test("trusted HTTPS origins do not inherit device-local capabilities from tunnel loopback", async () => {
@@ -545,6 +578,10 @@ test("trusted HTTPS origins do not inherit device-local capabilities from tunnel
     localCapabilities: { available: false },
   });
   assert.equal(Object.hasOwn(metadata.body, "managePanelSkillPath"), false);
+
+  const publicMetadata = await requestWithHost(baseUrl, "board.example.test", {}, "/api/meta");
+  assert.equal(publicMetadata.status, 200);
+  assert.deepEqual(publicMetadata.body, metadata.body);
 
   for (const pathname of [
     "/api/local/host-runtime",
@@ -659,10 +696,11 @@ test("project and task CRUD flow", async () => {
 
   const projectResult = await request(baseUrl, "/api/projects", {
     method: "POST",
-    body: { id: "website", name: "Website", workspacePath: "/work/website" },
+    body: { id: "website", name: "Website", issueKey: "WEB", workspacePath: "/work/website" },
   });
   assert.equal(projectResult.response.status, 201);
   assert.equal(projectResult.body.project.id, "website");
+  assert.equal(projectResult.body.project.issueKey, "WEB");
   assert.equal(projectResult.body.project.workspacePath, "/work/website");
 
   const createResult = await request(baseUrl, "/api/tasks", {
@@ -892,6 +930,121 @@ test("the active local Codex conversation supplies its exact task binding identi
     codexProjectKind: "local",
     codexHostId: "local",
     workspacePath: "/work/local-project",
+  });
+});
+
+test("an active Codex conversation can explicitly bind an issue without changing its status", async () => {
+  const baseUrl = await startServer();
+  const created = (await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { title: "Bind me", status: "todo" },
+  })).body.task;
+  await request(baseUrl, "/api/local/host-runtime", {
+    method: "PUT",
+    body: {
+      threadId: "manual-thread",
+      threadRunning: true,
+      threadTodoProgress: null,
+      codexProjectId: "local-project",
+      codexProjectKind: "local",
+      codexHostId: "local",
+      workspacePath: "/work/local-project",
+    },
+  });
+
+  const first = await request(baseUrl, `/api/tasks/${created.identifier}/bind-thread`, {
+    method: "POST",
+    headers: { "x-panel-client": "panelctl" },
+    body: { threadId: "manual-thread" },
+  });
+  assert.equal(first.response.status, 200);
+  assert.equal(first.body.task.status, "todo");
+  assert.deepEqual(first.body.task.threadBinding, {
+    threadId: "manual-thread",
+    codexProjectId: "local-project",
+    codexProjectKind: "local",
+    codexHostId: "local",
+    workspacePath: "/work/local-project",
+  });
+
+  const second = await request(baseUrl, `/api/tasks/${created.id}/bind-thread`, {
+    method: "POST",
+    body: { threadId: "manual-thread" },
+  });
+  assert.equal(second.response.status, 200);
+  assert.equal(second.body.task.version, first.body.task.version);
+
+  await request(baseUrl, "/api/local/host-runtime", {
+    method: "PUT",
+    body: {
+      threadId: "other-thread",
+      threadRunning: true,
+      threadTodoProgress: null,
+      codexProjectId: "local-project",
+      codexProjectKind: "local",
+      codexHostId: "local",
+      workspacePath: "/work/local-project",
+    },
+  });
+  const conflict = await request(baseUrl, `/api/tasks/${created.id}/bind-thread`, {
+    method: "POST",
+    body: { threadId: "other-thread" },
+  });
+  assert.equal(conflict.response.status, 409);
+  assert.equal(conflict.body.error.code, "TASK_THREAD_BINDING_CONFLICT");
+});
+
+test("a saved local Codex conversation binds even when another project is currently open", async () => {
+  const threadId = "00000000-0000-4000-8000-000000000123";
+  const projectId = "saved-project";
+  const workspacePath = "/work/saved-project-worktree";
+  const baseUrl = await startServer(async (directory) => {
+    const codexHome = path.join(directory, "codex-home");
+    const codexStatePath = path.join(codexHome, ".codex-global-state.json");
+    const sessionDirectory = path.join(codexHome, "sessions", "2026", "08", "29");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(codexStatePath, JSON.stringify({
+      "thread-project-assignments": {
+        [threadId]: { projectKind: "local", projectId },
+      },
+    }));
+    await writeFile(
+      path.join(sessionDirectory, `rollout-test-${threadId}.jsonl`),
+      `${JSON.stringify({
+        type: "session_meta",
+        payload: { id: threadId, cwd: workspacePath },
+      })}\n`,
+    );
+    return { codexStatePath };
+  });
+  const created = (await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { title: "Bind saved conversation", status: "todo" },
+  })).body.task;
+  await request(baseUrl, "/api/local/host-runtime", {
+    method: "PUT",
+    body: {
+      threadId: "different-thread",
+      threadRunning: false,
+      threadTodoProgress: null,
+      codexProjectId: "different-project",
+      codexProjectKind: "local",
+      codexHostId: "local",
+      workspacePath: "/work/different-project",
+    },
+  });
+
+  const result = await request(baseUrl, `/api/tasks/${created.id}/bind-thread`, {
+    method: "POST",
+    body: { threadId },
+  });
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.body.task.threadBinding, {
+    threadId,
+    codexProjectId: projectId,
+    codexProjectKind: "local",
+    codexHostId: "local",
+    workspacePath,
   });
 });
 

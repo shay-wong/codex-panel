@@ -14,6 +14,7 @@ import type {
   ComposerRebindRequest,
   ComposerRebindResponse,
   ComposerTurnInput,
+  CodexProjectIdentity,
   CodexThreadBinding,
   DevelopmentScan,
   HostContext,
@@ -44,6 +45,7 @@ const DEFAULT_USER_ACTOR: ActorIdentity = {
 
 let currentUserActor = DEFAULT_USER_ACTOR;
 let apiText = (_chinese: string, english: string) => english;
+const READ_RETRY_DELAYS_MS = [150, 350] as const;
 
 function isAbortError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
@@ -96,22 +98,40 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (method !== "GET" && method !== "HEAD") {
     headers.set("X-Panel-User-Id", currentUserActor.id);
     headers.set("X-Panel-User-Name", encodeURIComponent(currentUserActor.name));
-    if (currentUserActor.avatarUrl) {
+    if (
+      currentUserActor.avatarUrl
+      && currentUserActor.avatarUrl.length <= 2048
+      && (
+        currentUserActor.avatarUrl.startsWith("https://")
+        || currentUserActor.avatarUrl.startsWith("http://")
+      )
+    ) {
       headers.set("X-Panel-User-Avatar", currentUserActor.avatarUrl);
     }
   }
 
-  let response: Response;
-  try {
-    response = await fetch(resolvePanelUrl(path), { ...init, headers });
-  } catch (error) {
-    if (isAbortError(error)) throw error;
-    throw new ApiError(0, {
-      error: {
-        code: "SERVICE_UNAVAILABLE",
-        message: "无法连接本地 Panel 服务，请重新通过 Panel 启动 Codex。",
-      },
-    });
+  let response: Response | undefined;
+  const retryDelays = method === "GET" || method === "HEAD" ? READ_RETRY_DELAYS_MS : [];
+  for (let attempt = 0; !response; attempt += 1) {
+    try {
+      response = await fetch(resolvePanelUrl(path), { ...init, headers });
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      const retryDelay = retryDelays[attempt];
+      if (retryDelay !== undefined) {
+        await new Promise((resolve) => window.setTimeout(resolve, retryDelay));
+        continue;
+      }
+      throw new ApiError(0, {
+        error: {
+          code: "SERVICE_UNAVAILABLE",
+          message: apiText(
+            "暂时无法连接本地 Panel 服务，已自动重试。请稍后再试；若持续失败，请通过 Panel 重新启动 Codex。",
+            "The local Panel service is temporarily unavailable after automatic retries. Try again shortly; if it persists, restart Codex through Panel.",
+          ),
+        },
+      });
+    }
   }
   let body: T & ApiErrorBody;
   try {
@@ -299,9 +319,17 @@ export async function publishHostRuntime(context: HostContext): Promise<void> {
 export async function getAiChatCatalog(
   projectId: string,
   signal?: AbortSignal,
+  codexProjectIdentity?: CodexProjectIdentity | null,
 ): Promise<AiChatCatalog> {
+  const query = new URLSearchParams();
+  if (codexProjectIdentity) {
+    query.set("codexProjectId", codexProjectIdentity.codexProjectId);
+    query.set("codexProjectKind", codexProjectIdentity.codexProjectKind);
+    query.set("codexHostId", codexProjectIdentity.codexHostId);
+    query.set("workspacePath", codexProjectIdentity.workspacePath);
+  }
   return request<AiChatCatalog>(
-    `/api/local/ai/catalog?projectId=${encodeURIComponent(projectId)}`,
+    `/api/local/ai/catalog?projectId=${encodeURIComponent(projectId)}${query.size ? `&${query}` : ""}`,
     { signal },
   );
 }
@@ -317,6 +345,10 @@ export async function getAiChatComposerCandidates(
   if (input.projectId) query.set("projectId", input.projectId);
   if (input.threadId) query.set("threadId", input.threadId);
   if (input.surface) query.set("surface", input.surface);
+  if (input.codexProjectId) query.set("codexProjectId", input.codexProjectId);
+  if (input.codexProjectKind) query.set("codexProjectKind", input.codexProjectKind);
+  if (input.codexHostId) query.set("codexHostId", input.codexHostId);
+  if (input.workspacePath) query.set("workspacePath", input.workspacePath);
   return request<ComposerCandidatesResponse>(`/api/local/ai/composer/candidates?${query}`, { signal });
 }
 
@@ -347,7 +379,7 @@ export async function createAiChatThread(input: {
   model?: string;
   reasoningEffort?: string;
   sandbox?: AiChatSandbox;
-}): Promise<AiChatThread> {
+} & Partial<CodexProjectIdentity>): Promise<AiChatThread> {
   const data = await request<{ thread: AiChatThread }>("/api/local/ai/threads", {
     method: "POST",
     body: JSON.stringify(input),
@@ -513,6 +545,7 @@ export async function uploadProjectReadmeAttachment(
 export async function createProject(input: {
   id: string;
   name: string;
+  issueKey?: string;
   workspacePath: string | null;
 }): Promise<Project> {
   const data = await request<{ project: Project }>("/api/projects", {

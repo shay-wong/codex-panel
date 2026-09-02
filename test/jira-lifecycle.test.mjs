@@ -383,6 +383,17 @@ if (args[0] === "debug") {
     assert.equal(tasks.find((task) => task.id === independent.id).status, "blocked");
     assert.equal(tasks.find((task) => task.id === failing.id).status, "blocked");
     assert.equal(tasks.find((task) => task.id === second.id).status, "backlog");
+    app.database.enqueueClaim(independent.id, "resume");
+    app.database.markClaimRunning(independent.id);
+    assert.equal(app.claimQueue.resumeFromUserComment(independent.id), null);
+    assert.equal(app.database.getClaimQueueItem(independent.id).resumeRequested, false);
+    response = await fetch(`${baseUrl}/api/local/tasks/${independent.id}/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
+    });
+    payload = await response.json();
+    assert.equal(response.status, 409);
+    assert.equal(payload.error.code, "JIRA_ISSUE_PAUSED");
     assert.equal(app.database.getTask(archived.id).archivedAt !== null, true);
     assert.equal(app.database.getAiChatRun(runningRun.id).status, "interrupted");
     assert.equal(app.database.getAiChatRun(backlogRun.id).status, "interrupted");

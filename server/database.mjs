@@ -7,6 +7,7 @@ import {
   DEFAULT_LABEL_NAMES,
   JIRA_PROJECT_ID,
   jiraDescriptionToMarkdown,
+  nextProjectIssueKey,
 } from "../shared/domain.mjs";
 
 const DEFAULT_PROJECT_LABELS_JSON = JSON.stringify(DEFAULT_LABEL_NAMES);
@@ -409,6 +410,7 @@ function projectFromRow(row) {
   return {
     id: row.id,
     name: row.name,
+    issueKey: row.issue_key,
     workspacePath: row.workspace_path,
     source: row.id === JIRA_PROJECT_ID ? "jira" : "local",
     labels: JSON.parse(row.labels),
@@ -473,6 +475,9 @@ function aiChatThreadFromRow(row) {
       projectId: row.origin_project_id,
       projectName: row.origin_project_name,
       workspacePath: row.origin_workspace_path,
+      ...(row.origin_codex_project_id ? { codexProjectId: row.origin_codex_project_id } : {}),
+      ...(row.origin_codex_project_kind ? { codexProjectKind: row.origin_codex_project_kind } : {}),
+      ...(row.origin_codex_host_id ? { codexHostId: row.origin_codex_host_id } : {}),
       ...(row.origin_issue_id ? { issueId: row.origin_issue_id } : {}),
       ...(row.origin_issue_identifier ? { issueIdentifier: row.origin_issue_identifier } : {}),
     },
@@ -560,13 +565,11 @@ function claimAttemptFromRow(row) {
   };
 }
 
-function projectPrefix(project) {
-  const idPrefix = project.id.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 12) || "TASK";
-  const existingPrefix = project.first_identifier?.replace(/-\d+$/, "");
-  if (existingPrefix && /^[A-Z0-9]+$/i.test(existingPrefix) && existingPrefix !== idPrefix) return existingPrefix;
-  if (idPrefix.length <= 5) return idPrefix;
-  const namePrefix = project.name.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 3);
-  return namePrefix || idPrefix.slice(0, 3);
+function availableProjectIssueKey(database, project) {
+  const unavailable = new Set(database.prepare(`
+    SELECT issue_key FROM projects WHERE issue_key IS NOT NULL
+  `).all().map((row) => row.issue_key));
+  return nextProjectIssueKey(project, unavailable);
 }
 
 export class PanelDatabase {
@@ -586,6 +589,7 @@ export class PanelDatabase {
       CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
+        issue_key TEXT NOT NULL,
         workspace_path TEXT,
         labels TEXT NOT NULL DEFAULT '${DEFAULT_PROJECT_LABELS_JSON}',
         next_task_number INTEGER NOT NULL DEFAULT 1 CHECK (next_task_number > 0),
@@ -750,6 +754,9 @@ export class PanelDatabase {
         origin_project_id TEXT NOT NULL,
         origin_project_name TEXT NOT NULL,
         origin_workspace_path TEXT NOT NULL,
+        origin_codex_project_id TEXT,
+        origin_codex_project_kind TEXT,
+        origin_codex_host_id TEXT,
         origin_issue_id TEXT,
         origin_issue_identifier TEXT,
         codex_thread_id TEXT,
@@ -835,6 +842,41 @@ export class PanelDatabase {
     if (!projectColumns.some((column) => column.name === "workspace_path")) {
       this.database.exec("ALTER TABLE projects ADD COLUMN workspace_path TEXT");
     }
+    if (!projectColumns.some((column) => column.name === "issue_key")) {
+      this.database.exec("ALTER TABLE projects ADD COLUMN issue_key TEXT");
+    }
+    const unavailableIssueKeys = new Set(this.database.prepare(`
+      SELECT issue_key FROM projects WHERE issue_key IS NOT NULL
+    `).all().map((row) => row.issue_key));
+    const updateProjectIssueKey = this.database.prepare(`
+      UPDATE projects SET issue_key = ? WHERE id = ? AND issue_key IS NULL
+    `);
+    for (const project of this.database.prepare(`
+      SELECT
+        projects.id,
+        projects.name,
+        (
+          SELECT tasks.identifier
+          FROM tasks
+          WHERE tasks.project_id = projects.id
+          ORDER BY tasks.created_at, tasks.id
+          LIMIT 1
+        ) AS first_identifier
+      FROM projects
+      WHERE projects.issue_key IS NULL
+      ORDER BY projects.created_at, projects.id
+    `).all()) {
+      const issueKey = nextProjectIssueKey({
+        id: project.id,
+        name: project.name,
+        firstIdentifier: project.first_identifier,
+      }, unavailableIssueKeys);
+      updateProjectIssueKey.run(issueKey, project.id);
+      unavailableIssueKeys.add(issueKey);
+    }
+    this.database.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS projects_issue_key_unique ON projects(issue_key)
+    `);
 
     const projectSummaryColumns = this.database.prepare(
       "PRAGMA table_info(project_summaries)",
@@ -869,6 +911,15 @@ export class PanelDatabase {
         ADD COLUMN purpose TEXT NOT NULL DEFAULT 'temporary'
         CHECK (purpose IN ('temporary', 'formal'))
       `);
+    }
+    for (const column of [
+      "origin_codex_project_id",
+      "origin_codex_project_kind",
+      "origin_codex_host_id",
+    ]) {
+      if (!aiChatThreadColumns.some((candidate) => candidate.name === column)) {
+        this.database.exec(`ALTER TABLE ai_chat_threads ADD COLUMN ${column} TEXT`);
+      }
     }
     const claimQueueSql = this.database.prepare(`
       SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'issue_claim_queue'
@@ -943,6 +994,10 @@ export class PanelDatabase {
         this.database.exec(`ALTER TABLE tasks ADD COLUMN ${column} TEXT`);
       }
     }
+    this.database.exec(`
+      DROP TRIGGER IF EXISTS tasks_todo_execution_target_insert;
+      DROP TRIGGER IF EXISTS tasks_todo_execution_target_update;
+    `);
     if (hasLinkedThreadId) {
       this.database.exec(`
         UPDATE tasks
@@ -1395,8 +1450,8 @@ export class PanelDatabase {
 
     const timestamp = now();
     this.database.prepare(`
-      INSERT INTO projects (id, name, workspace_path, next_task_number, created_at, updated_at)
-      VALUES ('local', '全局', NULL, 1, ?, ?)
+      INSERT INTO projects (id, name, issue_key, workspace_path, next_task_number, created_at, updated_at)
+      VALUES ('local', '全局', 'LOCAL', NULL, 1, ?, ?)
       ON CONFLICT(id) DO NOTHING
     `).run(timestamp, timestamp);
     this.database.prepare(`
@@ -1492,6 +1547,7 @@ export class PanelDatabase {
       SELECT
         projects.id,
         projects.name,
+        projects.issue_key,
         projects.workspace_path,
         projects.labels,
         projects.created_at,
@@ -1504,6 +1560,7 @@ export class PanelDatabase {
       GROUP BY
         projects.id,
         projects.name,
+        projects.issue_key,
         projects.workspace_path,
         projects.labels,
         projects.created_at,
@@ -1514,20 +1571,25 @@ export class PanelDatabase {
 
   createProject(input) {
     const timestamp = now();
+    const issueKey = input.issueKey ?? availableProjectIssueKey(this.database, input);
     try {
       this.database.prepare(`
         INSERT INTO projects (
-          id, name, workspace_path, labels, next_task_number, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 1, ?, ?)
+          id, name, issue_key, workspace_path, labels, next_task_number, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
       `).run(
         input.id,
         input.name,
+        issueKey,
         input.workspacePath,
         DEFAULT_PROJECT_LABELS_JSON,
         timestamp,
         timestamp,
       );
     } catch (error) {
+      if (String(error.message).includes("projects.issue_key")) {
+        throw new ApiError(409, "PROJECT_ISSUE_KEY_EXISTS", `Project Key '${issueKey}' already exists`);
+      }
       if (String(error.message).includes("UNIQUE constraint failed")) {
         throw new ApiError(409, "PROJECT_EXISTS", `Project '${input.id}' already exists`);
       }
@@ -1538,24 +1600,18 @@ export class PanelDatabase {
 
   ensureJiraProject(name) {
     const timestamp = now();
+    const existing = this.database.prepare("SELECT issue_key FROM projects WHERE id = ?")
+      .get(JIRA_PROJECT_ID);
+    const issueKey = existing?.issue_key ?? availableProjectIssueKey(this.database, {
+      id: JIRA_PROJECT_ID,
+      name,
+    });
     this.database.prepare(`
-      INSERT INTO projects (id, name, workspace_path, next_task_number, created_at, updated_at)
-      VALUES (?, ?, NULL, 1, ?, ?)
+      INSERT INTO projects (id, name, issue_key, workspace_path, next_task_number, created_at, updated_at)
+      VALUES (?, ?, ?, NULL, 1, ?, ?)
       ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at
-    `).run(JIRA_PROJECT_ID, name, timestamp, timestamp);
-    return this.database.prepare(`
-      SELECT
-        projects.id,
-        projects.name,
-        projects.workspace_path,
-        projects.created_at,
-        projects.updated_at,
-        COUNT(tasks.id) AS issue_count
-      FROM projects
-      LEFT JOIN tasks ON tasks.project_id = projects.id AND tasks.archived_at IS NULL
-      WHERE projects.id = ?
-      GROUP BY projects.id
-    `).get(JIRA_PROJECT_ID);
+    `).run(JIRA_PROJECT_ID, name, issueKey, timestamp, timestamp);
+    return this.getProject(JIRA_PROJECT_ID);
   }
 
   syncJiraTasks(issues, {
@@ -1580,14 +1636,20 @@ export class PanelDatabase {
     ]);
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      const existingProject = this.database.prepare("SELECT issue_key FROM projects WHERE id = ?")
+        .get(JIRA_PROJECT_ID);
+      const issueKey = existingProject?.issue_key ?? availableProjectIssueKey(this.database, {
+        id: JIRA_PROJECT_ID,
+        name: projectName,
+      });
       this.database.prepare(`
-        INSERT INTO projects (id, name, workspace_path, labels, next_task_number, created_at, updated_at)
-        VALUES (?, ?, NULL, ?, 1, ?, ?)
+        INSERT INTO projects (id, name, issue_key, workspace_path, labels, next_task_number, created_at, updated_at)
+        VALUES (?, ?, ?, NULL, ?, 1, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           labels = excluded.labels,
           updated_at = excluded.updated_at
-      `).run(JIRA_PROJECT_ID, projectName, projectLabels, timestamp, timestamp);
+      `).run(JIRA_PROJECT_ID, projectName, issueKey, projectLabels, timestamp, timestamp);
       const findExisting = this.database.prepare(`
         SELECT * FROM tasks
         WHERE external_source = 'jira' AND external_origin = ? AND external_id = ?
@@ -3284,11 +3346,20 @@ export class PanelDatabase {
     const link = this.database.prepare(`
       SELECT jira_task_id FROM jira_task_links WHERE task_id = ?
     `).get(taskId);
-    if (link && this.getJiraLifecycle(link.jira_task_id).pending?.suggestedAction === "pause") {
+    if (!link) return;
+    const lifecycle = this.getJiraLifecycle(link.jira_task_id);
+    if (lifecycle.pending?.suggestedAction === "pause") {
       throw new ApiError(
         409,
         "JIRA_LIFECYCLE_PAUSE_PENDING",
         "Resolve the linked Jira lifecycle notice before starting or continuing this issue",
+      );
+    }
+    if (lifecycle.pausedIssueIds.includes(taskId)) {
+      throw new ApiError(
+        409,
+        "JIRA_ISSUE_PAUSED",
+        "Return the linked Jira issue to in progress before continuing this issue",
       );
     }
   }
@@ -3661,6 +3732,7 @@ export class PanelDatabase {
       SELECT
         projects.id,
         projects.name,
+        projects.issue_key,
         projects.workspace_path,
         projects.labels,
         projects.created_at,
@@ -3674,6 +3746,7 @@ export class PanelDatabase {
       GROUP BY
         projects.id,
         projects.name,
+        projects.issue_key,
         projects.workspace_path,
         projects.labels,
         projects.created_at,
@@ -4030,10 +4103,11 @@ export class PanelDatabase {
       INSERT INTO ai_chat_threads (
         id, title, status, purpose,
         origin_project_id, origin_project_name, origin_workspace_path,
+        origin_codex_project_id, origin_codex_project_kind, origin_codex_host_id,
         origin_issue_id, origin_issue_identifier,
         codex_thread_id, model, reasoning_effort, sandbox,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.title,
@@ -4042,6 +4116,9 @@ export class PanelDatabase {
       input.origin.projectId,
       input.origin.projectName,
       input.origin.workspacePath,
+      input.origin.codexProjectId ?? null,
+      input.origin.codexProjectKind ?? null,
+      input.origin.codexHostId ?? null,
       input.origin.issueId ?? null,
       input.origin.issueIdentifier ?? null,
       input.codexThreadId ?? null,
@@ -4832,6 +4909,22 @@ export class PanelDatabase {
     return attachTaskActivity(task, comments, activities, previewImage);
   }
 
+  resolveTaskReference(reference) {
+    const exact = this.getTask(reference);
+    if (exact) return exact;
+    const matches = this.database.prepare(`
+      SELECT id FROM tasks WHERE external_key = ? ORDER BY created_at, id LIMIT 2
+    `).all(reference);
+    if (matches.length > 1) {
+      throw new ApiError(
+        409,
+        "TASK_REFERENCE_AMBIGUOUS",
+        `Task reference '${reference}' matches more than one external issue`,
+      );
+    }
+    return matches[0] ? this.getTask(matches[0].id) : null;
+  }
+
   getTaskTree(id, direction, depth) {
     const root = this.database.prepare(
       "SELECT * FROM tasks WHERE id = ? OR identifier = ?",
@@ -4904,14 +4997,8 @@ export class PanelDatabase {
           projects.id,
           projects.name,
           projects.labels,
-          projects.next_task_number,
-          (
-            SELECT tasks.identifier
-            FROM tasks
-            WHERE tasks.project_id = projects.id
-            ORDER BY tasks.created_at, tasks.id
-            LIMIT 1
-          ) AS first_identifier
+          projects.issue_key,
+          projects.next_task_number
         FROM projects
         WHERE projects.id = ?
       `).get(input.projectId);
@@ -4919,7 +5006,7 @@ export class PanelDatabase {
         throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${input.projectId}' does not exist`);
       }
 
-      const prefix = projectPrefix(project);
+      const prefix = project.issue_key;
       const maximum = this.database.prepare(`
         SELECT MAX(CAST(substr(identifier, ?) AS INTEGER)) AS number
         FROM tasks

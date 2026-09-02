@@ -37,6 +37,30 @@ test("the Panel skill preserves complete task bindings", () => {
   assert.match(skillSource, /all five explicit `--binding-\*` options/i);
   assert.match(cliReference, /--binding-codex-project-kind local\|remote/i);
   assert.match(cliReference, /`--thread-id` records the conversation performing the mutation; it does not create a complete task binding/i);
+  assert.match(skillSource, /explicitly asks to bind the current conversation[\s\S]*`conversation bind ISSUE_ID`/i);
+  assert.match(cliReference, /panelctl conversation bind ISSUE_ID/);
+  assert.match(cliReference, /refuses to replace another conversation's binding/i);
+});
+
+test("the Panel skill resolves an explicit Jira ID before workspace context", () => {
+  assert.match(
+    skillSource,
+    /any user message supplies an exact Jira task ID[\s\S]*`jira planning get`[\s\S]*before `context current`/i,
+  );
+  assert.match(skillSource, /returned `context\.issues` as the Jira-linked Panel Issues/i);
+  assert.match(
+    skillSource,
+    /read-only lookup does not turn the conversation into a Jira planning conversation/i,
+  );
+});
+
+test("the Panel skill resolves linked Jira from an execution Issue", () => {
+  assert.match(skillSource, /`jira planning get` with the exact Panel Issue ID or identifier/i);
+  assert.match(skillSource, /Return `context\.jira\.externalKey` only when present/i);
+  assert.match(skillSource, /`context\.jira` is null[\s\S]*not linked to Jira/i);
+  assert.match(skillSource, /never substitute the Panel `id` or `identifier` as a Jira key/i);
+  assert.match(cliReference, /`jira planning get` is a read-only context lookup[\s\S]*execution workflow/i);
+  assert.match(cliReference, /Use `save` and `publish` only inside a planning conversation/i);
 });
 
 test("the Panel CLI reference covers help, project README, files, and incremental cursors", () => {

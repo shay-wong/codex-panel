@@ -20,6 +20,10 @@ In this product, **companion** means the **device-local loopback service** used 
 
 ## Workflow
 
+When any user message supplies an exact Jira task ID, run `jira planning get` with that ID before `context current`, even if the conversation was not opened from Jira. Use the returned `context.issues` as the Jira-linked Panel Issues, then read the relevant Issue, comments, and attachments through the normal workflow. This read-only lookup does not turn the conversation into a Jira planning conversation; `jira planning save` and `jira planning publish` remain limited to the planning workflow below.
+
+When another workflow needs the Jira reference linked to an execution Issue, run `jira planning get` with the exact Panel Issue ID or identifier. Return `context.jira.externalKey` only when present. If `context.jira` is null, the Issue is not linked to Jira; never substitute the Panel `id` or `identifier` as a Jira key. This is also a read-only lookup and does not authorize planning writes.
+
 1. For an existing issue, first run `issue get`, `comment list`, and `attachment list --task`. On the first handoff, omit `--after`, read the full lists, and keep each response's separate `nextCursor`. When the same task resumes, run `issue get` again and pass each saved cursor to its matching list with `--after` to read only new or modified entries. Comment lists include attachments on returned comments; use `attachment list --comment` with its own cursor when a known comment's attachment list can grow.
 2. Search for an existing issue before creating one. Use `context current`, then list the project issues and compare their identifiers, titles, descriptions, and status.
    - If an issue already tracks the same requirement, append the new requirement or acceptance detail to that issue without discarding its existing scope.
@@ -36,6 +40,7 @@ In this product, **companion** means the **device-local loopback service** used 
 5. Create or update issues with the CLI; consume its JSON output.
    Issues created through `panelctl` are assigned to Codex Agent by default. Later CLI updates do not change the assignee.
 6. Let `panelctl` attribute every issue, relation, or comment mutation to the current Codex conversation through `CODEX_THREAD_ID`. Outside Codex, pass the exact conversation id with `--thread-id`. This attribution alone is not a complete task binding.
+   When the user explicitly asks to bind the current conversation to an Issue or Jira key, run `conversation bind ISSUE_ID`. Do not infer binding from invoking this Skill, mentioning an Issue, reading it, commenting on it, or sharing its repository. Jira binding starts or resumes that Jira requirement's local planning record without changing Jira fields or status.
 7. To claim a `todo` issue, move it to `in_progress` with `--if-version` from the latest read before starting implementation. The claim and every later owned `issue move` must pass the complete saved `threadBinding`: `threadId`, `codexProjectId`, `codexProjectKind`, `codexHostId`, and `workspacePath`, using all five explicit `--binding-*` options. If any identity field is unavailable, stop before claiming; never create a legacy binding containing only `threadId`. Preserve an existing complete binding exactly and never take over a binding owned by another conversation. If the claim reports a version conflict or a new read shows changed status or requirements, skip the issue and do not implement it.
 8. Include `--if-version <version>` on every concurrent update, using the version returned by the latest read.
 9. Before requesting review, verify the requested work and acceptance criteria.

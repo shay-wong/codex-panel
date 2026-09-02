@@ -92,6 +92,7 @@
 
       .status-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--warning); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 15%, transparent); }
       .overall-status.running .status-dot, .component.success .status-dot { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+      .component.available .status-dot { border: 2px solid var(--accent); background: var(--surface); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
       .overall-status.error .status-dot, .component.danger .status-dot { background: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 15%, transparent); }
       .overall-status.stopped .status-dot, .component.idle .status-dot { background: var(--faint); box-shadow: none; }
 
@@ -360,7 +361,7 @@
         const isQueued = snapshot.openRequestPending && !integrationReady;
         setComponent("panelComponent", "panelStatus", isError ? "danger" : hasProcess ? "success" : "idle", isError ? "启动异常" : hasProcess ? `运行中 · PID ${snapshot.childPid}` : "未启动");
         setComponent("codexComponent", "codexStatus", isError ? "danger" : integrationReady ? "success" : hasProcess ? "working" : "idle", isError ? "连接失败" : integrationReady ? "连接已就绪" : hasProcess ? "正在等待连接" : "未连接");
-        setComponent("embeddedComponent", "embeddedStatus", snapshot.embeddedVisible ? "success" : isOpening || isQueued ? "working" : "idle", snapshot.embeddedVisible ? "已在 Codex 中打开" : isOpening ? "正在打开" : isQueued ? "等待连接后打开" : integrationReady ? "可以打开" : "尚未就绪");
+        setComponent("embeddedComponent", "embeddedStatus", snapshot.embeddedVisible ? "success" : isOpening || isQueued ? "working" : integrationReady ? "available" : "idle", snapshot.embeddedVisible ? "已在 Codex 中打开" : isOpening ? "正在打开" : isQueued ? "等待连接后打开" : integrationReady ? "可以打开" : "尚未就绪");
       }
 
       function renderSnapshot(snapshot) {

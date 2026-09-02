@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  findTaskConversations,
   findResidentInjectorPids,
   handleHostBindingPayload,
   injectionReadinessMatches,
@@ -21,15 +22,67 @@ const currentAutomationRequest = {
   operation: "ensure-active",
   panelProjectId: "local",
   codexProjectId: "codex-project",
-  codexProjectKind: "local",
-  codexHostId: "local",
   projectName: "Local",
   workspacePath: "/tmp/project",
   skillPath: "/tmp/manage-panel/SKILL.md",
+  enabledByUser: true,
+  quotaAware: false,
   intervalMinutes: 10,
   model: "gpt-5.6-sol",
   reasoningEffort: "ultra",
 };
+
+test("stored Codex conversations can be recovered by their exact issue identifier", async () => {
+  const calls = [];
+  const result = await findTaskConversations({
+    codexHostId: "local",
+    identifier: "TAPON-8776",
+  }, async (method, params) => {
+    calls.push([method, params]);
+    if (method === "thread/list") {
+      return {
+        data: [
+          { id: "matching-thread", name: "TAPON-8776 · Jira 规划", createdAt: 10 },
+          { id: "wrong-thread", name: "TAPON-8776 notes", createdAt: 9 },
+        ],
+        nextCursor: null,
+      };
+    }
+    return {
+      thread: {
+        id: params.threadId,
+        cwd: params.threadId === "matching-thread" ? "/tmp/project" : "/tmp/other",
+        turns: [{
+          items: [{
+            type: "userMessage",
+            content: [{
+              type: "text",
+              text: params.threadId === "matching-thread"
+                ? "规划 TAPON-8776"
+                : "规划 TAPON-87760",
+            }],
+          }],
+        }],
+      },
+    };
+  });
+
+  assert.deepEqual(result, {
+    matches: [{
+      threadId: "matching-thread",
+      name: "TAPON-8776 · Jira 规划",
+      cwd: "/tmp/project",
+      createdAt: 10,
+    }],
+  });
+  assert.deepEqual(calls[0], ["thread/list", {
+    cursor: null,
+    limit: 50,
+    sortKey: "created_at",
+    sortDirection: "desc",
+    searchTerm: "TAPON-8776",
+  }]);
+});
 
 test("native thread interruption targets only the active turn", async () => {
   const calls = [];
@@ -190,8 +243,46 @@ test("composer prefill requires bounded Panel Skill metadata", async () => {
     payload: JSON.stringify({ ...valid, id: "prefill-request-3", skillDisplayName: "x".repeat(1_025) }),
     executionContextId: 12,
   }, handlers);
+  await handleHostBindingPayload({
+    payload: JSON.stringify({
+      ...valid,
+      id: "prefill-request-skills",
+      skillName: "",
+      skillDisplayName: "",
+      skillPath: "",
+      skills: [
+        {
+          name: "manage-panel",
+          displayName: "Manage Panel",
+          path: "/tmp/manage-panel/SKILL.md",
+        },
+        {
+          name: "implement",
+          displayName: "Implement",
+          path: "/tmp/implement/SKILL.md",
+        },
+      ],
+    }),
+    executionContextId: 12,
+  }, handlers);
+  await handleHostBindingPayload({
+    payload: JSON.stringify({
+      ...valid,
+      id: "prefill-request-invalid-skills",
+      skills: [{ name: "", displayName: "Implement", path: "/tmp/implement/SKILL.md" }],
+    }),
+    executionContextId: 12,
+  }, handlers);
 
-  assert.deepEqual(calls, ["prefill", true, "prefill", true, false, false, false]);
+  assert.deepEqual(calls, [
+    "prefill", true,
+    "prefill", true,
+    false,
+    false,
+    false,
+    "prefill", true,
+    false,
+  ]);
 });
 
 test("SSH conversation confirmation, start, and attachment open require bounded host payloads", async () => {
@@ -201,6 +292,10 @@ test("SSH conversation confirmation, start, and attachment open require bounded 
     startConversation: async (request) => {
       calls.push(["start", request.taskId, request.codexHostId]);
       return { threadId: "thread-1" };
+    },
+    findConversations: async (request) => {
+      calls.push(["find", request.codexHostId, request.identifier]);
+      return { matches: [] };
     },
     confirmConversation: async (request) => calls.push(["confirm", request.threadId, request.identifier]),
     openAttachment: async (request) => calls.push(["attachment", request.filename]),
@@ -230,8 +325,16 @@ test("SSH conversation confirmation, start, and attachment open require bounded 
     codexHostId: "ssh-host",
     targetRoot: "/srv/project",
     identifier: "REMOTE-1",
+    title: "REMOTE-1: Fix bridge",
+  };
+  const recovery = {
+    id: "remote-thread-recovery",
+    action: "find-task-conversations",
+    codexHostId: "ssh-host",
+    identifier: "REMOTE-1",
   };
 
+  await handleHostBindingPayload({ payload: JSON.stringify(recovery), executionContextId: 12 }, handlers);
   await handleHostBindingPayload({ payload: JSON.stringify(confirmation), executionContextId: 12 }, handlers);
   await handleHostBindingPayload({ payload: JSON.stringify(conversation), executionContextId: 12 }, handlers);
   await handleHostBindingPayload({ payload: JSON.stringify(attachment), executionContextId: 12 }, handlers);
@@ -241,6 +344,8 @@ test("SSH conversation confirmation, start, and attachment open require bounded 
   }, handlers);
 
   assert.deepEqual(calls, [
+    ["find", "ssh-host", "REMOTE-1"],
+    ["response", true],
     ["confirm", "thread-1", "REMOTE-1"],
     ["response", true],
     ["start", "task-1", "ssh-host"],
@@ -314,7 +419,7 @@ test("a stale automation parser receives an immediate host error instead of timi
   assert.deepEqual(responses, [{
     id: currentAutomationRequest.id,
     ok: false,
-    error: "自动认领配置暂时无法应用，请刷新后重试",
+    error: "Panel 与 Codex 宿主协议不匹配，请重启 Codex Panel 后重试",
     diagnosticCode: "AUTOMATION_SCHEMA_MISMATCH",
   }]);
 });

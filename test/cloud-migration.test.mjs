@@ -517,11 +517,15 @@ test("migration snapshots live WAL data, counts each project, and strips local e
     attachmentsDirectory: fixture.attachmentsDirectory,
   });
 
-  assert.equal(bundle.schemaVersion, 3);
+  assert.equal(bundle.schemaVersion, 4);
   assert.deepEqual(bundle.counts.byProject, expectedProjectCounts());
   assert.deepEqual(
     bundle.tables.projects.map((project) => project.id).sort(),
     ["alpha", "beta"],
+  );
+  assert.deepEqual(
+    bundle.tables.projects.map((project) => project.issue_key).sort(),
+    ["ALPHA", "BETA"],
   );
   assert.equal(bundle.tables.projects.every((project) => project.workspace_path === null), true);
 

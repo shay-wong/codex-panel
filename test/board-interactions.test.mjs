@@ -14,6 +14,7 @@ const contextMenuSource = await readFile(new URL("../web/src/components/TaskCont
 const cardSource = await readFile(new URL("../web/src/components/TaskCard.tsx", import.meta.url), "utf8");
 const filterSource = await readFile(new URL("../web/src/taskFilters.ts", import.meta.url), "utf8");
 const typesSource = await readFile(new URL("../web/src/types.ts", import.meta.url), "utf8");
+const composerSource = await readFile(new URL("../web/src/components/InlineMediaComposer.tsx", import.meta.url), "utf8");
 
 function taskStatuses() {
   const match = typesSource.match(/export const TASK_STATUSES = (\[[\s\S]*?\]) as const/);
@@ -152,10 +153,10 @@ test("issues expose processing conversations without manual binding", () => {
   assert.doesNotMatch(appSource, /detail-thread-button/);
   assert.doesNotMatch(detailSource, /输入对话 ID|解除 Codex 对话绑定|>绑定</);
   assert.doesNotMatch(editorSource, /对话 ID|linkedThreadId/);
-  assert.match(detailSource, /currentTask\.threadBinding \|\| currentTask\.legacyLocalThreadId/);
+  assert.doesNotMatch(detailSource, /处理此议题的对话|Conversations for this issue/);
   assert.doesNotMatch(detailSource, /currentTask\.threadIds/);
   assert.match(detailSource, /<strong>\{text\("查看对话", "View conversation"\)\}<\/strong>/);
-  assert.match(detailSource, /className="conversation-thread-id">\{threadId\}/);
+  assert.doesNotMatch(detailSource, /className="conversation-thread-id">\{threadId\}/);
   assert.doesNotMatch(detailSource, /shortThreadId/);
   assert.doesNotMatch(detailSource, /detail-property-label">Codex/);
   assert.match(detailSource, /comment\.threadBinding \|\| comment\.legacyLocalThreadId/);
@@ -174,7 +175,11 @@ test("issue activity opens formal execution in Codex and keeps it out of tempora
   assert.match(appSource, /<TaskDetail[\s\S]*?aiChatThreads=\{aiThreads\}/);
   assert.match(detailSource, /aiChatThreads: AiChatThread\[\]/);
   assert.match(detailSource, /const linkedAiChatThreads = aiChatThreads\.filter/);
-  assert.match(detailSource, /\.\.\.linkedAiChatThreads\.map\(\(thread\) => \(\{/);
+  assert.match(detailSource, /const jiraPlanningThread = jiraContext\?\.plan\?\.threadId/);
+  assert.match(detailSource, /for \(const ref of currentTask\.conversationRefs\)/);
+  assert.match(detailSource, /roleLabel: \["Jira 规划会话", "Jira planning conversation"\]/);
+  assert.match(detailSource, /roleLabel: currentTask\.source === "jira" \? \["关联会话", "Linked conversation"\]/);
+  assert.match(detailSource, /\.\.\.\[\.\.\.conversationActivities\.values\(\)\]\.map/);
   assert.match(detailSource, /kind: "ai-conversation" as const/);
   assert.match(detailSource, /const formalThread = item\.thread\.purpose === "formal"/);
   assert.match(detailSource, /formalThread[\s\S]*?onOpenLegacyLocalThread\(item\.thread\.codexThreadId\)/);
@@ -184,10 +189,20 @@ test("issue activity opens formal execution in Codex and keeps it out of tempora
   assert.match(aiChatSource, /threads\.filter\(\(thread\) => thread\.purpose === "temporary"\)/);
   assert.match(aiChatSource, /onThreadsChange\?\.\(available \? threads : \[\]\)/);
   assert.match(appSource, /message\.type === "panel:thread-prepared"[\s\S]*?pendingJiraPlanningRef\.current\.has\(payload\.taskId\)[\s\S]*?return;[\s\S]*?setOpeningThreadTaskId\(null\)/);
-  assert.match(appSource, /const jiraPlanning = pendingJiraPlanningRef\.current\.get\(payload\.taskId\)[\s\S]*?if \(jiraPlanning\) setOpeningThreadTaskId\(null\)/);
+  assert.match(appSource, /const alreadyLinked = Boolean\([\s\S]*?\(!jiraPlanning && alreadyLinked\)[\s\S]*?else if \(!alreadyLinked\)/);
+  assert.match(appSource, /\.then\(\(updated\) => \{[\s\S]*?if \(jiraPlanning\) setOpeningThreadTaskId\(null\)/);
+  assert.match(detailSource, /\}, \[jiraAvailable, task\.id, task\.version, openingThread\]\);/);
   assert.match(appSource, /event\.type === "claim\.updated"[\s\S]*?setAiThreadsRevision\(\(current\) => current \+ 1\)/);
   assert.match(appSource, /candidate\.origin\.issueId === pendingExecutionOpen\.taskId[\s\S]*?candidate\.purpose === "formal"[\s\S]*?candidate\.currentRun\?\.status === "running"/);
   assert.match(styles, /\.activity-conversation-link \{[\s\S]*?background: var\(--surface\)/);
+});
+
+test("Jira link activity opens the linked Panel issue", () => {
+  assert.match(detailSource, /change\.field !== "jiraIssue"/);
+  assert.match(detailSource, /onOpenTask\(await getTask\(identifier\)\)/);
+  assert.match(detailSource, /aria-label=\{text\([\s\S]*?打开议题[\s\S]*?Open issue/);
+  assert.match(detailSource, /onClick=\{\(\) => void openActivityTask\(target\)\}/);
+  assert.match(styles, /button\.activity-change-value \{[\s\S]*?background: transparent;[\s\S]*?color: var\(--accent\)/);
 });
 
 test("Jira repository summary keeps the overflow count and manage action visible", () => {
@@ -204,14 +219,16 @@ test("Jira repository filtering keeps the management dialog height stable", () =
   assert.match(dialogStyles, /height: min\(720px, calc\(100vh - 48px\)\)/);
   assert.match(styles, /\.jira-manager-body \{[\s\S]*?min-height: 0/);
 });
-test("comments stage, upload, render and delete their own attachments", () => {
+test("comments upload and render their own attachments in the content flow", () => {
   assert.match(apiSource, /export async function uploadCommentAttachment/);
   assert.match(apiSource, /\/api\/comments\/\$\{encodeURIComponent\(commentId\)\}\/attachments/);
-  assert.match(detailSource, /pendingCommentFiles/);
-  assert.match(detailSource, /uploadCommentAttachment\(comment\.id, file, "attachment"\)/);
-  assert.match(detailSource, /comment\.attachments\.some\(\(attachment\) => attachment\.kind === "attachment"\)/);
-  assert.match(detailSource, /comment\.attachments[\s\S]*?\.filter\(\(attachment\) => attachment\.kind === "attachment"\)[\s\S]*?\.map\(\(attachment\) =>/);
-  assert.match(detailSource, /setPendingAttachmentDelete\(attachment\)/);
+  assert.match(detailSource, /commentInlineFiles/);
+  assert.match(detailSource, /uploadCommentAttachment\(comment\.id, file\.file, "attachment"\)/);
+  assert.match(detailSource, /resolveInlineAttachmentMarkdown/);
+  assert.match(detailSource, /createInlineMediaSegments\(comment\.body, referenceTasks, comment\.attachments\)/);
+  assert.match(detailSource, /attachments=\{comment\.attachments\}/);
+  assert.match(detailSource, /onOpenAttachment=\{handleAttachmentDownload\}/);
+  assert.match(composerSource, /className="inline-media-attachment"/);
 });
 
 test("issue creation and detail share one searchable, creatable label picker", () => {

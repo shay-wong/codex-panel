@@ -548,7 +548,7 @@ test("Panel reserves a repository until Codex binds its native worktree", async 
   }
 });
 
-test("failed execution blocks and resumes from user input", async () => {
+test("execution failure blocks until explicit retry", async () => {
   const item = await fixture();
   const task = item.createTask("Needs user input");
   const aiChat = {
@@ -583,10 +583,45 @@ test("failed execution blocks and resumes from user input", async () => {
     assert.equal(item.database.getClaimQueueItem(task.id).state, "blocked");
     assert.match(item.database.listComments(task.id)[0].body, /implementation failed/);
 
-    queue.resumeFromUserComment(task.id);
-    assert.equal(item.database.getTask(task.id).status, "todo");
-    assert.equal(item.database.getClaimQueueItem(task.id).state, "queued");
-    assert.equal(item.database.getClaimQueueItem(task.id).source, "resume");
+    assert.equal(queue.resumeFromUserComment(task.id), null);
+    assert.equal(item.database.getTask(task.id).status, "blocked");
+    const retried = queue.enqueue(task.id);
+    assert.equal(retried.task.status, "todo");
+    assert.equal(retried.claim.state, "queued");
+    assert.equal(retried.claim.source, "resume");
+  } finally {
+    queue.close();
+    await item.close();
+  }
+});
+
+test("user-input block resumes from a reply and rejects explicit retry", async () => {
+  const item = await fixture();
+  const task = item.createTask("Needs user input");
+  const queue = new ClaimQueueService({ database: item.database, aiChat: {} });
+  try {
+    queue.enqueue(task.id);
+    item.database.markClaimRunning(task.id);
+    const current = item.database.getTask(task.id);
+    item.database.moveTask(
+      current.id,
+      current.version,
+      "blocked",
+      undefined,
+      undefined,
+      undefined,
+      actor,
+    );
+    item.database.finishClaim(task.id, "blocked");
+
+    assert.throws(
+      () => queue.enqueue(task.id),
+      (error) => error?.code === "CLAIM_USER_INPUT_REQUIRED",
+    );
+    const resumed = queue.resumeFromUserComment(task.id);
+    assert.equal(resumed.task.status, "todo");
+    assert.equal(resumed.claim.state, "queued");
+    assert.equal(resumed.claim.source, "resume");
   } finally {
     queue.close();
     await item.close();

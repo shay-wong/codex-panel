@@ -1,12 +1,15 @@
-import type { ClipboardEvent } from "react";
+import { memo, useEffect, useState, type ClipboardEvent, type MouseEvent } from "react";
+import { createPortal } from "react-dom";
+import { attachmentContentUrl } from "../api";
 import { readIssueIdentifier } from "../issueRoute";
-import type { Task, TaskRelationSummary } from "../types";
+import type { Attachment, Task, TaskRelationSummary } from "../types";
 import { STATUS_DETAILS } from "./BoardColumn";
 import {
   createInlineMediaSegmentsFromHtml,
   writeInlineMediaClipboard,
 } from "./InlineMediaComposer";
 import { MarkdownDocument } from "./MarkdownDocument";
+import { LinearIcon } from "./LinearIcon";
 import { StatusIcon } from "./SemanticIcons";
 
 function referencedTask(
@@ -31,18 +34,56 @@ function referencedTask(
   }
 }
 
-export function DescriptionDocument({
+function referencedAttachment(href: string, attachments: Attachment[]): Attachment | null {
+  const match = new URL(href, document.baseURI).pathname.match(/\/api\/attachments\/([^/]+)\/download$/);
+  if (!match) return null;
+  const id = decodeURIComponent(match[1]);
+  return attachments.find((attachment) => attachment.id === id) ?? null;
+}
+
+function fileSize(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+export const DescriptionDocument = memo(function DescriptionDocument({
   value,
   referenceTasks,
   onOpenTask,
+  attachments = [],
+  enableImagePreview = false,
+  onOpenAttachment,
 }: {
   value: string;
   referenceTasks: Task[];
   onOpenTask: (task: TaskRelationSummary) => void;
+  attachments?: Attachment[];
+  enableImagePreview?: boolean;
+  onOpenAttachment?: (event: MouseEvent<HTMLAnchorElement>, attachment: Attachment) => void;
 }) {
-  return (
+  const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
+
+  useEffect(() => {
+    if (!previewImage) return;
+    function closePreview(event: globalThis.KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPreviewImage(null);
+    }
+    window.addEventListener("keydown", closePreview, true);
+    return () => window.removeEventListener("keydown", closePreview, true);
+  }, [previewImage]);
+
+  return (<>
     <MarkdownDocument
       value={value}
+      onImageClick={enableImagePreview ? (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setPreviewImage({ src: event.currentTarget.currentSrc, alt: event.currentTarget.alt });
+      } : undefined}
       onCopy={(event: ClipboardEvent<HTMLDivElement>) => {
         const selection = event.currentTarget.ownerDocument.getSelection();
         if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
@@ -63,6 +104,30 @@ export function DescriptionDocument({
         );
       }}
       renderLink={(href) => {
+        const attachment = href ? referencedAttachment(href, attachments) : null;
+        if (attachment) {
+          if (attachment.contentType.startsWith("video/")) {
+            return (
+              <video
+                className="document-inline-video"
+                src={attachmentContentUrl(attachment)}
+                aria-label={attachment.filename}
+                controls
+              />
+            );
+          }
+          return (
+            <span className="document-attachment-card">
+              <span className="attachment-file-icon" aria-hidden="true">
+                <LinearIcon name="file" />
+              </span>
+              <span className="attachment-copy composer-attachment-copy">
+                <strong>{attachment.filename}</strong>
+                <span>{fileSize(attachment.size)}</span>
+              </span>
+            </span>
+          );
+        }
         const reference = href ? referencedTask(href, referenceTasks) : null;
         if (!reference) return null;
         const { task } = reference;
@@ -88,6 +153,17 @@ export function DescriptionDocument({
         );
       }}
       onLinkClick={(event, href) => {
+        const attachment = href ? referencedAttachment(href, attachments) : null;
+        if (attachment && onOpenAttachment) {
+          if (
+            event.button === 0
+            && !event.metaKey
+            && !event.ctrlKey
+            && !event.shiftKey
+            && !event.altKey
+          ) onOpenAttachment(event, attachment);
+          return;
+        }
         const reference = href ? referencedTask(href, referenceTasks) : null;
         if (
           !reference
@@ -101,5 +177,33 @@ export function DescriptionDocument({
         if (reference.task) onOpenTask(reference.task);
       }}
     />
-  );
-}
+    {previewImage && createPortal(
+      <div
+        className="display-settings-backdrop image-preview-backdrop"
+        role="presentation"
+        onClick={(event) => {
+          event.stopPropagation();
+          if (event.target === event.currentTarget) setPreviewImage(null);
+        }}
+      >
+        <div
+          className="image-preview-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label={previewImage.alt || "Image preview"}
+        >
+          <img src={previewImage.src} alt={previewImage.alt} />
+          <button
+            className="icon-button display-settings-close image-preview-close"
+            type="button"
+            aria-label="Close image preview"
+            onClick={() => setPreviewImage(null)}
+          >
+            <LinearIcon name="close" />
+          </button>
+        </div>
+      </div>,
+      document.body,
+    )}
+  </>);
+});

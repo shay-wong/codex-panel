@@ -145,11 +145,14 @@ export function TaskPropertyPicker<Value extends string>({
 
     document.addEventListener("pointerdown", closeFromOutside);
     window.addEventListener("keydown", closeFromEscape);
-    window.addEventListener("resize", closeFromViewportChange);
-    window.addEventListener("scroll", closeFromViewportChange, true);
+    const viewportListenerFrame = requestAnimationFrame(() => {
+      window.addEventListener("resize", closeFromViewportChange);
+      window.addEventListener("scroll", closeFromViewportChange, true);
+    });
     return () => {
       document.removeEventListener("pointerdown", closeFromOutside);
       window.removeEventListener("keydown", closeFromEscape);
+      cancelAnimationFrame(viewportListenerFrame);
       window.removeEventListener("resize", closeFromViewportChange);
       window.removeEventListener("scroll", closeFromViewportChange, true);
     };

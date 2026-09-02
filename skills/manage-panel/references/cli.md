@@ -120,6 +120,14 @@ Use `issue move` to set `in_progress` before implementation and `in_review` afte
 
 `--thread-id` records the conversation performing the mutation; it does not create a complete task binding. `--binding-thread-id` can stand alone only to preserve a legacy local binding. If any binding identity option is present, all four identity options are required. A conversation that claims or continues an issue must pass all five `--binding-*` options together and preserve an existing complete binding exactly. `--clear-binding-thread` conflicts with every `--binding-*` option.
 
+To explicitly bind the current Codex conversation without changing the Issue status or fields:
+
+```bash
+panelctl conversation bind ISSUE_ID [--thread-id ID] [--json]
+```
+
+`ISSUE_ID` may be a Panel ID, Panel identifier, or an unambiguous Jira key. The command requires the running Codex host to provide a complete project, host, and workspace identity. It is idempotent for the current conversation and refuses to replace another conversation's binding. For a Jira requirement it also starts or resumes the local Jira planning record; it never changes Jira fields or status.
+
 Use either `--git-branch` or `--worktree-path`/`--worktree-branch`; an issue has only one development context. Issue JSON stores it as `developmentContext`, either `{ "type": "branch", "branch": "..." }` or `{ "type": "worktree", "path": "...", "branch": "..." }`. Its singular `threadId` is the Codex conversation that most recently created or changed the issue itself. Recurrence requires a due date. Changing only `--project` preserves the issue's existing linked conversation.
 
 ## Issue relations
@@ -170,15 +178,15 @@ Each comment JSON object independently records the most recent conversation that
 
 ## Jira planning
 
-Use these commands only inside a planning conversation opened from a Jira issue:
+`jira planning get` is a read-only context lookup and may also be used by an execution workflow to resolve its linked Jira. Use `save` and `publish` only inside a planning conversation opened from a Jira issue:
 
 ```bash
-panelctl jira planning get JIRA_ID [--json]
+panelctl jira planning get JIRA_OR_LINKED_ISSUE_ID [--json]
 panelctl jira planning save JIRA_ID --spec-file SPEC.md --if-version N [--json]
 panelctl jira planning publish JIRA_ID --tickets-file TICKETS.json --if-version N [--json]
 ```
 
-`jira planning get` returns the Jira context and `plan.version`. Save the synthesized Spec first. After the user approves the ticket breakdown, publish a JSON manifest in dependency order:
+`jira planning get` accepts a Jira task identity or a linked execution Issue identity and returns the Jira context plus `plan.version`. For a linked execution Issue, read `context.jira.externalKey`; a null `context.jira` means no Jira link exists. Save the synthesized Spec first. After the user approves the ticket breakdown, publish a JSON manifest in dependency order:
 
 ```json
 {

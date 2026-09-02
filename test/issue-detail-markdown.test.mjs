@@ -33,11 +33,11 @@ test("issue detail renders descriptions and comments with GFM markdown", () => {
   );
   assert.match(
     detailSource,
-    /\{description\s*\?\s*<DescriptionDocument\s*value=\{description\}\s*referenceTasks=\{referenceTasks\}\s*onOpenTask=\{onOpenTask\}\s*\/>\s*:\s*text\("添加描述…", "Add description…"\)\}/,
+    /\{description\s*\?\s*<DescriptionDocument\s*value=\{description\}\s*referenceTasks=\{referenceTasks\}\s*onOpenTask=\{onOpenTask\}\s*attachments=\{attachments\}\s*enableImagePreview\s*onOpenAttachment=\{handleAttachmentDownload\}\s*\/>\s*:\s*text\("添加描述…", "Add description…"\)\}/,
   );
   assert.match(
     detailSource,
-    /comment\.body && \(\s*<div className="comment-body">\s*<DescriptionDocument\s*value=\{comment\.body\}\s*referenceTasks=\{referenceTasks\}\s*onOpenTask=\{onOpenTask\}\s*\/>\s*<\/div>\s*\)/s,
+    /comment\.body && \(\s*<div className="comment-body">\s*<DescriptionDocument\s*value=\{comment\.body\}\s*referenceTasks=\{referenceTasks\}\s*onOpenTask=\{onOpenTask\}\s*attachments=\{comment\.attachments\}\s*enableImagePreview\s*onOpenAttachment=\{handleAttachmentDownload\}\s*\/>\s*<\/div>\s*\)/s,
   );
   assert.doesNotMatch(detailSource, /value\.split\("\\n"\)/);
 });
@@ -113,4 +113,22 @@ test("the configured markdown renderer produces CommonMark and GFM elements", ()
   for (const element of ["strong", "a", "blockquote", "input", "del", "table", "pre", "code"]) {
     assert.match(html, new RegExp(`<${element}(?: |>)`));
   }
+});
+
+test("read-only task lists keep inline code in the text flow", () => {
+  const html = renderToStaticMarkup(
+    createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, (
+      "- [ ] Receives `subscription_products=[]`, including `iap` products"
+    )),
+  );
+  assert.match(
+    html,
+    /<li class="task-list-item"><input[^>]*\/> Receives <code>subscription_products=\[\]<\/code>, including <code>iap<\/code> products<\/li>/,
+  );
+
+  const taskItemRule = styles.match(
+    /\.issue-description-document \.task-list-item\s*\{([^}]+)\}/,
+  )?.[1] ?? "";
+  assert.doesNotMatch(taskItemRule, /display:\s*grid/);
+  assert.match(styles, /\.issue-description-document input\[type="checkbox"\][\s\S]*?margin:\s*0 7px 0 0;[\s\S]*?vertical-align:\s*-2px;/);
 });
