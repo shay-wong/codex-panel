@@ -238,7 +238,7 @@ See [Cloud collaboration](docs/cloud-collaboration.md) for owner deployment, exi
 
 ## Issue Markdown
 
-Issue descriptions and comments support GFM, including tables and task lists. Fenced `mermaid` blocks render as read-only diagrams after loading; their source remains visible if rendering fails. Markdown HTML comments are hidden, and raw HTML is disabled.
+Issue descriptions and comments support GFM, including tables and task lists. Task-list labels keep inline code in the normal text flow beside the checkbox. Fenced `mermaid` blocks render as read-only diagrams after loading; their source remains visible if rendering fails. Markdown HTML comments are hidden, and raw HTML is disabled.
 
 ## Verify
 

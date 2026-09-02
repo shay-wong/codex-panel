@@ -232,7 +232,7 @@ npm run codex:inject -- --port 9229 --open
 
 ## Issue Markdown
 
-Issue 描述和评论支持 GFM，包括表格和任务列表。带 `mermaid` 标记的围栏代码块会在加载后渲染为只读图表；渲染失败时保留源码。Markdown HTML 注释不会显示，原始 HTML 默认禁用。
+Issue 描述和评论支持 GFM，包括表格和任务列表。任务列表中的行内代码会和正文一起排在 checkbox 右侧。带 `mermaid` 标记的围栏代码块会在加载后渲染为只读图表；渲染失败时保留源码。Markdown HTML 注释不会显示，原始 HTML 默认禁用。
 
 ## 验证
 
