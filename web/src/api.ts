@@ -45,6 +45,7 @@ const DEFAULT_USER_ACTOR: ActorIdentity = {
 
 let currentUserActor = DEFAULT_USER_ACTOR;
 let apiText = (_chinese: string, english: string) => english;
+const READ_RETRY_DELAYS_MS = [150, 350] as const;
 
 function isAbortError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
@@ -109,17 +110,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
   }
 
-  let response: Response;
-  try {
-    response = await fetch(resolvePanelUrl(path), { ...init, headers });
-  } catch (error) {
-    if (isAbortError(error)) throw error;
-    throw new ApiError(0, {
-      error: {
-        code: "SERVICE_UNAVAILABLE",
-        message: "无法连接本地 Panel 服务，请重新通过 Panel 启动 Codex。",
-      },
-    });
+  let response: Response | undefined;
+  const retryDelays = method === "GET" || method === "HEAD" ? READ_RETRY_DELAYS_MS : [];
+  for (let attempt = 0; !response; attempt += 1) {
+    try {
+      response = await fetch(resolvePanelUrl(path), { ...init, headers });
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      const retryDelay = retryDelays[attempt];
+      if (retryDelay !== undefined) {
+        await new Promise((resolve) => window.setTimeout(resolve, retryDelay));
+        continue;
+      }
+      throw new ApiError(0, {
+        error: {
+          code: "SERVICE_UNAVAILABLE",
+          message: apiText(
+            "暂时无法连接本地 Panel 服务，已自动重试。请稍后再试；若持续失败，请通过 Panel 重新启动 Codex。",
+            "The local Panel service is temporarily unavailable after automatic retries. Try again shortly; if it persists, restart Codex through Panel.",
+          ),
+        },
+      });
+    }
   }
   let body: T & ApiErrorBody;
   try {
