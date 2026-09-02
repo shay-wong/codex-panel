@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
-const appSource = await readFile(new URL("../web/src/App.tsx", import.meta.url), "utf8");
+const appSource = (await readFile(
+  new URL("../web/src/App.tsx", import.meta.url),
+  "utf8",
+)).replaceAll("\r\n", "\n");
 const apiSource = await readFile(new URL("../web/src/api.ts", import.meta.url), "utf8");
 const menuSource = await readFile(
   new URL("../web/src/components/ProjectAutomationMenu.tsx", import.meta.url),

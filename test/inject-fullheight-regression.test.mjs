@@ -275,7 +275,12 @@ test("Panel fills the workspace, opens HTTPS links and revokes hostile iframe na
   }));
 
   const profile = await mkdtemp(path.join(os.tmpdir(), "panel-fullheight-chrome-"));
-  t.after(() => rm(profile, { recursive: true, force: true }));
+  t.after(() => rm(profile, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 100,
+  }));
   const url = `http://127.0.0.1:${server.address().port}/fixture`;
   const child = spawn(chrome, [
     "--headless=new",
