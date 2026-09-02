@@ -626,7 +626,7 @@ export function TaskDetail({
       },
     );
     return () => controller.abort();
-  }, [jiraAvailable, task.id, task.version]);
+  }, [jiraAvailable, task.id, task.version, openingThread]);
 
   useEffect(() => {
     resizeTextarea(titleRef.current);
@@ -1562,7 +1562,17 @@ export function TaskDetail({
             : text("归档相关对话", "Archive related conversations");
   const claimState = currentTask.claim?.state;
   const claimActive = claimState === "queued" || claimState === "retry_wait" || claimState === "running";
-  const claimEnabled = currentTask.source === "local" && currentTask.status === "todo" && !claimActive;
+  const jiraExecutionPaused = Boolean(
+    jiraContext?.lifecycle?.pausedIssueIds.includes(currentTask.id),
+  );
+  const jiraPausePending = jiraContext?.lifecycle?.pending?.suggestedAction === "pause";
+  const claimWaitingForInput = claimState === "blocked" && currentTask.claim?.lastError === null;
+  const claimRetryable = claimState === "blocked" && currentTask.claim?.lastError !== null;
+  const claimEnabled = currentTask.source === "local"
+    && !jiraExecutionPaused
+    && !jiraPausePending
+    && (currentTask.status === "todo" || (currentTask.status === "blocked" && claimRetryable))
+    && !claimActive;
   const claimLabel = claiming
     ? text("正在加入队列…", "Adding to queue…")
     : claimState === "running"
@@ -1571,15 +1581,21 @@ export function TaskDetail({
         ? text("等待执行槽位", "Waiting for an execution slot")
         : claimState === "retry_wait"
           ? text("等待自动重试", "Waiting to retry")
-          : claimState === "blocked"
-            ? text("等待你的回复", "Waiting for your reply")
-            : claimState === "failed"
-              ? text("自动执行已停止", "Automatic execution stopped")
-              : claimState === "completed"
-                ? text("自动执行已完成", "Automatic execution completed")
-                : currentTask.status === "todo"
-                  ? text("立即执行", "Run now")
-                  : text("仅待认领可执行", "Available only while waiting");
+          : jiraExecutionPaused
+            ? text("已由 Jira 暂停", "Paused by Jira")
+            : jiraPausePending
+              ? text("等待 Jira 处理", "Waiting for Jira action")
+              : claimState === "blocked"
+                ? claimWaitingForInput
+                  ? text("等待你的回复", "Waiting for your reply")
+                  : text("重新执行", "Run again")
+                : claimState === "failed"
+                  ? text("自动执行已停止", "Automatic execution stopped")
+                  : claimState === "completed"
+                    ? text("自动执行已完成", "Automatic execution completed")
+                    : currentTask.status === "todo"
+                      ? text("立即执行", "Run now")
+                      : text("仅待认领可执行", "Available only while waiting");
   async function openActivityTask(identifier: string) {
     try {
       onOpenTask(await getTask(identifier));

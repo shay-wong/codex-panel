@@ -37,6 +37,9 @@ test("project automation reads and writes the persistent Panel policy", () => {
   assert.doesNotMatch(appSource, /setProjectAutomations|readProjectAutomations/);
   assert.match(appSource, /LEGACY_PROJECT_AUTOMATIONS_KEY/);
   assert.match(appSource, /operation: "pause"/);
+  const legacyPauseRequest = appSource.match(/type: "panel:automation-request",[\s\S]*?reasoningEffort:[\s\S]*?\n\s*},\n\s*}\);/)?.[0];
+  assert.ok(legacyPauseRequest);
+  assert.doesNotMatch(legacyPauseRequest, /codexProjectKind:|codexHostId:|remoteProjects:/);
   assert.doesNotMatch(appSource, /operation: "apply-policy"/);
   assert.match(menuSource, /AUTOMATION_MODELS\.map/);
   assert.match(menuSource, /withAutomationModel\(draft, value as AutomationModel\)/);
@@ -95,6 +98,9 @@ test("issue details expose one persistent immediate-execution action", () => {
   assert.match(detailSource, /等待执行槽位/);
   assert.match(detailSource, /自动执行中/);
   assert.match(detailSource, /等待你的回复/);
+  assert.match(detailSource, /重新执行/);
+  assert.match(detailSource, /已由 Jira 暂停/);
+  assert.match(detailSource, /claimWaitingForInput = claimState === "blocked" && currentTask\.claim\?\.lastError === null/);
   assert.match(detailSource, /aria-busy=\{claiming \|\| claimState === "running"\}/);
   assert.match(styles, /\.detail-run-action/);
 });

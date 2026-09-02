@@ -3346,11 +3346,20 @@ export class PanelDatabase {
     const link = this.database.prepare(`
       SELECT jira_task_id FROM jira_task_links WHERE task_id = ?
     `).get(taskId);
-    if (link && this.getJiraLifecycle(link.jira_task_id).pending?.suggestedAction === "pause") {
+    if (!link) return;
+    const lifecycle = this.getJiraLifecycle(link.jira_task_id);
+    if (lifecycle.pending?.suggestedAction === "pause") {
       throw new ApiError(
         409,
         "JIRA_LIFECYCLE_PAUSE_PENDING",
         "Resolve the linked Jira lifecycle notice before starting or continuing this issue",
+      );
+    }
+    if (lifecycle.pausedIssueIds.includes(taskId)) {
+      throw new ApiError(
+        409,
+        "JIRA_ISSUE_PAUSED",
+        "Return the linked Jira issue to in progress before continuing this issue",
       );
     }
   }

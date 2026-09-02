@@ -34,6 +34,10 @@ test("the resident injector authenticates its launcher-managed Panel service", (
 });
 
 test("the CDP bridge accepts local prefill, SSH conversation, and attachment actions", () => {
+  const appServerRequestSource = source.slice(
+    source.indexOf("async function requestCodexAppServerViaCdp"),
+    source.indexOf("async function applyPanelAutomationPolicy"),
+  );
   assert.match(source, /const hostBindingName = "__codexPanelHostV1"/);
   assert.match(runtimeSource, /request\.action === "ensure"/);
   assert.match(runtimeSource, /request\.action === "prefill-task-composer"/);
@@ -42,11 +46,14 @@ test("the CDP bridge accepts local prefill, SSH conversation, and attachment act
   assert.match(runtimeSource, /request\.action === "open-attachment"/);
   assert.match(runtimeSource, /request\.action === "open-external"/);
   assert.match(runtimeSource, /request\.instruction\.length <= 16_384/);
-  assert.match(runtimeSource, /request\.skillPath\.length <= 1_024/);
+  assert.match(runtimeSource, /function validSkillReference\(skill\)/);
+  assert.match(runtimeSource, /request\.skills === undefined[\s\S]*?validSkillReference\(\{/);
+  assert.match(runtimeSource, /request\.skills\.every\(validSkillReference\)/);
   assert.match(source, /function prefillTaskComposerViaCdp/);
   assert.match(source, /async function confirmTaskConversationViaCdp/);
   assert.match(source, /async function startTaskConversationViaCdp/);
   assert.match(source, /function requestCodexAppServerViaCdp/);
+  assert.doesNotMatch(appServerRequestSource, /contextId/);
   assert.match(source, /source: "panel_thread_create"/);
   assert.match(source, /"thread\/read"/);
   assert.match(source, /"thread\/name\/set"/);

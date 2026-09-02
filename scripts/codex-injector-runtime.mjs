@@ -1,6 +1,22 @@
-const HOST_REQUEST_ERROR = "自动认领配置暂时无法应用，请刷新后重试";
+const HOST_REQUEST_ERROR = "Panel 与 Codex 宿主协议不匹配，请重启 Codex Panel 后重试";
 const AUTOMATION_SCHEMA_DIAGNOSTIC = "AUTOMATION_SCHEMA_MISMATCH";
 const HOST_REQUEST_MAX_LENGTH = 4_194_304;
+
+function validSkillReference(skill) {
+  return (
+    skill
+    && typeof skill === "object"
+    && !Array.isArray(skill)
+    && typeof skill.name === "string"
+    && /^[a-z0-9-]{1,100}$/i.test(skill.name)
+    && typeof skill.displayName === "string"
+    && skill.displayName.length > 0
+    && skill.displayName.length <= 1_024
+    && typeof skill.path === "string"
+    && skill.path.length > 0
+    && skill.path.length <= 1_024
+  );
+}
 
 function parseHostRequest(payload, parseAutomationRequest) {
   if (typeof payload !== "string" || payload.length > HOST_REQUEST_MAX_LENGTH) {
@@ -131,35 +147,35 @@ function parseHostRequest(payload, parseAutomationRequest) {
     && typeof request.instruction === "string"
     && request.instruction.length > 0
     && request.instruction.length <= 16_384
-    && typeof request.skillName === "string"
-    && /^[a-z0-9-]{1,100}$/i.test(request.skillName)
-    && typeof request.skillDisplayName === "string"
-    && request.skillDisplayName.length > 0
-    && request.skillDisplayName.length <= 1_024
-    && typeof request.skillPath === "string"
-    && request.skillPath.length > 0
-    && request.skillPath.length <= 1_024
     && (
-      request.skills === undefined
+      (
+        request.skills === undefined
+        && validSkillReference({
+          name: request.skillName,
+          displayName: request.skillDisplayName,
+          path: request.skillPath,
+        })
+      )
       || (
         Array.isArray(request.skills)
         && request.skills.length > 0
         && request.skills.length <= 8
-        && request.skills.every((skill) => (
-          skill
-          && typeof skill === "object"
-          && !Array.isArray(skill)
-          && typeof skill.name === "string"
-          && /^[a-z0-9-]{1,100}$/i.test(skill.name)
-          && typeof skill.displayName === "string"
-          && skill.displayName.length > 0
-          && skill.displayName.length <= 1_024
-          && typeof skill.path === "string"
-          && skill.path.length > 0
-          && skill.path.length <= 1_024
-        ))
+        && request.skills.every(validSkillReference)
       )
     )
+  ) {
+    return { id, request, error: null };
+  }
+  if (
+    request.action === "find-task-conversations"
+    && typeof request.codexHostId === "string"
+    && request.codexHostId.length > 0
+    && request.codexHostId.length <= 240
+    && !/[\u0000-\u001f\u007f]/.test(request.codexHostId)
+    && typeof request.identifier === "string"
+    && request.identifier.length > 0
+    && request.identifier.length <= 240
+    && !/[\u0000-\u001f\u007f]/.test(request.identifier)
   ) {
     return { id, request, error: null };
   }
@@ -179,6 +195,15 @@ function parseHostRequest(payload, parseAutomationRequest) {
     && request.identifier.length > 0
     && request.identifier.length <= 240
     && !/[\u0000-\u001f\u007f]/.test(request.identifier)
+    && (
+      request.title === undefined
+      || (
+        typeof request.title === "string"
+        && request.title.length > 0
+        && request.title.length <= 240
+        && !/[\u0000-\u001f\u007f]/.test(request.title)
+      )
+    )
   ) {
     return { id, request, error: null };
   }
@@ -266,6 +291,8 @@ export async function handleHostBindingPayload(params, handlers) {
       result = await handlers.failClaim(parsed.request);
     } else if (parsed.request.action === "start-task-conversation") {
       result = await handlers.startConversation(parsed.request, params.executionContextId);
+    } else if (parsed.request.action === "find-task-conversations") {
+      result = await handlers.findConversations(parsed.request, params.executionContextId);
     } else if (parsed.request.action === "confirm-task-conversation") {
       result = await handlers.confirmConversation(parsed.request, params.executionContextId);
     } else {
@@ -286,6 +313,56 @@ export async function handleHostBindingPayload(params, handlers) {
     });
   }
   return { responded: true, accepted: true };
+}
+
+function firstUserText(thread) {
+  return thread?.turns
+    ?.flatMap((turn) => turn?.items ?? [])
+    .find((item) => item?.type === "userMessage")
+    ?.content?.filter((content) => content?.type === "text")
+    .map((content) => content.text)
+    .join("\n") ?? "";
+}
+
+function includesIssueIdentifier(text, identifier) {
+  const escaped = identifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^A-Za-z0-9-])${escaped}(?=$|[^A-Za-z0-9-])`).test(text);
+}
+
+export async function findTaskConversations(request, appServerRequest) {
+  const matches = [];
+  let cursor = null;
+  do {
+    const page = await appServerRequest("thread/list", {
+      cursor,
+      limit: 50,
+      sortKey: "created_at",
+      sortDirection: "desc",
+      searchTerm: request.identifier,
+    });
+    for (const summary of page?.data ?? []) {
+      if (typeof summary?.id !== "string" || !summary.id) continue;
+      const result = await appServerRequest("thread/read", {
+        threadId: summary.id,
+        includeTurns: true,
+      });
+      if (
+        result?.thread?.id !== summary.id
+        || !includesIssueIdentifier(firstUserText(result.thread), request.identifier)
+      ) continue;
+      matches.push({
+        threadId: summary.id,
+        name: typeof summary.name === "string" ? summary.name : "",
+        cwd: typeof result.thread.cwd === "string" ? result.thread.cwd : "",
+        createdAt: summary.createdAt ?? null,
+      });
+      if (matches.length >= 2) return { matches };
+    }
+    cursor = typeof page?.nextCursor === "string" && page.nextCursor
+      ? page.nextCursor
+      : null;
+  } while (cursor);
+  return { matches };
 }
 
 export async function interruptNativeCodexThread(binding, request) {

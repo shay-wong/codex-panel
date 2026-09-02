@@ -28,7 +28,9 @@
   const COMPOSER_PREFILL_REQUEST_TIMEOUT_MS = 60_000;
   const TASK_CONVERSATION_REQUEST_TIMEOUT_MS = 75_000;
   const HOST_HEARTBEAT_MAX_AGE_MS = 8_000;
+  const HOST_BINDING_READY_TIMEOUT_MS = 4_000;
   const THREAD_ASSOCIATION_TIMEOUT_MS = 10 * 60_000;
+  const PENDING_THREAD_ASSOCIATION_KEY = "codex-panel.pending-thread-association.v1";
   const MACOS_TITLEBAR_SAFE_LEFT = 80;
   const FRAME_REFRESH_PARAM = "__codex_panel_refresh";
   const PLUGIN_LABELS = ["插件", "外掛程式", "plugins", "プラグイン"];
@@ -56,7 +58,6 @@
   const TASK_SECTION_LABELS = ["tasks", "任务", "chats", "对话"];
   const SEND_LABELS = ["send", "发送", "傳送"];
   const NATIVE_WORKTREE_LABELS = ["新建本地工作树", "新增本機工作樹", "new local worktree"];
-  const LOCAL_RUN_LABELS = ["本地", "本機", "local"];
   const NATIVE_HEADER_DESTINATION_LABELS = [
     "查看活动",
     "查看活动，需要关注",
@@ -143,8 +144,78 @@
   let active = false;
   let destroyed = false;
 
+  function persistPendingThreadAssociation() {
+    try {
+      if (!pendingThreadAssociation) {
+        window.localStorage.removeItem(PENDING_THREAD_ASSOCIATION_KEY);
+        return;
+      }
+      window.localStorage.setItem(PENDING_THREAD_ASSOCIATION_KEY, JSON.stringify({
+        taskId: pendingThreadAssociation.taskId,
+        identifier: pendingThreadAssociation.identifier,
+        existingThreadIds: [...pendingThreadAssociation.existingThreadIds],
+        title: pendingThreadAssociation.title,
+        projectId: pendingThreadAssociation.projectId,
+        codexHostId: pendingThreadAssociation.codexHostId,
+        workspacePath: pendingThreadAssociation.workspacePath,
+        submitted: pendingThreadAssociation.submitted,
+        expiresAt: pendingThreadAssociation.expiresAt,
+      }));
+    } catch {}
+  }
+
+  function setPendingThreadAssociation(value) {
+    pendingThreadAssociation = value;
+    persistPendingThreadAssociation();
+  }
+
+  function restorePendingThreadAssociation() {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(PENDING_THREAD_ASSOCIATION_KEY) || "null");
+      if (
+        typeof stored?.taskId !== "string"
+        || typeof stored?.identifier !== "string"
+        || !Array.isArray(stored?.existingThreadIds)
+        || typeof stored?.expiresAt !== "number"
+        || stored.expiresAt <= Date.now()
+      ) {
+        window.localStorage.removeItem(PENDING_THREAD_ASSOCIATION_KEY);
+        return;
+      }
+      pendingThreadAssociation = {
+        ...stored,
+        title: typeof stored.title === "string" && stored.title.trim()
+          ? stored.title.trim()
+          : stored.identifier,
+        composer: null,
+        existingThreadIds: new Set(stored.existingThreadIds),
+        confirming: false,
+      };
+    } catch {
+      window.localStorage.removeItem(PENDING_THREAD_ASSOCIATION_KEY);
+    }
+  }
+
+  restorePendingThreadAssociation();
+
   function normalizedLabel(value) {
     return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function isInteractiveElement(element) {
+    const rect = element?.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+    const style = window.getComputedStyle(element);
+    const opacity = Number.parseFloat(style.opacity);
+    if (
+      style.display === "none"
+      || style.visibility === "hidden"
+      || style.visibility === "collapse"
+      || style.pointerEvents === "none"
+      || (Number.isFinite(opacity) && opacity <= 0)
+    ) return false;
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return Boolean(hit && (hit === element || element.contains(hit)));
   }
 
   function normalizeThreadId(value) {
@@ -855,6 +926,7 @@
       && !event.isComposing
     ) {
       pending.submitted = true;
+      persistPendingThreadAssociation();
       return;
     }
     const button = event.target?.closest?.("button");
@@ -865,6 +937,7 @@
       && SEND_LABELS.includes(normalizedLabel(button.getAttribute("aria-label")))
     ) {
       pending.submitted = true;
+      persistPendingThreadAssociation();
     }
   }
 
@@ -873,7 +946,7 @@
     const pending = pendingThreadAssociation;
     if (!pending) return;
     if (Date.now() > pending.expiresAt) {
-      pendingThreadAssociation = null;
+      setPendingThreadAssociation(null);
       return;
     }
     if (!pending.submitted || pending.confirming) return;
@@ -891,9 +964,10 @@
         codexHostId: pending.codexHostId || "local",
         targetRoot: pending.workspacePath,
         identifier: pending.identifier,
+        title: pending.title || pending.identifier,
       }, TASK_CONVERSATION_REQUEST_TIMEOUT_MS);
       if (pendingThreadAssociation !== pending) return;
-      pendingThreadAssociation = null;
+      setPendingThreadAssociation(null);
       lastNativeThreadId = threadId;
       postToFrame({
         type: "panel:thread-created",
@@ -901,7 +975,7 @@
       });
     } catch (error) {
       if (pendingThreadAssociation !== pending) return;
-      pendingThreadAssociation = null;
+      setPendingThreadAssociation(null);
       postToFrame({
         type: "panel:thread-create-error",
         payload: {
@@ -1156,11 +1230,15 @@
         selectedNativeProjectId(),
         activeNativeWorkspaceRoots(),
       ]);
-      if (projectId && projectId === expectedProjectId) {
+      if (projectId) {
         // Some Codex desktop builds no longer expose active-workspace-roots.
         // A confirmed selected project is still safe when that endpoint is unavailable;
         // keep rejecting an explicitly reported, mismatched workspace root.
-        if (!activeWorkspace.available) return projectId;
+        if (!activeWorkspace.available) {
+          if (projectId === expectedProjectId) return projectId;
+          await new Promise((resolve) => window.setTimeout(resolve, 80));
+          continue;
+        }
         const [canonicalTargetRoot, ...canonicalActiveRoots] = await canonicalNativeRootPaths([
           targetRoot,
           ...activeWorkspace.roots,
@@ -1178,13 +1256,26 @@
   async function selectNativeWorktree() {
     const trigger = Array.from(document.querySelectorAll(
       '[data-composer-navigation-target="run-location"]',
-    )).find((candidate) => candidate.getClientRects().length > 0);
+    )).find(isInteractiveElement);
     if (!trigger) throw new Error("Codex 没有显示运行位置选择器");
     trigger.click();
     const deadline = Date.now() + 4_000;
     while (Date.now() < deadline) {
+      const expanded = Array.from(document.querySelectorAll(
+        '[data-composer-navigation-target="run-location"]',
+      )).some((candidate) => (
+        isInteractiveElement(candidate)
+        && (
+          candidate.getAttribute("aria-expanded") === "true"
+          || candidate.getAttribute("data-state") === "open"
+        )
+      ));
+      if (!expanded) {
+        await new Promise((resolve) => window.setTimeout(resolve, 40));
+        continue;
+      }
       const item = Array.from(document.querySelectorAll('[role="menuitem"]')).find((candidate) => (
-        candidate.getClientRects().length > 0
+        isInteractiveElement(candidate)
         && NATIVE_WORKTREE_LABELS.includes(normalizedLabel(candidate.textContent))
       ));
       if (!item) {
@@ -1195,8 +1286,8 @@
       while (Date.now() < deadline) {
         const selected = Array.from(document.querySelectorAll(
           '[data-composer-navigation-target="run-location"]',
-        )).find((candidate) => candidate.getClientRects().length > 0);
-        if (selected && !LOCAL_RUN_LABELS.includes(normalizedLabel(selected.textContent))) return;
+        )).find(isInteractiveElement);
+        if (selected && NATIVE_WORKTREE_LABELS.includes(normalizedLabel(selected.textContent))) return;
         await new Promise((resolve) => window.setTimeout(resolve, 40));
       }
     }
@@ -1251,8 +1342,33 @@
       || pendingThreadCreation
     ) return;
     pendingThreadCreation = taskId;
-    pendingThreadAssociation = null;
+    setPendingThreadAssociation(null);
     try {
+      if (payload?.recoverExisting === true && !autoSubmit) {
+        const codexHostId = typeof payload?.codexHostId === "string"
+          ? payload.codexHostId.trim() || "local"
+          : "local";
+        const recovery = await requestHost("find-task-conversations", {
+          codexHostId,
+          identifier,
+        }, TASK_CONVERSATION_REQUEST_TIMEOUT_MS);
+        const matches = Array.isArray(recovery?.matches) ? recovery.matches : [];
+        const currentThreadId = normalizeThreadId(threadIdFromLocation() || lastNativeThreadId);
+        const recovered = matches.find((match) => (
+          normalizeThreadId(match?.threadId) === currentThreadId
+        )) ?? (matches.length === 1 ? matches[0] : null);
+        if (matches.length > 1 && !recovered) {
+          throw new Error(`发现多个 ${identifier} 对话，请先打开要关联的对话后重试`);
+        }
+        if (typeof recovered?.threadId === "string" && recovered.threadId.trim()) {
+          postToFrame({
+            type: "panel:thread-created",
+            payload: { taskId, threadId: recovered.threadId.trim() },
+          });
+          return;
+        }
+      }
+
       const bridge = window.electronBridge;
       if (!bridge || typeof bridge.sendMessageFromView !== "function") {
         throw new Error("当前 Codex 版本没有提供原生对话导航能力");
@@ -1280,9 +1396,10 @@
           },
         });
         const composer = await waitForPreparedComposer(identifier, []);
-        pendingThreadAssociation = {
+        setPendingThreadAssociation({
           taskId,
           identifier,
+          title,
           composer,
           existingThreadIds,
           projectId: requestedProjectId,
@@ -1291,7 +1408,7 @@
           submitted: false,
           confirming: false,
           expiresAt: Date.now() + THREAD_ASSOCIATION_TIMEOUT_MS,
-        };
+        });
         postToFrame({ type: "panel:thread-prepared", payload: { taskId } });
         return;
       }
@@ -1308,10 +1425,16 @@
             "The target project or worktree is not mapped in Codex",
           ));
         }
-        bridge.sendMessageFromView({
-          type: "electron-add-new-workspace-root-option",
-          root: target.targetRoot,
-        });
+        await ensureProjectRows();
+        const row = projectRowById(target.projectId);
+        if (!row) throw new Error("Codex 中找不到对应的本地项目");
+        if (row.getAttribute("data-app-action-sidebar-project-collapsed") === "true") {
+          row.click?.();
+          await new Promise((resolve) => window.setTimeout(resolve, 120));
+        }
+        const selectProject = row.querySelector("[data-app-action-sidebar-select-project]");
+        if (!selectProject) throw new Error("Codex 中找不到对应的本地项目");
+        selectProject.click?.();
         lastNativeProjectId = await waitForNativeProject(target.targetRoot, target.projectId);
       }
 
@@ -1357,9 +1480,10 @@
         });
         return;
       }
-      pendingThreadAssociation = {
+      setPendingThreadAssociation({
         taskId,
         identifier,
+        title,
         composer,
         existingThreadIds,
         projectId: selectedProjectId,
@@ -1368,7 +1492,7 @@
         submitted: false,
         confirming: false,
         expiresAt: Date.now() + THREAD_ASSOCIATION_TIMEOUT_MS,
-      };
+      });
       postToFrame({ type: "panel:thread-prepared", payload: { taskId } });
     } catch (error) {
       if (autoSubmit && reservationId) {
@@ -1805,11 +1929,18 @@
       && Date.now() - hostHeartbeatAt <= HOST_HEARTBEAT_MAX_AGE_MS;
   }
 
-  function requestHost(action, payload = {}, timeoutMs = HOST_REQUEST_TIMEOUT_MS) {
-    if (!hasLiveHostBinding()) {
-      return Promise.reject(new Error("Panel 启动器未运行，无法操作 Codex 对话输入框"));
+  async function waitForLiveHostBinding() {
+    const deadline = Date.now() + HOST_BINDING_READY_TIMEOUT_MS;
+    while (!hasLiveHostBinding() && Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
     }
+    if (!hasLiveHostBinding()) {
+      throw new Error("Codex 桥接尚未就绪，请稍后重试");
+    }
+  }
 
+  async function requestHost(action, payload = {}, timeoutMs = HOST_REQUEST_TIMEOUT_MS) {
+    await waitForLiveHostBinding();
     const id = `${Date.now().toString(36)}-${(++hostRequestSequence).toString(36)}`;
     return new Promise((resolve, reject) => {
       const timeout = timeoutMs === null

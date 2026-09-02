@@ -189,7 +189,9 @@ test("issue activity opens formal execution in Codex and keeps it out of tempora
   assert.match(aiChatSource, /threads\.filter\(\(thread\) => thread\.purpose === "temporary"\)/);
   assert.match(aiChatSource, /onThreadsChange\?\.\(available \? threads : \[\]\)/);
   assert.match(appSource, /message\.type === "panel:thread-prepared"[\s\S]*?pendingJiraPlanningRef\.current\.has\(payload\.taskId\)[\s\S]*?return;[\s\S]*?setOpeningThreadTaskId\(null\)/);
-  assert.match(appSource, /const jiraPlanning = pendingJiraPlanningRef\.current\.get\(payload\.taskId\)[\s\S]*?if \(jiraPlanning\) setOpeningThreadTaskId\(null\)/);
+  assert.match(appSource, /const alreadyLinked = Boolean\([\s\S]*?\(!jiraPlanning && alreadyLinked\)[\s\S]*?else if \(!alreadyLinked\)/);
+  assert.match(appSource, /\.then\(\(updated\) => \{[\s\S]*?if \(jiraPlanning\) setOpeningThreadTaskId\(null\)/);
+  assert.match(detailSource, /\}, \[jiraAvailable, task\.id, task\.version, openingThread\]\);/);
   assert.match(appSource, /event\.type === "claim\.updated"[\s\S]*?setAiThreadsRevision\(\(current\) => current \+ 1\)/);
   assert.match(appSource, /candidate\.origin\.issueId === pendingExecutionOpen\.taskId[\s\S]*?candidate\.purpose === "formal"[\s\S]*?candidate\.currentRun\?\.status === "running"/);
   assert.match(styles, /\.activity-conversation-link \{[\s\S]*?background: var\(--surface\)/);

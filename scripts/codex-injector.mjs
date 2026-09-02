@@ -19,6 +19,7 @@ import {
   panelAutomationPolicyOperation,
 } from "../shared/panel-automation.mjs";
 import {
+  findTaskConversations,
   findResidentInjectorPids,
   handleHostBindingPayload,
   injectionReadinessMatches,
@@ -1053,7 +1054,6 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
 
 async function requestCodexAppServerViaCdp(
   cdp,
-  executionContextId,
   hostId,
   method,
   params,
@@ -1124,7 +1124,6 @@ async function requestCodexAppServerViaCdp(
         });
       });
     }))()`,
-    ...(Number.isInteger(executionContextId) ? { contextId: executionContextId } : {}),
     awaitPromise: true,
     returnByValue: true,
   });
@@ -1458,13 +1457,15 @@ function nativeDevelopmentContext(workspacePath, targetRoot, useWorktree) {
   };
 }
 
-async function confirmTaskConversationViaCdp(cdp, executionContextId, request) {
+async function confirmTaskConversationViaCdp(cdp, request) {
+  const title = typeof request.title === "string" && request.title.trim()
+    ? request.title.trim()
+    : request.identifier;
   const deadline = Date.now() + 12_000;
   while (Date.now() < deadline) {
     try {
       const result = await requestCodexAppServerViaCdp(
         cdp,
-        executionContextId,
         request.codexHostId,
         "thread/read",
         { threadId: request.threadId, includeTurns: true },
@@ -1484,6 +1485,26 @@ async function confirmTaskConversationViaCdp(cdp, executionContextId, request) {
         )
         && firstUserText.includes(request.identifier)
       ) {
+        try {
+          await requestCodexAppServerViaCdp(
+            cdp,
+            request.codexHostId,
+            "thread/name/set",
+            { threadId: request.threadId, name: title },
+            10_000,
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+          if (!message.includes("rollout") || !message.includes("is empty")) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          await requestCodexAppServerViaCdp(
+            cdp,
+            request.codexHostId,
+            "thread/name/set",
+            { threadId: request.threadId, name: title },
+            10_000,
+          );
+        }
         return { confirmed: true };
       }
     } catch {}
@@ -1580,7 +1601,6 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
         try {
           const result = await requestCodexAppServerViaCdp(
             cdp,
-            executionContextId,
             codexHostId,
             "thread/read",
             { threadId, includeTurns: false },
@@ -1610,7 +1630,6 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
       try {
         await requestCodexAppServerViaCdp(
           cdp,
-          executionContextId,
           codexHostId,
           "thread/name/set",
           { threadId, name: title },
@@ -1622,7 +1641,6 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
         await new Promise((resolve) => setTimeout(resolve, 500));
         await requestCodexAppServerViaCdp(
           cdp,
-          executionContextId,
           codexHostId,
           "thread/name/set",
           { threadId, name: title },
@@ -1636,7 +1654,6 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
         try {
           result = await requestCodexAppServerViaCdp(
             cdp,
-            executionContextId,
             codexHostId,
             "thread/read",
             { threadId, includeTurns: false },
@@ -1926,7 +1943,6 @@ function installPanelHostBinding(
       readCurrentUser: async () => {
         let account = await requestCodexAppServerViaCdp(
           cdp,
-          undefined,
           "local",
           "account/read",
           { refreshToken: false },
@@ -1940,7 +1956,6 @@ function installPanelHostBinding(
         ) {
           account = await requestCodexAppServerViaCdp(
             cdp,
-            undefined,
             "local",
             "account/read",
             { refreshToken: true },
@@ -1967,8 +1982,18 @@ function installPanelHostBinding(
         taskId: request.taskId,
         error: request.error,
       }),
-      confirmConversation: (request, executionContextId) => (
-        confirmTaskConversationViaCdp(cdp, executionContextId, request)
+      confirmConversation: (request) => (
+        confirmTaskConversationViaCdp(cdp, request)
+      ),
+      findConversations: (request) => findTaskConversations(
+        request,
+        (method, body) => requestCodexAppServerViaCdp(
+          cdp,
+          request.codexHostId,
+          method,
+          body,
+          10_000,
+        ),
       ),
       runAutomation: (request) => (
         (async () => {
@@ -2645,7 +2670,6 @@ async function main() {
     const connection = await codexConnectionForHost(message.hostId);
     return requestCodexAppServerViaCdp(
       connection,
-      undefined,
       message.hostId,
       message.method,
       message.params,
@@ -2843,7 +2867,6 @@ async function main() {
               { threadId, codexHostId },
               (method, params) => requestCodexAppServerViaCdp(
                 cdp,
-                undefined,
                 codexHostId,
                 method,
                 params,

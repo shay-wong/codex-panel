@@ -87,7 +87,19 @@ export class ClaimQueueService {
   enqueue(taskId, source = "manual") {
     let task = this.database.getTask(taskId);
     if (!task) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${taskId}' does not exist`);
+    if (source === "manual") this.database.assertIssueExecutionAllowed(taskId);
     if (task.status === "blocked") {
+      if (source === "manual") {
+        const claim = this.database.getClaimQueueItem(taskId);
+        if (claim?.state !== "blocked" || claim.lastError === null) {
+          throw new ApiError(
+            409,
+            "CLAIM_USER_INPUT_REQUIRED",
+            "Reply to the blocked issue or conversation before continuing execution",
+          );
+        }
+        source = "resume";
+      }
       if (source !== "resume") {
         throw new ApiError(409, "CLAIM_TASK_STATUS", "Only waiting issues can be started manually");
       }
@@ -103,7 +115,16 @@ export class ClaimQueueService {
     const claim = this.database.getClaimQueueItem(taskId);
     const task = this.database.getTask(taskId);
     if (!claim || task?.status !== "blocked") return null;
-    if (claim.state === "blocked") return this.enqueue(taskId, "resume");
+    try {
+      this.database.assertIssueExecutionAllowed(taskId);
+    } catch (error) {
+      if (error instanceof ApiError && error.code.startsWith("JIRA_")) return null;
+      throw error;
+    }
+    if (claim.state === "blocked") {
+      if (claim.lastError !== null) return null;
+      return this.enqueue(taskId, "resume");
+    }
     if (claim.state !== "running") return null;
     const pending = this.database.requestClaimResume(taskId);
     if (!pending) return null;

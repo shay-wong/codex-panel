@@ -24,9 +24,9 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`cedb6ec601e6c8633203c57e199cb69414aa6275`
-- 精确已合并上游基线：`cedb6ec601e6c8633203c57e199cb69414aa6275`
-- 比较范围：`cedb6ec601e6c8633203c57e199cb69414aa6275..HEAD`
+- 本次合并的上游父提交：`015abf187bf8f952f16fa1bd236cea8d01a7ba9f`
+- 精确已合并上游基线：`015abf187bf8f952f16fa1bd236cea8d01a7ba9f`
+- 比较范围：`015abf187bf8f952f16fa1bd236cea8d01a7ba9f..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
@@ -122,6 +122,7 @@
 - Codex Skill mention 时序不变量：Codex 已接受 Skill 选择但异步渲染 mention 时，Panel 必须等待 mention 在 composer 中稳定落地后再继续；外层 host 请求预算必须覆盖该等待，不能先报错并留下半完成输入框。
 - Panel 服务端口不变量：launcher-owned listener 优先绑定 `127.0.0.1:47823`，端口被占用时回退到随机回环端口；Codex CDP 始终使用独立的随机端口。
 - Panel 只读请求不变量：Web 客户端只对网络层失败的 `GET` 和 `HEAD` 请求按 150、350 毫秒有限重试；取消请求和写请求不得重放，耗尽重试后必须说明服务暂时不可用，不能把单次瞬时失败直接表述成服务已停止。
+- Codex host bridge 不变量：Panel 页面已经显示但 renderer host bridge 的首个 heartbeat 尚未到达时，原生 Codex 操作必须等待最多 4 秒，不能立即误报启动器未运行；host 同时接受旧版单 Skill 字段和当前 `skills[]`，App Server 请求不得错误绑定 iframe execution context。
 - Windows 上的 Panel 生命周期中断使用由 runtime 路径和启动 token 派生、并再次校验启动 token 的 named pipe；它只承载需要响应的 native Codex turn 中断，不替代 Tauri 持有的 open/status/stop 子进程控制管道。
 - CI 触发约束：PR 分支通过 `pull_request` 运行完整 `Check`；`main` 的 `push` 先通过 GitHub REST 判断当前 SHA 是否为已合并 PR 的 `merge_commit_sha`，是则跳过已经在 PR 中完成的 Linux、macOS 和 Windows 检查，直接 push 则继续完整运行；来源判断失败必须使工作流失败，`workflow_dispatch` 继续完整手动重跑。
 - 代码和测试路径：`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`、`src-tauri/Entitlements.plist`、`src-tauri/release.json`、`src-tauri/src/main.rs`、`src-tauri/icons`、`src-tauri/ui`、`.codex/environments/environment.toml`、`.github/workflows/check.yml`、`cli/panelctl.mjs`、`scripts/prepare-tauri-app.mjs`、`scripts/preflight-macos-app.mjs`、`scripts/verify-packaged-taskctl.mjs`、`scripts/install-macos-launcher.mjs`、`scripts/codex-injector-control.mjs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-runtime.mjs`、`scripts/panel-supervisor.mjs`、`server/app.mjs`、`web/src/api.ts`、`web/src/api.spec.ts`、`test/cli.test.mjs`、`test/launcher-ui.test.mjs`、`test/injector-control.test.mjs`、`test/injector.test.mjs`、`test/injector-host-runtime.test.mjs` 和 `package.json`。
@@ -238,7 +239,7 @@
 - 所有项目详情不变量：从“所有项目”打开 Issue 时必须保留“所有项目”作为当前范围和返回位置，不得自动切换顶部项目；详情中的标签与开发上下文仍使用该 Issue 自身所属项目。
 - 显式会话绑定不变量：主动创建的 Codex 会话只有在用户明确要求时才可通过 `panelctl conversation bind ISSUE_ID` 绑定 Panel Issue 或 Jira 需求；调用 Skill、提及或读取 Issue、评论 Issue、处于相同仓库均不得隐式绑定。本地已保存会话必须从其 Codex project assignment 与 session metadata 解析完整项目、主机和实际 worktree 身份，不得依赖当前打开 Panel 的其他会话；远端会话仍必须使用宿主提供的完整身份。普通 Issue 禁止覆盖其他会话；绑定 Jira 时只写需求自身的关联会话，不得新建、替换或恢复规划记录，也不修改 Jira 字段或状态。立即执行、自动认领和手动绑定产生的任务级对话统一显示在活动区，不得在详情正文重复提供固定入口；Jira 活动必须按真实 Codex thread ID 去重并同时显示规划会话与关联会话。
 - 描述格式不变量：Jira 纯文本描述中以 `#` 开始的编号项必须按有序列表显示，普通 Panel Issue 的 Markdown 不得被改写；只读 Issue 描述和评论的任务列表必须让正文与行内代码保持在 checkbox 右侧的同一文本流中，编辑器已有内容容器的 Grid 布局保持不变。
-- 规划启动与诊断不变量：即使尚未关联仓库，也必须允许规划会话在 Panel 管理的非 Git 工作目录启动；Codex 无法启动时必须显示其实际诊断，而不是只显示退出码。
+- 规划启动与诊断不变量：即使尚未关联仓库，也必须允许规划会话在 Panel 管理的非 Git 工作目录启动；规划草稿提交后的待绑定意图必须跨 renderer 重载保留，再次点击规划时先通过 Codex `thread/list` 与 `thread/read` 按 Jira Key 复核未绑定会话，唯一匹配直接恢复，多个匹配必须停止而不能猜测或创建重复会话。同一规范化仓库路径存在多个 Codex project ID 时应视为同一目标项目。绑定完成后必须使用 Jira Key 和标题命名 Codex 会话。Codex 无法启动或切换时必须显示实际诊断，不得被注入脚本的二次异常覆盖，也不能只显示退出码。
 - 生命周期控制不变量：Jira 进入进行中时只释放没有未完成前置依赖的 backlog frontier；回到待认领或在关联工作未完成时提前结束必须生成非破坏性确认。确认暂停后，`todo` 回到 `backlog`、`in_progress` 进入 `blocked`，macOS 和 Windows 上的活动 Codex turn 都会尝试中断，但代码、对话和 worktree 保留；个别 turn 中断失败不得回滚 Issue 暂停，必须显示失败数量供用户处理。Jira 再次进行中时恢复符合依赖条件的暂停 Issue。已完成 Jira 重新打开时保留历史 Issue 和对话，允许创建新的返工 Issue 与独立对话，既有复杂规划还可选择新的默认“帮我批准”规划会话；重新规划只有在新会话与可编辑草稿成功准备后才能替换旧计划并清除提醒，准备失败必须保留旧计划且允许重试，准备草稿不得自动启动 Codex。执行期间必须拒绝同一 Jira 的同步、仓库、关联和生命周期并发写入。重复 Jira 必须记录 canonical Jira，禁止一键执行与规划；已关闭但仍有关联且等待确认的重复 Jira 保持可见，迁移已有仓库和 Issue 关系必须显式确认，canonical 在当前同步账号不可访问时保留原关系。
 - 自动完成不变量：Jira 设置中的自动完成默认关闭；只有至少一个关联 Issue 且所有关联 Issue 均为未归档的 `done` 时才可触发。Panel 必须先按 Jira `fields.updated` 重新读取远端，只有版本未变化且实时 transitions 中恰好一个操作映射到 `done` 时才回写，成功后再次读取确认。远端变化必须保留本地 `done` 并让用户选择接受完整远端状态或按最新远端版本仍然完成；transition 缺失、歧义或最终失败不得猜测或回滚本地 Issue。5xx、超时与 429 最多按 30 秒、2 分钟重试两次，最终错误和手动重试入口持久化可见。
 - 对话归档不变量：Jira 设置中的自动归档默认关闭，只有开启后才在完成、同步或关联变化时自动执行；手动归档不受该开关影响。自动与手动都必须要求 Jira 为 `done`、至少关联一个执行 Issue、全部关联 Issue 都是未归档的 `done`，且仍存在未归档的相关对话，并统一归档该 Jira 的规划对话以及通过简单创建、自动认领或返工建立的执行对话。归档只把本地 AI 对话移出活跃列表，必须保留 thread、run、event 和 Codex thread ID；运行中的 turn 保留可见直到收尾，归档对话不得再启动新 turn。关闭开关不恢复已归档对话；Jira 重开后的返工或重新规划必须创建新的未归档对话，不能复用历史线程。
@@ -253,7 +254,7 @@
 
 - 生命周期：`等待上游吸收`
 - 原始目的：由 Panel 自己保存自动认领策略、执行队列和尝试记录，统一承接普通 Issue、Jira 授权 Issue 与手动立即执行，不再让 Codex Scheduled Task 充当执行核心。
-- 行为不变量：仓库项目的自动化策略必须持久化保存开关、项目暂停、5/10/15/30/60 分钟扫描间隔、模型和推理强度，并展示排队、运行、阻塞和失败数量；Jira 项目和 Cloud 模式不可配置。全局默认项目并行数为 `3`，用户可在 `1-8` 内修改；每个项目可跟随默认值或设置自己的 `1-8` 覆盖值，不设跨项目总上限。周期扫描只纳入未关联 Jira 的本地 `todo` Issue；Jira 关联 Issue 只有在 Jira 为进行中且没有待处理生命周期决定时才可进入队列。关闭自动认领只阻止新的自动入队，已有队列继续调度；详情页“立即执行”和 Jira 简单一键创建使用 `manual` 来源，即使自动扫描关闭也可入队，但项目暂停仍阻止全部调度。队列先处理手动与恢复来源，Jira 与扫描来源再按 Issue 优先级、看板顺序和入队时间调度；达到项目容量时 Issue 保持 `todo` 并显示等待槽位。正式执行必须在关联仓库对应的 Codex 原生项目中选择“新建本地工作树”后提交包含 `manage-panel` 与 `implement` 的提示，使 Codex 环境初始化脚本生效；Panel 不得自行创建 worktree，只能在 Codex 返回后持久化真实 thread binding、worktree 路径和分支。Jira 关联 Issue 必须以 Jira external key 作为任务标题、执行提示和分支命名要求，不能以 Panel Issue 标识替代。临时启动或连接失败最多按 30 秒、2 分钟重试两次；其他失败将 Issue 和队列移入阻塞并记录 Agent 评论。用户评论或用户对话完成后恢复阻塞执行；如果评论早于运行 turn 完全收尾，恢复请求必须先持久化并在收尾时消费，不能丢失。服务重启必须记录中断尝试，只在原对话、执行记录和开发上下文一致时恢复，否则阻塞且不得创建替代对话。worktree 在 `in_review` 保留；Issue 为 `done` 后只在 worktree 干净且分支已合入 `origin/main` 或本地 `main` 时自动移除。项目容量只约束 Panel 的一键执行与自动认领，不限制用户自建 Codex 任务或 Scheduled Task；迁移旧自动化时也只能暂停 Panel 本地记录的具体 automation ID。
+- 行为不变量：仓库项目的自动化策略必须持久化保存开关、项目暂停、5/10/15/30/60 分钟扫描间隔、模型和推理强度，并展示排队、运行、阻塞和失败数量；Jira 项目和 Cloud 模式不可配置。全局默认项目并行数为 `3`，用户可在 `1-8` 内修改；每个项目可跟随默认值或设置自己的 `1-8` 覆盖值，不设跨项目总上限。周期扫描只纳入未关联 Jira 的本地 `todo` Issue；Jira 关联 Issue 只有在 Jira 为进行中且没有待处理生命周期决定时才可进入队列。关闭自动认领只阻止新的自动入队，已有队列继续调度；详情页“立即执行”和 Jira 简单一键创建使用 `manual` 来源，即使自动扫描关闭也可入队，但项目暂停仍阻止全部调度。队列先处理手动与恢复来源，Jira 与扫描来源再按 Issue 优先级、看板顺序和入队时间调度；达到项目容量时 Issue 保持 `todo` 并显示等待槽位。正式执行必须在关联仓库对应的 Codex 原生项目中，从已展开菜单里选择真实可见且可交互的“新建本地工作树”，再提交包含 `manage-panel` 与 `implement` 的提示，使 Codex 环境初始化脚本生效；Panel 不得自行创建 worktree，只能在 Codex 返回后持久化真实 thread binding、worktree 路径和分支。Jira 关联 Issue 必须以 Jira external key 作为任务标题、执行提示和分支命名要求，不能以 Panel Issue 标识替代。临时启动或连接失败最多按 30 秒、2 分钟重试两次；需要用户输入时显示“等待你的回复”，只能在收到 Issue 评论或关联对话回复后重新入队；其他执行失败显示“重新执行”，只能由用户明确重试，自动扫描不得自行重试阻塞工作。Jira 暂停或存在待处理暂停决定时，评论与手动执行都不得绕过授权。若评论早于运行 turn 完全收尾，恢复请求必须先持久化并在收尾时消费，不能丢失。服务重启必须记录中断尝试，只在原对话、执行记录和开发上下文一致时恢复，否则阻塞且不得创建替代对话。worktree 在 `in_review` 保留；Issue 为 `done` 后只在 worktree 干净且分支已合入 `origin/main` 或本地 `main` 时自动移除。项目容量只约束 Panel 的一键执行与自动认领，不限制用户自建 Codex 任务或 Scheduled Task；迁移旧自动化时也只能暂停 Panel 本地记录的具体 automation ID。
 - 代码和测试路径：`server/ai-chat.mjs`、`server/app.mjs`、`server/database.mjs`、`server/claim-queue.mjs`、`web/src/App.tsx`、`web/src/api.ts`、`web/src/components/ProjectAutomationMenu.tsx`、`web/src/components/TaskDetail.tsx`、`web/src/styles.css`、`web/src/types.ts`、`test/claim-queue.test.mjs` 和 `test/project-automation-settings.test.mjs`。
 - 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
 - 来源：当前 Panel 持久化自动执行能力；提交后可用 `git log -S'default_project_parallelism' -- server/database.mjs` 定位本次项目并行扩展。

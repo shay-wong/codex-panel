@@ -23,6 +23,51 @@ const bindRemoteThreadSource = webApp.slice(
   webApp.indexOf("\n  async function openRemoteTaskInThread"),
 );
 
+function hostRequestHarness({ heartbeatDelayMs, bindingWaitTimeoutMs = 100 }) {
+  const start = source.indexOf("  function hasLiveHostBinding");
+  const end = source.indexOf("\n  function requestHostEnsure", start);
+  const functionSource = source.slice(start, end);
+  return vm.runInNewContext(`(() => {
+    let hostHeartbeatAt = 0;
+    let hostRequestSequence = 0;
+    const hostRequests = new Map();
+    ${functionSource}
+    return async () => {
+      if (heartbeatDelayMs !== null) {
+        window.setTimeout(() => { hostHeartbeatAt = Date.now(); }, heartbeatDelayMs);
+      }
+      const response = requestHost("prefill-task-composer", { instruction: "Plan" }, 100);
+      const responder = window.setInterval(() => {
+        const pending = hostRequests.entries().next().value;
+        if (!pending) return;
+        const [id, request] = pending;
+        hostRequests.delete(id);
+        request.resolve({ ok: true });
+      }, 1);
+      try {
+        return await response;
+      } finally {
+        window.clearInterval(responder);
+      }
+    };
+  })()`, {
+    heartbeatDelayMs,
+    HOST_CAPABILITY: "capability",
+    HOST_HEARTBEAT_MAX_AGE_MS: 8_000,
+    HOST_BINDING_READY_TIMEOUT_MS: bindingWaitTimeoutMs,
+    HOST_REQUEST_TIMEOUT_MS: 100,
+    HOST_REQUEST_MESSAGE: "host-request",
+    window: {
+      location: { origin: "app://-" },
+      postMessage: () => {},
+      setInterval,
+      clearInterval,
+      setTimeout,
+      clearTimeout,
+    },
+  });
+}
+
 function loadLatestAiChatHandoff() {
   const start = webApp.indexOf("function latestAiChatHandoff");
   const end = webApp.indexOf("\nfunction issueThreadInstruction", start);
@@ -67,6 +112,9 @@ function pendingThreadAssociationHarness({ pending, threadId, projectMatches = t
     let lastNativeThreadId = "";
     const messages = [];
     const hostRequests = [];
+    function setPendingThreadAssociation(value) {
+      pendingThreadAssociation = value;
+    }
     ${functionSource}
     return {
       run: async () => {
@@ -103,6 +151,64 @@ function loadMarkPendingThreadAssociationSubmitted() {
     event,
     normalizedLabel: (value) => String(value || "").trim().toLowerCase(),
     SEND_LABELS: ["send", "发送", "傳送"],
+    persistPendingThreadAssociation: () => {},
+  });
+}
+
+function nativeControl({ textContent, left = 0, style = {}, onClick = () => {} }) {
+  const rect = { left, top: 0, width: 120, height: 32 };
+  return {
+    attributes: {},
+    click: onClick,
+    contains(candidate) {
+      return candidate === this;
+    },
+    getAttribute(name) {
+      return this.attributes[name] ?? null;
+    },
+    getBoundingClientRect: () => rect,
+    hitAt: (x, y) => x >= rect.left && x <= rect.left + rect.width
+      && y >= rect.top && y <= rect.top + rect.height,
+    style: {
+      display: "block",
+      opacity: "1",
+      pointerEvents: "auto",
+      visibility: "visible",
+      ...style,
+    },
+    textContent,
+  };
+}
+
+function selectNativeWorktreeHarness({ triggers, item, now }) {
+  const helperStart = source.indexOf("function isInteractiveElement");
+  const helperEnd = source.indexOf("\n  function normalizeThreadId", helperStart);
+  const selectStart = source.indexOf("async function selectNativeWorktree");
+  const selectEnd = source.indexOf("\n  async function createThreadForTask", selectStart);
+  const elements = [...triggers, item].filter(Boolean);
+  const document = {
+    elementFromPoint: (x, y) => elements.find((element) => (
+      element.style.pointerEvents !== "none"
+      && Number.parseFloat(element.style.opacity) > 0
+      && element.hitAt(x, y)
+    )) ?? null,
+    querySelectorAll: (selector) => selector === '[role="menuitem"]'
+      ? (item ? [item] : [])
+      : triggers,
+  };
+  return vm.runInNewContext(`(async () => {
+    ${source.slice(helperStart, helperEnd)}
+    ${source.slice(selectStart, selectEnd)}
+    await selectNativeWorktree();
+  })()`, {
+    Date: { now },
+    document,
+    NATIVE_WORKTREE_LABELS: ["新建本地工作树", "新增本機工作樹", "new local worktree"],
+    normalizedLabel: (value) => String(value || "").trim().toLowerCase(),
+    window: {
+      getComputedStyle: (element) => element.style,
+      setTimeout: (resolve) => resolve(),
+    },
   });
 }
 
@@ -309,6 +415,16 @@ test("opening asks the resident launcher to ensure the service and rebuilds fail
   assert.match(source, /HOST_HEARTBEAT_MAX_AGE_MS/);
 });
 
+test("host requests wait briefly for the launcher bridge heartbeat", async () => {
+  const request = hostRequestHarness({ heartbeatDelayMs: 20 });
+  assert.equal((await request()).ok, true);
+});
+
+test("host requests report an initializing bridge only after the wait limit", async () => {
+  const request = hostRequestHarness({ heartbeatDelayMs: null, bindingWaitTimeoutMs: 20 });
+  await assert.rejects(request(), /Codex 桥接尚未就绪，请稍后重试/);
+});
+
 test("the injected iframe can be cache-busted without reloading the Codex shell", () => {
   assert.match(source, /const FRAME_REFRESH_PARAM = "__codex_panel_refresh"/);
   assert.match(source, /function reloadFrame\(\)/);
@@ -480,8 +596,8 @@ test("issues open an unsent native Codex composer in the confirmed project", () 
   const waitSource = source.slice(waitStart, source.indexOf("async function createThreadForTask", waitStart));
   assert.match(waitSource, /selectedNativeProjectId\(\)/);
   assert.match(waitSource, /activeNativeWorkspaceRoots\(\)/);
-  assert.match(waitSource, /if \(projectId && projectId === expectedProjectId\)/);
-  assert.match(waitSource, /if \(!activeWorkspace\.available\) return projectId/);
+  assert.match(waitSource, /if \(projectId\)/);
+  assert.match(waitSource, /if \(projectId === expectedProjectId\) return projectId/);
   assert.match(waitSource, /canonicalNativeRootPaths\(\[\s*targetRoot,\s*\.\.\.activeWorkspace\.roots,/);
   assert.match(waitSource, /canonicalActiveRoots\.some\(\(root\) => root === canonicalTargetRoot\)/);
 });
@@ -497,8 +613,7 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.match(source, /function createThreadForTask\(payload\)/);
   assert.match(source, /\[data-app-action-sidebar-select-project\]/);
   assert.match(source, /data-codex-composer/);
-  assert.match(source, /type: "electron-add-new-workspace-root-option"/);
-  assert.match(source, /root: target\.targetRoot/);
+  assert.doesNotMatch(createThreadSource, /electron-add-new-workspace-root-option/);
   assert.doesNotMatch(source, /prefillPrompt: prompt/);
   assert.match(source, /requestHostTaskComposerPrefill\(\{/);
   assert.match(source, /requestHost\("prefill-task-composer"/);
@@ -553,7 +668,7 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.match(injectorSource, /gitValue\(root, \["branch", "--show-current"\]\)/);
   assert.match(
     createThreadSource,
-    /if \(autoSubmit\) \{[\s\S]*?return;[\s\S]*?pendingThreadAssociation = \{/,
+    /if \(autoSubmit\) \{[\s\S]*?return;[\s\S]*?setPendingThreadAssociation\(\{/,
   );
   assert.doesNotMatch(createThreadSource, /Input\.dispatchKeyEvent/);
   assert.doesNotMatch(openRemoteThreadSource, /moveTaskRequest/);
@@ -567,17 +682,89 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
   assert.match(bindRemoteThreadSource, /JSON\.stringify\(latestTask\.developmentContext\) !== pending\.developmentContext/);
 });
 
+test("native worktree selection skips stale covered controls", async () => {
+  let staleClicks = 0;
+  let triggerClicks = 0;
+  let itemClicks = 0;
+  let timestamp = 0;
+  const staleTrigger = nativeControl({
+    textContent: "本地",
+    style: { opacity: "0", pointerEvents: "none" },
+    onClick: () => { staleClicks += 1; },
+  });
+  const trigger = nativeControl({
+    textContent: "本地",
+    left: 140,
+    onClick: () => {
+      triggerClicks += 1;
+      trigger.attributes["aria-expanded"] = "true";
+    },
+  });
+  const item = nativeControl({
+    textContent: "新建本地工作树",
+    left: 280,
+    onClick: () => {
+      itemClicks += 1;
+      trigger.textContent = "新建本地工作树";
+    },
+  });
+
+  await selectNativeWorktreeHarness({
+    triggers: [staleTrigger, trigger],
+    item,
+    now: () => { timestamp += 40; return timestamp; },
+  });
+
+  assert.equal(staleClicks, 0);
+  assert.equal(triggerClicks, 1);
+  assert.equal(itemClicks, 1);
+});
+
+test("native worktree selection waits for the menu to open", async () => {
+  let itemClicks = 0;
+  let timestamp = 0;
+  const trigger = nativeControl({ textContent: "本地" });
+  const item = nativeControl({
+    textContent: "新建本地工作树",
+    left: 140,
+    onClick: () => { itemClicks += 1; },
+  });
+
+  await assert.rejects(
+    selectNativeWorktreeHarness({
+      triggers: [trigger],
+      item,
+      now: () => { timestamp += 1_000; return timestamp; },
+    }),
+    /Codex 没有切换到新建本地工作树/,
+  );
+  assert.equal(itemClicks, 0);
+});
+
 test("local Jira planning resolves the saved Codex project before applying its workspace", () => {
   assert.match(
     createThreadSource,
-    /if \(!projectless\) \{[\s\S]*?resolveNativeProject\(requestedProjectId, workspacePath\)[\s\S]*?electron-add-new-workspace-root-option[\s\S]*?waitForNativeProject\(target\.targetRoot, target\.projectId\)/,
+    /if \(!projectless\) \{[\s\S]*?resolveNativeProject\(requestedProjectId, workspacePath\)[\s\S]*?ensureProjectRows\(\)[\s\S]*?projectRowById\(target\.projectId\)[\s\S]*?selectProject\.click\?\.\(\)[\s\S]*?waitForNativeProject\(target\.targetRoot, target\.projectId\)/,
   );
+  assert.doesNotMatch(createThreadSource, /electron-add-new-workspace-root-option/);
+});
+
+test("Jira planning recovers a stored matching conversation before creating another one", () => {
+  assert.match(webApp, /recoverExisting: true/);
+  assert.match(
+    createThreadSource,
+    /recoverExisting === true[\s\S]*?requestHost\("find-task-conversations"[\s\S]*?panel:thread-created[\s\S]*?return;/,
+  );
+  assert.match(source, /PENDING_THREAD_ASSOCIATION_KEY/);
+  assert.match(source, /window\.localStorage\.setItem\(PENDING_THREAD_ASSOCIATION_KEY/);
+  assert.match(source, /restorePendingThreadAssociation\(\)/);
 });
 
 test("an unrelated new thread cannot claim an unsent SSH issue draft", async () => {
   const pending = {
     taskId: "task-1",
     identifier: "REMOTE-7",
+    title: "REMOTE-7: Fix bridge",
     existingThreadIds: new Set(["old-thread"]),
     projectId: "ssh-project",
     codexHostId: "ssh-host",
@@ -621,6 +808,7 @@ test("a submitted issue draft publishes only after project and host confirmation
   const pending = {
     taskId: "task-1",
     identifier: "REMOTE-7",
+    title: "REMOTE-7: Fix bridge",
     existingThreadIds: new Set(["old-thread"]),
     projectId: "ssh-project",
     codexHostId: "ssh-host",
@@ -643,12 +831,19 @@ test("a submitted issue draft publishes only after project and host confirmation
     codexHostId: "ssh-host",
     targetRoot: "/srv/project",
     identifier: "REMOTE-7",
+    title: "REMOTE-7: Fix bridge",
   }]]);
   assert.deepEqual(JSON.parse(JSON.stringify(pending.messages)), [{
     type: "panel:thread-created",
     payload: { taskId: "task-1", threadId: "issue-thread" },
   }]);
   assert.equal(result.pendingThreadAssociation, null);
+});
+
+test("prepared issue drafts preserve a title for native binding", () => {
+  assert.match(source, /title: pendingThreadAssociation\.title/);
+  assert.match(source, /title: pending\.title \|\| pending\.identifier/);
+  assert.match(source, /title,\s*composer,\s*existingThreadIds/);
 });
 
 test("long conversation handoffs use the Panel UI language for truncation", () => {
@@ -1503,13 +1698,19 @@ test("native project confirmation composes exact IDs, root availability, and can
   });
   await assert.rejects(mismatch.waitForNativeProject(sensitiveTarget, "expected"));
 
-  const wrongProject = loadWait({
-    projectId: "wrong",
+  const duplicateProject = loadWait({
+    projectId: "duplicate",
     activeWorkspace: { available: true, roots: [defaultTarget] },
     canonicalPathByRoot: { [defaultTarget]: defaultTarget },
   });
-  await assert.rejects(wrongProject.waitForNativeProject(defaultTarget, "expected"));
-  assert.deepEqual(wrongProject.canonicalCalls, []);
+  assert.equal(
+    await duplicateProject.waitForNativeProject(defaultTarget, "expected"),
+    "duplicate",
+  );
+  assert.deepEqual(duplicateProject.canonicalCalls, [{
+    path: "workspace-root-options",
+    body: { hostId: "local", canonicalizeRoots: [defaultTarget, defaultTarget] },
+  }]);
 });
 
 test("SSH task project selection uses its stable ID and local project IDs use bootstrap keys", () => {

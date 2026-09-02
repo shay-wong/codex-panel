@@ -1414,11 +1414,8 @@ export function App() {
           operation: "pause",
           panelProjectId,
           codexProjectId: record.codexProjectId,
-          codexProjectKind: record.codexProjectKind,
-          codexHostId: record.codexHostId,
           projectName: projects.find((project) => project.id === panelProjectId)?.name ?? panelProjectId,
           workspacePath: record.workspacePath,
-          remoteProjects: [],
           skillPath: managePanelSkillPath,
           automationId: record.automationId,
           enabledByUser: false,
@@ -1484,12 +1481,17 @@ export function App() {
         const threadId = payload.threadId.trim();
         const jiraPlanning = pendingJiraPlanningRef.current.get(payload.taskId);
         pendingJiraPlanningRef.current.delete(payload.taskId);
-        if (jiraPlanning) setOpeningThreadTaskId(null);
+        const alreadyLinked = Boolean(
+          task
+          && (
+            task.threadBinding?.threadId === threadId
+            || task.legacyLocalThreadId === threadId
+          )
+        );
         if (
           !task
           || !threadId
-          || task.threadBinding?.threadId === threadId
-          || task.legacyLocalThreadId === threadId
+          || (!jiraPlanning && alreadyLinked)
         ) return;
         void (async () => {
           let updated = task;
@@ -1503,7 +1505,7 @@ export function App() {
             );
             if (result.context.jira) updated = result.context.jira;
             updated = await updateTaskRequest(updated, taskToDraft(updated), threadId);
-          } else {
+          } else if (!alreadyLinked) {
             updated = await updateTaskRequest(updated, taskToDraft(updated), threadId);
           }
           if (jiraPlanning?.kind === "planning") {
@@ -1513,6 +1515,7 @@ export function App() {
           return updated;
         })()
           .then((updated) => {
+            if (jiraPlanning) setOpeningThreadTaskId(null);
             setTasks((current) => sortTasks(current.map((candidate) => (
               candidate.id === updated.id ? updated : candidate
             ))));
@@ -1526,6 +1529,7 @@ export function App() {
             ));
           })
           .catch((error) => {
+            if (jiraPlanning) setOpeningThreadTaskId(null);
             setActionError(error instanceof ApiError && error.code === "VERSION_CONFLICT"
               ? textRef.current(
                 "新 Codex 对话已创建，但议题同时发生了变化，未能自动关联。",
@@ -3098,6 +3102,7 @@ export function App() {
         codexProjectKind: "local",
         codexHostId: "local",
         workspacePath,
+        recoverExisting: true,
       },
     });
   }
