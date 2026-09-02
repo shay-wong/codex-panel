@@ -4325,6 +4325,18 @@ kbd {
   white-space: pre-wrap;
 }
 
+button.activity-change-value {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  text-align: left;
+}
+
+button.activity-change-value:hover {
+  text-decoration: underline;
+}
+
 .activity-ai-conversation {
   align-items: flex-start;
   padding-top: 8px;

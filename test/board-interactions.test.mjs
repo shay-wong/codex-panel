@@ -195,6 +195,14 @@ test("issue activity opens formal execution in Codex and keeps it out of tempora
   assert.match(styles, /\.activity-conversation-link \{[\s\S]*?background: var\(--surface\)/);
 });
 
+test("Jira link activity opens the linked Panel issue", () => {
+  assert.match(detailSource, /change\.field !== "jiraIssue"/);
+  assert.match(detailSource, /onOpenTask\(await getTask\(identifier\)\)/);
+  assert.match(detailSource, /aria-label=\{text\([\s\S]*?打开议题[\s\S]*?Open issue/);
+  assert.match(detailSource, /onClick=\{\(\) => void openActivityTask\(target\)\}/);
+  assert.match(styles, /button\.activity-change-value \{[\s\S]*?background: transparent;[\s\S]*?color: var\(--accent\)/);
+});
+
 test("Jira repository summary keeps the overflow count and manage action visible", () => {
   assert.match(detailSource, /const additionalJiraProjectCount = Math\.max/);
   assert.match(detailSource, /<em>\+\{additionalJiraProjectCount\}<\/em>/);
