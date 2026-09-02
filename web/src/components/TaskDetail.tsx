@@ -1649,6 +1649,14 @@ export function TaskDetail({
                 {editingDescription ? (
                   <div
                     className="issue-description-composer"
+                    onMouseDownCapture={(event) => {
+                      if (
+                        event.target instanceof Element
+                        && event.target.closest(
+                          ".inline-media-image > button, .inline-media-attachment > button, .issue-description-attach-button",
+                        )
+                      ) event.preventDefault();
+                    }}
                     onBlur={(event) => {
                       if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
                       void saveDescription();

@@ -281,18 +281,19 @@
   function findReferenceButton() {
     const scroll = document.querySelector("[data-app-action-sidebar-scroll]");
     if (!scroll) return null;
-    const buttons = Array.from(scroll.querySelectorAll("button"));
+    const buttons = Array.from(scroll.querySelectorAll("button"))
+      .filter((button) => button.getAttribute(OWNED_ATTRIBUTE) !== "true");
     const plugin = buttons.find((button) => buttonMatches(button, PLUGIN_LABELS));
     if (plugin) return plugin;
 
     const firstSection = scroll.querySelector("[data-app-action-sidebar-section]");
-    const sectionTop = firstSection?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY;
-    const groups = Array.from(scroll.querySelectorAll("div")).filter((element) => {
-      const directButtons = Array.from(element.children).filter((child) => child.tagName === "BUTTON");
-      return directButtons.length >= 3 && element.getBoundingClientRect().top < sectionTop;
-    });
-    const group = groups.sort((left, right) => right.children.length - left.children.length)[0];
-    return Array.from(group?.children || []).filter((child) => child.tagName === "BUTTON").at(-1) || null;
+    if (!firstSection) return null;
+    const sectionTop = firstSection.getBoundingClientRect().top;
+    return buttons.filter((button) => {
+      const rect = button.getBoundingClientRect();
+      return rect.height > 0
+        && rect.bottom <= sectionTop;
+    }).at(-1) || null;
   }
 
   function replaceEntryIcon(button) {
