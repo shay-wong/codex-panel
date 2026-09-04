@@ -121,6 +121,7 @@ interface AiChatProps {
   codexProjectIdentity: CodexProjectIdentity | null;
   onThreadsChange?: (threads: AiChatThread[]) => void;
   openThreadRequest?: AiChatOpenThreadRequest | null;
+  onOpenThreadRequestHandled: (requestId: number) => void;
 }
 
 type MenuName = "issue" | "model" | "model-list" | "effort-list" | "sandbox" | null;
@@ -1377,6 +1378,7 @@ export function AiChat({
   codexProjectIdentity,
   onThreadsChange,
   openThreadRequest,
+  onOpenThreadRequestHandled,
 }: AiChatProps) {
   const { locale, text } = useTaskboardI18n();
   const [panelOpen, setPanelOpen] = useState(false);
@@ -2137,6 +2139,7 @@ export function AiChat({
       setComposerRebindBlocked(composerDraft?.ready === false);
       if (composerDraft?.ready) setComposerRevision(composerDraft.revision);
       setPanelOpen(true);
+      onOpenThreadRequestHandled(openThreadRequest.requestId);
       return;
     }
     if (!threads.some((thread) => thread.id === openThreadRequest.threadId)) return;
@@ -2160,11 +2163,13 @@ export function AiChat({
     setMenu(null);
     setError(null);
     setPanelOpen(true);
+    onOpenThreadRequestHandled(openThreadRequest.requestId);
   }, [
     available,
     draftOrigin,
     loadSnapshot,
     openThreadRequest,
+    onOpenThreadRequestHandled,
     selectThread,
     snapshot?.thread.id,
     threads,

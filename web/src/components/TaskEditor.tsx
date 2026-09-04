@@ -40,17 +40,14 @@ import {
   StatusIcon,
 } from "./SemanticIcons";
 import {
-  fileKey,
-  MAX_ATTACHMENT_SIZE,
-  PendingAttachments,
-} from "./PendingAttachments";
-import {
   createInlineMediaSegments,
   InlineMediaComposer,
+  inlineMediaFiles,
   inlineMediaImages,
   serializeInlineMedia,
   type InlineMediaComposerHandle,
   type InlineMediaSegment,
+  type PendingInlineAttachment,
   type PendingInlineImage,
 } from "./InlineMediaComposer";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
@@ -96,7 +93,6 @@ export interface NewTaskEditorDraft {
   startDate: string;
   dueDate: string;
   recurrence: Recurrence | null;
-  attachments: File[];
   relations: NewTaskRelationDraft;
 }
 
@@ -117,7 +113,7 @@ interface TaskEditorProps {
   onCancel: (draft: NewTaskEditorDraft | null) => void;
   onSave: (
     draft: TaskDraft,
-    attachments: File[],
+    inlineFiles: PendingInlineAttachment[],
     inlineImages: PendingInlineImage[],
     createOptions?: NewTaskCreateOptions,
   ) => Promise<void>;
@@ -208,7 +204,6 @@ export function TaskEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<TaskEditorError | null>(null);
   const [attachmentError, setAttachmentError] = useState<TaskEditorError | null>(null);
-  const [attachments, setAttachments] = useState<File[]>(initialDraft?.attachments ?? []);
 
   const developmentOptions = useMemo(() => {
     const options = [...developmentScan.contexts];
@@ -402,14 +397,13 @@ export function TaskEditor({
         startDate: startDate || null,
         dueDate: dueDate || null,
         recurrence,
-      }, attachments, inlineMediaImages(descriptionSegments), task ? undefined : {
+      }, inlineMediaFiles(descriptionSegments), inlineMediaImages(descriptionSegments), task ? undefined : {
         keepOpen: createMore,
         relations: { parentId, relatedIds, subIssueIds },
       });
       if (!task && createMore) {
         setTitle("");
         setDescriptionSegments(createInlineMediaSegments());
-        setAttachments([]);
         setSubIssueIds([]);
         setRelationMenu(null);
         setAttachmentError(null);
@@ -447,23 +441,6 @@ export function TaskEditor({
     if (task) event.currentTarget.requestSubmit();
   }
 
-  function addAttachments(files: FileList | File[]) {
-    const selected = Array.from(files);
-    const oversized = selected.find((file) => file.size > MAX_ATTACHMENT_SIZE);
-    if (oversized) {
-      setAttachmentError([
-        `“${oversized.name}” 超过 25 MB，无法上传。`,
-        `“${oversized.name}” is larger than 25 MB and cannot be uploaded.`,
-      ]);
-      return;
-    }
-    setAttachmentError(null);
-    setAttachments((current) => {
-      const existing = new Set(current.map(fileKey));
-      return [...current, ...selected.filter((file) => !existing.has(fileKey(file)))];
-    });
-  }
-
   function chooseDueDate(value: string) {
     setDueDate(value);
     setMenu(null);
@@ -481,7 +458,6 @@ export function TaskEditor({
       startDate,
       dueDate,
       recurrence,
-      attachments,
       relations: { parentId, relatedIds, subIssueIds },
     });
   }
@@ -564,18 +540,9 @@ export function TaskEditor({
               placeholder={text("添加描述…", "Add description…")}
               ariaLabel={text("描述", "Description")}
               disabled={saving}
+              allowAttachments
               onChange={setDescriptionSegments}
               onError={setAttachmentError}
-            />
-          )}
-
-          {!task && (
-            <PendingAttachments
-              files={attachments}
-              disabled={saving}
-              uploadLabel={text("保存后上传", "Upload after saving")}
-              ariaLabel={text("待上传附件", "Pending attachments")}
-              onRemove={(index) => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}
             />
           )}
 
@@ -815,9 +782,9 @@ export function TaskEditor({
             {!task && (
               <>
                 <button className="composer-attach-icon" type="button" disabled={saving} onClick={() => attachmentInputRef.current?.click()} aria-label={text("上传附件", "Upload attachments")}>
-                  <AttachmentIcon color="currentColor" />{attachments.length > 0 && <span>{attachments.length}</span>}
+                  <AttachmentIcon color="currentColor" />
                 </button>
-                <input ref={attachmentInputRef} type="file" multiple hidden onChange={(event) => { if (event.currentTarget.files) addAttachments(event.currentTarget.files); event.currentTarget.value = ""; }} />
+                <input ref={attachmentInputRef} type="file" multiple hidden onChange={(event) => { if (event.currentTarget.files) descriptionComposerRef.current?.addFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
               </>
             )}
             {task && <span aria-hidden="true" />}

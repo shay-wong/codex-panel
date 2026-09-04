@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { EventEmitter, once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+import vm from "node:vm";
 
 const source = await readFile(new URL("../scripts/codex-injector.mjs", import.meta.url), "utf8");
 const runtimeSource = await readFile(
@@ -219,6 +221,102 @@ test("private CDP pipe launch and renderer recovery remain enabled", () => {
   assert.match(source, /openRuntimePanel[\s\S]*?injectionReadinessMatches\(status/);
   assert.match(source, /const hasOpenPending = \(\) => openedRequestGeneration < openRequestGeneration/);
   assert.match(source, /if \(idleAfterNormalExit\)[\s\S]*?if \(!hasOpenPending\(\)\) continue/);
+});
+
+test("managed private-CDP spawn failures wait for another open request", async () => {
+  const launchStart = source.indexOf("function managedCodexSpawnFailure");
+  const launchEnd = source.indexOf("class CdpConnection", launchStart);
+  assert.notEqual(launchStart, -1);
+  assert.notEqual(launchEnd, -1);
+
+  const executable = String.raw`C:\Users\alice\AppData\Roaming\Codex Panel\codex-runtime\codex.exe`;
+  const profile = String.raw`C:\Users\alice\AppData\Roaming\Codex Panel\codex-profile`;
+  const launches = [];
+  let spawnMode = "failure";
+  let browserOpenCount = 0;
+  class TestPipeBrowser {
+    constructor(child) {
+      this.child = child;
+    }
+
+    async open() {
+      browserOpenCount += 1;
+    }
+  }
+  const { launchCodexWithPipe } = vm.runInNewContext(
+    `(() => {
+      ${source.slice(launchStart, launchEnd)}
+      return { launchCodexWithPipe };
+    })()`,
+    {
+      CdpPipeBrowser: TestPipeBrowser,
+      Error,
+      once,
+      validatedCodexExecutablePath: (appPath) => appPath,
+      independentCodexProfilePath: profile,
+      process: { env: { SAFE_VALUE: "kept", CODEX_PANEL_SECRET: "removed" } },
+      spawn: (command, args, options) => {
+        launches.push({ command, args, options });
+        const child = new EventEmitter();
+        child.exitCode = null;
+        child.signalCode = null;
+        child.kill = () => true;
+        if (spawnMode === "success") {
+          child.pid = 376;
+        } else {
+          queueMicrotask(() => child.emit("error", Object.assign(
+            new Error(`spawn ${command} EPERM`),
+            {
+              code: "EPERM",
+              errno: -4048,
+              syscall: `spawn ${command}`,
+            },
+          )));
+        }
+        return child;
+      },
+      withoutPanelLauncherEnvironment: (environment) => ({
+        SAFE_VALUE: environment.SAFE_VALUE,
+      }),
+    },
+  );
+
+  await assert.rejects(launchCodexWithPipe(executable), (failure) => {
+    assert.equal(failure.managedCodexSpawnFailure, true);
+    assert.match(failure.message, /Managed Codex spawn failed/);
+    assert.match(failure.message, /--user-data-dir=<panel-profile>/);
+    assert.match(failure.message, /code=EPERM/);
+    assert.match(failure.message, /errno=-4048/);
+    assert.doesNotMatch(failure.message, /codex-profile/);
+    return true;
+  });
+  assert.equal(browserOpenCount, 0);
+
+  spawnMode = "success";
+  const launched = await launchCodexWithPipe(executable);
+  assert.equal(launched.child.pid, 376);
+  assert.equal(browserOpenCount, 1);
+  assert.equal(launches.at(-1).command, executable);
+  assert.deepEqual(Array.from(launches.at(-1).args), [
+    `--user-data-dir=${profile}`,
+    "--remote-debugging-pipe",
+    "--disable-features=LocalNetworkAccessForSubframeNavigations",
+  ]);
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(launches.at(-1).options.env)),
+    { SAFE_VALUE: "kept" },
+  );
+
+  assert.match(source, /if \(!options\.watch \|\| error\?\.managedCodexSpawnFailure !== true\) throw error/);
+  assert.equal(source.match(/const launchRequestGeneration = openRequestGeneration;/g)?.length, 3);
+  assert.equal(
+    source.match(
+      /openedRequestGeneration = Math\.max\(\s*openedRequestGeneration,\s*launchRequestGeneration,\s*\);/g,
+    )?.length,
+    3,
+  );
+  assert.match(source, /if \(!hasOpenPending\(\)\) continue;/);
+  assert.match(source, /idleAfterNormalExit = true;\s*console\.error\(`Waiting for Codex launch:/);
 });
 
 test("CSP bypass is activated by one controlled renderer reload", () => {

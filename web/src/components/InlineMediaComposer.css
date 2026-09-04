@@ -224,6 +224,7 @@
   cursor: pointer;
 }
 
+.issue-description-composer .inline-media-composer.ProseMirror li.task-list-item > input[type="checkbox"],
 .inline-media-description.ProseMirror li.task-list-item > input[type="checkbox"] {
   margin-top: 6.5px;
 }

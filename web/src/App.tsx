@@ -72,7 +72,9 @@ import { IssueListView } from "./components/IssueListView";
 import { JiraConnectionDialog } from "./components/JiraConnectionDialog";
 import { ArchivedTasksColumn, OtherTasksPanel } from "./components/OtherTasksPanel";
 import {
+  resolveInlineAttachmentMarkdown,
   resolveInlineMediaMarkdown,
+  type PendingInlineAttachment,
   type PendingInlineImage,
 } from "./components/InlineMediaComposer";
 import { LinearIcon } from "./components/LinearIcon";
@@ -685,6 +687,12 @@ export function App() {
   const [aiThreads, setAiThreads] = useState<AiChatThread[]>([]);
   const [aiThreadsRevision, setAiThreadsRevision] = useState(0);
   const [aiOpenThreadRequest, setAiOpenThreadRequest] = useState<AiChatOpenThreadRequest | null>(null);
+  const aiOpenThreadRequestSequenceRef = useRef(0);
+  const handleAiOpenThreadRequestHandled = useCallback((requestId: number) => {
+    setAiOpenThreadRequest((current) => (
+      current?.requestId === requestId ? null : current
+    ));
+  }, []);
   const [readActivityKeys, setReadActivityKeys] = useState<Record<string, string>>({});
   const [codexThreadProgress, setCodexThreadProgress] = useState<
     Record<string, {
@@ -2203,7 +2211,7 @@ export function App() {
 
   async function saveEditor(
     draft: TaskDraft,
-    attachments: File[],
+    inlineFiles: PendingInlineAttachment[],
     inlineImages: PendingInlineImage[],
     createOptions?: NewTaskCreateOptions,
   ) {
@@ -2229,29 +2237,37 @@ export function App() {
           : project
       )));
     }
-    let failedAttachments = 0;
     let postCreateWriteFailed = false;
-    if (creating && (attachments.length > 0 || inlineImages.length > 0)) {
-      const [results, inlineResults] = await Promise.all([
+    if (creating && (inlineFiles.length > 0 || inlineImages.length > 0)) {
+      const [fileResults, inlineResults] = await Promise.all([
           Promise.allSettled(
-            attachments.map((file) => uploadAttachment(saved.id, file, "attachment")),
+            inlineFiles.map((file) => uploadAttachment(saved.id, file.file, "attachment")),
           ),
           Promise.allSettled(
             inlineImages.map((image) => uploadAttachment(saved.id, image.file, "inline")),
           ),
       ]);
-      failedAttachments = results.filter((result) => result.status === "rejected").length;
+      const fileAttachments = fileResults.flatMap((result) => (
+        result.status === "fulfilled" ? [result.value] : []
+      ));
       const inlineAttachments = inlineResults.flatMap((result) => (
         result.status === "fulfilled" ? [result.value] : []
       ));
-      if (inlineAttachments.length !== inlineImages.length) {
+      if (
+        fileAttachments.length !== inlineFiles.length
+        || inlineAttachments.length !== inlineImages.length
+      ) {
         postCreateWriteFailed = true;
-      } else if (inlineImages.length > 0) {
+      } else if (inlineFiles.length > 0 || inlineImages.length > 0) {
         try {
-          const description = resolveInlineMediaMarkdown(
-            draft.description,
-            inlineImages,
-            inlineAttachments,
+          const description = resolveInlineAttachmentMarkdown(
+            resolveInlineMediaMarkdown(
+              draft.description,
+              inlineImages,
+              inlineAttachments,
+            ),
+            inlineFiles,
+            fileAttachments,
           );
           saved = await updateTaskRequest(saved, { ...draft, description });
         } catch {
@@ -2300,11 +2316,7 @@ export function App() {
     if (creating) setNewTaskDraft(null);
     const failedWrites = [
       ...(relationWriteFailed ? [{ zh: "关系", en: "relations" }] : []),
-      ...(postCreateWriteFailed ? [{ zh: "正文或图片", en: "description or images" }] : []),
-      ...(failedAttachments > 0 ? [{
-        zh: `${failedAttachments} 个附件`,
-        en: `${failedAttachments} attachment${failedAttachments === 1 ? "" : "s"}`,
-      }] : []),
+      ...(postCreateWriteFailed ? [{ zh: "正文或媒体", en: "description or media" }] : []),
     ];
     if (!creating || !createOptions?.keepOpen || failedWrites.length > 0) setEditor(null);
     if (failedWrites.length > 0) {
@@ -2824,10 +2836,11 @@ export function App() {
 
   function openTaskConversation(conversation: TaskConversationItem) {
     if (conversation.kind === "local-ai" && conversation.aiThreadId) {
-      setAiOpenThreadRequest((current) => ({
+      aiOpenThreadRequestSequenceRef.current += 1;
+      setAiOpenThreadRequest({
         threadId: conversation.aiThreadId!,
-        requestId: (current?.requestId ?? 0) + 1,
-      }));
+        requestId: aiOpenThreadRequestSequenceRef.current,
+      });
       return;
     }
     if (conversation.threadBinding) {
@@ -3931,15 +3944,18 @@ export function App() {
               <button
                 className="button primary"
                 type="button"
-                onClick={() => setAiOpenThreadRequest((current) => ({
-                  projectId: selectedProject.id,
-                  issueId: null,
-                  composerText: text(
-                    "只检查当前项目目录对应的 Codex 对话。请将其中已完成、处理中和待执行的任务整理并导入当前项目的 Panel。",
-                    "Only inspect Codex conversations associated with this project directory. Organize completed, in-progress, and pending tasks, then import them into this project's Panel.",
-                  ),
-                  requestId: (current?.requestId ?? 0) + 1,
-                }))}
+                onClick={() => {
+                  aiOpenThreadRequestSequenceRef.current += 1;
+                  setAiOpenThreadRequest({
+                    projectId: selectedProject.id,
+                    issueId: null,
+                    composerText: text(
+                      "只检查当前项目目录对应的 Codex 对话。请将其中已完成、处理中和待执行的任务整理并导入当前项目的 Panel。",
+                      "Only inspect Codex conversations associated with this project directory. Organize completed, in-progress, and pending tasks, then import them into this project's Panel.",
+                    ),
+                    requestId: aiOpenThreadRequestSequenceRef.current,
+                  });
+                }}
               >
                 {text("导入当前项目任务状态", "Import current project task status")}
               </button>
@@ -4429,6 +4445,7 @@ export function App() {
             codexProjectIdentity={selectedCodexProjectIdentity}
             onThreadsChange={setAiThreads}
             openThreadRequest={aiOpenThreadRequest}
+            onOpenThreadRequestHandled={handleAiOpenThreadRequestHandled}
           />
         </Suspense>
       )}

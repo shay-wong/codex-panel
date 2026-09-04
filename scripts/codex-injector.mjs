@@ -2,6 +2,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { accessSync, constants, createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readFile, realpath, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -402,19 +403,44 @@ export function launchCodex(executablePath, port) {
   return child;
 }
 
+function managedCodexSpawnFailure(executable, args, error) {
+  const diagnosticArguments = args.map((argument) => (
+    argument.startsWith("--user-data-dir=")
+      ? "--user-data-dir=<panel-profile>"
+      : argument
+  ));
+  const details = [
+    typeof error?.code === "string" ? `code=${error.code}` : null,
+    error?.errno !== undefined ? `errno=${error.errno}` : null,
+    typeof error?.syscall === "string" ? `syscall=${JSON.stringify(error.syscall)}` : null,
+    `message=${JSON.stringify(error instanceof Error ? error.message : String(error))}`,
+  ].filter(Boolean);
+  const failure = new Error(
+    `Managed Codex spawn failed: executable=${JSON.stringify(executable)}; `
+      + `arguments=${JSON.stringify(diagnosticArguments)}; ${details.join("; ")}`,
+    { cause: error },
+  );
+  failure.managedCodexSpawnFailure = true;
+  return failure;
+}
+
 async function launchCodexWithPipe(executablePath) {
-  const child = spawn(
-    validatedCodexExecutablePath(executablePath),
-    [
-      `--user-data-dir=${independentCodexProfilePath}`,
-      "--remote-debugging-pipe",
-      "--disable-features=LocalNetworkAccessForSubframeNavigations",
-    ],
-    {
+  const executable = validatedCodexExecutablePath(executablePath);
+  const args = [
+    `--user-data-dir=${independentCodexProfilePath}`,
+    "--remote-debugging-pipe",
+    "--disable-features=LocalNetworkAccessForSubframeNavigations",
+  ];
+  let child;
+  try {
+    child = spawn(executable, args, {
       env: withoutPanelLauncherEnvironment(process.env),
       stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"],
-    },
-  );
+    });
+    if (!Number.isInteger(child.pid)) await once(child, "spawn");
+  } catch (error) {
+    throw managedCodexSpawnFailure(executable, args, error);
+  }
   const browser = new CdpPipeBrowser(child);
   try {
     await browser.open();
@@ -2913,9 +2939,20 @@ async function main() {
     }
 
     if (options.cdpPipe) {
-      const launched = await launchCodexWithPipe(executablePath);
-      codexProcess = launched.child;
-      cdpRuntime = pipeCdpRuntime(launched.browser);
+      const launchRequestGeneration = openRequestGeneration;
+      try {
+        const launched = await launchCodexWithPipe(executablePath);
+        codexProcess = launched.child;
+        cdpRuntime = pipeCdpRuntime(launched.browser);
+      } catch (error) {
+        if (!options.watch || error?.managedCodexSpawnFailure !== true) throw error;
+        openedRequestGeneration = Math.max(
+          openedRequestGeneration,
+          launchRequestGeneration,
+        );
+        idleAfterNormalExit = true;
+        console.error(`Waiting for Codex launch: ${error.message}`);
+      }
     } else if (!cdpReachable) {
       codexProcess = launchCodex(executablePath, options.port);
       await waitUntilReachable(cdpVersionUrl, 30_000);
@@ -2986,6 +3023,7 @@ async function main() {
       }
       if (idleAfterNormalExit) {
         if (!hasOpenPending()) continue;
+        const launchRequestGeneration = openRequestGeneration;
         try {
           if (options.cdpPipe) {
             const launched = await launchCodexWithPipe(executablePath);
@@ -2998,6 +3036,12 @@ async function main() {
           }
           idleAfterNormalExit = false;
         } catch (error) {
+          if (error?.managedCodexSpawnFailure === true) {
+            openedRequestGeneration = Math.max(
+              openedRequestGeneration,
+              launchRequestGeneration,
+            );
+          }
           console.error(`Waiting to restart Codex: ${error.message}`);
           continue;
         }
@@ -3077,6 +3121,7 @@ async function main() {
             continue;
           }
           console.error("Codex exited unexpectedly; restarting it for the Panel launcher.");
+          const launchRequestGeneration = openRequestGeneration;
           try {
             if (options.cdpPipe) {
               const launched = await launchCodexWithPipe(executablePath);
@@ -3089,6 +3134,13 @@ async function main() {
             }
             if (options.open) openRequestGeneration += 1;
           } catch (restartError) {
+            if (restartError?.managedCodexSpawnFailure === true) {
+              openedRequestGeneration = Math.max(
+                openedRequestGeneration,
+                launchRequestGeneration,
+              );
+              idleAfterNormalExit = true;
+            }
             console.error(`Waiting to restart Codex: ${restartError.message}`);
           }
           continue;

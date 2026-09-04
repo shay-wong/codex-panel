@@ -24,17 +24,17 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`015abf187bf8f952f16fa1bd236cea8d01a7ba9f`
-- 精确已合并上游基线：`015abf187bf8f952f16fa1bd236cea8d01a7ba9f`
-- 比较范围：`015abf187bf8f952f16fa1bd236cea8d01a7ba9f..HEAD`
+- 本次合并的上游父提交：`8eff36f54a9dc5728da085d7a0aca690a7fcf91d`
+- 精确已合并上游基线：`8eff36f54a9dc5728da085d7a0aca690a7fcf91d`
+- 比较范围：`8eff36f54a9dc5728da085d7a0aca690a7fcf91d..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
-本次上游合并将基线从 `1.1.14` 更新到 `1.1.21`，吸收稳定 Codex 用户身份、账号邮箱回退、评论与负责人头像刷新、跨语言 Plugins 入口定位、精确可信公网 Host、全项目 backlog 迁移、逐 Issue 未读状态、Dashboard 未读提示、Issue 描述排版、媒体操作和属性菜单修复。Fork 保留 Jira 活动与正式会话、Panel 稳定剪贴板引用、桌面端能力以及持久化自动认领队列；上游远程 Scheduled Task 自动化不重新成为 Fork 的执行入口。桌面端产品名仍为 `Codex Panel`，私有实例鉴权、bundle ID、包名和当前 `0.1.0` 应用版本保持不变。
+本次上游合并将基线从 `1.1.21` 更新到 `1.1.22`，吸收 Windows Codex 启动失败后的有界等待、Windows checkout 测试兼容、Chrome profile 清理重试、新建议题内联媒体复用、上传后光标定位、checklist 对齐、项目菜单高度，以及 PR Check 对精确 merge tree 的验证与复用。Fork 保留 Jira 活动与正式会话、Panel 稳定剪贴板引用、桌面端能力以及持久化自动认领队列；上游远程 Scheduled Task 自动化不重新成为 Fork 的执行入口。桌面端产品名仍为 `Codex Panel`，私有实例鉴权、bundle ID、包名和当前 `0.1.0` 应用版本保持不变。
 
 上游 `e6c1781` 的“确认前预下载并验签、确认后自动安装”更新流程不适用于 Fork。Fork 继续只检查 `shay-wong/codex-panel` 的 GitHub Release 并打开可信发布页，不在 App 内下载或安装更新。
 
-上游 `1.1.21` 的 Beta updater、Beta 发布通道和对应发布工作流同样不适用于 Fork，因此不恢复已删除的自动更新脚本或上游发布工作流。
+上游 `1.1.22` 的 Beta App bundle 重命名与迁移、Beta updater、Beta 发布通道和对应发布工作流同样不适用于 Fork，因此不恢复已删除的自动更新脚本、Tauri build 包装器或上游发布工作流。
 
 本轮继续吸收精确 HTTPS trusted-origin 边界、确定性的 Issue 树查询、Markdown 图片边界修复、Issue 详情控件改进，以及 WSL CLI 发现并访问 Windows launcher runtime 的能力；这些属于上游能力，不新增 Fork 能力条目。Fork 继续使用 `Codex Panel`、`panelctl` 和 `manage-panel` 主命名，并保留 Jira、桌面端、自动化和 Cloud 扩展的不变量。
 
@@ -42,13 +42,13 @@
 
 - 权威上游版本来源：精确合并基线中的 `package.json`
 - 当前 Fork 版本来源：`package.json` 和 `package-lock.json` 的根包条目
-- 精确基线的上游版本：`1.1.21`
+- 精确基线的上游版本：`1.1.22`
 - 当前 Fork 版本：`0.1.0`
 - 匹配的 Fork 标签或 GitHub Release：无
 
 每个 Fork 发布版本都必须使用 `<upstream-version>-fork.<N>`。上游版本变化时从 `fork.1` 开始；同一上游版本的后续 Fork 发布递增 `N`。已准备但尚未发布的版本号在未被占用时可以保留。
 
-当前 Fork 版本 `0.1.0` 与精确上游基线版本不一致，也不符合 Fork 发布格式。下一个规范化 Fork 发布版本是 `1.1.21-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
+当前 Fork 版本 `0.1.0` 与精确上游基线版本不一致，也不符合 Fork 发布格式。下一个规范化 Fork 发布版本是 `1.1.22-fork.1`。不得仅因本次合并修改版本文件；只能在已授权的发布任务中更新。
 
 ## 活跃 Fork 能力
 

@@ -2251,6 +2251,12 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
         transaction = transaction.setSelection(TextSelection.near(transaction.doc.resolve(position)));
       }
       transaction = transaction.replaceSelection(new Slice(Fragment.fromArray(nodes), 0, 0));
+      if (transaction.selection instanceof NodeSelection) {
+        const paragraphPosition = transaction.selection.to;
+        transaction = transaction
+          .insert(paragraphPosition, composerSchema.nodes.paragraph.create())
+          .setSelection(TextSelection.create(transaction.doc, paragraphPosition + 1));
+      }
       onErrorRef.current(null);
       view.dispatch(transaction.scrollIntoView());
       view.focus();
