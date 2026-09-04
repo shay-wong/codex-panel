@@ -160,13 +160,13 @@
 
 - 生命周期：`等待上游吸收`
 - 原始目的：修复 Codex 会话页的主内容 frame 覆盖原生标题栏时，Panel 入口变为选中但页面没有挂载，以及 Panel 激活后通过全局命令菜单、活动视图或通知无法返回原生目的地的问题。
-- 行为不变量：主内容 frame 只要覆盖大部分 viewport 就可以作为挂载锚点，不得因其顶部位于原生标题栏上方而拒绝；会话页、Plugins 和 Sites 均能直接切换到 Panel。Panel 激活时，从全局命令菜单以鼠标或 Enter 选择对话、工作、Codex、设置、技能、已安排任务、新会话等简中、繁中或英文原生目的地，打开活动视图，或由通知切换当前原生对话，都必须先恢复原生内容；主题、复制等非导航命令、相同对话的普通刷新及普通 History 状态同步不得关闭 Panel。当前 App DOM 只暴露本地化标题而不暴露稳定命令 ID，因此其他界面语言留待 Codex 提供稳定标识后支持。
-- 代码和测试路径：`inject/codex-panel.user.js`、`test/inject.test.mjs`。
+- 行为不变量：主内容 frame 只要覆盖大部分 viewport 就可以作为挂载锚点，不得因其顶部位于原生标题栏上方而拒绝；会话页、Plugins 和 Sites 均能直接切换到 Panel。再次点击 Panel 入口时，URL 中的 `project` 参数优先；没有该参数时恢复上次选择的任意项目，包括“所有项目”。Panel 激活时，从全局命令菜单以鼠标或 Enter 选择对话、工作、Codex、设置、技能、已安排任务、新会话等简中、繁中或英文原生目的地，打开活动视图，或由通知切换当前原生对话，都必须先恢复原生内容；主题、复制等非导航命令、相同对话的普通刷新及普通 History 状态同步不得关闭 Panel。当前 App DOM 只暴露本地化标题而不暴露稳定命令 ID，因此其他界面语言留待 Codex 提供稳定标识后支持。
+- 代码和测试路径：`inject/codex-panel.user.js`、`web/src/App.tsx`、`test/inject.test.mjs`、`test/project-home.test.mjs`。
 - 用户文档：`README.md` 和 `README.zh-CN.md` 的“Embed in Codex”/“嵌入 Codex”章节，以及 `docs/fork-capabilities.md`。
 - 来源：本次 Fork 修复；可用 `git log -S'conversation content frames can host Panel' -- test/inject.test.mjs`、`git log -S'handleNativeDestinationCommand' -- inject/codex-panel.user.js` 和 `git log -S'closePanelForNativeThreadChange' -- inject/codex-panel.user.js` 定位。
 - 合并指引：上游调整 Codex 主内容 DOM 或命令菜单时，应以页面实际覆盖范围和真实命令选择事件为准，不能重新要求 frame 位于原生标题栏下方，也不能通过全局 History 包装判断命令导航；若命令菜单暴露稳定命令 ID，应以 ID 替代本地化标题并补全其他语言。
 - 移除条件：上游提供等价的跨会话页和原生页面双向切换逻辑，并覆盖会话 frame 从 viewport 顶部开始、命令菜单鼠标与 Enter、活动通知、非导航命令和 History 状态同步场景。
-- 针对性验证：运行 `node --test --test-name-pattern='conversation content frames|native destinations' test/inject.test.mjs`，并从实际 Codex 会话点击 Panel，再通过全局命令菜单分别选择对话、插件和设置，确认原生目的地可见；打开活动视图并选择一条通知，确认通知目标可见；执行主题切换时 Panel 应保持打开。
+- 针对性验证：运行 `node --test --test-name-pattern='conversation content frames|native destinations' test/inject.test.mjs` 和 `node --test test/project-home.test.mjs`；选择“所有项目”，离开后再次点击 Panel 入口，确认没有 URL `project` 参数时恢复“所有项目”，显式 URL 参数仍覆盖记录。再通过全局命令菜单分别选择对话、插件和设置，确认原生目的地可见；打开活动视图并选择一条通知，确认通知目标可见；执行主题切换时 Panel 应保持打开。
 
 ### 内嵌 AI 对话关联议题
 

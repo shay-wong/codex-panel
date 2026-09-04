@@ -918,8 +918,8 @@ export function App() {
     selectedCodexProjectIdentity?.workspacePath,
   ]);
   useLayoutEffect(() => {
-    if (selectedProject) rememberProjectOpen(selectedProject.id);
-  }, [rememberProjectOpen, selectedProject]);
+    if (selectedProject || isAllProjects) rememberProjectOpen(selectedProjectId);
+  }, [isAllProjects, rememberProjectOpen, selectedProject, selectedProjectId]);
   const currentUser = hostContext?.user ?? {
     ...DEFAULT_USER_ACTOR,
     name: text("本地用户", "Local user"),

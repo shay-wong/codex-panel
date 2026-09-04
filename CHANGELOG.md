@@ -4,6 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed the Panel sidebar entry so it restores the last selected project, including **All projects**, while keeping an explicit `project` query parameter authoritative.
 - Fixed Jira issue-link activity so both current and historical unlink records open the corresponding Panel issue even when its repository is not loaded in the Jira view.
 - Added immutable, globally unique Project Keys for stable `KEY-N` Issue identifiers. Existing Issues keep their identifiers, legacy projects retain their first valid prefix when possible, and colliding projects receive deterministic suffixes.
 - Fixed brief local Panel request failures so read-only requests retry after 150 and 350 milliseconds before showing a temporary service-unavailable message; canceled and mutating requests are never replayed.
