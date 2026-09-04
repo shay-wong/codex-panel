@@ -63,6 +63,8 @@ Each project has one immutable, globally unique Project Key containing 1-12 lett
 
 `npm run panelctl -- ...` works without installing a user command. Run `npm run codex:install` to install a managed `panelctl` launcher at `~/.local/bin/panelctl`; this also installs the Codex Skills, standalone runtime, and generated app described below. Set `CODEX_PANEL_URL` to point the CLI at another local or LAN service. Cloud deployments are configured through the loopback companion with `panelctl cloud login`.
 
+In a Jira planning conversation, an explicitly requested repository link can be saved with `panelctl jira repositories set JIRA_ID --projects PROJECT_ID,... --if-version N`; read `context.jira.version` with `jira planning get` immediately before the write. Repository links are never inferred from the current conversation or directory.
+
 ## Install the Codex Skills
 
 Install dependencies first, then explicitly install the Codex integration:

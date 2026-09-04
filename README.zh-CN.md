@@ -63,6 +63,8 @@ npm run panelctl -- issue create \
 
 不安装用户级命令也可以使用 `npm run panelctl -- ...`。运行 `npm run codex:install` 后，安装器会把受管的 `panelctl` 启动文件安装到 `~/.local/bin/panelctl`；该命令还会安装下文所述的 Codex Skills、独立 runtime 和生成式应用。通过 `CODEX_PANEL_URL` 可让 CLI 连接到其他本地或局域网服务。云端部署通过回环地址上的本地伴随服务配置，使用 `panelctl cloud login` 登录。
 
+在 Jira 规划对话中，用户明确要求的仓库关联可以通过 `panelctl jira repositories set JIRA_ID --projects PROJECT_ID,... --if-version N` 保存；写入前必须用 `jira planning get` 读取最新的 `context.jira.version`。Panel 不会根据当前对话或目录自动推断仓库关联。
+
 ## 安装 Codex Skills
 
 先安装依赖，再显式安装 Codex 集成：

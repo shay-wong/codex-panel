@@ -182,11 +182,12 @@ Each comment JSON object independently records the most recent conversation that
 
 ```bash
 panelctl jira planning get JIRA_OR_LINKED_ISSUE_ID [--json]
+panelctl jira repositories set JIRA_ID --projects PROJECT_ID,... --if-version N [--json]
 panelctl jira planning save JIRA_ID --spec-file SPEC.md --if-version N [--json]
 panelctl jira planning publish JIRA_ID --tickets-file TICKETS.json --if-version N [--json]
 ```
 
-`jira planning get` accepts a Jira task identity or a linked execution Issue identity and returns the Jira context plus `plan.version`. For a linked execution Issue, read `context.jira.externalKey`; a null `context.jira` means no Jira link exists. Save the synthesized Spec first. After the user approves the ticket breakdown, publish a JSON manifest in dependency order:
+`jira planning get` accepts a Jira task identity or a linked execution Issue identity and returns the Jira context plus `plan.version`. For a linked execution Issue, read `context.jira.externalKey`; a null `context.jira` means no Jira link exists. When the user explicitly asks to change repository links, resolve exact IDs with `project list`, then pass `context.jira.version` to `jira repositories set`; `--projects` replaces the complete linked-repository set, so include existing `context.projects` IDs when adding a repository. Remove or replace links only when the user explicitly asks, and never infer them from the current directory or conversation project. Save the synthesized Spec first. After the user approves the ticket breakdown, publish a JSON manifest in dependency order:
 
 ```json
 {

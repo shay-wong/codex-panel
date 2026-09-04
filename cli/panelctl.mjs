@@ -99,6 +99,7 @@ const COMMAND_OPTIONS = new Map([
   ["issue restore", new Set(["thread-id", "if-version", "json"])],
   ["issue tree", new Set(["direction", "depth", "json"])],
   ["issue relation", new Set(["type", "issue", "thread-id", "if-version", "json"])],
+  ["jira repositories", new Set(["projects", "if-version", "json"])],
   ["jira planning", new Set(["spec-file", "tickets-file", "if-version", "json"])],
   ["comment list", new Set(["after", "json"])],
   ["comment add", new Set([
@@ -135,6 +136,7 @@ Commands:
   cloud login --url URL --actor-name NAME
   cloud status|logout
   issue list|get|create|update|move|archive|restore|tree|relation
+  jira repositories set JIRA_ID --projects PROJECT_ID,... --if-version N
   jira planning ISSUE_ID [--spec-file FILE] [--tickets-file FILE] [--if-version N]
   comment list ISSUE_ID [--after CURSOR]
   comment add ISSUE_ID (--body TEXT | --body-file FILE) [--thread-id ID]
@@ -198,6 +200,15 @@ Bind the current Codex conversation to one Panel Issue or Jira requirement witho
 
 Options:
   --thread-id ID  Override CODEX_THREAD_ID
+  --json          Make the JSON output contract explicit
+  --help          Show this help`],
+  ["jira repositories", `Usage: panelctl jira repositories set JIRA_ID --projects PROJECT_ID,... --if-version N [--json]
+
+Replace the repositories linked to a Jira requirement with an explicitly selected project list.
+
+Options:
+  --projects IDS  Comma-separated Panel project IDs
+  --if-version N  Current context.jira.version from jira planning get
   --json          Make the JSON output contract explicit
   --help          Show this help`],
   ["comment list", `Usage: panelctl comment list ISSUE_ID [--after CURSOR] [--json]
@@ -322,7 +333,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map/readme, conversation bind, cloud login/status/logout, issue list/get/create/update/move/archive/restore/tree/relation, jira planning, comment list/add/update/delete, attachment list/download/upload, context current",
+      "Expected one of: project list/create/map/readme, conversation bind, cloud login/status/logout, issue list/get/create/update/move/archive/restore/tree/relation, jira repositories/planning, comment list/add/update/delete, attachment list/download/upload, context current",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -421,6 +432,8 @@ async function execute(parsed, overrides) {
         parsed.options,
         overrides,
       );
+    case "jira repositories":
+      return jiraRepositories(api, parsed.operands, parsed.options);
     case "jira planning":
       return jiraPlanning(api, parsed.operands, parsed.options, overrides);
     case "comment list": {
@@ -496,6 +509,16 @@ async function execute(parsed, overrides) {
     default:
       throw usageError(`Unsupported command: ${command}`);
   }
+}
+
+async function jiraRepositories(api, operands, options) {
+  if (operands.length !== 2 || operands[0] !== "set") {
+    throw usageError("jira repositories expects: set JIRA_ID");
+  }
+  return api.request("PUT", `${taskPath(operands[1])}/jira-context`, {
+    version: explicitVersion(options["if-version"]),
+    projectIds: parseProjectIds(requiredOption(options, "projects")),
+  });
 }
 
 async function jiraPlanning(api, operands, options, overrides) {
@@ -1143,6 +1166,14 @@ async function resolveDescription(options, overrides) {
 function parseLabels(rawLabels) {
   if (rawLabels === undefined || rawLabels === "") return [];
   return [...new Set(rawLabels.split(",").map((label) => label.trim()).filter(Boolean))];
+}
+
+function parseProjectIds(rawProjectIds) {
+  const projectIds = parseLabels(rawProjectIds);
+  if (projectIds.length === 0) {
+    throw usageError("--projects must contain at least one project id");
+  }
+  return projectIds;
 }
 
 function developmentContextFromOptions(options, overrides) {

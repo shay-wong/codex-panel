@@ -442,6 +442,29 @@ test("conversation bind has command-specific help", async () => {
   assert.match(output, /without changing its status or fields/);
 });
 
+test("jira repositories set replaces the explicit repository list", async () => {
+  let request;
+  const result = await run(
+    [
+      "jira", "repositories", "set", "TAPON-8794",
+      "--projects", "tapon-api, tapon-web,tapon-api",
+      "--if-version", "7",
+    ],
+    async (url, init) => {
+      request = { url, init };
+      return response({ context: { jira: { id: "jira-task", version: 8 } } });
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(request.url.pathname, "/api/tasks/TAPON-8794/jira-context");
+  assert.equal(request.init.method, "PUT");
+  assert.deepEqual(JSON.parse(request.init.body), {
+    version: 7,
+    projectIds: ["tapon-api", "tapon-web"],
+  });
+});
+
 test("issue restore uses the mutation thread and optimistic version", async () => {
   let requestBody;
   const result = await run(

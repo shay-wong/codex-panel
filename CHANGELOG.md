@@ -4,6 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Added `panelctl jira repositories set` so an explicitly requested Jira repository link can be saved from a Codex conversation before its Spec and tickets are published.
 - Fixed the Panel sidebar entry so it restores the last selected project, including **All projects**, while keeping an explicit `project` query parameter authoritative.
 - Fixed Jira issue-link activity so both current and historical unlink records open the corresponding Panel issue even when its repository is not loaded in the Jira view.
 - Added immutable, globally unique Project Keys for stable `KEY-N` Issue identifiers. Existing Issues keep their identifiers, legacy projects retain their first valid prefix when possible, and colliding projects receive deterministic suffixes.
