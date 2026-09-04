@@ -551,6 +551,18 @@ function parseProjectCreate(body) {
   return { id, name, issueKey, workspacePath };
 }
 
+function parseProjectIssueKeyMigration(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["issueKey"]));
+  const issueKey = normalizeProjectIssueKey(
+    stringField(body.issueKey, "issueKey", { required: true, maxLength: 12 }),
+  );
+  if (!PROJECT_ISSUE_KEY_PATTERN.test(issueKey)) {
+    throw new ApiError(400, "INVALID_FIELD", "'issueKey' must contain 1-12 letters or numbers");
+  }
+  return issueKey;
+}
+
 function parseProjectLabel(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set(["label"]));
@@ -3776,6 +3788,20 @@ export function createPanelServer(options = {}) {
           return sendJson(response, 201, { project });
         }
         return methodNotAllowed(response, ["GET", "POST"]);
+      }
+
+      const projectIssueKeyRoute = pathname.match(/^\/api\/projects\/([^/]+)\/issue-key$/);
+      if (projectIssueKeyRoute) {
+        if (request.method !== "PUT") return methodNotAllowed(response, ["PUT"]);
+        assertNoQuery(url.searchParams, "PUT /api/projects/:id/issue-key");
+        const projectId = decodeRouteSegment(projectIssueKeyRoute[1], "Project id");
+        validateProjectId(projectId);
+        const result = database.migrateProjectIssueKey(
+          projectId,
+          parseProjectIssueKeyMigration(await readJson(request)),
+        );
+        events.emit("project.updated", { project: result.project });
+        return sendJson(response, 200, result);
       }
 
       const projectRoute = pathname.match(/^\/api\/projects\/([^/]+)$/);

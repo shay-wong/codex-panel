@@ -133,6 +133,35 @@ test("projects, tasks, comments, and relations preserve the current API contract
   assert.ok(listed.body.tasks.some((task) => task.id === child.body.task.id));
 });
 
+test("Project Key migration keeps Cloud task ids and numbering stable", async () => {
+  const createdProject = await cloud.request("/api/projects", {
+    method: "POST",
+    actorName: alice,
+    json: { id: "key-migration", name: "Key migration", issueKey: "TAP" },
+  });
+  assert.equal(createdProject.response.status, 201);
+  const first = (await createTask("key-migration", "First")).body.task;
+  const second = (await createTask("key-migration", "Second")).body.task;
+
+  const migrated = await cloud.request("/api/projects/key-migration/issue-key", {
+    method: "PUT",
+    actorName: alice,
+    json: { issueKey: "tp" },
+  });
+  assert.equal(migrated.response.status, 200);
+  assert.equal(migrated.body.project.issueKey, "TP");
+  assert.equal(migrated.body.migratedIssueCount, 2);
+
+  const tasks = await cloud.request("/api/tasks?projectId=key-migration&archived=false", {
+    actorName: alice,
+  });
+  assert.deepEqual(
+    tasks.body.tasks.map((task) => [task.id, task.identifier]).sort(),
+    [[first.id, "TP-1"], [second.id, "TP-2"]].sort(),
+  );
+  assert.equal((await createTask("key-migration", "Next")).body.task.identifier, "TP-3");
+});
+
 test("concurrent issue creation has unique identifiers and stale writes return 409", async () => {
   const created = await Promise.all(
     Array.from({ length: 25 }, (_, index) => createTask("alpha", `Concurrent ${index}`)),

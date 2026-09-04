@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 
 import {
   DEFAULT_LABEL_NAMES,
+  JIRA_PROJECT_ID,
   PROJECT_ISSUE_KEY_PATTERN,
   nextProjectIssueKey,
   normalizeProjectIssueKey,
@@ -677,6 +678,7 @@ function projectFromRow(row) {
     name: row.name,
     issueKey: row.issue_key,
     workspacePath: null,
+    source: row.id === JIRA_PROJECT_ID ? "jira" : "local",
     labels: JSON.parse(row.labels),
     issueCount: Number(row.issue_count ?? 0),
     createdAt: row.created_at,
@@ -1306,6 +1308,18 @@ function parseProjectCreate(body) {
   return { id, name, issueKey };
 }
 
+function parseProjectIssueKeyMigration(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["issueKey"]));
+  const issueKey = normalizeProjectIssueKey(
+    stringField(body.issueKey, "issueKey", { required: true, maxLength: 12 }),
+  );
+  if (!PROJECT_ISSUE_KEY_PATTERN.test(issueKey)) {
+    throw new ApiError(400, "INVALID_FIELD", "'issueKey' must contain 1-12 letters or numbers");
+  }
+  return issueKey;
+}
+
 function parseClientStorageUpdate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set(["key", "value"]));
@@ -1690,6 +1704,65 @@ async function createProject(env, input) {
     }
   }
   throw new ApiError(409, "PROJECT_ISSUE_KEY_EXISTS", "Could not reserve a unique Project Key");
+}
+
+async function migrateProjectIssueKey(env, id, issueKey) {
+  if (id === JIRA_PROJECT_ID) {
+    throw new ApiError(403, "PROJECT_ISSUE_KEY_MIGRATION_FORBIDDEN", "The Jira project Key cannot be migrated");
+  }
+  const project = await getProject(env, id);
+  if (!project) {
+    throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${id}' does not exist`);
+  }
+  if (project.issueKey === issueKey) return { project, migratedIssueCount: 0 };
+
+  const oldPrefixLength = project.issueKey.length + 1;
+  const migratedIssueCount = Number(await env.DB.prepare(`
+    SELECT COUNT(*) AS issue_count
+    FROM tasks
+    WHERE project_id = ?
+      AND identifier GLOB ?
+      AND substr(identifier, ?) NOT GLOB '*[^0-9]*'
+  `).bind(id, `${project.issueKey}-[0-9]*`, oldPrefixLength + 1).first("issue_count"));
+  const timestamp = now();
+  try {
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE projects SET issue_key = ?, updated_at = ? WHERE id = ?
+      `).bind(issueKey, timestamp, id),
+      env.DB.prepare(`
+        UPDATE tasks
+        SET identifier = ? || substr(identifier, ?), version = version + 1, updated_at = ?
+        WHERE project_id = ?
+          AND identifier GLOB ?
+          AND substr(identifier, ?) NOT GLOB '*[^0-9]*'
+      `).bind(
+        issueKey,
+        oldPrefixLength,
+        timestamp,
+        id,
+        `${project.issueKey}-[0-9]*`,
+        oldPrefixLength + 1,
+      ),
+    ]);
+  } catch (error) {
+    const message = String(error.message);
+    if (message.includes("projects.issue_key")) {
+      throw new ApiError(409, "PROJECT_ISSUE_KEY_EXISTS", `Project Key '${issueKey}' already exists`);
+    }
+    if (message.includes("tasks.identifier")) {
+      throw new ApiError(
+        409,
+        "PROJECT_ISSUE_IDENTIFIER_EXISTS",
+        `Project Key '${issueKey}' conflicts with an existing Issue identifier`,
+      );
+    }
+    throw error;
+  }
+  return {
+    project: await getProject(env, id),
+    migratedIssueCount,
+  };
 }
 
 async function addProjectLabel(env, projectId, label) {
@@ -3237,6 +3310,18 @@ async function routeApi(request, env, actor, url) {
       });
     }
     methodNotAllowed(["GET", "POST"]);
+  }
+
+  const projectIssueKeyMatch = pathname.match(/^\/api\/projects\/([^/]+)\/issue-key$/);
+  if (projectIssueKeyMatch) {
+    requireNoQuery(url, "Project Key migration");
+    if (request.method !== "PUT") methodNotAllowed(["PUT"]);
+    const projectId = validateProjectId(decodePathPart(projectIssueKeyMatch[1], "Project id"));
+    return json(200, await migrateProjectIssueKey(
+      env,
+      projectId,
+      parseProjectIssueKeyMigration(await readJson(request)),
+    ));
   }
 
   const projectMatch = pathname.match(/^\/api\/projects\/([^/]+)$/);

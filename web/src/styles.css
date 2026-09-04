@@ -6198,6 +6198,19 @@ button.activity-change-value:hover {
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
+.project-key-migration-preview {
+  margin-top: 12px !important;
+  color: var(--text-primary) !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px !important;
+  font-weight: 600;
+}
+
+.project-key-migration-preview span {
+  margin: 0 6px;
+  color: var(--text-tertiary);
+}
+
 .jira-connection-dialog {
   width: min(400px, 100%);
   max-height: calc(100dvh - 40px);

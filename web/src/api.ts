@@ -555,6 +555,16 @@ export async function createProject(input: {
   return data.project;
 }
 
+export async function migrateProjectIssueKey(
+  projectId: string,
+  issueKey: string,
+): Promise<{ project: Project; migratedIssueCount: number }> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/issue-key`, {
+    method: "PUT",
+    body: JSON.stringify({ issueKey }),
+  });
+}
+
 export async function createProjectLabel(projectId: string, label: string): Promise<Project> {
   const data = await request<{ project: Project }>(
     `/api/projects/${encodeURIComponent(projectId)}/labels`,

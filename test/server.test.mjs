@@ -809,6 +809,68 @@ test("project and task CRUD flow", async () => {
   assert.equal(restoredWebsiteProject.issueCount, 1);
 });
 
+test("Project Key migration renumbers matching issues atomically and preserves task identity", async () => {
+  const baseUrl = await startServer();
+  await request(baseUrl, "/api/projects", {
+    method: "POST",
+    body: { id: "migration", name: "Migration", issueKey: "TAP", workspacePath: null },
+  });
+  await request(baseUrl, "/api/projects", {
+    method: "POST",
+    body: { id: "reserved", name: "Reserved", issueKey: "USED", workspacePath: null },
+  });
+  const first = (await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { projectId: "migration", title: "First" },
+  })).body.task;
+  const second = (await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { projectId: "migration", title: "Second" },
+  })).body.task;
+  const externalProject = await request(baseUrl, "/api/projects", {
+    method: "POST",
+    body: { id: "external", name: "External", issueKey: "EXT", workspacePath: null },
+  });
+  assert.equal(externalProject.response.status, 201);
+  const moved = (await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { projectId: "external", title: "Moved" },
+  })).body.task;
+  const movedResult = await request(baseUrl, `/api/tasks/${moved.id}`, {
+    method: "PATCH",
+    body: { version: moved.version, projectId: "migration" },
+  });
+  assert.equal(movedResult.response.status, 200);
+
+  const conflict = await request(baseUrl, "/api/projects/migration/issue-key", {
+    method: "PUT",
+    body: { issueKey: "USED" },
+  });
+  assert.equal(conflict.response.status, 409);
+  assert.equal(conflict.body.error.code, "PROJECT_ISSUE_KEY_EXISTS");
+  assert.equal((await request(baseUrl, `/api/tasks/${first.id}`)).body.task.identifier, "TAP-1");
+
+  const migrated = await request(baseUrl, "/api/projects/migration/issue-key", {
+    method: "PUT",
+    body: { issueKey: "tp" },
+  });
+  assert.equal(migrated.response.status, 200);
+  assert.equal(migrated.body.project.issueKey, "TP");
+  assert.equal(migrated.body.migratedIssueCount, 2);
+  assert.deepEqual(
+    (await request(baseUrl, "/api/tasks?projectId=migration")).body.tasks
+      .map((task) => [task.id, task.identifier])
+      .sort(),
+    [[first.id, "TP-1"], [second.id, "TP-2"], [moved.id, "EXT-1"]].sort(),
+  );
+
+  const next = (await request(baseUrl, "/api/tasks", {
+    method: "POST",
+    body: { projectId: "migration", title: "Next" },
+  })).body.task;
+  assert.equal(next.identifier, "TP-3");
+});
+
 test("moving a task updates its status and sort order", async () => {
   const baseUrl = await startServer();
   const createResult = await request(baseUrl, "/api/tasks", {
