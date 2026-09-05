@@ -206,6 +206,7 @@ test("validated executable launch preserves TCP and pipe security flags", () => 
   const tcpLaunchStart = source.indexOf("export function launchCodex");
   const tcpLaunchEnd = source.indexOf("async function launchCodexWithPipe", tcpLaunchStart);
   const tcpLaunchSource = source.slice(tcpLaunchStart, tcpLaunchEnd);
+  assert.match(tcpLaunchSource, /process\.platform === "win32"[\s\S]*?activateWindowsCodex/);
   assert.match(tcpLaunchSource, /spawn\(\s*"\/usr\/bin\/open"/);
   assert.match(tcpLaunchSource, /"-W",\s*"-n",\s*"-a",\s*applicationPath,\s*"--args"/);
   assert.doesNotMatch(tcpLaunchSource, /spawn\(\s*validatedCodexExecutablePath/);
@@ -347,6 +348,6 @@ test("injector cleanup never terminates the launched ChatGPT process", () => {
     source.indexOf("  const cleanup = () =>", source.indexOf("async function main")),
     source.indexOf("  try {", source.indexOf("  const cleanup = () =>", source.indexOf("async function main"))),
   );
-  assert.match(cleanupSource, /launchedCodex\?\.unref\(\)/);
+  assert.match(cleanupSource, /launchedCodex\?\.unref\?\.\(\)/);
   assert.doesNotMatch(cleanupSource, /launchedCodex\.kill/);
 });

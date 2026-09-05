@@ -8,7 +8,7 @@ The browser title and repository entry points use the `Codex Panel` name, and th
 
 ## Stable Project Keys and Issue identifiers
 
-Each project stores one immutable, globally unique Project Key containing 1-12 letters or numbers. New Issues use that Key as their `KEY-N` prefix, so similarly named projects never share a prefix or numbering sequence. The create-project UI accepts an explicit Key; CLI and automatic repository registration can allocate one when omitted.
+Each project stores one globally unique Project Key containing 1-12 letters or numbers. New Issues use that Key as their `KEY-N` prefix, so similarly named projects never share a prefix or numbering sequence. The create-project UI accepts an explicit Key; CLI and automatic repository registration can allocate one when omitted. A local project's context menu can atomically migrate the Key and every matching `KEY-N` identifier while preserving internal task ids and conversation links.
 
 Existing Issue identifiers are never rewritten. During local or Cloud migration, Panel keeps a project's first valid historical prefix when possible and gives later collisions a deterministic numeric suffix. The same Key is included in local-to-Cloud migration bundles.
 

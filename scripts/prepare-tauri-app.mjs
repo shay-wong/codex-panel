@@ -313,6 +313,7 @@ async function copyApplicationResources() {
     "codex-injector-runtime.mjs",
     "codex-rate-limits.mjs",
     "panel-supervisor.mjs",
+    "windows-codex.mjs",
   ]) {
     await copyFile(
       path.join(projectRoot, "scripts", fileName),

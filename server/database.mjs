@@ -6,8 +6,10 @@ import { DatabaseSync } from "node:sqlite";
 import {
   DEFAULT_LABEL_NAMES,
   JIRA_PROJECT_ID,
+  PROJECT_ISSUE_KEY_PATTERN,
   jiraDescriptionToMarkdown,
   nextProjectIssueKey,
+  normalizeProjectIssueKey,
 } from "../shared/domain.mjs";
 
 const DEFAULT_PROJECT_LABELS_JSON = JSON.stringify(DEFAULT_LABEL_NAMES);
@@ -1596,6 +1598,76 @@ export class PanelDatabase {
       throw error;
     }
     return this.getProject(input.id);
+  }
+
+  migrateProjectIssueKey(id, value) {
+    const issueKey = normalizeProjectIssueKey(value);
+    if (!PROJECT_ISSUE_KEY_PATTERN.test(issueKey)) {
+      throw new ApiError(400, "INVALID_FIELD", "'issueKey' must contain 1-12 letters or numbers");
+    }
+    if (id === JIRA_PROJECT_ID) {
+      throw new ApiError(403, "PROJECT_ISSUE_KEY_MIGRATION_FORBIDDEN", "The Jira project Key cannot be migrated");
+    }
+
+    this.database.exec("BEGIN IMMEDIATE");
+    let migratedIssueCount = 0;
+    try {
+      const project = this.database.prepare("SELECT issue_key FROM projects WHERE id = ?").get(id);
+      if (!project) {
+        throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${id}' does not exist`);
+      }
+      if (project.issue_key !== issueKey) {
+        const timestamp = now();
+        const oldPrefixLength = project.issue_key.length + 1;
+        this.database.prepare(`
+          UPDATE projects SET issue_key = ?, updated_at = ? WHERE id = ?
+        `).run(issueKey, timestamp, id);
+        const issues = this.database.prepare(`
+          UPDATE tasks
+          SET identifier = ? || substr(identifier, ?), version = version + 1, updated_at = ?
+          WHERE project_id = ?
+            AND identifier GLOB ?
+            AND substr(identifier, ?) NOT GLOB '*[^0-9]*'
+        `).run(
+          issueKey,
+          oldPrefixLength,
+          timestamp,
+          id,
+          `${project.issue_key}-[0-9]*`,
+          oldPrefixLength + 1,
+        );
+        migratedIssueCount = Number(issues.changes);
+        this.database.prepare(`
+          UPDATE ai_chat_threads
+          SET origin_issue_identifier = ? || substr(origin_issue_identifier, ?)
+          WHERE origin_project_id = ?
+            AND origin_issue_identifier GLOB ?
+            AND substr(origin_issue_identifier, ?) NOT GLOB '*[^0-9]*'
+        `).run(
+          issueKey,
+          oldPrefixLength,
+          id,
+          `${project.issue_key}-[0-9]*`,
+          oldPrefixLength + 1,
+        );
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      const message = String(error.message);
+      if (message.includes("projects.issue_key")) {
+        throw new ApiError(409, "PROJECT_ISSUE_KEY_EXISTS", `Project Key '${issueKey}' already exists`);
+      }
+      if (message.includes("tasks.identifier")) {
+        throw new ApiError(
+          409,
+          "PROJECT_ISSUE_IDENTIFIER_EXISTS",
+          `Project Key '${issueKey}' conflicts with an existing Issue identifier`,
+        );
+      }
+      throw error;
+    }
+    return { project: this.getProject(id), migratedIssueCount };
   }
 
   ensureJiraProject(name) {

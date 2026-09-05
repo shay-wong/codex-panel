@@ -20,6 +20,15 @@ test("the project switcher merges live Codex projects with persisted Panel proje
   assert.match(apiSource, /export async function createProject/);
 });
 
+test("local projects expose the Project Key migration flow", () => {
+  assert.match(appSource, /project\.persisted && project\.id !== JIRA_PROJECT_ID/);
+  assert.match(appSource, /迁移项目 Key/);
+  assert.match(appSource, /migrateProjectIssueKeyRequest/);
+  assert.match(appSource, /migratedIssueCount/);
+  assert.match(apiSource, /export async function migrateProjectIssueKey/);
+  assert.match(apiSource, /\/api\/projects\/\$\{encodeURIComponent\(projectId\)\}\/issue-key/);
+});
+
 test("each device stores an independent workspace path for every project", () => {
   assert.match(appSource, /const DEVICE_WORKSPACE_PATHS_KEY = "panel\.deviceWorkspacePaths\.v1"/);
   assert.match(appSource, /function readDeviceWorkspacePaths\(\)/);

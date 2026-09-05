@@ -38,6 +38,7 @@ import {
   listDeviceWorkspaces,
   listProjects,
   listTasks,
+  migrateProjectIssueKey as migrateProjectIssueKeyRequest,
   moveTask as moveTaskRequest,
   publishHostRuntime,
   removeTaskRelation,
@@ -80,6 +81,7 @@ import {
 import { LinearIcon } from "./components/LinearIcon";
 import {
   DeleteIcon,
+  EditIcon,
   MoreIcon,
   PlusIcon,
   RefreshIcon,
@@ -388,6 +390,7 @@ const EVENT_NAMES = [
   "attachment.created",
   "attachment.deleted",
   "project.created",
+  "project.updated",
   "project.labels.updated",
   "claim.updated",
   "automation.updated",
@@ -589,7 +592,7 @@ function LocalRealtimeSync({
         scheduleRefresh({ projects: true });
         return;
       }
-      if (event.type === "project.labels.updated") {
+      if (event.type === "project.updated" || event.type === "project.labels.updated") {
         setAiThreadsRevision((current) => current + 1);
         scheduleRefresh({ projects: true, tasks: affectsSelectedProject });
         return;
@@ -794,6 +797,9 @@ export function App() {
   const [pendingProjectDelete, setPendingProjectDelete] = useState<ProjectChoice | null>(null);
   const [projectDeleteIssueCount, setProjectDeleteIssueCount] = useState<number | null>(null);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
+  const [pendingProjectKeyMigration, setPendingProjectKeyMigration] = useState<Project | null>(null);
+  const [migratedProjectIssueKey, setMigratedProjectIssueKey] = useState("");
+  const [migratingProjectId, setMigratingProjectId] = useState<string | null>(null);
   const [deviceWorkspacePaths, setDeviceWorkspacePaths] = useState(readDeviceWorkspacePaths);
   const [projectCodexIdentities, setProjectCodexIdentities] = useState(readProjectCodexIdentities);
   const [selectedProjectAutomation, setSelectedProjectAutomation] = useState<ProjectAutomationPolicy | null>(null);
@@ -1057,14 +1063,15 @@ export function App() {
       id: project.id,
       name: project.name,
       dividerBefore: hasProjectsWithIssues && project.id === firstEmptyProjectId,
-      onContextMenu: project.id.startsWith("temp-") ? (event: ReactMouseEvent<HTMLButtonElement>) => {
-        event.preventDefault();
-        setProjectContextMenu({
-          project,
-          x: event.clientX,
-          y: event.clientY,
-        });
-      } : undefined,
+      onContextMenu: project.persisted && project.id !== JIRA_PROJECT_ID
+        ? (event: ReactMouseEvent<HTMLButtonElement>) => {
+          event.preventDefault();
+          setProjectContextMenu({
+            project,
+            x: event.clientX,
+            y: event.clientY,
+          });
+        } : undefined,
     })),
   ];
   const editorProjectId = editor?.task?.projectId
@@ -3449,6 +3456,47 @@ export function App() {
     setPendingProjectDelete(project);
   }
 
+  function requestProjectKeyMigration(projectChoice: ProjectChoice) {
+    const project = projects.find((candidate) => candidate.id === projectChoice.id);
+    if (!project || project.source === "jira") return;
+    setProjectMenuOpen(false);
+    setProjectContextMenu(null);
+    setMigratedProjectIssueKey(project.issueKey);
+    setActionError(null);
+    setPendingProjectKeyMigration(project);
+  }
+
+  function closeProjectKeyMigrationDialog() {
+    if (migratingProjectId) return;
+    setPendingProjectKeyMigration(null);
+    setActionError(null);
+  }
+
+  async function migratePendingProjectKey() {
+    if (!pendingProjectKeyMigration || migratingProjectId) return;
+    const issueKey = migratedProjectIssueKey.trim();
+    if (!issueKey || issueKey === pendingProjectKeyMigration.issueKey) return;
+    setMigratingProjectId(pendingProjectKeyMigration.id);
+    setActionError(null);
+    try {
+      const result = await migrateProjectIssueKeyRequest(pendingProjectKeyMigration.id, issueKey);
+      setProjects((current) => current.map((project) => (
+        project.id === result.project.id ? result.project : project
+      )));
+      await refreshTasks(selectedProjectId);
+      if (detailTask?.projectId === pendingProjectKeyMigration.id) closeTaskDetail();
+      setPendingProjectKeyMigration(null);
+      setAnnouncement(text(
+        `已将项目 Key 迁移为 ${result.project.issueKey}，更新 ${result.migratedIssueCount} 个议题编号`,
+        `Migrated the Project Key to ${result.project.issueKey} and updated ${result.migratedIssueCount} issue identifiers`,
+      ));
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setMigratingProjectId(null);
+    }
+  }
+
   function closeProjectDeleteDialog() {
     if (deletingProjectId) return;
     setPendingProjectDelete(null);
@@ -4160,14 +4208,25 @@ export function App() {
           style={{ left: projectContextMenu.x, top: projectContextMenu.y }}
         >
           <button
-            className="context-menu-item is-danger"
+            className="context-menu-item"
             type="button"
             role="menuitem"
-            onClick={() => requestProjectDelete(projectContextMenu.project)}
+            onClick={() => requestProjectKeyMigration(projectContextMenu.project)}
           >
-            <span className="context-menu-icon" aria-hidden="true"><DeleteIcon color="currentColor" /></span>
-            <span className="context-menu-label">{text("删除项目", "Delete project")}</span>
+            <span className="context-menu-icon" aria-hidden="true"><EditIcon color="currentColor" /></span>
+            <span className="context-menu-label">{text("迁移项目 Key", "Migrate Project Key")}</span>
           </button>
+          {projectContextMenu.project.id.startsWith("temp-") && (
+            <button
+              className="context-menu-item is-danger"
+              type="button"
+              role="menuitem"
+              onClick={() => requestProjectDelete(projectContextMenu.project)}
+            >
+              <span className="context-menu-icon" aria-hidden="true"><DeleteIcon color="currentColor" /></span>
+              <span className="context-menu-label">{text("删除项目", "Delete project")}</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -4251,6 +4310,77 @@ export function App() {
                 {openingProjectId
                   ? text("创建中…", "Creating…")
                   : text("创建", "Create")}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {pendingProjectKeyMigration && (
+        <div
+          className="delete-backdrop"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) closeProjectKeyMigrationDialog();
+          }}
+        >
+          <form
+            className="delete-dialog project-create-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="project-key-migration-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void migratePendingProjectKey();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") closeProjectKeyMigrationDialog();
+            }}
+          >
+            <h2 id="project-key-migration-title">{text(
+              `迁移“${pendingProjectKeyMigration.name}”的项目 Key`,
+              `Migrate the Project Key for “${pendingProjectKeyMigration.name}”`,
+            )}</h2>
+            <p>{text(
+              `现有 ${pendingProjectKeyMigration.issueKey}-* 议题将同步改为新的编号，任务和会话关联保持不变。`,
+              `Existing ${pendingProjectKeyMigration.issueKey}-* issues will receive the new prefix. Task and conversation links stay intact.`,
+            )}</p>
+            <label>
+              <span>{text("新项目 Key", "New Project Key")}</span>
+              <input
+                autoFocus
+                maxLength={12}
+                pattern="[A-Z0-9]{1,12}"
+                required
+                value={migratedProjectIssueKey}
+                onChange={(event) => {
+                  setMigratedProjectIssueKey(event.target.value.toUpperCase().replace(/[^A-Z0-9]+/g, ""));
+                  setActionError(null);
+                }}
+              />
+            </label>
+            <p className="project-key-migration-preview">
+              {pendingProjectKeyMigration.issueKey}-* <span aria-hidden="true">→</span> {migratedProjectIssueKey || "…"}-*
+            </p>
+            {actionErrorText && <p className="project-dialog-error">{actionErrorText}</p>}
+            <div>
+              <button
+                className="button secondary"
+                type="button"
+                disabled={migratingProjectId !== null}
+                onClick={closeProjectKeyMigrationDialog}
+              >
+                {text("取消", "Cancel")}
+              </button>
+              <button
+                className="button primary"
+                type="submit"
+                disabled={
+                  !migratedProjectIssueKey
+                  || migratedProjectIssueKey === pendingProjectKeyMigration.issueKey
+                  || migratingProjectId !== null
+                }
+              >
+                {migratingProjectId ? text("迁移中…", "Migrating…") : text("迁移", "Migrate")}
               </button>
             </div>
           </form>

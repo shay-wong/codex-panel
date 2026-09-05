@@ -45,6 +45,11 @@ import {
   startInjectorControlServer,
   stopManagedInjector,
 } from "./codex-injector-control.mjs";
+import {
+  activateWindowsCodex,
+  windowsCodexProcesses,
+  windowsCodexProfileArgument,
+} from "./windows-codex.mjs";
 
 const injectorPath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(injectorPath), "..");
@@ -343,6 +348,7 @@ export function codexExecutablePath(appPath) {
       appPath === "/usr/bin/chatgpt" ? "/usr/lib/chatgpt/ChatGPT" : appPath,
     );
   }
+  if (process.platform === "win32") return appPath;
   if (process.platform !== "darwin") return validatedCodexExecutablePath(appPath);
   const plistPath = path.join(appPath, "Contents", "Info.plist");
   const plistResult = spawnSync("/usr/bin/plutil", [
@@ -372,6 +378,18 @@ function validatedCodexExecutablePath(executablePath) {
 }
 
 export function launchCodex(executablePath, port) {
+  if (process.platform === "win32") {
+    return {
+      executable: executablePath,
+      pid: activateWindowsCodex(
+        executablePath,
+        independentCodexProfilePath,
+        port,
+        withoutPanelLauncherEnvironment(process.env),
+      ),
+      port,
+    };
+  }
   const validatedExecutablePath = validatedCodexExecutablePath(executablePath);
   const macOSDirectory = path.dirname(validatedExecutablePath);
   const contentsDirectory = path.dirname(macOSDirectory);
@@ -401,6 +419,23 @@ export function launchCodex(executablePath, port) {
   );
   child.unref();
   return child;
+}
+
+function launchedCodexExited(record) {
+  if (!record) return false;
+  if (process.platform === "win32") {
+    return !windowsCodexProcesses(
+      record.executable,
+      withoutPanelLauncherEnvironment(process.env),
+    ).some((candidate) => (
+      candidate.pid === record.pid
+      || (
+        windowsCodexProfileArgument(candidate.command, independentCodexProfilePath)
+        && candidate.command.includes(`--remote-debugging-port=${record.port}`)
+      )
+    ));
+  }
+  return record.exitCode !== null || record.signalCode !== null;
 }
 
 function managedCodexSpawnFailure(executable, args, error) {
@@ -2748,7 +2783,7 @@ async function main() {
       cdpRuntime = null;
       const launchedCodex = codexProcess;
       codexProcess = null;
-      launchedCodex?.unref();
+      launchedCodex?.unref?.();
       await closeInjectorControlServer(controlServer);
       controlServer = null;
       await supervisor.stop();
@@ -2990,7 +3025,7 @@ async function main() {
       await publishManagedStatus();
     }
     if (!options.watch) {
-      codexProcess?.unref();
+      codexProcess?.unref?.();
       return;
     }
 
@@ -3102,9 +3137,8 @@ async function main() {
           }
           throw error;
         }
-        const launchedCodexExited = codexProcess
-          && (codexProcess.exitCode !== null || codexProcess.signalCode !== null);
-        if (launchedCodexExited) {
+        const codexExited = launchedCodexExited(codexProcess);
+        if (codexExited) {
           injectedTargets.forEach((connection) => {
             unregisterRoutableCodexConnection(connection);
             unregisterQuotaPolicyCdp(connection);
@@ -3114,7 +3148,7 @@ async function main() {
           cdpRuntime?.close();
           const exitCode = codexProcess.exitCode;
           codexProcess = null;
-          if (exitCode === 0) {
+          if (process.platform === "win32" || exitCode === 0) {
             console.error(
               "Waiting for Codex after normal exit; open Codex Panel again to restart it.",
             );
