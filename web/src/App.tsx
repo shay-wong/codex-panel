@@ -111,6 +111,11 @@ import {
 } from "./embeddedHost.mjs";
 import { buildIssueUrl, readIssueIdentifier } from "./issueRoute";
 import {
+  clearPendingJiraPlanning,
+  readPendingJiraPlanning,
+  savePendingJiraPlanning,
+} from "./jiraPlanningStorage";
+import {
   getTaskboardI18n,
   resolveTaskboardLanguage,
   taskStatusLabel,
@@ -840,11 +845,6 @@ export function App() {
     );
   }
   const pendingRemoteThreadClaimsRef = useRef(new Map<string, PendingRemoteThreadClaim>());
-  const pendingJiraPlanningRef = useRef(new Map<string, {
-    kind: "planning" | "replan";
-    lifecycleVersion?: number;
-    projectId: string | null;
-  }>());
   const legacyAutomationPauseRequestsRef = useRef(new Set<string>());
 
   useEffect(() => {
@@ -1479,7 +1479,7 @@ export function App() {
         const payload = message.payload as { taskId?: unknown };
         if (
           typeof payload.taskId === "string"
-          && pendingJiraPlanningRef.current.has(payload.taskId)
+          && readPendingJiraPlanning()?.taskId === payload.taskId
         ) return;
         setOpeningThreadTaskId(null);
         return;
@@ -1488,27 +1488,23 @@ export function App() {
       if (message.type === "panel:thread-created" && message.payload) {
         const payload = message.payload as { taskId?: unknown; threadId?: unknown };
         if (typeof payload.taskId !== "string" || typeof payload.threadId !== "string") return;
+        const taskId = payload.taskId;
         if (pendingRemoteThreadClaimsRef.current.has(payload.taskId)) {
           void bindPreparedRemoteThread(payload.taskId, payload.threadId);
           return;
         }
-        const task = tasksRef.current.find((candidate) => candidate.id === payload.taskId);
         const threadId = payload.threadId.trim();
-        const jiraPlanning = pendingJiraPlanningRef.current.get(payload.taskId);
-        pendingJiraPlanningRef.current.delete(payload.taskId);
-        const alreadyLinked = Boolean(
-          task
-          && (
-            task.threadBinding?.threadId === threadId
-            || task.legacyLocalThreadId === threadId
-          )
-        );
-        if (
-          !task
-          || !threadId
-          || (!jiraPlanning && alreadyLinked)
-        ) return;
+        const pendingJiraPlanning = readPendingJiraPlanning();
+        const jiraPlanning = pendingJiraPlanning?.taskId === taskId
+          ? pendingJiraPlanning
+          : null;
+        const cachedTask = tasksRef.current.find((candidate) => candidate.id === taskId);
+        if (!threadId || (!jiraPlanning && !cachedTask)) return;
         void (async () => {
+          const task = jiraPlanning ? await getTask(taskId) : cachedTask!;
+          const alreadyLinked = task.threadBinding?.threadId === threadId
+            || task.legacyLocalThreadId === threadId;
+          if (!jiraPlanning && alreadyLinked) return task;
           let updated = task;
           if (jiraPlanning?.kind === "replan" && jiraPlanning.lifecycleVersion !== undefined) {
             const result = await resolveJiraLifecycle(
@@ -1530,7 +1526,10 @@ export function App() {
           return updated;
         })()
           .then((updated) => {
-            if (jiraPlanning) setOpeningThreadTaskId(null);
+            if (jiraPlanning) {
+              clearPendingJiraPlanning(taskId);
+              setOpeningThreadTaskId(null);
+            }
             setTasks((current) => sortTasks(current.map((candidate) => (
               candidate.id === updated.id ? updated : candidate
             ))));
@@ -1565,8 +1564,8 @@ export function App() {
           threadId?: unknown;
           uncertain?: unknown;
         };
-        if (typeof payload.taskId === "string") {
-          pendingJiraPlanningRef.current.delete(payload.taskId);
+        if (typeof payload.taskId === "string" && payload.uncertain !== true) {
+          clearPendingJiraPlanning(payload.taskId);
         }
         if (typeof payload.taskId === "string" && pendingRemoteThreadClaimsRef.current.has(payload.taskId)) {
           pendingRemoteThreadClaimsRef.current.delete(payload.taskId);
@@ -3069,7 +3068,12 @@ export function App() {
         "Panel has not received the manage-panel Skill path. Refresh and try again.",
       ));
     }
-    if (openingThreadTaskId) return;
+    if (openingThreadTaskId) {
+      throw new Error(text(
+        "另一个 Codex 对话仍在准备中，请等待它完成后重试。",
+        "Another Codex conversation is still being prepared. Wait for it to finish and try again.",
+      ));
+    }
 
     const targetProject = projectId
       ? projects.find((project) => project.id === projectId) ?? null
@@ -3098,9 +3102,14 @@ export function App() {
         path: skill.path,
       })),
     ];
-    pendingJiraPlanningRef.current.set(task.id, composer.replanLifecycleVersion === undefined
-      ? { kind: "planning", projectId }
-      : { kind: "replan", lifecycleVersion: composer.replanLifecycleVersion, projectId });
+    savePendingJiraPlanning(composer.replanLifecycleVersion === undefined
+      ? { taskId: task.id, kind: "planning", projectId }
+      : {
+          taskId: task.id,
+          kind: "replan",
+          lifecycleVersion: composer.replanLifecycleVersion,
+          projectId,
+        });
     setOpeningThreadTaskId(task.id);
     setActionError(null);
     postEmbeddedHostMessage({
@@ -3974,7 +3983,7 @@ export function App() {
             })}
             onCopy={(text, message) => void copyText(text, message)}
             onEnsureJiraProjects={ensureJiraRepositoryProjects}
-            openingThread={openingThreadTaskId === detailTask.id}
+            openingThread={openingThreadTaskId !== null}
             onError={setActionError}
           />
         ) : boardView !== "readme"
