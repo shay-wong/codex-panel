@@ -35,6 +35,7 @@ test("each device stores an independent workspace path for every project", () =>
   assert.match(appSource, /rememberDeviceWorkspacePath/);
   assert.match(appSource, /const \[nextProjects, metadata, workspaces\] = await Promise\.all\(\[[\s\S]*?listDeviceWorkspaces\(signal\)/);
   assert.match(appSource, /const \[nextJiraConnection, nextTemporaryTasks\] = await Promise\.all\(\[[\s\S]*?getJiraConnection\(signal\)[\s\S]*?listTasks\(GLOBAL_PROJECT_ID, signal\)/);
+  assert.match(appSource, /const persistedProjectIds = new Set\(nextProjects\.map\(\(project\) => project\.id\)\);[\s\S]*?Object\.entries\(current\)\.filter\(\(\[projectId\]\) => persistedProjectIds\.has\(projectId\)\)[\s\S]*?Object\.assign\(next, workspaces\)/);
   assert.match(appSource, /const selectedDeviceWorkspacePath = selectedProjectId === GLOBAL_PROJECT_ID[\s\S]*?: deviceWorkspacePaths\[selectedProjectId\]/);
   assert.match(appSource, /listDevelopmentContexts\([\s\S]*?controller\.signal,\s*workspacePath,\s*\)/);
   assert.match(apiSource, /query\.set\("workspacePath", workspacePath\)/);

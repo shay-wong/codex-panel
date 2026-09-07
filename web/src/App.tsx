@@ -1676,7 +1676,11 @@ export function App() {
       setManagePanelSkillPath(metadata.managePanelSkillPath ?? "");
       setLocalAiChatAvailable(metadata.capabilities?.localAiChat === true);
       setDeviceWorkspacePaths((current) => {
-        const next = { ...current, ...workspaces };
+        const persistedProjectIds = new Set(nextProjects.map((project) => project.id));
+        const next = Object.fromEntries(
+          Object.entries(current).filter(([projectId]) => persistedProjectIds.has(projectId)),
+        );
+        Object.assign(next, workspaces);
         delete next[GLOBAL_PROJECT_ID];
         if (JSON.stringify(next) === JSON.stringify(current)) return current;
         panelStorage.setItem(DEVICE_WORKSPACE_PATHS_KEY, JSON.stringify(next));
