@@ -6211,6 +6211,56 @@ button.activity-change-value:hover {
   color: var(--text-tertiary);
 }
 
+.project-settings-view {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 32px 40px 80px;
+}
+
+.project-settings-view section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 32px;
+  width: min(753px, 100%);
+  margin: 0 auto;
+  padding: 20px 0;
+  border-bottom: var(--border-hairline) solid var(--border);
+}
+
+.project-settings-view h2 {
+  margin: 0 0 5px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 590;
+}
+
+.project-settings-view p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.project-settings-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.project-settings-control > span {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.project-settings-control > strong {
+  min-width: 64px;
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
 .jira-connection-dialog {
   width: min(400px, 100%);
   max-height: calc(100dvh - 40px);

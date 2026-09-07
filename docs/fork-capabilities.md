@@ -8,7 +8,9 @@ The browser title and repository entry points use the `Codex Panel` name, and th
 
 ## Stable Project Keys and Issue identifiers
 
-Each project stores one globally unique Project Key containing 1-12 letters or numbers. New Issues use that Key as their `KEY-N` prefix, so similarly named projects never share a prefix or numbering sequence. The create-project UI accepts an explicit Key; CLI and automatic repository registration can allocate one when omitted. A local project's context menu can atomically migrate the Key and every matching `KEY-N` identifier while preserving internal task ids and conversation links.
+Each project stores one globally unique Project Key containing 1-12 letters or numbers. New Issues use that Key as their `KEY-N` prefix, so similarly named projects never share a prefix or numbering sequence. The create-project UI accepts an explicit Key; CLI and automatic repository registration can allocate one when omitted. **Project Settings**, immediately after **Project Docs**, can atomically migrate a local project's Key and historical local `PREFIX-N` identifiers while preserving internal task ids, relations, and conversation links. Issues moved from another project retain their original identifier.
+
+Read-only issue, Jira planning, activity, comment, attachment, and tree lookups accept an internal task UUID, a Panel Issue identifier, or a unique linked Jira key. An ambiguous Jira key returns an explicit conflict instead of selecting a task.
 
 Existing Issue identifiers are never rewritten. During local or Cloud migration, Panel keeps a project's first valid historical prefix when possible and gives later collisions a deterministic numeric suffix. The same Key is included in local-to-Cloud migration bundles.
 

@@ -25,6 +25,10 @@ test("local projects expose the Project Key migration flow", () => {
   assert.match(appSource, /迁移项目 Key/);
   assert.match(appSource, /migrateProjectIssueKeyRequest/);
   assert.match(appSource, /migratedIssueCount/);
+  assert.match(appSource, /项目文档[\s\S]*项目设置/);
+  assert.match(appSource, /<ProjectSettingsView[\s\S]*onEditIssueKey/);
+  assert.doesNotMatch(appSource, /issueKey === pendingProjectKeyMigration\.issueKey/);
+  assert.match(appSource, /querySelector<HTMLElement>\("\.view-tab\.active"\)[\s\S]*scrollIntoView/);
   assert.match(apiSource, /export async function migrateProjectIssueKey/);
   assert.match(apiSource, /\/api\/projects\/\$\{encodeURIComponent\(projectId\)\}\/issue-key/);
 });

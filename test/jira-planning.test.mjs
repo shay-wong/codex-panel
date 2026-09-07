@@ -124,7 +124,15 @@ if (args[0] === "debug") {
     assert.equal(projectList.projects.find((project) => project.id === "web").workspacePath, workspace);
 
     let jira = app.database.getTask("jira-plan-1");
-    let result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
+    let result = await cli(baseUrl, directory, ["issue", "get", "TEST-1", "--json"]);
+    assert.equal(result.task.id, jira.id);
+    result = await cli(baseUrl, directory, ["jira", "planning", "get", "TEST-1", "--json"]);
+    assert.equal(result.context.jira.id, jira.id);
+    result = await cli(baseUrl, directory, ["comment", "list", "TEST-1", "--json"]);
+    assert.deepEqual(result.comments, []);
+    result = await cli(baseUrl, directory, ["attachment", "list", "--task", "TEST-1", "--json"]);
+    assert.deepEqual(result.attachments, []);
+    result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
       version: jira.version,
     });
     assert.equal(result.context.plan, null);
@@ -264,6 +272,10 @@ if (args[0] === "debug") {
     const docsTask = app.database.getTask(firstItems.get("docs").taskId);
     assert.equal(apiTask.status, "backlog");
     assert.equal(webTask.relations.blockedBy[0].id, apiTask.id);
+    result = await cli(baseUrl, directory, [
+      "jira", "planning", "get", apiTask.identifier, "--json",
+    ]);
+    assert.equal(result.context.jira.externalKey, "TEST-1");
 
     app.database.moveTask(apiTask.id, apiTask.version, "in_progress", undefined, undefined, undefined, AGENT);
     app.database.moveTask(docsTask.id, docsTask.version, "in_progress", undefined, undefined, undefined, AGENT);

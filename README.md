@@ -59,7 +59,7 @@ npm run panelctl -- issue create \
   --labels product,mvp
 ```
 
-Each project has one globally unique Project Key containing 1-12 letters or numbers. New Issues use it as their stable `KEY-N` prefix. The create-project UI requires the Key; CLI and automatic repository registration may omit `--issue-key` to allocate the next available Key. A local project's context menu can migrate its Key and matching Issue identifiers atomically while keeping task and conversation links intact.
+Each project has one globally unique Project Key containing 1-12 letters or numbers. New Issues use it as their stable `KEY-N` prefix. The create-project UI requires the Key; CLI and automatic repository registration may omit `--issue-key` to allocate the next available Key. **Project Settings**, immediately after **Project Docs**, can migrate a local project's Key and historical local Issue identifiers atomically while keeping task and conversation links intact. Read-only CLI lookups accept either the Panel Issue ID or its linked Jira key.
 
 `npm run panelctl -- ...` works without installing a user command. Run `npm run codex:install` to install a managed `panelctl` launcher at `~/.local/bin/panelctl`; this also installs the Codex Skills, standalone runtime, and generated app described below. Set `CODEX_PANEL_URL` to point the CLI at another local or LAN service. Cloud deployments are configured through the loopback companion with `panelctl cloud login`.
 

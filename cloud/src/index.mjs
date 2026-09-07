@@ -1714,16 +1714,20 @@ async function migrateProjectIssueKey(env, id, issueKey) {
   if (!project) {
     throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${id}' does not exist`);
   }
-  if (project.issueKey === issueKey) return { project, migratedIssueCount: 0 };
-
-  const oldPrefixLength = project.issueKey.length + 1;
   const migratedIssueCount = Number(await env.DB.prepare(`
     SELECT COUNT(*) AS issue_count
     FROM tasks
     WHERE project_id = ?
-      AND identifier GLOB ?
-      AND substr(identifier, ?) NOT GLOB '*[^0-9]*'
-  `).bind(id, `${project.issueKey}-[0-9]*`, oldPrefixLength + 1).first("issue_count"));
+      AND identifier GLOB '*-[0-9]*'
+      AND substr(identifier, length(rtrim(identifier, '0123456789')), 1) = '-'
+      AND substr(identifier, 1, length(rtrim(identifier, '0123456789')) - 1) != ?
+      AND NOT EXISTS (
+        SELECT 1
+        FROM task_activities, json_each(task_activities.changes)
+        WHERE task_activities.task_id = tasks.id
+          AND json_extract(json_each.value, '$.field') = 'projectId'
+      )
+  `).bind(id, issueKey).first("issue_count"));
   const timestamp = now();
   try {
     await env.DB.batch([
@@ -1732,17 +1736,25 @@ async function migrateProjectIssueKey(env, id, issueKey) {
       `).bind(issueKey, timestamp, id),
       env.DB.prepare(`
         UPDATE tasks
-        SET identifier = ? || substr(identifier, ?), version = version + 1, updated_at = ?
+        SET
+          identifier = ? || '-' || substr(identifier, length(rtrim(identifier, '0123456789')) + 1),
+          version = version + 1,
+          updated_at = ?
         WHERE project_id = ?
-          AND identifier GLOB ?
-          AND substr(identifier, ?) NOT GLOB '*[^0-9]*'
+          AND identifier GLOB '*-[0-9]*'
+          AND substr(identifier, length(rtrim(identifier, '0123456789')), 1) = '-'
+          AND substr(identifier, 1, length(rtrim(identifier, '0123456789')) - 1) != ?
+          AND NOT EXISTS (
+            SELECT 1
+            FROM task_activities, json_each(task_activities.changes)
+            WHERE task_activities.task_id = tasks.id
+              AND json_extract(json_each.value, '$.field') = 'projectId'
+          )
       `).bind(
         issueKey,
-        oldPrefixLength,
         timestamp,
         id,
-        `${project.issueKey}-[0-9]*`,
-        oldPrefixLength + 1,
+        issueKey,
       ),
     ]);
   } catch (error) {
