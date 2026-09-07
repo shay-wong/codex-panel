@@ -4096,7 +4096,9 @@ export function createPanelServer(options = {}) {
           throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Jira context routes do not accept query parameters");
         }
         if (request.method === "GET") {
-          return sendJson(response, 200, { context: database.getJiraContext(taskId) });
+          const task = database.resolveTaskReference(taskId);
+          if (!task) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${taskId}' does not exist`);
+          return sendJson(response, 200, { context: database.getJiraContext(task.id) });
         }
         if (request.method === "PUT") {
           const { version, projectIds } = parseJiraProjects(await readJson(request));
@@ -4321,7 +4323,9 @@ export function createPanelServer(options = {}) {
           throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Activity routes do not accept query parameters");
         }
         if (request.method === "GET") {
-          return sendJson(response, 200, { activities: database.listTaskActivities(taskId) });
+          const task = database.resolveTaskReference(taskId);
+          if (!task) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${taskId}' does not exist`);
+          return sendJson(response, 200, { activities: database.listTaskActivities(task.id) });
         }
         return methodNotAllowed(response, ["GET"]);
       }
@@ -4338,10 +4342,12 @@ export function createPanelServer(options = {}) {
           throw new ApiError(400, "INVALID_PATH", "Task id is invalid");
         }
         if (request.method === "GET") {
+          const task = database.resolveTaskReference(taskId);
+          if (!task) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${taskId}' does not exist`);
           const after = parseAfterCursor(url.searchParams, "Comment routes");
           const comments = after
-            ? database.listCommentsAfter(taskId, after)
-            : database.listComments(taskId);
+            ? database.listCommentsAfter(task.id, after)
+            : database.listComments(task.id);
           return sendJson(response, 200, {
             comments,
             nextCursor: nextCursor(comments, after),
@@ -4465,8 +4471,10 @@ export function createPanelServer(options = {}) {
           throw new ApiError(400, "INVALID_PATH", "Task id is invalid");
         }
         if (request.method === "GET") {
+          const task = database.resolveTaskReference(taskId);
+          if (!task) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${taskId}' does not exist`);
           const after = parseAfterCursor(url.searchParams, "Attachment routes");
-          const attachments = database.listAttachments(taskId, after);
+          const attachments = database.listAttachments(task.id, after);
           return sendJson(response, 200, {
             attachments,
             nextCursor: nextCursor(attachments, after),
@@ -4577,7 +4585,9 @@ export function createPanelServer(options = {}) {
         }
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
         const { direction, depth } = parseTaskTreeQuery(url.searchParams);
-        return sendJson(response, 200, { tree: database.getTaskTree(id, direction, depth) });
+        const task = database.resolveTaskReference(id);
+        if (!task) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
+        return sendJson(response, 200, { tree: database.getTaskTree(task.id, direction, depth) });
       }
 
       const taskRoute = pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(archive|restore|move|bind-thread))?$/);
@@ -4641,7 +4651,7 @@ export function createPanelServer(options = {}) {
           if ([...url.searchParams.keys()].length > 0) {
             throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/tasks/:id does not accept query parameters");
           }
-          const task = database.getTask(id);
+          const task = database.resolveTaskReference(id);
           if (!task) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
           return sendJson(response, 200, { task });
         }

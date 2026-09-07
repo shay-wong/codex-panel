@@ -810,7 +810,11 @@ test("project and task CRUD flow", async () => {
 });
 
 test("Project Key migration renumbers matching issues atomically and preserves task identity", async () => {
-  const baseUrl = await startServer();
+  let databasePath;
+  const baseUrl = await startServer((directory) => {
+    databasePath = path.join(directory, "panel.sqlite");
+    return { databasePath };
+  });
   await request(baseUrl, "/api/projects", {
     method: "POST",
     body: { id: "migration", name: "Migration", issueKey: "TAP", workspacePath: null },
@@ -841,6 +845,17 @@ test("Project Key migration renumbers matching issues atomically and preserves t
     body: { version: moved.version, projectId: "migration" },
   });
   assert.equal(movedResult.response.status, 200);
+  const related = await request(
+    baseUrl,
+    `/api/tasks/${second.id}/relations/blocked_by/${first.id}`,
+    { method: "POST", body: { version: second.version } },
+  );
+  assert.equal(related.response.status, 200);
+
+  const database = new DatabaseSync(databasePath);
+  database.prepare("UPDATE tasks SET identifier = ? WHERE id = ?").run("LEGACY-1", first.id);
+  database.prepare("UPDATE tasks SET identifier = ? WHERE id = ?").run("COD-2", second.id);
+  database.close();
 
   const conflict = await request(baseUrl, "/api/projects/migration/issue-key", {
     method: "PUT",
@@ -848,7 +863,7 @@ test("Project Key migration renumbers matching issues atomically and preserves t
   });
   assert.equal(conflict.response.status, 409);
   assert.equal(conflict.body.error.code, "PROJECT_ISSUE_KEY_EXISTS");
-  assert.equal((await request(baseUrl, `/api/tasks/${first.id}`)).body.task.identifier, "TAP-1");
+  assert.equal((await request(baseUrl, `/api/tasks/${first.id}`)).body.task.identifier, "LEGACY-1");
 
   const migrated = await request(baseUrl, "/api/projects/migration/issue-key", {
     method: "PUT",
@@ -863,6 +878,20 @@ test("Project Key migration renumbers matching issues atomically and preserves t
       .sort(),
     [[first.id, "TP-1"], [second.id, "TP-2"], [moved.id, "EXT-1"]].sort(),
   );
+  const migratedSecond = (await request(baseUrl, `/api/tasks/${second.id}`)).body.task;
+  assert.equal(migratedSecond.relations.blockedBy[0].id, first.id);
+  assert.equal(migratedSecond.relations.blockedBy[0].identifier, "TP-1");
+
+  const repairDatabase = new DatabaseSync(databasePath);
+  repairDatabase.prepare("UPDATE tasks SET identifier = ? WHERE id = ?").run("COD-2", second.id);
+  repairDatabase.close();
+  const repaired = await request(baseUrl, "/api/projects/migration/issue-key", {
+    method: "PUT",
+    body: { issueKey: "TP" },
+  });
+  assert.equal(repaired.response.status, 200);
+  assert.equal(repaired.body.migratedIssueCount, 1);
+  assert.equal((await request(baseUrl, `/api/tasks/${second.id}`)).body.task.identifier, "TP-2");
 
   const next = (await request(baseUrl, "/api/tasks", {
     method: "POST",

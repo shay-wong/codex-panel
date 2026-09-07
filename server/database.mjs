@@ -1618,39 +1618,38 @@ export class PanelDatabase {
       }
       if (project.issue_key !== issueKey) {
         const timestamp = now();
-        const oldPrefixLength = project.issue_key.length + 1;
         this.database.prepare(`
           UPDATE projects SET issue_key = ?, updated_at = ? WHERE id = ?
         `).run(issueKey, timestamp, id);
-        const issues = this.database.prepare(`
-          UPDATE tasks
-          SET identifier = ? || substr(identifier, ?), version = version + 1, updated_at = ?
-          WHERE project_id = ?
-            AND identifier GLOB ?
-            AND substr(identifier, ?) NOT GLOB '*[^0-9]*'
-        `).run(
-          issueKey,
-          oldPrefixLength,
-          timestamp,
-          id,
-          `${project.issue_key}-[0-9]*`,
-          oldPrefixLength + 1,
-        );
-        migratedIssueCount = Number(issues.changes);
-        this.database.prepare(`
-          UPDATE ai_chat_threads
-          SET origin_issue_identifier = ? || substr(origin_issue_identifier, ?)
-          WHERE origin_project_id = ?
-            AND origin_issue_identifier GLOB ?
-            AND substr(origin_issue_identifier, ?) NOT GLOB '*[^0-9]*'
-        `).run(
-          issueKey,
-          oldPrefixLength,
-          id,
-          `${project.issue_key}-[0-9]*`,
-          oldPrefixLength + 1,
-        );
       }
+      const timestamp = now();
+      const issues = this.database.prepare(`
+        UPDATE tasks
+        SET
+          identifier = ? || '-' || substr(identifier, length(rtrim(identifier, '0123456789')) + 1),
+          version = version + 1,
+          updated_at = ?
+        WHERE project_id = ?
+          AND external_source IS NULL
+          AND identifier GLOB '*-[0-9]*'
+          AND substr(identifier, length(rtrim(identifier, '0123456789')), 1) = '-'
+          AND substr(identifier, 1, length(rtrim(identifier, '0123456789')) - 1) != ?
+          AND NOT EXISTS (
+            SELECT 1
+            FROM task_activities, json_each(task_activities.changes)
+            WHERE task_activities.task_id = tasks.id
+              AND json_extract(json_each.value, '$.field') = 'projectId'
+          )
+      `).run(issueKey, timestamp, id, issueKey);
+      migratedIssueCount = Number(issues.changes);
+      this.database.prepare(`
+        UPDATE ai_chat_threads
+        SET origin_issue_identifier = (
+          SELECT tasks.identifier FROM tasks WHERE tasks.id = ai_chat_threads.origin_issue_id
+        )
+        WHERE origin_project_id = ?
+          AND origin_issue_id IN (SELECT id FROM tasks WHERE project_id = ?)
+      `).run(id, id);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");

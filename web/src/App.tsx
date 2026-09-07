@@ -69,6 +69,7 @@ import {
 } from "./components/BoardCardDisplayMenu";
 import { DashboardView } from "./components/DashboardView";
 import { ProjectReadmeView } from "./components/ProjectReadmeView";
+import { ProjectSettingsView } from "./components/ProjectSettingsView";
 import { IssueListView } from "./components/IssueListView";
 import { JiraConnectionDialog } from "./components/JiraConnectionDialog";
 import { ArchivedTasksColumn, OtherTasksPanel } from "./components/OtherTasksPanel";
@@ -162,7 +163,7 @@ import { createRevisionPoller, createRevisionWebSocketClient, getRevisionPolling
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
-type BoardView = "readme" | "dashboard" | "issues" | "list" | "gantt";
+type BoardView = "readme" | "settings" | "dashboard" | "issues" | "list" | "gantt";
 type ListLayout = "horizontal" | "vertical";
 type ListCollapseMode = "always-expanded" | "remember" | "always-collapsed";
 type ListCollapseModes = Record<TaskStatus, ListCollapseMode>;
@@ -271,7 +272,7 @@ function issueReadStorageKey(mode: string, task: Pick<Task, "id" | "projectId">)
 
 function readProjectBoardView(projectId: string): BoardView {
   const view = panelStorage.getItem(`${PROJECT_VIEW_KEY_PREFIX}${projectId}`);
-  return view === "readme" || view === "dashboard" || view === "list" || view === "gantt" || view === "issues"
+  return view === "readme" || view === "settings" || view === "dashboard" || view === "list" || view === "gantt" || view === "issues"
     ? view
     : "issues";
 }
@@ -816,6 +817,7 @@ export function App() {
   const undoStackRef = useRef<UndoOperation[]>([]);
   const undoInFlightRef = useRef(false);
   const dragRegionRef = useRef<HTMLDivElement>(null);
+  const viewTabsRef = useRef<HTMLDivElement>(null);
   const issueListRef = useRef<HTMLDivElement>(null);
   const boardScrollRef = useRef<HTMLDivElement>(null);
   const boardColumnScrollRefs = useRef<Partial<Record<TaskStatus, HTMLElement | null>>>({});
@@ -2143,6 +2145,12 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [hasRunningTask]);
 
+  useEffect(() => {
+    viewTabsRef.current
+      ?.querySelector<HTMLElement>(".view-tab.active")
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [boardView, selectedProjectId]);
+
 
   function selectBoardView(view: BoardView) {
     closeContextMenu();
@@ -3456,8 +3464,8 @@ export function App() {
     setPendingProjectDelete(project);
   }
 
-  function requestProjectKeyMigration(projectChoice: ProjectChoice) {
-    const project = projects.find((candidate) => candidate.id === projectChoice.id);
+  function requestProjectKeyMigration(projectId: string) {
+    const project = projects.find((candidate) => candidate.id === projectId);
     if (!project || project.source === "jira") return;
     setProjectMenuOpen(false);
     setProjectContextMenu(null);
@@ -3475,7 +3483,7 @@ export function App() {
   async function migratePendingProjectKey() {
     if (!pendingProjectKeyMigration || migratingProjectId) return;
     const issueKey = migratedProjectIssueKey.trim();
-    if (!issueKey || issueKey === pendingProjectKeyMigration.issueKey) return;
+    if (!issueKey) return;
     setMigratingProjectId(pendingProjectKeyMigration.id);
     setActionError(null);
     try {
@@ -3720,7 +3728,7 @@ export function App() {
         </header>
 
         {selectedProjectId && <div className="board-toolbar">
-          <div className="view-tabs" aria-label={text("看板视图", "Board views")}>
+          <div ref={viewTabsRef} className="view-tabs" aria-label={text("看板视图", "Board views")}>
             <button
               className={`view-tab${boardView === "dashboard" ? " active" : ""}`}
               type="button"
@@ -3754,14 +3762,24 @@ export function App() {
               {text("甘特图", "Gantt")}
             </button>
             {!isAllProjects && (
-              <button
-                className={`view-tab${boardView === "readme" ? " active" : ""}`}
-                type="button"
-                aria-pressed={boardView === "readme"}
-                onClick={() => selectBoardView("readme")}
-              >
-                {text("项目文档", "Project Docs")}
-              </button>
+              <>
+                <button
+                  className={`view-tab${boardView === "readme" ? " active" : ""}`}
+                  type="button"
+                  aria-pressed={boardView === "readme"}
+                  onClick={() => selectBoardView("readme")}
+                >
+                  {text("项目文档", "Project Docs")}
+                </button>
+                <button
+                  className={`view-tab${boardView === "settings" ? " active" : ""}`}
+                  type="button"
+                  aria-pressed={boardView === "settings"}
+                  onClick={() => selectBoardView("settings")}
+                >
+                  {text("项目设置", "Project Settings")}
+                </button>
+              </>
             )}
           </div>
           {!detailTask && (boardView === "issues" || boardView === "list" || boardView === "gantt") && <div className="toolbar-tools">
@@ -4026,6 +4044,11 @@ export function App() {
             onOpenTask={openTaskDetail}
             onError={setActionError}
           />
+        ) : boardView === "settings" && selectedProject ? (
+          <ProjectSettingsView
+            project={selectedProject}
+            onEditIssueKey={() => requestProjectKeyMigration(selectedProject.id)}
+          />
         ) : boardView === "dashboard" && (selectedProject || isAllProjects) ? (
           <DashboardView
             key={selectedProjectId}
@@ -4211,7 +4234,7 @@ export function App() {
             className="context-menu-item"
             type="button"
             role="menuitem"
-            onClick={() => requestProjectKeyMigration(projectContextMenu.project)}
+            onClick={() => requestProjectKeyMigration(projectContextMenu.project.id)}
           >
             <span className="context-menu-icon" aria-hidden="true"><EditIcon color="currentColor" /></span>
             <span className="context-menu-label">{text("迁移项目 Key", "Migrate Project Key")}</span>
@@ -4341,8 +4364,8 @@ export function App() {
               `Migrate the Project Key for “${pendingProjectKeyMigration.name}”`,
             )}</h2>
             <p>{text(
-              `现有 ${pendingProjectKeyMigration.issueKey}-* 议题将同步改为新的编号，任务和会话关联保持不变。`,
-              `Existing ${pendingProjectKeyMigration.issueKey}-* issues will receive the new prefix. Task and conversation links stay intact.`,
+              "该项目的历史本地议题编号将同步使用新的 Key，任务和会话关联保持不变。",
+              "Historical local Issue IDs in this project will use the new Key. Task and conversation links stay intact.",
             )}</p>
             <label>
               <span>{text("新项目 Key", "New Project Key")}</span>
@@ -4359,7 +4382,7 @@ export function App() {
               />
             </label>
             <p className="project-key-migration-preview">
-              {pendingProjectKeyMigration.issueKey}-* <span aria-hidden="true">→</span> {migratedProjectIssueKey || "…"}-*
+              *-N <span aria-hidden="true">→</span> {migratedProjectIssueKey || "…"}-N
             </p>
             {actionErrorText && <p className="project-dialog-error">{actionErrorText}</p>}
             <div>
@@ -4376,7 +4399,6 @@ export function App() {
                 type="submit"
                 disabled={
                   !migratedProjectIssueKey
-                  || migratedProjectIssueKey === pendingProjectKeyMigration.issueKey
                   || migratingProjectId !== null
                 }
               >

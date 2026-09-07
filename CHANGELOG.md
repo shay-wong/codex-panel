@@ -4,6 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Added a visible **Project Settings** view after **Project Docs**, repaired Project Key migration for historical local Issue prefixes, and allowed read-only task lookup by either Panel Issue ID or a unique linked Jira key.
 - Added `panelctl jira repositories set` so an explicitly requested Jira repository link can be saved from a Codex conversation before its Spec and tickets are published.
 - Fixed the Panel sidebar entry so it restores the last selected project, including **All projects**, while keeping an explicit `project` query parameter authoritative.
 - Fixed Jira issue-link activity so both current and historical unlink records open the corresponding Panel issue even when its repository is not loaded in the Jira view.
