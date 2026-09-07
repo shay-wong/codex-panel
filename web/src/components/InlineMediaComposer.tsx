@@ -2131,7 +2131,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
         },
         stopEvent(event) {
           const target = event.target;
-          return target instanceof Element && Boolean(target.closest("button, video, a"));
+          return target instanceof Element && Boolean(target.closest("button, a"));
         },
         ignoreMutation() {
           return true;

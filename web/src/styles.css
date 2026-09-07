@@ -4091,6 +4091,7 @@ kbd {
   flex-direction: column;
   min-width: 0;
   gap: 2px;
+  line-height: 1.4;
 }
 
 .attachment-copy strong {

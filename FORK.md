@@ -24,9 +24,9 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`2a6970a2f4334da65a1979b7f9a834f0d18ce84e`
-- 精确已合并上游基线：`2a6970a2f4334da65a1979b7f9a834f0d18ce84e`
-- 比较范围：`2a6970a2f4334da65a1979b7f9a834f0d18ce84e..HEAD`
+- 本次合并的上游父提交：`bd264e7ff3402785f1e8b0bb789106358352707b`
+- 精确已合并上游基线：`bd264e7ff3402785f1e8b0bb789106358352707b`
+- 比较范围：`bd264e7ff3402785f1e8b0bb789106358352707b..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
@@ -37,6 +37,8 @@
 上游 `1.1.22` 的 Beta App bundle 重命名与迁移、Beta updater、Beta 发布通道和对应发布工作流同样不适用于 Fork，因此不恢复已删除的自动更新脚本、Tauri build 包装器或上游发布工作流。
 
 本轮继续吸收精确 HTTPS trusted-origin 边界、确定性的 Issue 树查询、Markdown 图片边界修复、Issue 详情控件改进，以及 WSL CLI 发现并访问 Windows launcher runtime 的能力；这些属于上游能力，不新增 Fork 能力条目。Fork 继续使用 `Codex Panel`、`panelctl` 和 `manage-panel` 主命名，并保留 Jira、桌面端、自动化和 Cloud 扩展的不变量。
+
+本轮继续吸收 `1.1.22-beta.3` 至 `1.1.22-beta.6` 的 PR 原生构建范围选择、各平台 Rust 缓存、编辑器视频选择、任务 checkbox 垂直对齐和附件卡片紧凑排版。上游把任务字段、记录和附件处理抽到共享模块的删重方案会同时删除 Fork 的 Jira、自动化、Cloud 和对应回归测试，因此本轮保留 Fork 现有实现；上游 GPT-6 Pro 网页审查、更新预下载与自动安装、Beta release workflow 仍不适用于 Fork，不予恢复。
 
 ## Fork 发布版本策略
 
