@@ -4634,6 +4634,14 @@ export function createPanelServer(options = {}) {
               { existingThreadId },
             );
           }
+          if (task.source === "jira" && !database.getJiraPlan(task.id)) {
+            const context = database.getJiraContext(task.id);
+            const projectId = context.projects.length > 1
+              ? threadBinding.codexProjectId
+              : undefined;
+            await startJiraPlanning(task.id, task.version, threadId, projectId);
+            events.emit("task.jira.updated", { taskId: task.id, task: database.getTask(task.id) });
+          }
           if (!task.threadBinding || JSON.stringify(task.threadBinding) !== JSON.stringify(threadBinding)) {
             task = database.updateTask(
               task.id,
