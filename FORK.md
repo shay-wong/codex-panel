@@ -24,9 +24,9 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`2a6970a2f4334da65a1979b7f9a834f0d18ce84e`
-- 精确已合并上游基线：`2a6970a2f4334da65a1979b7f9a834f0d18ce84e`
-- 比较范围：`2a6970a2f4334da65a1979b7f9a834f0d18ce84e..HEAD`
+- 本次合并的上游父提交：`bd264e7ff3402785f1e8b0bb789106358352707b`
+- 精确已合并上游基线：`bd264e7ff3402785f1e8b0bb789106358352707b`
+- 比较范围：`bd264e7ff3402785f1e8b0bb789106358352707b..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
@@ -37,6 +37,8 @@
 上游 `1.1.22` 的 Beta App bundle 重命名与迁移、Beta updater、Beta 发布通道和对应发布工作流同样不适用于 Fork，因此不恢复已删除的自动更新脚本、Tauri build 包装器或上游发布工作流。
 
 本轮继续吸收精确 HTTPS trusted-origin 边界、确定性的 Issue 树查询、Markdown 图片边界修复、Issue 详情控件改进，以及 WSL CLI 发现并访问 Windows launcher runtime 的能力；这些属于上游能力，不新增 Fork 能力条目。Fork 继续使用 `Codex Panel`、`panelctl` 和 `manage-panel` 主命名，并保留 Jira、桌面端、自动化和 Cloud 扩展的不变量。
+
+本轮继续吸收 `1.1.22-beta.3` 至 `1.1.22-beta.6` 的 PR 原生构建范围选择、各平台 Rust 缓存、编辑器视频选择、任务 checkbox 垂直对齐和附件卡片紧凑排版。上游把任务字段、记录和附件处理抽到共享模块的删重方案会同时删除 Fork 的 Jira、自动化、Cloud 和对应回归测试，因此本轮保留 Fork 现有实现；上游 GPT-6 Pro 网页审查、更新预下载与自动安装、Beta release workflow 仍不适用于 Fork，不予恢复。
 
 ## Fork 发布版本策略
 
@@ -234,6 +236,7 @@
 - 生命周期：`等待上游吸收`
 - 原始目的：把 Jira 保持为独立外部需求，同时允许一个需求跨多个仓库拆成多个本地执行 Issue，避免 Jira 刷新覆盖仓库内的实施内容。
 - 行为不变量：一个 Jira 可以选择一个或多个具有本地 workspace 的项目并关联其中多个执行 Issue；每个执行 Issue 最多关联一个 Jira。仓库候选必须合并本机 Codex workspace 映射与已有 Panel 项目，使用与顶部项目菜单相同的可搜索、独立滚动选择组件；搜索过滤只能改变内部候选列表，不能改变管理弹窗的外框尺寸。尚未持久化的候选只能在用户显式保存关联时按需创建 Panel 项目。对话中只有在用户明确指定 Jira 和仓库后，才可通过 `panelctl jira repositories set` 以最新 Jira version 替换完整仓库集合；新增请求必须保留现有集合，只有用户明确要求时才可移除或替换，不得从当前目录、会话项目或 ticket 内容隐式关联。执行 Issue 的关联卡片必须返回 Panel 内的 Jira 需求，外部 Jira 入口保留在需求详情页。仓库变更必须先展示差异并等待显式保存，活动记录必须优先显示项目名称而不是内部 ID；普通关联不自动创建、迁移或删除 Issue。详情摘要关联多个仓库时必须稳定显示首个仓库和 `+N`，完整列表保留在悬停提示中。只有已保存至少一个仓库的待认领 Jira 才可一键创建并开始：Jira 先回写为进行中，每仓库复用唯一执行 Issue 或创建一个 backlog Issue 及独立正式 Codex 任务，全部仓库就绪后才统一释放到待认领。部分失败必须持久化保留进度，重试复用预留 Issue 与会话 ID、已有关联和对话，不重复回写或创建。右下角内嵌聊天只承载 `temporary` 临时问答；Jira 新建或重新规划、简单创建和队列执行必须登记为 `formal` 原生 Codex 任务并通过原生路由打开，不得回退到内嵌聊天或出现在临时聊天历史。规划未关联仓库时创建无项目任务，关联一个仓库时必须先选择对应的 Codex 项目再应用仓库 workspace，关联多个仓库时必须先选择目标项目；仅设置活动 workspace 不等同于关联 Codex 项目。新建与重新规划任务默认使用“帮我批准”（`workspace-write`）权限，已有规划任务继续复用其已保存权限。Panel 必须把 `grill-with-docs`、`to-spec`、`to-tickets` 和规划 prompt 填入可编辑输入框并保持未发送，只有用户手动发送后才启动 Codex；宿主预填确认成功后，injector 不得以重复且更严格的 DOM Skill mention 校验否定该结果或丢失 Jira 会话关联。Codex `skills/list` 漏掉 `~/.agents/skills` 下的直接符号链接目录时，Panel 必须从有效 `SKILL.md` 补齐本地 catalog；Codex 已返回的同名 Skill 保持优先，补齐项必须继续作为结构化 Skill 引用发送，不能退化为普通 `$名称` 文本。Spec 属于 Jira 的本地规划产物，发布前必须获得用户确认并为每个 ticket 选择已关联仓库。发布后的 Issue 以 backlog 创建，保留跨仓库阻塞关系并关联同一 Jira；规划不授权执行，与一键创建互斥。Jira 标题、描述、需求链接或仓库变化后必须复核，未开始 Issue 在此期间不得进入 `in_progress`；重新发布只取消被替代的 backlog 或 todo，保留 `in_progress`、`in_review`、`done` 和 `blocked` 成果、关系和可见告警，并把这些成果继续作为新规划约束。关联 Issue 只能移动到该 Jira 已选项目；归档保留关系，永久删除前必须解除。Jira 同步只更新外部需求镜像的 key、标题、原始状态、URL、同步时间和错误，不修改关联执行 Issue 的本地字段。
+- 仓库缓存不变量：设备 workspace 缓存只能保留当前 Panel 项目或 Codex 当前返回的项目 ID，已删除 Codex 项目的失效缓存不得继续生成重复仓库候选。
 - 活动跳转不变量：Jira 活动中的 Issue 关联和解除记录必须按保存的 Issue 编号直接打开对应 Panel Issue，即使当前 Jira 项目没有加载目标仓库的任务。
 - Jira ID 路由不变量：任何对话收到完整 Jira ID 后都必须先通过 `jira planning get` 解析 `context.issues`，不得先用工作目录和 `context current` 猜测关联 Issue；该只读解析不授权 `jira planning save` 或 `jira planning publish`。
 - 所有项目详情不变量：从“所有项目”打开 Issue 时必须保留“所有项目”作为当前范围和返回位置，不得自动切换顶部项目；详情中的标签与开发上下文仍使用该 Issue 自身所属项目。
