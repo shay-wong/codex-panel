@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  continueTaskConversation,
   findTaskConversations,
   findResidentInjectorPids,
   handleHostBindingPayload,
@@ -13,6 +14,42 @@ import {
   restartResidentInjector,
   sameFrameDocumentUrl,
 } from "../scripts/codex-injector-runtime.mjs";
+
+test('shared execution continues the saved native thread with structured skills', async () => {
+  const request = {
+    threadId: 'shared-thread', targetRoot: '/disposable/worktree',
+    codexProjectId: 'test-project', codexHostId: 'local', instruction: 'Execute TEST-2',
+    skills: [{ name: 'implement', path: '/skills/implement/SKILL.md' }],
+  };
+  const calls = [];
+  const call = async (method, params) => {
+    calls.push([method, params]);
+    return method === 'turn/start' ? { turn: { id: 'next-turn' } }
+      : { thread: { id: request.threadId, cwd: request.targetRoot, status: { type: 'idle' } } };
+  };
+  const result = await continueTaskConversation(request, call);
+  assert.equal(result.threadBinding.threadId, request.threadId);
+  assert.deepEqual(calls.map(([method]) => method), ['thread/read', 'thread/resume', 'turn/start']);
+  assert.equal(calls[2][1].input[1].type, 'skill');
+  await assert.rejects(continueTaskConversation(request, async () => ({
+    thread: { id: request.threadId, cwd: '/wrong-workspace' },
+  })), /workspace does not match/);
+  await assert.rejects(continueTaskConversation(request, async () => ({
+    thread: { id: request.threadId, cwd: request.targetRoot, status: { type: 'active' } },
+  })), /temporarily busy/);
+  await assert.rejects(continueTaskConversation(request, async () => ({
+    thread: { id: request.threadId, cwd: request.targetRoot, turns: [{ status: 'inProgress' }] },
+  })), /temporarily busy/);
+  await assert.rejects(continueTaskConversation(request, async (method, params) => {
+    if (method === 'turn/start') throw new Error('Thread already has an active turn');
+    return call(method, params);
+  }), /temporarily busy/);
+  await assert.rejects(continueTaskConversation(request, async (method, params) => {
+    if (method === 'turn/start') throw new Error('connection timed out');
+    return call(method, params);
+  }), (error) => error.uncertain === true && error.threadId === request.threadId
+    && !/connection|timed? out|temporar/i.test(error.message));
+});
 import { parsePanelAutomationHostRequest } from "../shared/panel-automation.mjs";
 
 const currentAutomationRequest = {

@@ -34,7 +34,7 @@ const ISSUE_CLAIM_QUEUE_TABLE = `
   CREATE TABLE issue_claim_queue (
     task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    thread_id TEXT UNIQUE,
+    thread_id TEXT,
     source TEXT NOT NULL CHECK (source IN ('manual', 'resume', 'jira', 'scan')),
     state TEXT NOT NULL CHECK (state IN (
       'queued', 'running', 'retry_wait', 'blocked', 'failed', 'completed', 'canceled'
@@ -929,14 +929,16 @@ export class PanelDatabase {
     const claimAttemptsSql = this.database.prepare(`
       SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'issue_claim_attempts'
     `).get()?.sql ?? "";
-    if (/REFERENCES\s+ai_chat_threads/i.test(claimQueueSql)) {
+    if (/REFERENCES\s+ai_chat_threads|thread_id\s+TEXT\s+UNIQUE/i.test(claimQueueSql)) {
       this.database.exec(`
+        BEGIN IMMEDIATE;
         ALTER TABLE issue_claim_queue RENAME TO issue_claim_queue_legacy;
         ${ISSUE_CLAIM_QUEUE_TABLE}
         INSERT INTO issue_claim_queue SELECT * FROM issue_claim_queue_legacy;
         DROP TABLE issue_claim_queue_legacy;
         CREATE INDEX issue_claim_queue_dispatch
           ON issue_claim_queue(state, available_at, enqueued_at);
+        COMMIT;
       `);
     }
     if (/REFERENCES\s+ai_chat_threads/i.test(claimAttemptsSql)) {
@@ -3058,7 +3060,16 @@ export class PanelDatabase {
     `);
     for (const task of linked) {
       if (task.status === "blocked" && !paused.has(task.id)) continue;
-      if (blocked.get(task.id)) continue;
+      if (blocked.get(task.id)) {
+        const current = this.getTask(task.id);
+        const peers = this.jiraExecutionPeers(task.id);
+        if (current.relations.blockedBy.some((dependency) => (
+          !['done', 'canceled'].includes(dependency.status)
+          && !(dependency.status === 'in_review' && peers.some((peer) => (
+            peer.id === dependency.id && peer.threadBinding && peer.developmentContext
+          )))
+        ))) continue;
+      }
       release.run(timestamp, task.id, task.status);
       paused.delete(task.id);
     }
@@ -4434,6 +4445,19 @@ export class PanelDatabase {
   }
 
   enqueueAuthorizedJiraClaims() {
+    const jiraIds = this.database.prepare(`
+      SELECT DISTINCT links.jira_task_id
+      FROM jira_task_links AS links
+      JOIN tasks AS jira ON jira.id = links.jira_task_id
+      JOIN tasks AS issue ON issue.id = links.task_id
+      WHERE jira.status = 'in_progress' AND jira.archived_at IS NULL
+    `).all();
+    for (const { jira_task_id: jiraTaskId } of jiraIds) {
+      const lifecycle = this.getJiraLifecycle(jiraTaskId);
+      if (!lifecycle.pending && !this.getJiraPlan(jiraTaskId)?.needsReview) {
+        this.#releaseJiraFrontier(jiraTaskId, [], now());
+      }
+    }
     const candidates = this.database.prepare(`
       SELECT linked.task_id
       FROM jira_task_links AS linked
@@ -4498,6 +4522,27 @@ export class PanelDatabase {
 
   reconcileClaimQueue() {
     const timestamp = now();
+    // A native task can bind itself after the launcher timed out. Its confirmed
+    // binding and execution status supersede the old dispatch error.
+    const recovered = this.database.prepare(`
+      UPDATE issue_claim_queue
+      SET state = CASE WHEN tasks.status = 'in_progress' THEN 'running' ELSE 'completed' END,
+          thread_id = tasks.thread_id, last_error = NULL, resume_requested = 0,
+          finished_at = CASE WHEN tasks.status = 'in_progress' THEN NULL ELSE ? END,
+          updated_at = ?
+      FROM tasks
+      WHERE tasks.id = issue_claim_queue.task_id
+        AND issue_claim_queue.state IN ('blocked', 'retry_wait', 'queued', 'running')
+        AND tasks.archived_at IS NULL
+        AND tasks.status IN ('in_progress', 'in_review', 'done')
+        AND tasks.thread_id IS NOT NULL
+        AND tasks.thread_codex_project_id IS NOT NULL
+        AND tasks.thread_codex_project_kind IS NOT NULL
+        AND tasks.thread_codex_host_id IS NOT NULL
+        AND tasks.thread_workspace_path IS NOT NULL
+        AND (issue_claim_queue.state != 'running' OR issue_claim_queue.thread_id IS NULL)
+      RETURNING task_id
+    `).all(timestamp, timestamp).map((row) => row.task_id);
     const changedTaskIds = this.database.prepare(`
       SELECT queue.task_id
       FROM issue_claim_queue AS queue
@@ -4563,7 +4608,20 @@ export class PanelDatabase {
           )
         )
     `).run(timestamp, timestamp);
-    return [...new Set(changedTaskIds)];
+    return [...new Set([...recovered, ...changedTaskIds])];
+  }
+
+  jiraExecutionPeers(taskId) {
+    const task = this.#requireTask(taskId);
+    const context = this.getJiraContext(taskId);
+    if (!context.jira) return [];
+    const publication = context.plan?.items.map((item) => item.task?.id).filter(Boolean);
+    return context.issues
+      .filter((issue) => issue.projectId === task.projectId
+        && (!publication?.includes(taskId) || publication.includes(issue.id)))
+      .map((issue) => this.getTask(issue.id))
+      .filter((issue) => issue.archivedAt === null && issue.status !== 'canceled'
+        && (issue.status !== 'done' || publication?.includes(taskId)));
   }
 
   listReadyClaims(at = now()) {
@@ -4629,15 +4687,16 @@ export class PanelDatabase {
     return this.getClaimQueueItem(taskId);
   }
 
-  markClaimRunning(taskId) {
+  markClaimRunning(taskId, native = false) {
     const timestamp = now();
     const result = this.database.prepare(`
       UPDATE issue_claim_queue
       SET state = 'running', attempt_count = attempt_count + 1,
+          thread_id = CASE WHEN ? THEN NULL ELSE thread_id END,
           resume_requested = 0, started_at = ?, finished_at = NULL,
           last_error = NULL, updated_at = ?
       WHERE task_id = ? AND state IN ('queued', 'retry_wait')
-    `).run(timestamp, timestamp, taskId);
+    `).run(native ? 1 : 0, timestamp, timestamp, taskId);
     if (result.changes !== 1) {
       throw new ApiError(409, "CLAIM_NOT_READY", `Claim queue item '${taskId}' is not ready`);
     }
@@ -4650,7 +4709,8 @@ export class PanelDatabase {
     if (task.archivedAt !== null || task.status !== "todo") {
       throw new ApiError(409, "CLAIM_TASK_STATUS", "Only waiting issues can bind a native execution");
     }
-    if (!claim || claim.state !== "running" || claim.threadId !== null) {
+    if (!claim || claim.state !== "running"
+      || (claim.threadId !== null && claim.threadId !== threadBinding.threadId)) {
       throw new ApiError(409, "CLAIM_NOT_READY", `Claim queue item '${taskId}' is not ready`);
     }
     this.#assertJiraPlanAllowsExecution(task.id, "in_progress");
@@ -4670,8 +4730,8 @@ export class PanelDatabase {
         SET thread_id = ?,
             resume_requested = 0, started_at = ?, finished_at = NULL,
             last_error = NULL, updated_at = ?
-        WHERE task_id = ? AND state = 'running' AND thread_id IS NULL
-      `).run(threadBinding.threadId, timestamp, timestamp, task.id);
+        WHERE task_id = ? AND state = 'running' AND (thread_id IS NULL OR thread_id = ?)
+      `).run(threadBinding.threadId, timestamp, timestamp, task.id, threadBinding.threadId);
       if (claimResult.changes !== 1) {
         throw new ApiError(409, "CLAIM_NOT_READY", `Claim queue item '${taskId}' is not ready`);
       }
