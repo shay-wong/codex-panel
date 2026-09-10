@@ -20,6 +20,7 @@ import {
   panelAutomationPolicyOperation,
 } from "../shared/panel-automation.mjs";
 import {
+  continueTaskConversation,
   findTaskConversations,
   findResidentInjectorPids,
   handleHostBindingPayload,
@@ -1575,6 +1576,11 @@ async function confirmTaskConversationViaCdp(cdp, request) {
 }
 
 async function startTaskConversationViaCdp(cdp, executionContextId, request) {
+  if (request.threadId) {
+    return continueTaskConversation(request, (method, params) => (
+      requestCodexAppServerViaCdp(cdp, request.codexHostId, method, params, 10_000)
+    ));
+  }
   const {
     codexProjectId,
     codexHostId,

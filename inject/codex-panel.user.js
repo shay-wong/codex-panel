@@ -1344,6 +1344,30 @@
     pendingThreadCreation = taskId;
     setPendingThreadAssociation(null);
     try {
+      if (autoSubmit && payload.threadBinding) {
+        const binding = payload.threadBinding;
+        const started = await requestHost("start-task-conversation", {
+          taskId,
+          threadId: binding.threadId,
+          previousThreadId: binding.threadId,
+          codexProjectId: binding.codexProjectId,
+          codexHostId: binding.codexHostId,
+          targetRoot: binding.workspacePath,
+          projectless: false,
+          instruction,
+          title,
+          useWorktree: false,
+          skills: skillReferences,
+        }, TASK_CONVERSATION_REQUEST_TIMEOUT_MS);
+        await requestHost("bind-native-claim", {
+          reservationId,
+          taskId,
+          threadBinding: started.threadBinding,
+          developmentContext: payload.developmentContext,
+        });
+        await openThread(started.threadBinding);
+        return;
+      }
       if (payload?.recoverExisting === true && !autoSubmit) {
         const codexHostId = typeof payload?.codexHostId === "string"
           ? payload.codexHostId.trim() || "local"
@@ -1502,6 +1526,9 @@
             taskId,
             error: error instanceof Error ? error.message : "无法创建 Codex 对话",
           });
+          // The queue owns execution errors and clears them after a confirmed
+          // takeover; a second global banner would outlive that recovery.
+          return;
         } catch (_) {}
       }
       postToFrame({

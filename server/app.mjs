@@ -2281,6 +2281,9 @@ export function createPanelServer(options = {}) {
   async function cleanupClaimExecution(task) {
     if (options.cleanupClaimExecution) return await options.cleanupClaimExecution(task);
     if (task.status !== "done" || task.developmentContext?.type !== "worktree") return task;
+    if (database.jiraExecutionPeers(task.id).some((peer) => (
+      peer.id !== task.id && peer.status !== "done"
+    ))) return task;
     const worktreePath = await canonicalWorkspace(task.developmentContext.path);
     const branch = task.developmentContext.branch;
     const automaticWorktreeRoot = await canonicalWorkspace(path.join(resolved.dataDirectory, "worktrees"));

@@ -24,7 +24,7 @@ function isTransientError(error) {
     .test(errorText(error));
 }
 
-function executionPrompt(task, executionIdentifier = task.identifier) {
+function executionPrompt(task, executionIdentifier = task.identifier, peers = [], reuse = false) {
   const branchInstruction = executionIdentifier === task.identifier
     ? `创建分支时使用任务标识 ${executionIdentifier}。`
     : `创建分支时使用 Jira 标识 ${executionIdentifier}，不要使用 Panel Issue 标识 ${task.identifier}。`;
@@ -32,6 +32,10 @@ function executionPrompt(task, executionIdentifier = task.identifier) {
     "\uFFFC",
     `自动执行 ${executionIdentifier} 对应的 Panel 议题 ${task.identifier}：${task.title}`,
     branchInstruction,
+    ...(peers.length > 1 ? [
+      `同一 Jira、同一仓库的执行议题：${peers.map((peer) => `${peer.identifier}（${peer.status}）`).join('、')}。共用当前执行对话、分支和工作树，按依赖顺序逐项处理；每张议题独立绑定、记录进度和审核结果。本轮只处理 ${task.identifier}，后续议题由队列继续派发；不要执行尚未授权的 backlog 议题。`,
+    ] : []),
+    ...(reuse ? ['继续使用当前会话已有的分支和工作树，不要重新创建分支、工作树或执行对话。'] : []),
     "开始前读取该议题的最新描述和全部评论，并严格按当前内容实施。不要创建第二个执行对话。",
     "完成实现、验证和本地代码审核后，在议题中记录关键改动、验证结果和剩余限制，并移动到 in_review。",
     "如果必须等待用户输入，在议题中提出明确问题并移动到 blocked；如果实施或测试确认失败，也记录原因并移动到 blocked。",
@@ -171,6 +175,23 @@ export class ClaimQueueService {
     }
     for (const next of this.database.listReadyClaims()) {
       if (this.nativeReservations.has(next.task.id)) continue;
+      const peers = this.database.jiraExecutionPeers(next.task.id);
+      if (peers.some((peer) => peer.id !== next.task.id && (
+        peer.status === 'in_progress'
+        || (peer.status === 'blocked' && (peer.threadBinding || this.database.getClaimQueueItem(peer.id)))
+        || this.nativeReservations.has(peer.id)
+        || this.database.getClaimQueueItem(peer.id)?.state === 'running'
+      ))) continue;
+      if (next.task.relations.blockedBy.some((dependency) => (
+        !['done', 'canceled'].includes(dependency.status)
+        && !(dependency.status === 'in_review' && peers.some((peer) => peer.id === dependency.id))
+      ))) continue;
+      const owners = peers.filter((peer) => (
+        peer.threadBinding && peer.developmentContext && ['in_review', 'done'].includes(peer.status)
+      ));
+      const prerequisites = owners.filter((peer) => next.task.relations.blockedBy.some((dependency) => dependency.id === peer.id));
+      const candidates = prerequisites.length ? prerequisites : owners;
+      const identities = new Set(candidates.map((peer) => JSON.stringify(peer.threadBinding)));
       if ((runningByProject.get(next.task.projectId) ?? 0) >= next.policy.parallelism) continue;
       const reservation = {
         reservationId: randomUUID(),
@@ -180,8 +201,16 @@ export class ClaimQueueService {
       };
       this.nativeReservations.set(next.task.id, reservation);
       try {
-        this.onQueueChanged(this.database.markClaimRunning(next.task.id));
-        const prepared = await this.prepareExecution(next.task);
+        this.onQueueChanged(this.database.markClaimRunning(next.task.id, true));
+        if (!next.task.threadBinding && identities.size > 1) {
+          throw new ApiError(409, 'CLAIM_THREAD_CONFLICT', '同一 Jira 存在多个执行上下文，请先为此任务绑定要继续的会话');
+        }
+        const owner = next.task.threadBinding ? next.task : candidates[0];
+        const prepared = owner ? {
+          workspacePath: owner.threadBinding.workspacePath,
+          codexProjectId: owner.threadBinding.codexProjectId,
+          useWorktree: false,
+        } : await this.prepareExecution(next.task);
         const catalog = await this.aiChat.getCatalog(next.task.projectId);
         const implement = catalog.skills.find((skill) => skill.id === "implement");
         if (!implement) {
@@ -190,12 +219,14 @@ export class ClaimQueueService {
         const jira = this.database.getJiraContext(next.task.id).jira;
         const executionIdentifier = jira?.externalKey ?? next.task.identifier;
         reservation.workspacePath = prepared.workspacePath;
+        reservation.threadBinding = owner?.threadBinding ?? null;
+        reservation.developmentContext = owner?.developmentContext ?? null;
         return {
           ...reservation,
           identifier: executionIdentifier,
           panelIdentifier: next.task.identifier,
           title: `${executionIdentifier} · ${next.task.title}`,
-          instruction: executionPrompt(next.task, executionIdentifier),
+          instruction: executionPrompt(next.task, executionIdentifier, peers, Boolean(owner)),
           workspacePath: prepared.workspacePath,
           workspaceLabel: prepared.workspaceLabel,
           projectName: prepared.projectName,
@@ -225,14 +256,31 @@ export class ClaimQueueService {
     if (!reservation || reservation.reservationId !== reservationId) {
       throw new ApiError(409, "CLAIM_RESERVATION_EXPIRED", "The native claim reservation expired");
     }
+    if (reservation.threadBinding && (
+      threadBinding.threadId !== reservation.threadBinding.threadId
+      || threadBinding.codexProjectId !== reservation.threadBinding.codexProjectId
+      || threadBinding.codexHostId !== reservation.threadBinding.codexHostId
+    )) {
+      throw new ApiError(409, 'CLAIM_THREAD_CONFLICT', 'Codex returned a different shared execution conversation');
+    }
     if (threadBinding.workspacePath !== (developmentContext?.path ?? reservation.workspacePath)) {
       throw new ApiError(409, "CLAIM_WORKSPACE_CONFLICT", "Codex returned an unexpected execution workspace");
+    }
+    const current = this.database.getTask(taskId);
+    if (['in_progress', 'in_review', 'done'].includes(current?.status)
+      && current.threadBinding?.threadId === threadBinding.threadId
+      && current.threadBinding?.workspacePath === threadBinding.workspacePath) {
+      this.database.reconcileClaimQueue();
+      this.nativeReservations.delete(taskId);
+      const claim = this.database.getClaimQueueItem(taskId);
+      this.onQueueChanged(claim);
+      return { task: this.database.getTask(taskId), claim };
     }
     const result = this.database.bindNativeClaim(
       taskId,
       threadBinding,
       CODEX_AGENT_ACTOR,
-      developmentContext,
+      reservation.developmentContext ?? developmentContext,
     );
     this.nativeReservations.delete(taskId);
     this.onTaskChanged(result.task);
@@ -248,6 +296,13 @@ export class ClaimQueueService {
     const reservation = this.nativeReservations.get(taskId);
     if (!reservation || reservation.reservationId !== reservationId) return null;
     this.nativeReservations.delete(taskId);
+    const task = this.database.getTask(taskId);
+    if (task?.threadBinding && ['in_progress', 'in_review', 'done'].includes(task.status)) {
+      this.database.reconcileClaimQueue();
+      const claim = this.database.getClaimQueueItem(taskId);
+      this.onQueueChanged(claim);
+      return claim;
+    }
     await this.#handleFailure(taskId, null, error);
     return this.database.getClaimQueueItem(taskId);
   }
@@ -328,7 +383,9 @@ export class ClaimQueueService {
     try {
       const jiraClaims = this.database.enqueueAuthorizedJiraClaims();
       const scanClaims = this.database.enqueueDueProjectScans();
-      this.database.reconcileClaimQueue();
+      for (const taskId of this.database.reconcileClaimQueue()) {
+        this.onQueueChanged(this.database.getClaimQueueItem(taskId));
+      }
       for (const claim of [...jiraClaims, ...scanClaims]) this.onQueueChanged(claim);
       if (this.managePanelSkillPath) return;
       const runningByProject = new Map();

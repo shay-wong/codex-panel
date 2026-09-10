@@ -243,10 +243,60 @@ function parseHostRequest(payload, parseAutomationRequest) {
       )
     )
     && (request.useWorktree === undefined || typeof request.useWorktree === "boolean")
+    && (request.threadId === undefined || (
+      typeof request.threadId === "string" && /^[a-z0-9-]{1,128}$/i.test(request.threadId)
+      && Array.isArray(request.skills) && request.skills.length <= 8
+      && request.skills.every(validSkillReference)
+    ))
   ) {
     return { id, request, error: null };
   }
   return { id, request: null, error: HOST_REQUEST_ERROR };
+}
+
+export async function continueTaskConversation(request, call) {
+  const { threadId, targetRoot, instruction, skills } = request;
+  const current = await call('thread/read', { threadId, includeTurns: true });
+  if (current?.thread?.id !== threadId || current.thread.cwd !== targetRoot) {
+    throw new Error('Codex shared execution workspace does not match the saved binding');
+  }
+  if (current.thread.status?.type === 'active'
+    || current.thread.turns?.some((turn) => turn.status === 'inProgress')) {
+    throw new Error('Codex conversation is temporarily busy');
+  }
+  const resumed = await call('thread/resume', { threadId });
+  if (resumed?.thread?.id !== threadId || resumed.thread.cwd !== targetRoot) {
+    throw new Error('Codex did not resume the saved execution conversation');
+  }
+  try {
+    const started = await call('turn/start', {
+      threadId,
+      input: [
+        { type: 'text', text: instruction, text_elements: [] },
+        ...skills.map(({ name, path }) => ({ type: 'skill', name, path })),
+      ],
+    });
+    if (!started?.turn?.id) throw new Error('Missing turn id');
+  } catch (cause) {
+    if (/\bTHREAD_BUSY\b|already.*(?:active|running).*turn|turn.*already.*(?:active|running)|thread.*busy/i.test(cause?.message ?? '')) {
+      throw new Error('Codex conversation is temporarily busy', { cause });
+    }
+    // A lost acknowledgement must not automatically submit the same task twice.
+    const error = new Error('Codex 执行请求是否送达尚未确认，请检查原会话后再重试', { cause });
+    error.threadId = threadId;
+    error.uncertain = true;
+    throw error;
+  }
+  return {
+    threadId,
+    threadBinding: {
+      threadId,
+      codexProjectId: request.codexProjectId,
+      codexProjectKind: 'local',
+      codexHostId: request.codexHostId,
+      workspacePath: targetRoot,
+    },
+  };
 }
 
 export async function handleHostBindingPayload(params, handlers) {

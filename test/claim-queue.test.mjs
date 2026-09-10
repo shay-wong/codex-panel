@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
+import { DatabaseSync } from "node:sqlite";
 
 import { createPanelServer } from "../server/index.mjs";
 import { ClaimQueueService } from "../server/claim-queue.mjs";
@@ -259,6 +260,13 @@ test("Jira native claims use the external key for task and branch context", asyn
   item.database.setJiraProjects(jira.id, jira.version, ["claim-project"], actor);
   jira = item.database.getTask(jira.id);
   item.database.addJiraTaskLink(jira.id, jira.version, task.id, actor);
+  const sibling = item.createTask("Same Jira next ticket");
+  jira = item.database.getTask(jira.id);
+  item.database.addJiraTaskLink(jira.id, jira.version, sibling.id, actor);
+  item.database.addTaskRelation(task.id, item.database.getTask(task.id).version,
+    'blocks', sibling.id, undefined, undefined, actor);
+  item.database.moveTask(sibling.id, item.database.getTask(sibling.id).version,
+    'backlog', undefined, undefined, undefined, actor);
   const queue = new ClaimQueueService({
     database: item.database,
     aiChat: {
@@ -280,8 +288,116 @@ test("Jira native claims use the external key for task and branch context", asyn
     assert.match(reservation.title, /^TEST-123 /);
     assert.match(reservation.instruction, /使用 Jira 标识 TEST-123/);
     assert.match(reservation.instruction, new RegExp(`不要使用 Panel Issue 标识 ${task.identifier}`));
+    assert.match(reservation.instruction, /共用当前执行对话、分支和工作树/);
+    assert.equal(await queue.reserveNextNativeClaim(), null);
+    const binding = {
+      threadId: 'shared-jira-thread', codexProjectId: 'claim-project',
+      codexProjectKind: 'local', codexHostId: 'local', workspacePath: item.directory,
+    };
+    const developmentContext = { type: 'worktree', path: item.directory, branch: 'shay-TEST-123' };
+    const bound = queue.bindNativeClaim(reservation.reservationId, task.id, binding, developmentContext);
+    assert.equal(await queue.reserveNextNativeClaim(), null);
+    const unrelated = item.createTask('Historical separate sibling');
+    jira = item.database.getTask(jira.id);
+    item.database.addJiraTaskLink(jira.id, jira.version, unrelated.id, actor);
+    item.database.updateTask(unrelated.id, item.database.getTask(unrelated.id).version, {
+      status: 'in_review', developmentContext: { ...developmentContext, branch: 'other-branch' },
+    }, 'other-thread', { ...binding, threadId: 'other-thread' }, actor);
+    item.database.saveProjectAutomationPolicy('claim-project', {
+      enabledByUser: false, paused: false, intervalMinutes: 5,
+      model: 'gpt-5.5', reasoningEffort: 'high',
+    });
+    item.database.moveTask(task.id, bound.task.version, 'in_review', undefined, undefined, undefined, actor);
+    await queue.runOnce();
+    assert.equal(item.database.getTask(sibling.id).status, 'todo');
+    assert.equal(item.database.getClaimQueueItem(sibling.id), null);
+    queue.enqueue(sibling.id);
+    const next = await queue.reserveNextNativeClaim();
+    assert.equal(next.taskId, sibling.id);
+    assert.deepEqual(next.threadBinding, binding);
+    assert.deepEqual(next.developmentContext, developmentContext);
+    assert.equal(next.useWorktree, false);
+    assert.match(next.instruction, /不要重新创建分支/);
+    const continued = queue.bindNativeClaim(next.reservationId, sibling.id, binding);
+    assert.deepEqual(continued.task.threadBinding, binding);
+    assert.deepEqual(continued.task.developmentContext, developmentContext);
+    item.database.moveTask(sibling.id, continued.task.version, 'blocked', undefined, undefined, undefined, actor);
+    item.database.finishClaim(sibling.id, 'blocked', 'execution failed');
+    queue.enqueue(sibling.id);
+    const retry = await queue.reserveNextNativeClaim();
+    await queue.runOnce();
+    assert.equal(item.database.getClaimQueueItem(sibling.id).state, 'running');
+    assert.deepEqual(retry.threadBinding, binding);
+    const retried = queue.bindNativeClaim(retry.reservationId, sibling.id, binding);
+    assert.equal(retried.task.threadBinding.threadId, binding.threadId);
   } finally {
     queue.close();
+    await item.close();
+  }
+});
+
+test("confirmed native takeover clears a stale failure and survives a late failure callback", async () => {
+  const item = await fixture();
+  const queue = new ClaimQueueService({
+    database: item.database,
+    aiChat: { getCatalog: async () => ({ skills: [{ id: 'implement', label: 'Implement', path: '/skills/implement/SKILL.md' }] }) },
+    managePanelSkillPath: '/skills/manage-panel/SKILL.md',
+    prepareExecution: async (task) => ({ task, workspacePath: item.directory }),
+  });
+  try {
+    const task = item.createTask('Native late binding');
+    queue.enqueue(task.id);
+    const reservation = await queue.reserveNextNativeClaim();
+    const binding = {
+      threadId: 'late-thread', codexProjectId: 'claim-project', codexProjectKind: 'local',
+      codexHostId: 'local', workspacePath: item.directory,
+    };
+    item.database.moveTask(task.id, task.version, 'in_progress', undefined, binding.threadId, binding, actor);
+    await queue.failNativeClaim(reservation.reservationId, task.id, 'Codex 没有切换到新建本地工作树');
+    assert.equal(item.database.getTask(task.id).status, 'in_progress');
+    assert.equal(item.database.getClaimQueueItem(task.id).state, 'running');
+    item.database.finishClaim(task.id, 'blocked', 'old failure');
+    await queue.runOnce();
+    assert.equal(item.database.getClaimQueueItem(task.id).lastError, null);
+    assert.equal(item.database.getClaimQueueItem(task.id).threadId, binding.threadId);
+    assert.equal(item.database.getClaimQueueItem(task.id).state, 'running');
+    const current = item.database.getTask(task.id);
+    item.database.moveTask(task.id, current.version, 'in_review', undefined, undefined, undefined, actor);
+    await queue.runOnce();
+    assert.equal(item.database.getClaimQueueItem(task.id).state, 'completed');
+  } finally {
+    queue.close();
+    await item.close();
+  }
+});
+
+test('claim queue migration preserves history while allowing shared thread bindings', async () => {
+  const item = await fixture();
+  try {
+    const first = item.createTask('Existing execution');
+    const second = item.createTask('Next execution');
+    item.database.enqueueClaim(first.id, 'manual');
+    item.database.markClaimRunning(first.id);
+    item.database.setClaimThread(first.id, 'shared-thread');
+    const attempt = item.database.createClaimAttempt({ taskId: first.id, threadId: 'shared-thread' });
+    const saved = item.database.getClaimQueueItem(first.id);
+    item.database.close();
+    const legacy = new DatabaseSync(item.filename);
+    const schema = legacy.prepare("SELECT sql FROM sqlite_schema WHERE name = 'issue_claim_queue'").get().sql;
+    legacy.exec(`
+      ALTER TABLE issue_claim_queue RENAME TO queue_before_legacy;
+      ${schema.replace('thread_id TEXT,', 'thread_id TEXT UNIQUE,')};
+      INSERT INTO issue_claim_queue SELECT * FROM queue_before_legacy;
+      DROP TABLE queue_before_legacy;
+    `);
+    legacy.close();
+    item.database = new PanelDatabase(item.filename);
+    assert.deepEqual(item.database.getClaimQueueItem(first.id), saved);
+    assert.equal(item.database.listClaimAttempts(first.id)[0].id, attempt.id);
+    item.database.enqueueClaim(second.id, 'manual');
+    item.database.setClaimThread(second.id, 'shared-thread');
+    assert.equal(item.database.getClaimQueueItem(second.id).threadId, 'shared-thread');
+  } finally {
     await item.close();
   }
 });

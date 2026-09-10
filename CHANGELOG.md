@@ -8,6 +8,7 @@ This file records user-visible changes introduced by the fork.
 - Added **6 Astra** (`gpt-6-astra`) to the project model picker with reasoning levels from `low` through `ultra`.
 
 - Fixed explicit Jira conversation binding when no planning record exists: rebinding the same conversation now initializes the plan so its Spec and tickets can be saved, while existing plans and their conversations remain unchanged.
+- Reuse one native execution conversation, branch, and worktree for sequential tickets from the same Jira requirement and repository; retain per-ticket progress and clear stale dispatch errors after a confirmed execution takeover.
 
 - Added a visible **Project Settings** view after **Project Docs**, repaired Project Key migration for historical local Issue prefixes, and allowed read-only task lookup by either Panel Issue ID or a unique linked Jira key.
 - Added `panelctl jira repositories set` so an explicitly requested Jira repository link can be saved from a Codex conversation before its Spec and tickets are published.

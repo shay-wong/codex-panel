@@ -760,6 +760,38 @@ test("Jira planning recovers a stored matching conversation before creating anot
   assert.match(source, /restorePendingThreadAssociation\(\)/);
 });
 
+test('shared native execution resumes and binds without opening a new composer', async () => {
+  const calls = [];
+  const binding = {
+    threadId: 'shared-thread', codexProjectId: 'project', codexProjectKind: 'local',
+    codexHostId: 'local', workspacePath: '/disposable/worktree',
+  };
+  const run = vm.runInNewContext(`(() => {
+    let pendingThreadCreation = null;
+    ${createThreadSource}
+    return createThreadForTask;
+  })()`, {
+    TASK_CONVERSATION_REQUEST_TIMEOUT_MS: 100,
+    setPendingThreadAssociation: () => {},
+    requestHost: async (action, payload) => {
+      calls.push([action, payload]);
+      return { threadBinding: binding };
+    },
+    openThread: async (payload) => calls.push(['open', payload]),
+    postToFrame: () => assert.fail('unexpected error'),
+  });
+  await run({
+    taskId: 'task-2', identifier: 'TEST-1', title: 'Second ticket', instruction: 'Continue',
+    autoSubmit: true, reservationId: 'reservation', threadBinding: binding,
+    developmentContext: { type: 'worktree', path: binding.workspacePath, branch: 'TEST-1' },
+    skillReferences: [{ name: 'implement', displayName: 'Implement', path: '/skills/implement/SKILL.md' }],
+  });
+  assert.deepEqual(calls.map(([action]) => action), ['start-task-conversation', 'bind-native-claim', 'open']);
+  assert.equal(calls[0][1].threadId, binding.threadId);
+  assert.equal(calls[0][1].useWorktree, false);
+  assert.equal(calls[1][1].developmentContext.branch, 'TEST-1');
+});
+
 test("an unrelated new thread cannot claim an unsent SSH issue draft", async () => {
   const pending = {
     taskId: "task-1",
