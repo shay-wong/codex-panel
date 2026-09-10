@@ -24,6 +24,8 @@ Repository projects use a Panel-owned persistent execution queue instead of Code
 
 Jira tickets in the same repository reuse one native execution conversation, branch, and worktree in sequence. Each ticket keeps its own status and activity. Same-repository dependencies can continue after review; cross-repository dependencies still wait for completion. A confirmed execution takeover clears stale queue errors. Existing separate conversations are not moved or merged automatically.
 
+Native conversation activity uses the same live session progress as the board. Unavailable session data shows **Status unknown**, rather than idle.
+
 ## Requirements
 
 - Node.js 22.5 or newer

@@ -10,6 +10,8 @@ This file records user-visible changes introduced by the fork.
 - Fixed explicit Jira conversation binding when no planning record exists: rebinding the same conversation now initializes the plan so its Spec and tickets can be saved, while existing plans and their conversations remain unchanged.
 - Reuse one native execution conversation, branch, and worktree for sequential tickets from the same Jira requirement and repository; retain per-ticket progress and clear stale dispatch errors after a confirmed execution takeover.
 
+- Fixed native conversation activity showing idle while the board reports running; both now use the existing session progress feed, with unknown status when session data is unavailable.
+
 - Added a visible **Project Settings** view after **Project Docs**, repaired Project Key migration for historical local Issue prefixes, and allowed read-only task lookup by either Panel Issue ID or a unique linked Jira key.
 - Added `panelctl jira repositories set` so an explicitly requested Jira repository link can be saved from a Codex conversation before its Spec and tickets are published.
 - Fixed the Panel sidebar entry so it restores the last selected project, including **All projects**, while keeping an explicit `project` query parameter authoritative.

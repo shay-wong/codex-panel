@@ -81,6 +81,15 @@ export function normalizeCodexThreadId(value: string | null | undefined) {
   return trimmed.replace(/^(?:local|cloud):/i, "").trim();
 }
 
+export function conversationActivityStatus(
+  thread: Pick<AiChatThread, "purpose" | "codexThreadId" | "status">,
+  progress: Record<string, { running: boolean } | null>,
+): AiChatThread["status"] | "unknown" {
+  if (thread.purpose !== "formal" || !thread.codexThreadId) return thread.status;
+  const session = progress[normalizeCodexThreadId(thread.codexThreadId)];
+  return session ? (session.running ? "running" : "idle") : "unknown";
+}
+
 function newerTimestamp(left: string, right: string) {
   return left > right ? left : right;
 }
