@@ -123,6 +123,57 @@ if (args[0] === "debug") {
     assert.equal(projectList.projects.find((project) => project.id === "api").workspacePath, workspace);
     assert.equal(projectList.projects.find((project) => project.id === "web").workspacePath, workspace);
 
+    // Reproduce an already-bound conversation whose planning record was never created.
+    app.database.syncJiraTasks([
+      jiraIssue("todo"),
+      { ...jiraIssue("todo"), id: "jira-bind-plan", identifier: "JIRA:TEST:2", externalId: "2", externalKey: "TEST-2" },
+    ], { originId: "test", projectName: "Jira", syncedAt: timestamp });
+    const binding = {
+      threadId: "codex-bound-without-plan",
+      codexProjectId: "api",
+      codexProjectKind: "local",
+      codexHostId: "local",
+      workspacePath: workspace,
+    };
+    await api(baseUrl, "/api/local/host-runtime", "PUT", {
+      ...binding, threadRunning: true, threadTodoProgress: null,
+    });
+    let bindingTask = app.database.getTask("jira-bind-plan");
+    await api(baseUrl, `/api/tasks/${bindingTask.id}/jira-context`, "PUT", {
+      version: bindingTask.version, projectIds: ["api"],
+    });
+    bindingTask = app.database.getTask(bindingTask.id);
+    bindingTask = app.database.updateTask(bindingTask.id, bindingTask.version, {}, binding.threadId, binding, AGENT);
+    assert.equal(app.database.getJiraPlan(bindingTask.id), null);
+    const bound = await cli(baseUrl, directory, ["conversation", "bind", "TEST-2", "--thread-id", binding.threadId]);
+    assert.equal(bound.task.version, bindingTask.version);
+    assert.equal(bound.task.status, "todo");
+    assert.deepEqual(bound.task.threadBinding, binding);
+    let boundContext = (await cli(baseUrl, directory, ["jira", "planning", "get", "TEST-2"])).context;
+    assert.equal(boundContext.plan.threadId, binding.threadId);
+    assert.ok(boundContext.plan.version > 0);
+    assert.equal(app.database.getAiChatThread(binding.threadId).codexThreadId, binding.threadId);
+    const bindingSpecPath = path.join(directory, "bound-spec.md");
+    const bindingTicketsPath = path.join(directory, "bound-tickets.json");
+    await writeFile(bindingSpecPath, "# Bound planning spec");
+    await cli(baseUrl, directory, ["jira", "planning", "save", bindingTask.id,
+      "--spec-file", bindingSpecPath, "--if-version", String(boundContext.plan.version)]);
+    boundContext = app.database.getJiraContext(bindingTask.id);
+    await cli(baseUrl, directory, ["conversation", "bind", "TEST-2", "--thread-id", binding.threadId]);
+    assert.deepEqual(app.database.getJiraPlan(bindingTask.id), boundContext.plan);
+    await writeFile(bindingTicketsPath, JSON.stringify({ items: [
+      { key: "first", projectId: "api", title: "First bound ticket", description: "First", priority: "medium", labels: [], blockedBy: [] },
+      { key: "second", projectId: "api", title: "Second bound ticket", description: "Second", priority: "medium", labels: [], blockedBy: ["first"] },
+    ] }));
+    const publishedBinding = await cli(baseUrl, directory, ["jira", "planning", "publish", bindingTask.id,
+      "--tickets-file", bindingTicketsPath, "--if-version", String(boundContext.plan.version)]);
+    assert.equal(publishedBinding.context.issues.length, 2);
+    assert.ok(publishedBinding.context.issues.every((issue) => issue.status === "backlog"));
+    const boundItems = publishedBinding.plan.items;
+    assert.equal(app.database.getTask(boundItems[1].taskId).relations.blockedBy[0].id, boundItems[0].taskId);
+    assert.equal(app.database.listAiChatRuns(binding.threadId).length, 0);
+    await app.aiChat.discardThread(binding.threadId);
+
     let jira = app.database.getTask("jira-plan-1");
     let result = await cli(baseUrl, directory, ["issue", "get", "TEST-1", "--json"]);
     assert.equal(result.task.id, jira.id);

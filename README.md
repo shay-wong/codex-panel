@@ -2,6 +2,8 @@
 
 The project model picker includes **6 Astra** (`gpt-6-astra`), with reasoning levels through `max` and `ultra`.
 
+Explicit Jira conversation binding initializes a missing planning record so the same conversation can save its Spec and publish tickets. Existing plans are preserved. See [Jira planning](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues).
+
 [简体中文](README.zh-CN.md) | [Fork capabilities](docs/fork-capabilities.md)
 
 A local-first issue board that runs in a browser and can be embedded in Codex through the standalone CDP launcher or its injection script. The same HTTP API powers the React UI and the `panelctl` CLI used by the bundled Codex Skill.
