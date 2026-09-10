@@ -17,6 +17,7 @@ sha2 = "0.10"
 tauri = { version = "2.11.5", features = ["tray-icon"] }
 tauri-plugin-autostart = "2.5.1"
 tauri-plugin-dialog = "2.7.2"
+tauri-plugin-updater = "~2.11.0"
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

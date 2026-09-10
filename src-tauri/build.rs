@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rerun-if-env-changed=CODEX_PANEL_UPDATER_PUBLIC_KEY");
     println!("cargo:rerun-if-env-changed=CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT");
     println!("cargo:rerun-if-changed=resources/runtime-integrity.json");
     let manifest = match std::fs::read_to_string("resources/runtime-integrity.json") {
