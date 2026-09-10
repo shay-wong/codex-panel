@@ -99,9 +99,9 @@ test("the issue composer includes Linear-style labels and scheduling", () => {
 });
 
 test("issue creation selects a project from all projects and detail supports project moves", () => {
-  assert.match(editorSource, /\{!task && projectOptions && \([\s\S]*?ariaLabel=\{text\("项目", "Project"\)\}/);
+  assert.match(editorSource, /\{projectOptions && \([\s\S]*?ariaLabel=\{text\("项目", "Project"\)\}/);
   assert.match(detailSource, /value=\{currentTask\.projectId\}[\s\S]*?options=\{projects\.map/);
-  assert.match(appSource, /projectOptions=\{!editor\.task && isAllProjects \? createTargetProjects : undefined\}/);
+  assert.match(appSource, /projectOptions=\{isAllProjects \? createTargetProjects : undefined\}/);
   assert.match(appSource, /const targetProjectId = editorProjectId \?\? selectedProjectId;[\s\S]*?createTaskRequest\(targetProjectId, draft\)/);
   assert.match(appSource, /className="header-project-switcher"/);
 });
@@ -152,7 +152,7 @@ test("the app omits the old navigation and keeps the embedded draggable header r
 });
 
 test("realtime updates remain active on the project home and reconcile after reconnecting", () => {
-  assert.match(appSource, /useEffect\(\(\) => \{\s*const source = new EventSource\(resolvePanelUrl\("\/api\/events"\)\)/);
-  assert.match(appSource, /event\.type\.startsWith\("task\."\)[\s\S]*?scheduleRefresh\(\{ projects: true, tasks: affectsSelectedProject \}\)/);
+  assert.match(appSource, /const eventsUrl = resolvePanelUrl\("\/api\/events"\);[\s\S]*?useEffect\(\(\) => \{\s*const source = new EventSource\(eventsUrl\)/);
+  assert.match(appSource, /event\.type\.startsWith\("task\."\)[\s\S]*?scheduleRefresh\(\{\s*projects: event\.type !== "task.relation.updated",\s*tasks: affectsSelectedProject,\s*projectId: eventProjectId,/);
   assert.match(appSource, /source\.onopen = \(\) => \{[\s\S]*?scheduleRefresh\(\{ projects: true, tasks: Boolean\(selectedProjectId\) \}\)/);
 });

@@ -57,6 +57,7 @@ function fixture(fetch) {
     syncJiraTasks: (issues, options) => database.syncCalls.push({ issues, options }),
   };
   const configStore = {
+    validate: (input) => ({ ...config, ...input }),
     read: async () => config,
     save: async (next) => {
       config = { ...next, version: 3 };
@@ -156,6 +157,36 @@ test("Jira REST sync is atomic, rechecks missing issues, and confirms account ch
   await integration.sync({ force: true, acceptAccountChange: true });
   assert.equal(readConfig().accountId, "account-b");
   assert.ok(requests.filter((pathname) => pathname === "/rest/api/2/search").length >= 4);
+});
+
+test("Jira configuration serializes queued forced sync and reconciliation without losing bearer auth", async () => {
+  const started = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const requests = [];
+  const { integration, database, readConfig } = fixture(async (url, init) => {
+    const pathname = new URL(url).pathname;
+    requests.push({ pathname, authorization: init.headers.authorization });
+    if (requests.length === 1) {
+      started.resolve();
+      await release.promise;
+    }
+    if (pathname === "/rest/applinks/1.0/manifest") return json({ id: "jira-instance" });
+    if (pathname === "/rest/api/2/myself") return json({ accountId: "account-a", displayName: "Shay A" });
+    if (pathname === "/rest/api/2/search") return json({ total: 0, issues: [] });
+    throw new Error(`Unexpected Jira request: ${pathname}`);
+  });
+  const configuring = integration.configure({ authMethod: "bearer", password: "replacement-token" });
+  await started.promise;
+  const queued = integration.sync();
+  const forced = integration.sync({ force: true });
+  const reconciling = integration.reconcile();
+  assert.equal(requests.length, 1);
+  release.resolve();
+  await Promise.all([configuring, queued, forced, reconciling]);
+  assert.equal(database.syncCalls.length, 3);
+  assert.equal(readConfig().username, "");
+  assert.ok(requests.every((request) => request.authorization === "Bearer replacement-token"));
+  assert.deepEqual(database.syncCalls.map((call) => call.options.archiveMissing), [true, true, false]);
 });
 
 test("Jira transition retries accept the remote target state after a lost response", async () => {

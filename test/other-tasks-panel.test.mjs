@@ -96,9 +96,9 @@ test("panel cards reuse TaskCard and the existing ranked board drop path", () =>
 });
 
 test("global creation defaults to todo while per-column creation keeps the chosen status", () => {
-  assert.equal(appSource.match(/setEditor\(\{ task: null, status: "todo" \}\)/g)?.length, 3);
-  assert.doesNotMatch(appSource, /setEditor\(\{ task: null, status: "backlog" \}\)/);
-  assert.match(appSource, /onCreate=\{\(initialStatus\) => setEditor\(\{ task: null, status: initialStatus \}\)\}/);
+  assert.equal(appSource.match(/setEditor\(\{ status: "todo" \}\)/g)?.length, 3);
+  assert.doesNotMatch(appSource, /setEditor\(\{ status: "backlog" \}\)/);
+  assert.match(appSource, /onCreate=\{\(initialStatus\) => setEditor\(\{ status: initialStatus \}\)\}/);
 });
 
 test("legacy empty-column and manual visibility runtime paths are removed", async () => {

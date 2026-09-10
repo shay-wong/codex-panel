@@ -5,12 +5,11 @@ import type { ComposerCandidatesResponse, Task } from "../types";
 import {
   createInlineMediaSegmentsFromHtml,
   createInlineMediaSegments,
-  InlineMediaComposer,
   serializeInlineMedia,
   writeInlineMediaClipboard,
-  type InlineMediaComposerHandle,
   type InlineMediaSegment,
-} from "./InlineMediaComposer";
+} from "../documentModel";
+import { InlineMediaComposer, type InlineMediaComposerHandle } from "./InlineMediaComposer";
 
 const api = vi.hoisted(() => ({
   getCandidates: vi.fn(),

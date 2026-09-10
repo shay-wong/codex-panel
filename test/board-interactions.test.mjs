@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 const appSource = await readFile(new URL("../web/src/App.tsx", import.meta.url), "utf8");
 const boardColumnSource = await readFile(new URL("../web/src/components/BoardColumn.tsx", import.meta.url), "utf8");
+const dragPreviewSource = await readFile(new URL("../web/src/useTaskCardDragPreview.ts", import.meta.url), "utf8");
 const apiSource = await readFile(new URL("../web/src/api.ts", import.meta.url), "utf8");
 const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 const detailSource = await readFile(new URL("../web/src/components/TaskDetail.tsx", import.meta.url), "utf8");
@@ -23,12 +24,13 @@ function taskStatuses() {
 }
 
 test("dragging previews the insertion rank before committing it", () => {
-  assert.match(boardColumnSource, /function findDropBefore/);
-  assert.match(boardColumnSource, /clientY < card\.getBoundingClientRect\(\)\.top \+ card\.offsetHeight \/ 2/);
+  assert.match(boardColumnSource, /useTaskCardDragPreview\(\{ tasks, draggedTaskId, draggedTaskHeight, isDropTarget \}\)/);
+  assert.match(dragPreviewSource, /function findDropBefore/);
+  assert.match(dragPreviewSource, /clientY < card\.getBoundingClientRect\(\)\.top \+ card\.offsetHeight \/ 2/);
   assert.match(boardColumnSource, /onDrop\(status, taskId, findDropBefore/);
-  assert.match(boardColumnSource, /function getTaskDragShift/);
-  assert.match(boardColumnSource, /shift -= dragDistance/);
-  assert.match(boardColumnSource, /shift \+= dragDistance/);
+  assert.match(dragPreviewSource, /function getTaskDragShift/);
+  assert.match(dragPreviewSource, /shift -= dragDistance/);
+  assert.match(dragPreviewSource, /shift \+= dragDistance/);
   assert.match(boardColumnSource, /dragShift=\{dragShift\}/);
   assert.match(styles, /\.task-card\.is-dragging \{[\s\S]*?opacity: 0/);
   assert.doesNotMatch(styles, /\.task-card\.is-dragging \{[^}]*pointer-events: none/);
