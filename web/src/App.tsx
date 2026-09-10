@@ -2050,10 +2050,13 @@ export function App() {
   const activeFilterCount = taskFilterCount(filters);
   const hasActiveTaskFilters = Boolean(search.trim()) || activeFilterCount > 0;
 
-  const trackedCodexThreadIds = useMemo(() => [...new Set(tasks
+  const trackedCodexThreadIds = useMemo(() => [...new Set([...tasks
     .filter((task) => task.status === "in_progress" && task.threadId)
-    .map((task) => normalizeCodexThreadId(task.threadId))
-    .filter(Boolean))].sort(), [tasks]);
+    .map((task) => task.threadId),
+    ...(detailTask?.conversationRefs ?? []).map((ref) => ref.threadId),
+    ...aiThreads.filter((thread) => thread.purpose === "formal"
+      && thread.origin.issueId === detailTask?.id).map((thread) => thread.codexThreadId),
+  ].map(normalizeCodexThreadId).filter(Boolean))].sort(), [tasks, detailTask, aiThreads]);
   const trackedCodexThreadIdsKey = trackedCodexThreadIds.join(",");
 
   useEffect(() => {
@@ -2064,13 +2067,18 @@ export function App() {
     let disposed = false;
     const sync = async () => {
       try {
-        const progress = await getCodexThreadProgress(trackedCodexThreadIds);
+        const progress: typeof codexThreadProgress = {};
+        for (let offset = 0; offset < trackedCodexThreadIds.length; offset += 64) {
+          Object.assign(progress, await getCodexThreadProgress(trackedCodexThreadIds.slice(offset, offset + 64)));
+        }
         if (!disposed) {
           setCodexThreadProgress((current) => (
             JSON.stringify(current) === JSON.stringify(progress) ? current : progress
           ));
         }
-      } catch {}
+      } catch {
+        if (!disposed) setCodexThreadProgress({});
+      }
     };
     void sync();
     const timer = window.setInterval(sync, 2_000);
@@ -3963,6 +3971,9 @@ export function App() {
         {detailTask && (selectedProject || isAllProjects) ? (
           <TaskDetail
             key={detailTask.id}
+            codexThreadProgress={hostContext?.threadRunning && hostContext.threadId
+              ? { ...codexThreadProgress, [normalizeCodexThreadId(hostContext.threadId)]: { running: true } }
+              : codexThreadProgress}
             task={detailTask}
             tasks={tasks}
             referenceTasks={referenceTasks}

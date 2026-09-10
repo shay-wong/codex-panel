@@ -255,6 +255,8 @@
 
 ### Panel 持久化自动执行队列
 
+- 原生会话状态展示修复（本次变更）：详情活动接入看板同一份会话进度，按真实 thread ID 显示运行/空闲；未读取到状态显示未知，不得把任务绑定占位记录的 idle 当成原生运行状态。详情可见会话纳入已有轮询，按 API 的 64 个 ID 上限分批，不修改任务或队列。代码：`web/src/App.tsx`、`web/src/taskConversations.ts`、`web/src/components/TaskDetail.tsx`；验证：`test/conversation-activity-status.test.mjs`；提交定位：`git log -S'conversationActivityStatus' -- web/src/taskConversations.ts`。上游合并时保留原生状态来源与未知态，等价吸收后删除此补充。
+
 - 生命周期：`等待上游吸收`
 - 原始目的：由 Panel 自己保存自动认领策略、执行队列和尝试记录，统一承接普通 Issue、Jira 授权 Issue 与手动立即执行，不再让 Codex Scheduled Task 充当执行核心。
 - 行为不变量：仓库项目的自动化策略必须持久化保存开关、项目暂停、5/10/15/30/60 分钟扫描间隔、模型和推理强度，并展示排队、运行、阻塞和失败数量；Jira 项目和 Cloud 模式不可配置。全局默认项目并行数为 `3`，用户可在 `1-8` 内修改；每个项目可跟随默认值或设置自己的 `1-8` 覆盖值，不设跨项目总上限。周期扫描只纳入未关联 Jira 的本地 `todo` Issue；Jira 关联 Issue 只有在 Jira 为进行中且没有待处理生命周期决定时才可进入队列。关闭自动认领只阻止新的自动入队，已有队列继续调度；详情页“立即执行”和 Jira 简单一键创建使用 `manual` 来源，即使自动扫描关闭也可入队，但项目暂停仍阻止全部调度。队列先处理手动与恢复来源，Jira 与扫描来源再按 Issue 优先级、看板顺序和入队时间调度；达到项目容量时 Issue 保持 `todo` 并显示等待槽位。正式执行必须在关联仓库对应的 Codex 原生项目中，从已展开菜单里选择真实可见且可交互的“新建本地工作树”，再提交包含 `manage-panel` 与 `implement` 的提示，使 Codex 环境初始化脚本生效；Panel 不得自行创建 worktree，只能在 Codex 返回后持久化真实 thread binding、worktree 路径和分支。Jira 关联 Issue 必须以 Jira external key 作为任务标题、执行提示和分支命名要求，不能以 Panel Issue 标识替代。临时启动或连接失败最多按 30 秒、2 分钟重试两次；需要用户输入时显示“等待你的回复”，只能在收到 Issue 评论或关联对话回复后重新入队；其他执行失败显示“重新执行”，只能由用户明确重试，自动扫描不得自行重试阻塞工作。Jira 暂停或存在待处理暂停决定时，评论与手动执行都不得绕过授权。若评论早于运行 turn 完全收尾，恢复请求必须先持久化并在收尾时消费，不能丢失。服务重启必须记录中断尝试，只在原对话、执行记录和开发上下文一致时恢复，否则阻塞且不得创建替代对话。worktree 在 `in_review` 保留；Issue 为 `done` 后只在 worktree 干净且分支已合入 `origin/main` 或本地 `main` 时自动移除。项目容量只约束 Panel 的一键执行与自动认领，不限制用户自建 Codex 任务或 Scheduled Task；迁移旧自动化时也只能暂停 Panel 本地记录的具体 automation ID。

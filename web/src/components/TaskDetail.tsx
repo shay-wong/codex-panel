@@ -109,7 +109,7 @@ import {
 } from "./IssueRelations";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { buildIssueUrl } from "../issueRoute";
-import { normalizeCodexThreadId } from "../taskConversations";
+import { conversationActivityStatus, normalizeCodexThreadId } from "../taskConversations";
 import { postEmbeddedHostMessage } from "../embeddedHost.mjs";
 import copyIdIcon from "../assets/figma-taskboard/copy-id.svg";
 import copyLinkIcon from "../assets/figma-taskboard/copy-link.svg";
@@ -118,6 +118,7 @@ import { DescriptionDocument } from "./DescriptionDocument";
 type TaskDetailError = string | readonly [string, string];
 
 interface TaskDetailProps {
+  codexThreadProgress?: Record<string, { running: boolean } | null>;
   task: Task;
   tasks: Task[];
   referenceTasks: Task[];
@@ -437,18 +438,21 @@ function AiConversationActivity({
   onOpen,
   native = false,
   roleLabel,
+  status = thread.status,
 }: {
   thread: AiChatThread;
   onOpen: () => void;
   native?: boolean;
   roleLabel?: readonly [string, string];
+  status?: AiChatThread["status"] | "unknown";
 }) {
   const { locale, text } = useTaskboardI18n();
   const statusLabel = {
     idle: text("空闲", "Idle"),
     running: text("运行中", "Running"),
     failed: text("失败", "Failed"),
-  }[thread.status];
+    unknown: text("状态未知", "Status unknown"),
+  }[status];
 
   return (
     <div className="activity-entry activity-ai-conversation">
@@ -470,7 +474,7 @@ function AiConversationActivity({
         <span className="activity-conversation-copy">
           <strong>{thread.title}</strong>
           <small>
-            <span className={`activity-conversation-state is-${thread.status}`} aria-hidden="true" />
+            <span className={`activity-conversation-state is-${status}`} aria-hidden="true" />
             <span>{roleLabel
               ? `${text(...roleLabel)} · ${statusLabel}`
               : native
@@ -486,6 +490,7 @@ function AiConversationActivity({
 }
 
 export function TaskDetail({
+  codexThreadProgress = {},
   task,
   tasks,
   referenceTasks,
@@ -1873,6 +1878,7 @@ export function TaskDetail({
                       <AiConversationActivity
                         key={`ai-conversation-${item.id}`}
                         thread={item.thread}
+                        status={conversationActivityStatus(item.thread, codexThreadProgress)}
                         native={formalThread}
                         roleLabel={item.roleLabel}
                         onOpen={() => formalThread

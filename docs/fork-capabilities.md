@@ -136,6 +136,8 @@ Jira settings can enable automatic conversation archiving, which remains off by 
 
 ## Persistent automatic execution queue
 
+Native conversation entries in issue activity use the board's session-progress polling, including conversations shown in an open detail even when the issue is not in progress. Running and idle reflect the actual conversation; unavailable session data displays **Status unknown**. This display does not move issues or modify the execution queue.
+
 Each repository project has a Panel-owned automation policy stored with the local Panel database. The automation menu can enable or disable automatic claiming, pause all dispatch for the project, choose a 5, 10, 15, 30, or 60 minute scan interval, and select the model and reasoning effort. It also sets the global default project parallelism, which starts at 3 and accepts 1 through 8, and lets the current project follow that default or override it with another 1-8 value. Projects do not share a total device limit. The menu shows queued, running/effective-capacity, blocked, and failed totals. Jira and Cloud projects do not expose this policy.
 
 Automatic scans queue waiting local issues that are not linked to Jira. A Jira-linked execution issue enters the queue only after its Jira requirement is in progress and has no pending lifecycle decision. **Run now** queues any waiting local issue immediately without requiring automatic scans to be enabled, including execution issues created by the Jira simple-start action. Disabling automatic claiming stops new automatic entries but lets the current queue drain; pausing a project keeps every queued item waiting until the project resumes.
