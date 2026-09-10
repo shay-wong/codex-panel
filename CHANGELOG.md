@@ -4,6 +4,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Merged upstream through `c346e8e` (`1.1.23-beta.1`): improved Jira configuration/sync ordering, AI permission and process handling, comment attachment retries, document editing, realtime subscriptions, board performance, and launcher lifecycle handling while preserving Fork integrations.
+
 - Added a visible **Project Settings** view after **Project Docs**, repaired Project Key migration for historical local Issue prefixes, and allowed read-only task lookup by either Panel Issue ID or a unique linked Jira key.
 - Added `panelctl jira repositories set` so an explicitly requested Jira repository link can be saved from a Codex conversation before its Spec and tickets are published.
 - Fixed the Panel sidebar entry so it restores the last selected project, including **All projects**, while keeping an explicit `project` query parameter authoritative.

@@ -2547,6 +2547,10 @@ async function resolveRunnableCodexExecutable(appPath) {
   return cachedExecutable;
 }
 
+function emitLauncherEvent(event, details = {}) {
+  console.log(JSON.stringify({ launcherEvent: event, ...details }));
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (!options.cdpPipe && options.launch && options.attachExisting) {
@@ -2828,7 +2832,7 @@ async function main() {
           };
         } catch (_) {}
       }
-      console.log(JSON.stringify({ panelManagedStatus: status }));
+      emitLauncherEvent("managedStatus", { panelManagedStatus: status });
       return status;
     };
     const requestPanelOpen = () => {
@@ -2846,7 +2850,7 @@ async function main() {
         );
         if (!opened) return false;
         openedRequestGeneration = Math.max(openedRequestGeneration, generation);
-        console.log(JSON.stringify({ openPanelSignalOpened: true }));
+        emitLauncherEvent("panelOpened", { openPanelSignalOpened: true });
         await publishManagedStatus();
         return true;
       })().catch((error) => {
@@ -2871,7 +2875,7 @@ async function main() {
           requestStop();
         }
       });
-      console.log(JSON.stringify({ openPanelSignalReady: true }));
+      emitLauncherEvent("openSignalReady", { openPanelSignalReady: true });
     } else if (options.watch && process.platform === "linux") {
       openSignalHandler = () => {
         openRequestGeneration += 1;
@@ -2879,7 +2883,7 @@ async function main() {
         void requestPanelOpen();
       };
       process.on("SIGUSR2", openSignalHandler);
-      console.log(JSON.stringify({ openPanelSignalReady: true }));
+      emitLauncherEvent("openSignalReady", { openPanelSignalReady: true });
     }
     if (panelRuntimeFile && options.startupToken) {
       const controlSocket = injectorControlSocketPath(panelRuntimeFile, options.startupToken);
@@ -2950,12 +2954,13 @@ async function main() {
         ...(!options.cdpPipe ? { port: options.port } : {}),
       });
     }
-    console.log(JSON.stringify({ panelServiceReady: true }));
+    emitLauncherEvent("serviceReady", { panelServiceReady: true });
 
     if (!options.cdpPipe && !cdpReachable && options.launch && codexIsRunning()) {
       console.error(
         "Waiting for Codex: the running app has no debugging port; Panel service remains available.",
       );
+      emitLauncherEvent("waitingForCodex");
       while (!stopping && codexIsRunning()) {
         await Promise.race([
           new Promise((resolve) => setTimeout(resolve, 500)),
@@ -2987,6 +2992,7 @@ async function main() {
         );
         idleAfterNormalExit = true;
         console.error(`Waiting for Codex launch: ${error.message}`);
+        emitLauncherEvent("waitingForCodex");
       }
     } else if (!cdpReachable) {
       codexProcess = launchCodex(executablePath, options.port);
@@ -3014,14 +3020,15 @@ async function main() {
     } catch (error) {
       if (!options.watch) throw error;
       console.error(`Waiting for Codex renderer: ${error.message}`);
+      emitLauncherEvent("waitingForCodex");
     }
     if (firstResults.length > 0) {
       if (shouldOpenFirstTarget) {
         openedRequestGeneration = Math.max(openedRequestGeneration, firstOpenGeneration);
-        console.log(JSON.stringify({ openPanelSignalOpened: true }));
+        emitLauncherEvent("panelOpened", { openPanelSignalOpened: true });
       }
       console.log(JSON.stringify({ injected: firstResults }, null, 2));
-      console.log(JSON.stringify({ panelManagedReady: true }));
+      emitLauncherEvent("injected", { panelManagedReady: true });
       await publishManagedStatus();
     }
     if (!options.watch) {
@@ -3099,7 +3106,7 @@ async function main() {
         );
         if (results.length > 0) {
           console.log(JSON.stringify({ injected: results }, null, 2));
-          console.log(JSON.stringify({ panelManagedReady: true }));
+          emitLauncherEvent("injected", { panelManagedReady: true });
           await publishManagedStatus();
         }
         if (hasOpenPending() && injectedTargets.size > 0) {
@@ -3133,6 +3140,7 @@ async function main() {
             console.error(
               "Waiting for Codex after normal exit; open Codex Panel again to restart it.",
             );
+            emitLauncherEvent("waitingForCodex");
             continue;
           }
           throw error;
@@ -3152,6 +3160,7 @@ async function main() {
             console.error(
               "Waiting for Codex after normal exit; open Codex Panel again to restart it.",
             );
+            emitLauncherEvent("waitingForCodex");
             continue;
           }
           console.error("Codex exited unexpectedly; restarting it for the Panel launcher.");
@@ -3180,6 +3189,7 @@ async function main() {
           continue;
         }
         console.error(`Waiting for Codex renderer: ${error.message}`);
+        emitLauncherEvent("waitingForCodex");
       }
     }
   } finally {

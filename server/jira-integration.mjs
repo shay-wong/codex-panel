@@ -217,6 +217,14 @@ function safeConfig(config, syncState, settings) {
 
 export function createJiraIntegration({ configStore, database, fetch: fetchImplementation = globalThis.fetch }) {
   let pendingSync = null;
+  let pendingOperation = Promise.resolve();
+
+  function runInOrder(operation) {
+    const result = pendingOperation.then(operation);
+    // Recover only the scheduling tail; callers still receive the rejection.
+    pendingOperation = result.catch(() => {});
+    return result;
+  }
 
   function settings() {
     return database.getJiraSettings?.() ?? {
@@ -470,22 +478,29 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
   }
 
   async function sync({ force = false, acceptAccountChange = false } = {}) {
-    const config = await configStore.read();
-    const state = database.getJiraSyncState();
-    if (!config) return safeConfig(null, state, settings());
-    if (
-      !force
-      && state.lastSuccessfulAt
-      && Date.now() - new Date(state.lastSuccessfulAt).getTime() < SYNC_INTERVAL_MS
-    ) {
-      return safeConfig(config, state, settings());
+    if (pendingSync) {
+      pendingSync.force ||= force;
+      pendingSync.acceptAccountChange ||= acceptAccountChange;
+      return pendingSync.promise;
     }
-    if (pendingSync) return pendingSync;
-    pendingSync = syncWithConfig(config, { acceptAccountChange })
-      .finally(() => {
+    const syncRequest = { force, acceptAccountChange, promise: null };
+    syncRequest.promise = runInOrder(async () => {
+      try {
+        const config = await configStore.read();
+        const state = database.getJiraSyncState();
+        if (!config) return safeConfig(null, state, settings());
+        if (
+          !syncRequest.force
+          && state.lastSuccessfulAt
+          && Date.now() - new Date(state.lastSuccessfulAt).getTime() < SYNC_INTERVAL_MS
+        ) return safeConfig(config, state, settings());
+        return await syncWithConfig(config, { acceptAccountChange: syncRequest.acceptAccountChange });
+      } finally {
         pendingSync = null;
-      });
-    return pendingSync;
+      }
+    });
+    pendingSync = syncRequest;
+    return syncRequest.promise;
   }
 
   async function resolveTransition(config, issueKey, targetStatus) {
@@ -573,82 +588,86 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
       );
     },
     async configure(input) {
-      const current = await configStore.read();
-      const currentAuthMethod = current?.username ? "basic" : "bearer";
-      const authMethod = input.authMethod ?? (current ? currentAuthMethod : "basic");
-      const username = authMethod === "bearer" ? "" : (input.username || current?.username);
-      if (authMethod === "basic" && !username?.trim()) {
-        throw new ApiError(400, "JIRA_USERNAME_REQUIRED", "Basic Auth 必须填写 Jira 用户名或邮箱");
-      }
-      const password = input.password || current?.password;
-      const candidate = configStore.validate({ ...input, username, password });
-      if (current?.version === 1 && candidate.baseUrl !== current.baseUrl) {
-        throw new ApiError(
-          409,
-          "JIRA_LEGACY_URL_CHANGE_UNAVAILABLE",
-          "请先使用原 Jira 地址完成配置升级，再修改地址",
-        );
-      }
-      if (
-        !input.password
-        && (
-          !current
-          || candidate.baseUrl !== current.baseUrl
-          || candidate.username !== current.username
-          || authMethod !== currentAuthMethod
-        )
-      ) {
-        throw new ApiError(
-          400,
-          "JIRA_PASSWORD_REQUIRED",
-          "修改 Jira 地址、用户名或认证方式时必须重新输入密码或 Token",
-        );
-      }
-      const attemptedAt = new Date().toISOString();
-      database.recordJiraSyncAttempt(attemptedAt);
-      try {
-        const originId = await fetchOriginId(candidate);
-        const account = await fetchAccount(candidate);
-        assertAccountChangeAccepted(current, account, input.acceptAccountChange === true);
-        const config = { ...candidate, originId, ...account };
-        const issues = await fetchAssignedIssues(config);
-        const legacyIdentity = current?.version === 1
-          ? { urlHash: legacyJiraOriginId(current.baseUrl), originId: config.originId }
-          : null;
-        const syncResult = await collectSyncIssues(config, issues, { archiveMissing: true });
-        const succeededAt = new Date().toISOString();
-        database.syncJiraTasks(syncResult.issues, {
-          archiveMissing: true,
-          originId: current?.originId === config.originId ? config.originId : null,
-          projectName: `Jira · ${config.displayName}`,
-          legacyIdentity,
-          unknownTasks: syncResult.unknownTasks,
-          syncedAt: succeededAt,
-        });
-        const savedConfig = await configStore.save(config);
-        database.recordJiraSyncSuccess({
-          attemptedAt,
-          succeededAt,
-          issueCount: syncResult.issueCount,
-          unknownIssueCount: syncResult.unknownTasks.length,
-        });
-        return safeConfig(savedConfig, database.getJiraSyncState(), settings());
-      } catch (error) {
-        database.markJiraSyncError(
-          error instanceof Error ? error.message : String(error),
-          error?.code,
-          attemptedAt,
-        );
-        throw error;
-      }
+      return runInOrder(async () => {
+        const current = await configStore.read();
+        const currentAuthMethod = current?.username ? "basic" : "bearer";
+        const authMethod = input.authMethod ?? (current ? currentAuthMethod : "basic");
+        const username = authMethod === "bearer" ? "" : (input.username || current?.username);
+        if (authMethod === "basic" && !username?.trim()) {
+          throw new ApiError(400, "JIRA_USERNAME_REQUIRED", "Basic Auth 必须填写 Jira 用户名或邮箱");
+        }
+        const password = input.password || current?.password;
+        const candidate = configStore.validate({ ...input, username, password });
+        if (current?.version === 1 && candidate.baseUrl !== current.baseUrl) {
+          throw new ApiError(
+            409,
+            "JIRA_LEGACY_URL_CHANGE_UNAVAILABLE",
+            "请先使用原 Jira 地址完成配置升级，再修改地址",
+          );
+        }
+        if (
+          !input.password
+          && (
+            !current
+            || candidate.baseUrl !== current.baseUrl
+            || candidate.username !== current.username
+            || authMethod !== currentAuthMethod
+          )
+        ) {
+          throw new ApiError(
+            400,
+            "JIRA_PASSWORD_REQUIRED",
+            "修改 Jira 地址、用户名或认证方式时必须重新输入密码或 Token",
+          );
+        }
+        const attemptedAt = new Date().toISOString();
+        database.recordJiraSyncAttempt(attemptedAt);
+        try {
+          const originId = await fetchOriginId(candidate);
+          const account = await fetchAccount(candidate);
+          assertAccountChangeAccepted(current, account, input.acceptAccountChange === true);
+          const config = { ...candidate, originId, ...account };
+          const issues = await fetchAssignedIssues(config);
+          const legacyIdentity = current?.version === 1
+            ? { urlHash: legacyJiraOriginId(current.baseUrl), originId: config.originId }
+            : null;
+          const syncResult = await collectSyncIssues(config, issues, { archiveMissing: true });
+          const succeededAt = new Date().toISOString();
+          database.syncJiraTasks(syncResult.issues, {
+            archiveMissing: true,
+            originId: current?.originId === config.originId ? config.originId : null,
+            projectName: `Jira · ${config.displayName}`,
+            legacyIdentity,
+            unknownTasks: syncResult.unknownTasks,
+            syncedAt: succeededAt,
+          });
+          const savedConfig = await configStore.save(config);
+          database.recordJiraSyncSuccess({
+            attemptedAt,
+            succeededAt,
+            issueCount: syncResult.issueCount,
+            unknownIssueCount: syncResult.unknownTasks.length,
+          });
+          return safeConfig(savedConfig, database.getJiraSyncState(), settings());
+        } catch (error) {
+          database.markJiraSyncError(
+            error instanceof Error ? error.message : String(error),
+            error?.code,
+            attemptedAt,
+          );
+          throw error;
+        }
+      });
     },
     sync,
     async reconcile() {
-      const config = await configStore.read();
-      if (!config || config.version === 1) {
-        throw new ApiError(409, "JIRA_NOT_CONFIGURED", "Jira 尚未完成稳定身份配置");
-      }
-      return syncWithConfig(config, { archiveMissing: false });
+      return runInOrder(async () => {
+        const config = await configStore.read();
+        if (!config || config.version === 1) {
+          throw new ApiError(409, "JIRA_NOT_CONFIGURED", "Jira 尚未完成稳定身份配置");
+        }
+        return syncWithConfig(config, { archiveMissing: false });
+      });
     },
     async updateTask(task, changes) {
       const config = await configStore.read();

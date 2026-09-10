@@ -19,6 +19,7 @@ import type {
 import { LinearIcon } from "./LinearIcon";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskboardIcon } from "./TaskboardIcon";
+import { listenForMenuViewportChange, listenForOutsidePointerDown } from "../menuEvents";
 
 type IntervalMinutes = 5 | 10 | 15 | 30 | 60;
 
@@ -128,29 +129,20 @@ export function ProjectAutomationMenu({
 
   useEffect(() => {
     if (!open) return;
-    function closeFromOutside(event: PointerEvent) {
-      if (!menuRef.current?.contains(event.target as Node) && !triggerRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-    function closeFromViewportChange() {
-      setOpen(false);
-    }
+    const close = () => setOpen(false);
+    const stopOutside = listenForOutsidePointerDown([triggerRef, menuRef], close);
+    const stopViewport = listenForMenuViewportChange(menuRef, close);
     function closeFromEscape(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setOpen(false);
         triggerRef.current?.focus();
       }
     }
-    document.addEventListener("pointerdown", closeFromOutside);
     document.addEventListener("keydown", closeFromEscape);
-    window.addEventListener("resize", closeFromViewportChange);
-    window.addEventListener("scroll", closeFromViewportChange, true);
     return () => {
-      document.removeEventListener("pointerdown", closeFromOutside);
+      stopOutside();
+      stopViewport();
       document.removeEventListener("keydown", closeFromEscape);
-      window.removeEventListener("resize", closeFromViewportChange);
-      window.removeEventListener("scroll", closeFromViewportChange, true);
     };
   }, [open]);
 

@@ -6,7 +6,7 @@ import type {
   ComposerPersistedDocument,
   Task,
 } from "./types";
-import type { InlineMediaSegment } from "./components/InlineMediaComposer";
+import type { InlineMediaSegment } from "./documentModel";
 
 export interface TaskConversationItem {
   key: string;

@@ -2098,12 +2098,16 @@ export function createPanelServer(options = {}) {
     configStore: cloudConfig,
     fetch: options.remoteFetch ?? globalThis.fetch,
     resolveThreadBinding: currentHostThreadBinding,
-    resolveDevelopmentContext: async (projectId, context) => {
+    resolveDevelopmentContext: async (projectId, context, scans) => {
       if (!context.branch) return null;
       const config = await cloudConfig.read();
       const workspacePath = config.projectMappings[projectId];
       if (!workspacePath) return null;
-      const result = await scanDevelopmentContexts(workspacePath, codexProcessEnvironment);
+      const key = `${projectId}\0${workspacePath}`;
+      if (!scans.has(key)) {
+        scans.set(key, scanDevelopmentContexts(workspacePath, codexProcessEnvironment));
+      }
+      const result = await scans.get(key);
       return result.contexts.find((candidate) => (
         candidate.type === "worktree" && candidate.branch === context.branch
       )) ?? null;
@@ -3581,12 +3585,20 @@ export function createPanelServer(options = {}) {
         }
       }
 
+      const aiThreadSummaryRoute = pathname.match(/^\/api\/local\/ai\/threads\/([^/]+)\/summary$/);
+      if (aiThreadSummaryRoute) {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        assertNoQuery(url.searchParams, "GET /api/local/ai/threads/:id/summary");
+        const threadId = decodeRouteSegment(aiThreadSummaryRoute[1], "Thread id");
+        return sendJson(response, 200, await aiChat.getThreadSummary(threadId));
+      }
+
       const aiThreadEventsRoute = pathname.match(/^\/api\/local\/ai\/threads\/([^/]+)\/events$/);
       if (aiThreadEventsRoute) {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
         assertNoQuery(url.searchParams, "GET /api/local/ai/threads/:id/events");
         const threadId = decodeRouteSegment(aiThreadEventsRoute[1], "Thread id");
-        await aiChat.getThreadSnapshot(threadId);
+        await aiChat.getThread(threadId);
         response.writeHead(200, {
           connection: "keep-alive",
           "cache-control": "no-cache, no-transform",
@@ -4664,17 +4676,18 @@ export function createPanelServer(options = {}) {
             threadBinding,
             assigneeTarget,
           } = resolveInputThreadBinding(parseTaskPatch(await readJson(request)));
-          const current = database.getTask(id);
-          if (!current) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
+          const source = database.getTaskSource(id);
+          if (!source) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
           let jiraChanged = false;
-          if (current.source !== "jira" && changes.projectId === JIRA_PROJECT_ID) {
+          if (source !== "jira" && changes.projectId === JIRA_PROJECT_ID) {
             throw new ApiError(
               409,
               "JIRA_PROJECT_MOVE_UNAVAILABLE",
               "本地任务不能移入 Jira 同步项目",
             );
           }
-          if (current.source === "jira") {
+          if (source === "jira") {
+            const current = database.getTask(id);
             if (current.version !== version) {
               throw new ApiError(409, "VERSION_CONFLICT", "Task changed since it was last read", {
                 expectedVersion: version,
@@ -4719,11 +4732,11 @@ export function createPanelServer(options = {}) {
             }
             throw error;
           }
-          if (current.source !== "jira" && task.status === "done") {
+          if (source !== "jira" && task.status === "done") {
             task = await claimQueue.cleanupCompletedTask(task);
           }
           events.emit("task.updated", { task });
-          if (current.source !== "jira") jiraAutoComplete.queueForTask(task.id);
+          if (source !== "jira") jiraAutoComplete.queueForTask(task.id);
           return sendJson(response, 200, { task });
         }
         if (!action && request.method === "DELETE") {

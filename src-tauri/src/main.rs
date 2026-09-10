@@ -119,10 +119,25 @@ struct LauncherSnapshot {
     embedded_visible: bool,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RendererStatus {
     ready: bool,
     page_visible: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "launcherEvent", rename_all = "camelCase")]
+enum LauncherEvent {
+    WaitingForCodex,
+    ServiceReady,
+    OpenSignalReady,
+    PanelOpened,
+    Injected,
+    ManagedStatus {
+        #[serde(rename = "panelManagedStatus")]
+        status: RendererStatus,
+    },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1898,93 +1913,41 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
     thread::spawn(move || {
         for line in BufReader::new(reader).lines().map_while(Result::ok) {
             append_log(&state, &line);
-            if is_stderr && line.contains("Panel service remains available") {
-                update_snapshot(&app, &state, |snapshot| {
-                    if state.generation.load(Ordering::SeqCst) == generation
-                        && snapshot.child_pid == Some(pid)
-                    {
+            if is_stderr {
+                continue;
+            }
+            let Ok(event) = serde_json::from_str::<LauncherEvent>(&line) else {
+                continue;
+            };
+            let signal_open = matches!(
+                event,
+                LauncherEvent::OpenSignalReady | LauncherEvent::Injected
+            );
+            let snapshot = update_snapshot(&app, &state, |snapshot| {
+                if state.generation.load(Ordering::SeqCst) != generation
+                    || snapshot.child_pid != Some(pid)
+                {
+                    return;
+                }
+                match event {
+                    LauncherEvent::WaitingForCodex | LauncherEvent::ServiceReady => {
                         apply_waiting_for_codex(snapshot);
                     }
-                });
-            } else if is_stderr && line.contains("Waiting for Codex") {
-                update_snapshot(&app, &state, |snapshot| {
-                    if state.generation.load(Ordering::SeqCst) == generation
-                        && snapshot.child_pid == Some(pid)
-                    {
-                        apply_waiting_for_codex(snapshot);
-                    }
-                });
-            } else if !is_stderr && line.contains("Codex Panel listening") {
-                update_snapshot(&app, &state, |snapshot| {
-                    if state.generation.load(Ordering::SeqCst) == generation
-                        && snapshot.child_pid == Some(pid)
-                    {
-                        snapshot.phase = "starting".into();
-                        snapshot.message = "任务面板服务已启动，正在注入 Codex…".into();
-                    }
-                });
-            } else if !is_stderr && line.contains("\"panelServiceReady\":true") {
-                update_snapshot(&app, &state, |snapshot| {
-                    if state.generation.load(Ordering::SeqCst) == generation
-                        && snapshot.child_pid == Some(pid)
-                    {
-                        snapshot.phase = "waiting".into();
-                        snapshot.message = "Panel 服务已启动，正在等待 Codex 连接。".into();
-                    }
-                });
-            } else if !is_stderr && line.contains("\"openPanelSignalReady\":true") {
-                let snapshot = update_snapshot(&app, &state, |snapshot| {
-                    if state.generation.load(Ordering::SeqCst) == generation
-                        && snapshot.child_pid == Some(pid)
-                    {
+                    LauncherEvent::OpenSignalReady => {
                         snapshot.open_signal_pid = Some(pid);
                     }
-                });
-                if snapshot.child_pid == Some(pid) && snapshot.open_signal_pid == Some(pid) {
-                    if let Err(error) = signal_pending_panel_open(&app, &state) {
-                        append_log(&state, &format!("Panel open signal failed: {error}"));
-                    }
-                }
-            } else if !is_stderr && line.contains("\"openPanelSignalOpened\":true") {
-                update_snapshot(&app, &state, |snapshot| {
-                    if state.generation.load(Ordering::SeqCst) == generation
-                        && snapshot.child_pid == Some(pid)
-                    {
+                    LauncherEvent::PanelOpened => {
                         snapshot.open_request_pending = false;
                         snapshot.embedded_visible = true;
                     }
-                });
-            } else if !is_stderr && line.contains("\"panelManagedStatus\"") {
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
-                    let status = value.get("panelManagedStatus");
-                    let renderer_status = RendererStatus {
-                        ready: status
-                            .and_then(|value| value.get("ready"))
-                            .and_then(serde_json::Value::as_bool)
-                            .unwrap_or(false),
-                        page_visible: status
-                            .and_then(|value| value.get("pageVisible"))
-                            .and_then(serde_json::Value::as_bool)
-                            .unwrap_or(false),
-                    };
-                    #[cfg(target_os = "windows")]
-                    {
-                        *state.renderer_status.lock().unwrap() =
-                            Some((Instant::now(), renderer_status));
-                    }
-                    update_snapshot(&app, &state, |snapshot| {
-                        if state.generation.load(Ordering::SeqCst) == generation
-                            && snapshot.child_pid == Some(pid)
+                    LauncherEvent::ManagedStatus { status } => {
+                        #[cfg(target_os = "windows")]
                         {
-                            apply_renderer_status(snapshot, pid, renderer_status);
+                            *state.renderer_status.lock().unwrap() = Some((Instant::now(), status));
                         }
-                    });
-                }
-            } else if !is_stderr && line.contains("\"panelManagedReady\":true") {
-                let snapshot = update_snapshot(&app, &state, |snapshot| {
-                    if state.generation.load(Ordering::SeqCst) == generation
-                        && snapshot.child_pid == Some(pid)
-                    {
+                        apply_renderer_status(snapshot, pid, status);
+                    }
+                    LauncherEvent::Injected => {
                         apply_renderer_status(
                             snapshot,
                             pid,
@@ -1994,11 +1957,16 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                             },
                         );
                     }
-                });
-                if snapshot.child_pid == Some(pid) && snapshot.open_signal_pid == Some(pid) {
-                    if let Err(error) = signal_pending_panel_open(&app, &state) {
-                        append_log(&state, &format!("Panel open signal failed: {error}"));
-                    }
+                }
+            });
+            // Control requests can block and update the snapshot themselves.
+            if signal_open
+                && state.generation.load(Ordering::SeqCst) == generation
+                && snapshot.child_pid == Some(pid)
+                && snapshot.open_signal_pid == Some(pid)
+            {
+                if let Err(error) = signal_pending_panel_open(&app, &state) {
+                    append_log(&state, &format!("Panel open signal failed: {error}"));
                 }
             }
         }
@@ -3100,6 +3068,24 @@ mod tests {
     use std::os::unix::fs::symlink;
     use std::{env, fs};
     use uuid::Uuid;
+
+    #[test]
+    fn launcher_events_require_structured_state_not_log_substrings() {
+        assert!(matches!(
+            serde_json::from_str::<super::LauncherEvent>(
+                r#"{"launcherEvent":"managedStatus","panelManagedStatus":{"ready":true,"pageVisible":false}}"#
+            ).unwrap(),
+            super::LauncherEvent::ManagedStatus { status: RendererStatus { ready: true, page_visible: false } }
+        ));
+        assert!(serde_json::from_str::<super::LauncherEvent>(
+            r#"{"message":"Waiting for Codex","panelManagedReady":true}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<super::LauncherEvent>(
+            r#"{"launcherEvent":"openSignalQueued"}"#
+        )
+        .is_err());
+    }
 
     #[test]
     fn github_rate_limit_error_includes_the_retry_delay() {

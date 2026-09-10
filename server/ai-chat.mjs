@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { signalProcessTree } from "../shared/process-tree.mjs";
 import { ApiError } from "./database.mjs";
+import { resolveCodexPermissions } from "../shared/codex-permissions.mjs";
 import {
   ComposerCatalog,
   discoverAppServerAiCatalog,
@@ -104,16 +105,14 @@ function handoffComment(thread, summary) {
 }
 
 function appServerThreadSettings(thread, resolved) {
-  const dangerous = thread.sandbox === "danger-full-access";
+  const permission = resolveCodexPermissions(thread.sandbox);
   return {
     model: thread.model,
     cwd: resolved.workspacePath,
     runtimeWorkspaceRoots: [resolved.workspacePath, ...resolved.addDirectories],
-    approvalPolicy: dangerous ? "never" : "on-request",
-    ...(dangerous
-      ? {}
-      : { approvalsReviewer: thread.sandbox === "read-only" ? "user" : "auto_review" }),
-    sandbox: thread.sandbox,
+    approvalPolicy: permission.approvalPolicy,
+    ...(permission.reviewer ? { approvalsReviewer: permission.reviewer } : {}),
+    sandbox: permission.sandbox,
   };
 }
 
@@ -228,8 +227,8 @@ export class AiChatService {
     this.active = new Map();
     this.listeners = new Map();
     this.completions = new Map();
-    this.unsubscribeAppServer = this.appServer.subscribe((notification) => {
-      this.#handleAppServerNotification(this.appServer, notification);
+    this.unsubscribeAppServer = this.appServer.subscribe((notification, child) => {
+      this.#handleAppServerNotification(this.appServer, notification, child);
     });
   }
 
@@ -271,6 +270,13 @@ export class AiChatService {
       );
     }
     return thread;
+  }
+
+  getThreadSummary(threadId) {
+    return {
+      thread: this.getThread(threadId),
+      runs: this.database.listAiChatRuns(threadId),
+    };
   }
 
   getThreadSnapshot(threadId) {
@@ -963,6 +969,7 @@ export class AiChatService {
       run,
       threadId: thread.id,
       appServer,
+      appServerChild: appServer === this.appServer ? appServer.child : undefined,
       appServerThreadId,
       turnId: null,
       interrupted: false,
@@ -1167,12 +1174,30 @@ export class AiChatService {
     }
   }
 
-  #handleAppServerNotification(appServer, notification) {
+  #handleAppServerNotification(appServer, notification, child) {
     const params = notification?.params;
     if (!params || typeof params !== "object") return;
+    if (notification.method === "app-server/terminated") {
+      // A remote bridge disconnect does not establish that the remote turn stopped.
+      if (appServer !== this.appServer || !child) return;
+      for (const active of this.active.values()) {
+        if (
+          active.kind !== "app-server"
+          || active.appServer !== appServer
+          || active.appServerChild !== child
+        ) continue;
+        void this.#finishAppServerRun(
+          active,
+          active.interrupted ? "interrupted" : "failed",
+          params.message,
+        );
+      }
+      return;
+    }
     const active = [...this.active.values()].find((candidate) => (
       candidate.kind === "app-server"
       && candidate.appServer === appServer
+      && candidate.appServerChild === child
       && candidate.appServerThreadId === params.threadId
       && (!candidate.turnId || !params.turnId || candidate.turnId === params.turnId)
     ));
@@ -1209,7 +1234,7 @@ export class AiChatService {
   }
 
   async #finishAppServerRun(active, status, error) {
-    if (!this.active.has(active.run.id)) return this.getRun(active.run.id);
+    if (!this.active.delete(active.run.id)) return this.getRun(active.run.id);
     let publicError = null;
     if (status === "interrupted") publicError = "Interrupted";
     if (status === "failed") publicError = cappedError(error) || "Codex turn failed";
@@ -1234,7 +1259,6 @@ export class AiChatService {
       this.#emit(active.threadId, { type: "ai.run", run });
       return run;
     } finally {
-      this.active.delete(active.run.id);
       if (active.temporaryDirectory) {
         await rm(active.temporaryDirectory, { recursive: true, force: true });
       }

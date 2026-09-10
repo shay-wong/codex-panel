@@ -1,3 +1,4 @@
+import { taskRelationsQuery, taskRelationsFromRows } from "../../shared/task-relations.mjs";
 import { DurableObject } from "cloudflare:workers";
 
 import {
@@ -1073,98 +1074,91 @@ async function hydrateComment(env, row) {
   return commentFromRow(row, await attachmentsForComment(env, row.id));
 }
 
-async function hydrateTask(env, row, activityComments = null, activityChanges = null) {
-  const task = taskFromRow(row);
-  const [parent, subIssues, blockedBy, blocks, related, previewImageRow] = await Promise.all([
-    env.DB.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = task_relations.source_task_id
-      WHERE task_relations.relation_type = 'parent'
-        AND task_relations.target_task_id = ?
-    `).bind(task.id).first(),
-    all(env.DB.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = task_relations.target_task_id
-      WHERE task_relations.relation_type = 'parent'
-        AND task_relations.source_task_id = ?
-      ORDER BY tasks.sort_order, tasks.created_at, tasks.id
-    `).bind(task.id)),
-    all(env.DB.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = task_relations.source_task_id
-      WHERE task_relations.relation_type = 'blocks'
-        AND task_relations.target_task_id = ?
-      ORDER BY tasks.sort_order, tasks.created_at, tasks.id
-    `).bind(task.id)),
-    all(env.DB.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = task_relations.target_task_id
-      WHERE task_relations.relation_type = 'blocks'
-        AND task_relations.source_task_id = ?
-      ORDER BY tasks.sort_order, tasks.created_at, tasks.id
-    `).bind(task.id)),
-    all(env.DB.prepare(`
-      SELECT tasks.*
-      FROM task_relations
-      JOIN tasks ON tasks.id = CASE
-        WHEN task_relations.source_task_id = ? THEN task_relations.target_task_id
-        ELSE task_relations.source_task_id
-      END
-      WHERE task_relations.relation_type = 'related'
-        AND (
-          task_relations.source_task_id = ?
-          OR task_relations.target_task_id = ?
-        )
-      ORDER BY tasks.sort_order, tasks.created_at, tasks.id
-    `).bind(task.id, task.id, task.id)),
-    env.DB.prepare(`
+async function hydrateComments(env, rows) {
+  const attachmentsByComment = new Map(rows.map((row) => [row.id, []]));
+  const commentIds = rows.map((row) => row.id);
+  const batches = [];
+  for (let offset = 0; offset < commentIds.length; offset += 80) {
+    const chunk = commentIds.slice(offset, offset + 80);
+    const placeholders = chunk.map(() => "?").join(", ");
+    batches.push(all(env.DB.prepare(`
+      SELECT * FROM attachments
+      WHERE comment_id IN (${placeholders})
+      ORDER BY comment_id, created_at, id
+    `).bind(...chunk)));
+  }
+  for (const attachments of await Promise.all(batches)) {
+    for (const attachment of attachments) {
+      attachmentsByComment.get(attachment.comment_id).push(attachmentFromRow(attachment));
+    }
+  }
+  return rows.map((row) => commentFromRow(row, attachmentsByComment.get(row.id)));
+}
+
+async function taskRelationsForTasks(env, taskIds) {
+  const relationsByTask = new Map();
+  const batches = [];
+  for (let offset = 0; offset < taskIds.length; offset += 80) {
+    const chunk = taskIds.slice(offset, offset + 80);
+    const placeholders = chunk.map(() => "?").join(", ");
+    batches.push(all(env.DB.prepare(taskRelationsQuery(placeholders)).bind(...chunk)).then(
+      (rows) => taskRelationsFromRows(chunk, rows, taskRelationSummaryFromRow),
+    ));
+  }
+  for (const batch of await Promise.all(batches)) {
+    for (const [taskId, relations] of batch) relationsByTask.set(taskId, relations);
+  }
+  return relationsByTask;
+}
+
+async function taskPreviewImages(env, taskIds) {
+  const imagesByTask = new Map();
+  const batches = [];
+  for (let offset = 0; offset < taskIds.length; offset += 80) {
+    const chunk = taskIds.slice(offset, offset + 80);
+    const placeholders = chunk.map(() => "?").join(", ");
+    batches.push(all(env.DB.prepare(`
       SELECT attachments.*
       FROM attachments
       JOIN tasks ON tasks.id = attachments.task_id
-      WHERE attachments.task_id = ?
+      WHERE attachments.task_id IN (${placeholders})
         AND attachments.comment_id IS NULL
         AND attachments.content_type LIKE 'image/%'
         AND instr(tasks.description, 'api/attachments/' || attachments.id || '/content') > 0
-      ORDER BY attachments.created_at, attachments.id
-      LIMIT 1
-    `).bind(task.id).first(),
+      ORDER BY attachments.task_id, attachments.created_at, attachments.id
+    `).bind(...chunk)));
+  }
+  for (const rows of await Promise.all(batches)) {
+    for (const row of rows) {
+      if (!imagesByTask.has(row.task_id)) imagesByTask.set(row.task_id, attachmentFromRow(row));
+    }
+  }
+  return imagesByTask;
+}
+
+async function hydrateTasks(env, rows) {
+  const taskIds = rows.map((row) => row.id);
+  const [relationsByTask, commentsByTask, activitiesByTask, previewImagesByTask] = await Promise.all([
+    taskRelationsForTasks(env, taskIds),
+    taskActivityComments(env, taskIds),
+    taskActivitiesForTasks(env, taskIds),
+    taskPreviewImages(env, taskIds),
   ]);
-  task.relations = {
-    parent: parent ? taskRelationSummaryFromRow(parent) : null,
-    subIssues: subIssues.map(taskRelationSummaryFromRow),
-    blockedBy: blockedBy.map(taskRelationSummaryFromRow),
-    blocks: blocks.map(taskRelationSummaryFromRow),
-    related: related.map(taskRelationSummaryFromRow),
-  };
-  const comments = activityComments ?? await all(env.DB.prepare(`
-    SELECT
-      id, task_id,
-      CASE WHEN thread_id IS NULL THEN NULL ELSE substr(body, 1, 512) END AS body,
-      thread_id, thread_codex_project_id, thread_codex_project_kind,
-      thread_codex_host_id, thread_workspace_path,
-      author_type, author_id, author_name,
-      author_avatar_url, version, updated_at
-    FROM comments
-    WHERE task_id = ?
-    ORDER BY id
-  `).bind(task.id));
-  const activities = activityChanges ?? await all(env.DB.prepare(`
-    SELECT
-      id, task_id, actor_type, actor_id, actor_name, actor_avatar_url, created_at
-    FROM task_activities
-    WHERE task_id = ?
-    ORDER BY created_at, id
-  `).bind(task.id));
-  return attachTaskActivity(
-    task,
-    comments,
-    activities,
-    previewImageRow ? attachmentFromRow(previewImageRow) : null,
-  );
+  return rows.map((row) => {
+    const task = taskFromRow(row);
+    task.relations = relationsByTask.get(row.id);
+    return attachTaskActivity(
+      task,
+      commentsByTask.get(row.id) ?? [],
+      activitiesByTask.get(row.id) ?? [],
+      previewImagesByTask.get(row.id) ?? null,
+    );
+  });
+}
+
+async function hydrateTask(env, row) {
+  const [task] = await hydrateTasks(env, [row]);
+  return task;
 }
 
 async function getTask(env, id) {
@@ -1344,6 +1338,20 @@ function parseProjectLabel(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set(["label"]));
   return stringField(body.label, "label", { required: true, maxLength: 64 });
+}
+
+function parseProjectReadmeSave(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "content"]));
+  const version = body.version === undefined ? undefined : parseVersion(body.version, { allowZero: true });
+  const content = body.content ?? "";
+  if (typeof content !== "string") {
+    throw new ApiError(400, "INVALID_FIELD", "'content' must be a string");
+  }
+  if (content.length > 500_000) {
+    throw new ApiError(400, "INVALID_FIELD", "'content' cannot exceed 500000 characters");
+  }
+  return { content, version };
 }
 
 function parseTaskCreate(body) {
@@ -1884,17 +1892,7 @@ async function listTasks(env, filters) {
         id
     `).bind(...values),
   );
-  const taskIds = rows.map((row) => row.id);
-  const [commentsByTask, activitiesByTask] = await Promise.all([
-    taskActivityComments(env, taskIds),
-    taskActivitiesForTasks(env, taskIds),
-  ]);
-  return Promise.all(rows.map((row) => hydrateTask(
-    env,
-    row,
-    commentsByTask.get(row.id) ?? [],
-    activitiesByTask.get(row.id) ?? [],
-  )));
+  return hydrateTasks(env, rows);
 }
 
 async function createTask(env, input, actor) {
@@ -2874,7 +2872,7 @@ async function listComments(env, taskId) {
     ORDER BY created_at, id
   `).bind(task.id));
   return {
-    comments: await Promise.all(rows.map((row) => hydrateComment(env, row))),
+    comments: await hydrateComments(env, rows),
     nextCursor: nextCursor(rows, null),
   };
 }
@@ -2888,7 +2886,7 @@ async function listCommentsAfter(env, taskId, after) {
     ORDER BY change_revision
   `).bind(task.id, after.revision));
   return {
-    comments: await Promise.all(rows.map((row) => hydrateComment(env, row))),
+    comments: await hydrateComments(env, rows),
     nextCursor: nextCursor(rows, after),
   };
 }
@@ -3387,23 +3385,11 @@ async function routeApi(request, env, actor, url) {
       return json(200, { readme: await getProjectReadme(env, projectId) });
     }
     if (request.method === "PUT") {
-      const body = await readJson(
+      const { content, version } = parseProjectReadmeSave(await readJson(
         request,
         PROJECT_README_BODY_LIMIT,
         "Project README request cannot exceed 3 MiB",
-      );
-      assertPlainObject(body);
-      assertAllowedKeys(body, new Set(["version", "content"]));
-      const version = body.version === undefined
-        ? undefined
-        : parseVersion(body.version, { allowZero: true });
-      const content = body.content ?? "";
-      if (typeof content !== "string") {
-        throw new ApiError(400, "INVALID_FIELD", "'content' must be a string");
-      }
-      if (content.length > 500_000) {
-        throw new ApiError(400, "INVALID_FIELD", "'content' cannot exceed 500000 characters");
-      }
+      ));
       return json(200, {
         readme: await saveProjectReadme(env, projectId, content, version),
       });
