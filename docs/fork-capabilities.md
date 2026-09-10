@@ -1,5 +1,7 @@
 # Fork capabilities
 
+The project model picker supports **6 Astra** (`gpt-6-astra`) with `low`, `medium`, `high`, `xhigh`, `max`, and `ultra` reasoning levels. Its default effort is `low`; existing saved model selections remain unchanged.
+
 This page indexes the user-visible differences maintained by `shay-wong/codex-panel` relative to `chuspeeism/dashi-taskboard`.
 
 ## Codex Panel product and repository name

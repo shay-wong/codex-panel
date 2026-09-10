@@ -36,6 +36,12 @@ const baseRequest = {
 test("the automation model catalog matches Codex and normalizes unsupported efforts", () => {
   assert.deepEqual(AUTOMATION_MODELS, [
     {
+      label: "6 Astra",
+      slug: "gpt-6-astra",
+      defaultEffort: "low",
+      efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
+    {
       label: "5.6 Sol",
       slug: "gpt-5.6-sol",
       defaultEffort: "low",
