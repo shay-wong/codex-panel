@@ -59,6 +59,8 @@ test("launcher actions show feedback on the button that was clicked", async () =
   let holdRefresh = false;
   let browserShouldFail = false;
   let phase = "waiting";
+  let updateReady = false;
+  let installCalls = 0;
   let openSignalPid = null;
   let statusListener;
   const state = () => ({
@@ -72,6 +74,7 @@ test("launcher actions show feedback on the button that was clicked", async () =
       embeddedVisible: false,
       updateMessage: "尚未检查更新。",
       updateAvailable: false,
+      updateReady,
       appPath: "/Applications/Codex.app",
     },
     preferences: { autoConnectCodex: true, autoOpenPanel: true },
@@ -86,6 +89,7 @@ test("launcher actions show feedback on the button that was clicked", async () =
       window.__TAURI__ = {
         core: {
           invoke: async (action) => {
+            if (action === "install_available_update") installCalls += 1;
             if (action === "open_embedded_panel") openRequestPending = true;
             if (action === "open_browser_panel" && browserShouldFail) throw new Error("open failed");
             if (action === "reconnect_codex") {
@@ -108,6 +112,14 @@ test("launcher actions show feedback on the button that was clicked", async () =
   });
 
   await new Promise((resolve) => setTimeout(resolve, 0));
+  const install = dom.window.document.getElementById("installUpdate");
+  assert.equal(install.hidden, true);
+  updateReady = true;
+  statusListener({ payload: state().snapshot });
+  assert.equal(install.hidden, false);
+  install.click();
+  await new Promise((resolve) => setTimeout(resolve, 320));
+  assert.equal(installCalls, 1);
   const button = dom.window.document.getElementById("primaryAction");
   button.click();
   await new Promise((resolve) => setTimeout(resolve, 0));

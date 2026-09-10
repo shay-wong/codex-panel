@@ -294,7 +294,7 @@
           <div class="update-row">
             <div class="update-header"><span class="update-title">版本更新</span><span class="update-badge" id="updateBadge" hidden>有新版本</span></div>
             <p class="update-message" id="updateMessage">尚未检查更新。</p>
-            <div class="update-actions"><button class="button update" type="button" data-action="check_for_updates">检查更新</button><button class="button" id="openRelease" type="button" data-action="open_available_release" hidden>查看 Release</button></div>
+            <div class="update-actions"><button class="button update" type="button" data-action="check_for_updates">检查更新</button><button class="button update" id="installUpdate" type="button" data-action="install_available_update" hidden>安装并重启</button><button class="button" id="openRelease" type="button" data-action="open_available_release" hidden>查看 Release</button></div>
           </div>
           <div class="maintenance"><div class="utility-bar"><button class="button subtle" type="button" data-action="open_log">打开运行日志</button><button class="button subtle" type="button" data-action="reveal_data">显示数据目录</button></div></div>
         </section>
@@ -331,6 +331,7 @@
         updateMessage: document.getElementById("updateMessage"),
         updateBadge: document.getElementById("updateBadge"),
         openRelease: document.getElementById("openRelease"),
+        installUpdate: document.getElementById("installUpdate"),
         errorNotice: document.getElementById("errorNotice"),
         errorText: document.getElementById("errorText"),
         autoOpenSetting: document.getElementById("autoOpenSetting"),
@@ -389,6 +390,7 @@
         elements.updateMessage.textContent = snapshot.updateMessage;
         elements.updateBadge.hidden = !snapshot.updateAvailable;
         elements.openRelease.hidden = !snapshot.updateAvailable;
+        elements.installUpdate.hidden = !snapshot.updateReady;
         elements.appPath.textContent = snapshot.appPath || "尚未检测";
         elements.appPath.title = snapshot.appPath || "";
         elements.childPid.textContent = snapshot.childPid ? `PID ${snapshot.childPid}` : "尚未启动";

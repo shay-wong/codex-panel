@@ -106,7 +106,7 @@ open "$HOME/Applications/Codex Panel.app"
 
 可见的管理窗口是由 Tauri WebView 承载的本地 HTML/CSS 界面；服务、进程和文件操作仍由 Rust command 执行。紧凑的顶部控制面把当前状态、Panel 主操作、同一个启动/停止按钮、独立的重启服务、浏览器入口，以及 Panel 服务、Codex 连接和内嵌面板状态放在一起，不再重复单独的服务控制区；Codex 连接就绪与内嵌 Panel 实际可见会分别显示，等待 renderer 的打开请求会保持排队而不是误报失败，Panel 刚显示时触发的原生 Codex 操作也会短暂等待首个 host bridge heartbeat。异步操作按钮会至少显示 300ms loading，再短暂保留清晰的成功或失败状态；服务启动、停止和重启等待进程生命周期操作时，管理窗口仍保持响应；浏览器入口会校验并保留启动器的私有回环地址。启动偏好、更新与 Release、日志、数据目录和运行详情位于下方。窗口标题区与 macOS App/Dock 使用同一套带 `PANEL` 角标的 Codex 明暗图标，并跟随系统外观切换。
 
-应用最多每 24 小时自动检查一次 Fork 的 GitHub Releases，成功结果缓存 24 小时；临时失败 5 分钟后重试，匿名 API 限流则缓存到 GitHub 返回的重置时间。手动检查始终绕过缓存。检查会优先使用本机已登录的 `gh` CLI，无法使用时才回退到匿名 GitHub API，并分别提示额度耗尽、网络失败、暂无 Release、已是最新版本或发现新版本。只有规范化的 `vX.Y.Z-fork.N` 标签会成为更新候选，发现新版本时只会打开经过校验的 `shay-wong/codex-panel` Release 页面；应用不会自动下载或安装更新。
+应用最多每 24 小时自动检查一次 Fork 的 GitHub Releases，成功结果缓存 24 小时；临时失败 5 分钟后重试，匿名 API 限流则缓存到 GitHub 返回的重置时间。手动检查始终绕过缓存。检查会优先使用本机已登录的 `gh` CLI，无法使用时才回退到匿名 GitHub API，并分别提示额度耗尽、网络失败、暂无 Release、已是最新版本或发现新版本。只有规范化的 `vX.Y.Z-fork.N` 标签会成为更新候选，发现新版本后会在应用内下载并验证签名，只有用户确认后才安装并重启 Panel。仅接受 Fork 签名的更新；构建时未配置更新公钥会明确提示不可安装。详见[更新包配置](docs/fork-capabilities.md#signed-in-app-updates)。
 
 App bundle 内包含 Panel runtime、`panelctl`、两个 Panel Skills，以及用于运行它们的官方签名 Node.js runtime。macOS 安装器优先使用 `CODEX_PANEL_CODESIGN_IDENTITY`，其次使用可复用的本机 Apple Development 身份；两者都不可用时回退到 ad-hoc 签名。Windows 正式发行要求配置 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT`，并生成带 Authenticode 签名的 NSIS 安装包。
 

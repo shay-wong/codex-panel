@@ -43,6 +43,7 @@ use tauri::{
 use tauri::{ActivationPolicy, Theme};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tauri_plugin_updater::{Update, UpdaterExt};
 use uuid::Uuid;
 #[cfg(target_os = "windows")]
 use windows::{
@@ -110,6 +111,7 @@ struct LauncherSnapshot {
     message: String,
     update_message: String,
     update_available: bool,
+    update_ready: bool,
     update_url: Option<String>,
     version: String,
     app_path: Option<String>,
@@ -325,6 +327,8 @@ struct LauncherState {
     open_browser_menu: Mutex<Option<MenuItem<tauri::Wry>>>,
     intentional_stop: AtomicBool,
     update_flow_in_progress: AtomicBool,
+    update_installing: AtomicBool,
+    prepared_update: Mutex<Option<(Update, Vec<u8>)>>,
     generation: AtomicU64,
     lifecycle: Mutex<()>,
     preferences: Mutex<LauncherPreferences>,
@@ -360,6 +364,7 @@ impl LauncherState {
                 message: "正在启动任务面板…".into(),
                 update_message: "尚未检查更新。".into(),
                 update_available: false,
+                update_ready: false,
                 update_url: None,
                 version,
                 app_path: None,
@@ -374,6 +379,8 @@ impl LauncherState {
             open_browser_menu: Mutex::new(None),
             intentional_stop: AtomicBool::new(false),
             update_flow_in_progress: AtomicBool::new(false),
+            update_installing: AtomicBool::new(false),
+            prepared_update: Mutex::new(None),
             generation: AtomicU64::new(0),
             lifecycle: Mutex::new(()),
             preferences: Mutex::new(preferences),
@@ -1978,6 +1985,9 @@ fn start_launcher_locked(
     state: &Arc<LauncherState>,
     should_open: bool,
 ) -> Result<LauncherSnapshot, String> {
+    if state.update_installing.load(Ordering::SeqCst) {
+        return Err("正在安装更新，请稍候。".into());
+    }
     if state.child.lock().unwrap().is_some() {
         if should_open {
             open_panel(app, state)?;
@@ -2316,6 +2326,9 @@ fn restart_launcher(
 ) -> Result<LauncherSnapshot, String> {
     let (result, result_generation) = {
         let _lifecycle = state.lifecycle.lock().unwrap();
+        if state.update_installing.load(Ordering::SeqCst) {
+            return Err("正在安装更新，请稍候。".into());
+        }
         stop_managed_child_locked(app, state);
         reset_recovery(state);
         let result = start_launcher_locked(app, state, false);
@@ -2505,6 +2518,186 @@ fn open_available_release(state: State<'_, Arc<LauncherState>>) -> Result<(), St
     open_with_system(&url)
 }
 
+fn updater_endpoint(tag: &str) -> Result<reqwest::Url, String> {
+    if !PanelVersion::is_fork_tag(tag) {
+        return Err("更新版本不是有效的 Fork 版本。".into());
+    }
+    format!("https://github.com/shay-wong/codex-panel/releases/download/{tag}/latest.json")
+        .parse()
+        .map_err(|error| format!("更新地址无效：{error}"))
+}
+
+fn trusted_update_asset(url: &reqwest::Url, tag: &str) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some("github.com")
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.path().starts_with(&format!("/shay-wong/codex-panel/releases/download/{tag}/"))
+}
+
+async fn prepare_update(
+    app: &AppHandle,
+    state: &Arc<LauncherState>,
+    tag: &str,
+) -> Result<(), String> {
+    if cfg!(target_os = "windows") {
+        return Err("Windows 暂不支持应用内更新，请从 Release 页面下载安装。".into());
+    }
+    let public_key = option_env!("CODEX_PANEL_UPDATER_PUBLIC_KEY")
+        .filter(|key| !key.trim().is_empty())
+        .ok_or("此构建未配置 Fork 更新签名公钥，请从 Release 页面下载安装。")?;
+    let current_version = state.snapshot.lock().unwrap().version.clone();
+    let current = PanelVersion::parse(&current_version)
+        .ok_or("当前版本无效，无法安全检查更新。")?;
+    if PanelVersion::parse(tag).is_none_or(|candidate| candidate <= current) {
+        return Err("该版本不高于当前版本，请重新检查更新。".into());
+    }
+    if state.prepared_update.lock().unwrap().as_ref()
+        .is_some_and(|(update, _)| update.version == tag.trim_start_matches('v'))
+    {
+        update_snapshot(app, state, |snapshot| {
+            snapshot.update_ready = true;
+            snapshot.update_message = format!("{tag} 已下载并通过签名验证，等待安装。");
+        });
+        return Ok(());
+    }
+    state.prepared_update.lock().unwrap().take();
+    let expected_version = tag.trim_start_matches('v').to_string();
+    let update = app.updater_builder()
+        .pubkey(public_key)
+        .configure_client(|client| client
+            .connect_timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(600))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                let url = attempt.url();
+                if attempt.previous().len() >= 10
+                    || url.scheme() != "https"
+                    || !url.username().is_empty()
+                    || url.password().is_some()
+                    || url.port().is_some()
+                    || !matches!(url.host_str(), Some(
+                        "github.com" | "release-assets.githubusercontent.com" | "objects.githubusercontent.com"
+                    ))
+                {
+                    attempt.error("更新重定向地址不受信任")
+                } else {
+                    attempt.follow()
+                }
+            })))
+        .endpoints(vec![updater_endpoint(tag)?])
+        .map_err(|error| error.to_string())?
+        .version_comparator(move |_, release| release.version.to_string() == expected_version)
+        .build()
+        .map_err(|error| error.to_string())?
+        .check().await
+        .map_err(|error| error.to_string())?
+        .ok_or("更新清单与所选 Fork 版本不一致。")?;
+    if !trusted_update_asset(&update.download_url, tag) {
+        return Err("更新下载地址不属于所选 Fork Release。".into());
+    }
+    update_snapshot(app, state, |snapshot| {
+        snapshot.update_message = format!("正在下载 {tag}…");
+    });
+    let mut downloaded = 0_u64;
+    let mut displayed_progress = None;
+    let bytes = update.download(
+        |chunk_length, content_length| {
+            downloaded = downloaded.saturating_add(chunk_length as u64);
+            let progress = content_length.filter(|total| *total > 0)
+                .map(|total| downloaded.saturating_mul(100).saturating_div(total).min(100));
+            if progress != displayed_progress {
+                displayed_progress = progress;
+                update_snapshot(app, state, |snapshot| {
+                    snapshot.update_message = format!("正在下载 {tag} · {}%", progress.unwrap_or(0));
+                });
+            }
+        },
+        || { update_snapshot(app, state, |snapshot| {
+            snapshot.update_message = "正在验证更新签名…".into();
+        }); },
+    ).await.map_err(|error| error.to_string())?;
+    *state.prepared_update.lock().unwrap() = Some((update, bytes));
+    update_snapshot(app, state, |snapshot| {
+        snapshot.update_message = format!("{tag} 已下载并通过签名验证，等待安装。");
+        snapshot.update_ready = true;
+    });
+    Ok(())
+}
+
+#[tauri::command]
+async fn install_available_update(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+) -> Result<(), String> {
+    let state = Arc::clone(state.inner());
+    if state.update_flow_in_progress
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err()
+    {
+        return Err("更新正在准备中，请稍候。".into());
+    }
+    let result = confirm_prepared_update(&app, &state).await;
+    state.update_flow_in_progress.store(false, Ordering::SeqCst);
+    result
+}
+
+async fn confirm_prepared_update(app: &AppHandle, state: &Arc<LauncherState>) -> Result<(), String> {
+    let app = app.clone();
+    let state = Arc::clone(state);
+    tauri::async_runtime::spawn_blocking(move || install_prepared_update(&app, &state))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn install_prepared_update(app: &AppHandle, state: &Arc<LauncherState>) -> Result<(), String> {
+    let prepared = state.prepared_update.lock().unwrap().take();
+    let Some((update, bytes)) = prepared else {
+        return Err("更新尚未完成下载和签名验证，请先检查更新。".into());
+    };
+    if !app.dialog()
+        .message(format!("{} 已下载并通过签名验证。是否安装并重启 Codex Panel？", update.version))
+        .title("Codex Panel 更新")
+        .buttons(MessageDialogButtons::OkCancelCustom("安装并重启".into(), "稍后".into()))
+        .blocking_show()
+    {
+        *state.prepared_update.lock().unwrap() = Some((update, bytes));
+        return Ok(());
+    }
+    let lifecycle = state.lifecycle.lock().unwrap();
+    state.update_installing.store(true, Ordering::SeqCst);
+    let was_running = state.child.lock().unwrap().is_some();
+    update_snapshot(app, state, |snapshot| {
+        snapshot.update_ready = false;
+        snapshot.update_message = "正在安装更新…".into();
+    });
+    stop_managed_child_locked(app, state);
+    drop(lifecycle);
+    if let Err(error) = update.install(&bytes) {
+        let _lifecycle = state.lifecycle.lock().unwrap();
+        state.update_installing.store(false, Ordering::SeqCst);
+        let recovery = if was_running {
+            start_launcher_locked(app, state, false).err()
+        } else {
+            None
+        };
+        *state.prepared_update.lock().unwrap() = Some((update, bytes));
+        let message = match recovery {
+            Some(recovery) => format!("更新安装失败：{error}；服务恢复失败：{recovery}"),
+            None => format!("更新安装失败：{error}"),
+        };
+        update_snapshot(app, state, |snapshot| {
+            snapshot.update_ready = true;
+            snapshot.update_message = message.clone();
+        });
+        append_log(state, &message);
+        return Err(message);
+    }
+    update_snapshot(app, state, |snapshot| { snapshot.update_message = "正在重启…".into(); });
+    app.restart()
+}
+
 async fn offer_update(
     app: &AppHandle,
     state: &Arc<LauncherState>,
@@ -2530,6 +2723,7 @@ async fn offer_update(
         update_snapshot(app, state, |snapshot| {
             snapshot.update_message = "正在检查更新…".into();
             snapshot.update_available = false;
+            snapshot.update_ready = false;
             snapshot.update_url = None;
         });
     }
@@ -2575,24 +2769,23 @@ async fn offer_update(
         Ok(ReleaseCheckResult::Available { version, url }) => {
             append_log(state, &format!("Fork release {version} is available"));
             update_snapshot(app, state, |snapshot| {
-                snapshot.update_message =
-                    format!("发现新版本 {version}。需从 Fork Release 手动安装。");
+                snapshot.update_message = format!("发现新版本 {version}，正在准备更新…");
                 snapshot.update_available = true;
+                snapshot.update_ready = false;
                 snapshot.update_url = Some(url.clone());
             });
-            if show_result
-                && app
-                    .dialog()
-                    .message(format!(
-                        "发现 Codex Panel {version}。是否打开 Fork Release 页面？"
-                    ))
-                    .title("Codex Panel 更新")
-                    .buttons(MessageDialogButtons::YesNo)
-                    .blocking_show()
-            {
-                if let Err(error) = open_with_system(&url) {
-                    show_error_dialog(app, "Codex Panel 更新", &error);
-                }
+            if show_result {
+                let _ = show_main_window(app);
+            }
+            if let Err(error) = prepare_update(app, state, &version).await {
+                append_log(state, &format!("Update preparation failed: {error}"));
+                update_snapshot(app, state, |snapshot| {
+                    snapshot.update_message = format!("发现新版本 {version}。{error}");
+                });
+            } else if show_result {
+                let result = confirm_prepared_update(app, state).await;
+                state.update_flow_in_progress.store(false, Ordering::SeqCst);
+                return result;
             }
             Ok(())
         }
@@ -2626,6 +2819,7 @@ fn main() {
             None,
         ))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             launcher_ui_state,
             start_service,
@@ -2639,6 +2833,7 @@ fn main() {
             set_autostart,
             check_for_updates,
             open_available_release,
+            install_available_update,
         ])
         .on_window_event(|window, event| {
             if window.label() == "main" {
@@ -2987,6 +3182,9 @@ fn main() {
                         let Some(state) = app.try_state::<Arc<LauncherState>>() else {
                             return;
                         };
+                        if state.update_installing.load(Ordering::SeqCst) {
+                            return;
+                        }
                         let lifecycle = state.lifecycle.lock().unwrap();
                         stop_managed_child_locked(app, &state);
                         drop(lifecycle);
@@ -3036,8 +3234,12 @@ fn main() {
                 show_error_dialog(app_handle, "Codex Panel 打开失败", &error);
             }
         }
-        tauri::RunEvent::ExitRequested { .. } => {
+        tauri::RunEvent::ExitRequested { code, api, .. } => {
             if let Some(state) = app_handle.try_state::<Arc<LauncherState>>() {
+                if code != Some(tauri::RESTART_EXIT_CODE) && state.update_installing.load(Ordering::SeqCst) {
+                    api.prevent_exit();
+                    return;
+                }
                 let _lifecycle = state.lifecycle.lock().unwrap();
                 stop_managed_child_locked(app_handle, &state);
             }
@@ -3068,6 +3270,19 @@ mod tests {
     use std::os::unix::fs::symlink;
     use std::{env, fs};
     use uuid::Uuid;
+
+    #[test]
+    fn updater_only_uses_selected_fork_release_assets() {
+        let tag = "v1.1.23-fork.1";
+        assert_eq!(super::updater_endpoint(tag).unwrap().as_str(),
+            "https://github.com/shay-wong/codex-panel/releases/download/v1.1.23-fork.1/latest.json");
+        assert!(super::updater_endpoint("v1.1.23").is_err());
+        let asset = "https://github.com/shay-wong/codex-panel/releases/download/v1.1.23-fork.1/Panel.app.tar.gz";
+        assert!(super::trusted_update_asset(&asset.parse().unwrap(), tag));
+        for url in [asset.replace("shay-wong", "chuspeeism"), asset.replace("https:", "http:"), format!("{asset}?redirect=other"), asset.replace("fork.1", "fork.2")] {
+            assert!(!super::trusted_update_asset(&url.parse().unwrap(), tag));
+        }
+    }
 
     #[test]
     fn launcher_events_require_structured_state_not_log_substrings() {
@@ -3134,6 +3349,7 @@ mod tests {
             message: String::new(),
             update_message: String::new(),
             update_available: false,
+            update_ready: false,
             update_url: None,
             version: "0.1.0".into(),
             app_path: None,
@@ -3166,6 +3382,7 @@ mod tests {
             message: String::new(),
             update_message: String::new(),
             update_available: false,
+            update_ready: false,
             update_url: None,
             version: "0.1.0".into(),
             app_path: None,
