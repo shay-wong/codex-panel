@@ -1,5 +1,7 @@
 # Codex Panel
 
+项目模型选择支持 **6 Astra**（`gpt-6-astra`），思考强度包含 `max` 和 `ultra`。
+
 [English](README.md) | [Fork 能力（英文）](docs/fork-capabilities.md)
 
 一个本地优先的 Issue 看板，可在浏览器中运行，也可以通过独立 CDP 启动器或注入脚本嵌入 Codex。React UI 与随附 Codex Skill 使用的 `panelctl` CLI 共用同一套 HTTP API。

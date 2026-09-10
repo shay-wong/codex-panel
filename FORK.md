@@ -54,6 +54,8 @@
 
 ## 活跃 Fork 能力
 
+项目模型列表包含 `gpt-6-astra`（显示为 `6 Astra`），支持 `low/medium/high/xhigh/max/ultra`，该模型默认强度为 `low`。菜单与宿主请求校验共用 `shared/panel-automation-options.mjs`，类型同步于 `.d.mts`，验证见 `test/panel-automation.test.mjs`。沿用既有模型选项维护策略，不改变已保存选择或自动化默认模型；后续上游提供等价选项时吸收其实现。
+
 ### 持久化项目 Key 与稳定 Issue ID
 
 - 生命周期：`等待上游吸收`
