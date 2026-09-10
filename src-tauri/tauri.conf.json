@@ -3,6 +3,11 @@
   "productName": "Codex Panel",
   "version": "0.1.0",
   "identifier": "com.shay.codex-panel",
+  "plugins": {
+    "updater": {
+      "pubkey": ""
+    }
+  },
   "build": {
     "frontendDist": "ui"
   },

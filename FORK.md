@@ -34,6 +34,8 @@
 
 更新方式已按用户新决定采用上游“预下载并验签、确认后安装并重启”流程；发布源仍固定为 `shay-wong/codex-panel`，只信任 Fork 自己的更新签名公钥。旧的仅跳转发布页策略已废止。
 
+`src-tauri/tauri.conf.json` 必须保留 `plugins.updater` 配置对象及空的 `pubkey` 占位，使未配置发布公钥的本地构建也能正常启动；实际更新仍由 `prepare_update` 强制读取编译时 `CODEX_PANEL_UPDATER_PUBLIC_KEY` 并覆盖占位值。缺少公钥只禁用安装更新，不能阻止启动面板。修改后需实际启动签名 App，确认无 `PluginInitialization("updater", ...)` 错误且服务就绪。
+
 上游 `1.1.22` 的 Beta App bundle 重命名与迁移、Beta 发布通道和对应发布工作流不适用于 Fork；更新包生成按 Fork 标签与签名策略单独配置，不恢复上游品牌及 Beta 发布流水线。
 
 本轮继续吸收精确 HTTPS trusted-origin 边界、确定性的 Issue 树查询、Markdown 图片边界修复、Issue 详情控件改进，以及 WSL CLI 发现并访问 Windows launcher runtime 的能力；这些属于上游能力，不新增 Fork 能力条目。Fork 继续使用 `Codex Panel`、`panelctl` 和 `manage-panel` 主命名，并保留 Jira、桌面端、自动化和 Cloud 扩展的不变量。
