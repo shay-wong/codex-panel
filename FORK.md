@@ -60,6 +60,8 @@
 
 ### 全局可定制 AI 工作流
 
+技能搜索接受 ID 及带 `$` 前缀的引用，例如 `$shay-skills:review`。
+
 - 生命周期：`长期保留`。目的：允许不同用户选择自己的 Skill，基础规划、执行、审核和交接不依赖 Fork 作者的个人技能。
 - 行为不变量：Codex Panel App 的“偏好设置 → 工作流 → 配置工作流”打开 App 内嵌专用编辑器，服务须处于运行状态；任务面板不保留顶部设置入口。配置为所有本地项目共用，四个阶段保存有顺序的 Skill ID；每阶段最多 20 个，执行与审核合计最多 20 个不同 ID。调用时按目标项目 catalog 解析实际路径；任一配置项缺失时整个阶段回到默认流程并提示，不执行残缺链。未配置时规划实际切换 Codex 原生 Plan 并保留未发送草稿，执行使用默认 Codex Agent，审核由 Agent 执行官方 `codex review --uncommitted` 或已提交改动的 `--base <development base SHA>`，交接使用内置脱敏临时文档。原生 Plan 确认后须退出该模式才可写 Spec 或发布。配置仅影响新操作，不重绑已有会话，不按个人安装情况自动迁移。内置 `manage-panel`、`handoff-panel` 继续提供 Panel 集成；不改第三方 Skill。 专用页面使用受信任 `panel_browser_url` 与当前私有 runtime token，并附加 `view=workflow-settings&language=zh`；前端只加载编辑器，不初始化任务面板或其项目选择存储。
 - 代码：`launcher/src/App.tsx`、`launcher/src/launcher.css`、`src-tauri/src/main.rs`、`web/src/main.tsx`、`server/workflow-settings.mjs`、`server/database.mjs`、`server/app.mjs`、`server/claim-queue.mjs`、`server/ai-chat.mjs`、`cli/panelctl.mjs`、`web/src/components/WorkflowSettingsDialog.tsx`、`web/src/App.tsx`、`inject/codex-panel.user.js`、`scripts/codex-injector-runtime.mjs`、`skills/manage-panel/SKILL.md`、`skills/handoff-panel/SKILL.md`。用户文档：`README.md`、`README.zh-CN.md`、`docs/fork-capabilities.md#configurable-ai-workflows`；发布记录：`CHANGELOG.md` Unreleased。

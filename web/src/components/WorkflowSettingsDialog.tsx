@@ -30,7 +30,7 @@ export function WorkflowSettingsDialog({ projectId, onClose }: {
     { id: "review", label: text("代码审核", "Code review"), defaultLabel: "Codex Review" },
     { id: "handoff", label: text("任务交接", "Task handoff"), defaultLabel: text("Panel 内置交接", "Panel built-in handoff") },
   ];
-  const needle = search.trim().toLocaleLowerCase();
+  const needle = search.trim().replace(/^\$/, "").toLocaleLowerCase();
   const visibleSkills = skills.filter((skill) => `${skill.label} ${skill.id}`.toLocaleLowerCase().includes(needle));
 
   useEffect(() => {

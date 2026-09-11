@@ -6,6 +6,8 @@ This page indexes the user-visible differences maintained by `shay-wong/codex-pa
 
 ## Configurable AI workflows
 
+Search by Skill name or ID, with or without a leading `$` (for example, `$shay-skills:review`).
+
 In the Codex Panel App, open **Preferences → Workflow → Configure workflows**. The Panel service must be running. A dedicated workflow editor opens inside the App; it does not open an external browser or change the selected board project. The four ordered Skill selections are stored in the local Panel database and shared by every project on that installation; they are not Cloud settings.
 
 | Stage | Default when no custom Skills are available |

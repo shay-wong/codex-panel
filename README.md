@@ -98,6 +98,8 @@ Existing browser settings and drafts are migrated from `taskboard.*` keys to `pa
 
 ## Embed in Codex
 
+Workflow Skill search accepts a leading `$`, such as `$shay-skills:review`.
+
 ### Recommended: use the Codex Panel desktop app
 
 The launcher separates **Runtime overview** from **Preferences**. In **Preferences → Display**, **Hide exhausted-usage banner** is off by default. Enable it to hide the Codex and Work exhausted-usage banner while connected; disable it to restore the banner. The choice survives restarts and does not change account limits. See [banner visibility](docs/fork-capabilities.md#exhausted-usage-banner-visibility).
