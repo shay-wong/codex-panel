@@ -116,6 +116,7 @@ export interface AiChatModel {
 }
 
 export interface AiChatSkill {
+  canonicalPath?: string;
   id: string;
   label: string;
   description: string;

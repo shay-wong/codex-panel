@@ -1103,7 +1103,10 @@ export async function discoverAiCatalog({
   const modelCatalog = JSON.parse(modelResult.stdout);
   return {
     models: sanitizeModels(modelCatalog?.models),
-    skills: sanitizeSkills(skillEntries),
+    skills: await Promise.all(sanitizeSkills(skillEntries).map(async (skill) => ({
+      ...skill,
+      canonicalPath: skill.path ? await realpath(skill.path).catch(() => skill.path) : "",
+    }))),
     commands,
     sandboxes: ["read-only", "workspace-write", "danger-full-access"],
   };

@@ -956,6 +956,8 @@ test("AI turns serialize linked user Skills omitted by the Codex catalog", async
 
     const catalog = await fixture.service.getCatalog("project");
     assert.equal(catalog.skills.some((skill) => skill.id === "linked-turn-skill"), true);
+    assert.equal(catalog.skills.find((skill) => skill.id === "linked-turn-skill").canonicalPath,
+      await realpath(path.join(sourceDirectory, "SKILL.md")));
     const thread = await fixture.service.createThread({ projectId: "project" });
     const run = await fixture.service.startTurn(thread.id, {
       message: "\uFFFC run",

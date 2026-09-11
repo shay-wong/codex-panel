@@ -99,6 +99,7 @@ Existing browser settings and drafts are migrated from `taskboard.*` keys to `pa
 ## Embed in Codex
 
 Workflow Skill search accepts a leading `$`, such as `$shay-skills:review`.
+The workflow picker shows one entry per real Skill file, preferring namespaced IDs and retaining existing selections.
 
 With banner hiding enabled, switching conversations hides new usage banners without waiting for the delayed page refresh.
 

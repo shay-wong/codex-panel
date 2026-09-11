@@ -99,6 +99,7 @@ npm run codex:install
 ## 嵌入 Codex
 
 工作流 Skill 搜索支持带 `$` 前缀的引用，例如 `$shay-skills:review`。
+工作流选择器按真实 Skill 文件去重，优先显示带命名空间的 ID，并保留已有选择。
 
 开启隐藏额度提示后，切换会话新增的横幅会立即隐藏，不再等待页面延迟刷新。
 

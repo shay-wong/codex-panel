@@ -47,13 +47,29 @@ export function WorkflowSettingsDialog({ projectId, onClose }: {
 
   useEffect(() => {
     const controller = new AbortController();
-    void getWorkflowSettings(controller.signal).then(setSettings).catch((cause: unknown) => {
+    void Promise.all([
+      getWorkflowSettings(controller.signal),
+      getAiChatCatalog(projectId, controller.signal).catch(() => {
+        if (!controller.signal.aborted) setCatalogError(true);
+        return { skills: [] as AiChatSkill[] };
+      }),
+    ]).then(([saved, catalog]) => {
+      if (controller.signal.aborted) return;
+      const byPath = new Map<string, AiChatSkill>();
+      const candidates = catalog.skills.filter((skill) => !["manage-panel", "handoff-panel"].includes(skill.id));
+      for (const skill of candidates) {
+        const key = skill.canonicalPath || skill.path || skill.id;
+        const existing = byPath.get(key);
+        if (!existing || (!existing.id.includes(":") && skill.id.includes(":"))) byPath.set(key, skill);
+      }
+      const ids = new Map(candidates.map((skill) => [skill.id, byPath.get(skill.canonicalPath || skill.path || skill.id)!.id]));
+      for (const stage of Object.keys(saved) as Array<keyof WorkflowSettings>) {
+        saved[stage] = [...new Set(saved[stage].map((id) => ids.get(id) ?? id))];
+      }
+      setSkills([...byPath.values()]);
+      setSettings(saved);
+    }).catch((cause: unknown) => {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause));
-    });
-    void getAiChatCatalog(projectId, controller.signal).then((catalog) => {
-      if (!controller.signal.aborted) setSkills(catalog.skills.filter((skill) => !["manage-panel", "handoff-panel"].includes(skill.id)));
-    }).catch(() => {
-      if (!controller.signal.aborted) setCatalogError(true);
     }).finally(() => {
       if (!controller.signal.aborted) setCatalogLoading(false);
     });

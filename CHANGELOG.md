@@ -4,6 +4,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Deduplicate workflow Skill choices pointing to the same file, preferring namespaced IDs and retaining existing selections.
+
 - Fixed hidden exhausted-usage banners flashing when switching conversations by hiding them before deferred page refreshes.
 
 - Fixed workflow Skill searches containing a leading `$`.
