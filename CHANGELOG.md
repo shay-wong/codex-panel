@@ -4,6 +4,10 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Rebuilt the App's management interface with React and Radix Themes: fixed sidebar navigation, a dedicated About page for version updates, compact runtime status rows, grouped preference forms, and consistent light/dark controls shared with the workflow editor; native service and update actions are retained.
+
+- Added global **Workflow settings** in the Codex Panel App's Preferences, with an embedded editor for ordered planning, execution, review, and handoff Skills while the service is running. Empty or unavailable selections use native Codex Plan, default execution, the official Codex CLI reviewer, and built-in handoff instead of requiring personal Skills; existing conversations are preserved.
+
 - Separated runtime overview and grouped preferences in the launcher, and added a persistent display toggle to hide the Codex-and-Work exhausted-usage banner while connected without changing account limits.
 
 - Adopted signed in-app update downloads and user-confirmed installation/restart for fork releases, with a fork-owned build-time verification key and macOS update-package generation.

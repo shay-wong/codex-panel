@@ -9,7 +9,7 @@
     }
   },
   "build": {
-    "frontendDist": "ui"
+    "frontendDist": "../dist/launcher"
   },
   "app": {
     "withGlobalTauri": true,

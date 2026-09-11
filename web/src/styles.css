@@ -6268,6 +6268,10 @@ button.activity-change-value:hover {
   overflow-y: auto;
 }
 
+.workflow-settings-page .radix-themes {
+  --default-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+}
+
 .jira-auth-method {
   min-width: 0;
   margin: 0;

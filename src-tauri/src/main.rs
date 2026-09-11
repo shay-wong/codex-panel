@@ -2464,6 +2464,19 @@ fn open_browser_panel(state: State<'_, Arc<LauncherState>>) -> Result<(), String
 }
 
 #[tauri::command]
+fn workflow_settings_url(state: State<'_, Arc<LauncherState>>) -> Result<String, String> {
+    if state.child.lock().unwrap().is_none() {
+        return Err("请先启动 Panel 服务，再配置工作流".into());
+    }
+    let mut url = reqwest::Url::parse(&panel_browser_url(&state)?)
+        .map_err(|error| error.to_string())?;
+    url.query_pairs_mut()
+        .append_pair("view", "workflow-settings")
+        .append_pair("language", "zh");
+    Ok(url.to_string())
+}
+
+#[tauri::command]
 fn open_log(state: State<'_, Arc<LauncherState>>) -> Result<(), String> {
     open_with_system(&state.log_path.to_string_lossy())
 }
@@ -2832,6 +2845,7 @@ fn main() {
             reconnect_codex,
             open_embedded_panel,
             open_browser_panel,
+            workflow_settings_url,
             open_log,
             reveal_data,
             set_launcher_preference,
