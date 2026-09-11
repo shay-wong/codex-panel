@@ -55,6 +55,8 @@ The launcher and its embedded workflow editor use React with Radix Themes for co
 
 ### Exhausted-usage banner visibility
 
+When switching conversations, new banners and updated banner text are hidden before the deferred page refresh runs.
+
 The launcher separates **运行概览** (Runtime overview), with service status and maintenance actions, from **偏好设置** (Preferences), with distinct connection, display, and system groups. Open **偏好设置 → 显示** and enable **隐藏额度耗尽提示** (Hide exhausted-usage banner). The preference defaults to off and is saved across restarts. While connected, changes reach Codex on the next host heartbeat, normally within two seconds. Turning it off restores the banner; no service restart is needed.
 
 This hides only the current English and Chinese Codex-and-Work exhausted-usage banner. It leaves other errors, model/image limits, account quotas, and usage enforcement unchanged. Other locales or a future Codex banner structure may remain visible. Panel does not patch the installed Codex application.

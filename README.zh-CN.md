@@ -100,6 +100,8 @@ npm run codex:install
 
 工作流 Skill 搜索支持带 `$` 前缀的引用，例如 `$shay-skills:review`。
 
+开启隐藏额度提示后，切换会话新增的横幅会立即隐藏，不再等待页面延迟刷新。
+
 ### 推荐：使用 Codex Panel 桌面端
 
 启动器将“运行概览”和“偏好设置”分开。进入“偏好设置 → 显示”可开启“隐藏额度耗尽提示”，默认关闭。开启后会在连接期间隐藏 Codex 和工作额度耗尽横幅，关闭后恢复；选择会记住并在重启后生效，不改变账户额度。详见[横幅显示设置](docs/fork-capabilities.md#exhausted-usage-banner-visibility)。

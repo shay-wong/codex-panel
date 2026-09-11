@@ -2383,10 +2383,11 @@
   }
 
   function scheduleRefresh() {
-    if (destroyed || reattachTimer !== null) return;
+    if (destroyed) return;
+    syncUsageBannerVisibility();
+    if (reattachTimer !== null) return;
     reattachTimer = window.setTimeout(() => {
       reattachTimer = null;
-      syncUsageBannerVisibility();
       if (closePanelForNativeThreadChange()) return;
       ensureEntry();
       if (mountActivePage()) reloadFrame();
@@ -2410,6 +2411,7 @@
     observer = new MutationObserver(scheduleRefresh);
     observer.observe(document.documentElement, {
       childList: true,
+      characterData: true,
       subtree: true,
       attributes: true,
       attributeFilter: [

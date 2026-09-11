@@ -71,6 +71,8 @@
 
 ### 额度耗尽横幅显示偏好
 
+切换会话新增横幅或原地更新文案时，在 MutationObserver 回调中立即同步隐藏，不等待页面延迟刷新。验证：`node --test test/inject-usage-banner.test.mjs`。
+
 - 生命周期：`长期保留`。目的：允许用户收起 Codex 对话中的额度耗尽横幅。
 - 行为不变量：启动器分为“运行概览”和“偏好设置”；前者展示服务状态与维护操作，后者按连接行为、显示、系统分组。“显示”中的“隐藏额度耗尽提示”默认关闭，保存到现有 `preferences.json`；通过受管 injector 心跳实时传递，关闭后恢复。仅匹配当前中英文 Codex 与工作额度耗尽横幅，其他额度及错误提示不变，不改变服务端限额，不修改官方 App。未识别的文案或结构保持显示。
 - 代码：`launcher/src/App.tsx`、`launcher/src/launcher.css`、`src-tauri/src/main.rs`、`scripts/codex-injector.mjs`、`inject/codex-panel.user.js`。用户文档：`README.md`、`README.zh-CN.md`、`docs/fork-capabilities.md#exhausted-usage-banner-visibility`；发布记录：`CHANGELOG.md` Unreleased。

@@ -4,6 +4,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed hidden exhausted-usage banners flashing when switching conversations by hiding them before deferred page refreshes.
+
 - Fixed workflow Skill searches containing a leading `$`.
 
 - Rebuilt the App's management interface with React and Radix Themes: fixed sidebar navigation, a dedicated About page for version updates, compact runtime status rows, grouped preference forms, and consistent light/dark controls shared with the workflow editor; native service and update actions are retained.
