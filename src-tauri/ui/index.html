@@ -49,6 +49,7 @@
       }
 
       * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
       html { min-width: 320px; min-height: 100%; }
       body { min-width: 320px; min-height: 100vh; margin: 0; background: var(--bg); color: var(--text); font-size: 14px; letter-spacing: 0; }
       button, input { font: inherit; }
@@ -140,7 +141,16 @@
       #dismissError:hover::before, #dismissError:focus-visible::before { transform: translateY(0); }
       .header-action { min-height: 32px; padding: 0 11px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border)); border-radius: 6px; background: var(--accent-soft); color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 650; white-space: nowrap; }
       .header-action:hover { border-color: var(--accent); background: var(--accent); color: #ffffff; }
-      main { width: min(100%, 920px); margin: 0 auto; padding: 20px 24px 28px; }
+      main { width: min(100%, 800px); margin: 0 auto; padding: 20px 24px 28px; }
+      .view-navigation { display: flex; gap: 6px; margin-bottom: 22px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+      .view-navigation button { padding: 8px 14px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; }
+      .view-navigation button:hover { background: var(--surface-raised); color: var(--text); }
+      .view-navigation button[aria-pressed="true"] { background: var(--surface-raised); color: var(--text); font-weight: 600; }
+      .preferences-intro { margin: 0 0 24px; }
+      .preferences-intro h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
+      .preferences-intro p { margin: 0; color: var(--muted); font-size: 12px; }
+      .preference-group + .preference-group { margin-top: 22px; }
+      .preference-group h3 { margin: 0 0 9px 2px; color: var(--muted); font-size: 12px; font-weight: 500; }
       .overview { overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow); }
       .overview-heading { display: flex; align-items: center; justify-content: space-between; gap: 22px; min-height: 104px; padding: 18px 20px; }
       .overview-copy { min-width: 0; }
@@ -186,9 +196,9 @@
       .lifecycle-action.danger.is-busy::after { border-color: var(--danger); border-top-color: transparent; }
       .button-symbol { display: inline-block; width: 16px; margin-right: 4px; text-align: center; }
 
-      .workspace-grid { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr); gap: 24px; }
-      .settings { border-top: 1px solid var(--border); }
-      .setting { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 56px; border-bottom: 1px solid var(--border); }
+      .settings { overflow: hidden; padding: 0 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+      .setting { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 66px; padding: 12px 0; }
+      .setting + .setting { border-top: 1px solid var(--border); }
       .setting.disabled { opacity: 0.52; }
       .setting-copy { min-width: 0; }
       .setting-label { display: block; font-size: 13px; font-weight: 580; }
@@ -232,7 +242,6 @@
         .component-strip { grid-template-columns: 1fr; }
         .component { min-height: 62px; }
         .component + .component { border-top: 1px solid var(--border); border-left: 0; }
-        .workspace-grid { grid-template-columns: 1fr; gap: 0; }
         .runtime-grid { grid-template-columns: 1fr; }
       }
     </style>
@@ -257,6 +266,12 @@
     </header>
 
     <main>
+      <div class="notice" id="errorNotice" role="alert" hidden><span aria-hidden="true">!</span><span class="notice-text" id="errorText"></span><button class="notice-close" id="dismissError" type="button" data-tooltip="关闭提示" aria-label="关闭提示">×</button></div>
+      <nav class="view-navigation" aria-label="启动器页面">
+        <button type="button" data-view="overviewView" aria-controls="overviewView" aria-pressed="true">运行概览</button>
+        <button type="button" data-view="preferencesView" aria-controls="preferencesView" aria-pressed="false">偏好设置</button>
+      </nav>
+      <div id="overviewView">
       <section class="overview" aria-labelledby="overviewTitle">
         <div class="overview-heading">
           <div class="overview-copy">
@@ -277,29 +292,15 @@
         </div>
       </section>
 
-      <div class="notice" id="errorNotice" role="alert" hidden><span aria-hidden="true">!</span><span class="notice-text" id="errorText"></span><button class="notice-close" id="dismissError" type="button" data-tooltip="关闭提示" aria-label="关闭提示">×</button></div>
-
-      <div class="workspace-grid">
-        <section class="section" aria-labelledby="startupSettingsTitle">
-          <div class="section-heading"><h3 id="startupSettingsTitle">启动设置</h3></div>
-          <div class="settings">
-            <label class="setting"><span class="setting-copy"><span class="setting-label">启动时连接 Codex</span><span class="setting-detail">启动本地服务并建立内嵌连接</span></span><span class="switch"><input id="autoConnectCodex" type="checkbox" /><span></span></span></label>
-            <label class="setting" id="autoOpenSetting"><span class="setting-copy"><span class="setting-label">连接后打开任务面板</span><span class="setting-detail" id="autoOpenDetail">连接就绪后自动显示 Panel</span></span><span class="switch"><input id="autoOpenPanel" type="checkbox" /><span></span></span></label>
-            <label class="setting"><span class="setting-copy"><span class="setting-label">登录时启动</span><span class="setting-detail">登录系统后启动 Codex Panel</span></span><span class="switch"><input id="autostart" type="checkbox" /><span></span></span></label>
-          </div>
-        </section>
-
         <section class="section" aria-labelledby="maintenanceTitle">
           <div class="section-heading"><h3 id="maintenanceTitle">更新与维护</h3></div>
           <div class="update-row">
             <div class="update-header"><span class="update-title">版本更新</span><span class="update-badge" id="updateBadge" hidden>有新版本</span></div>
             <p class="update-message" id="updateMessage">尚未检查更新。</p>
-            <div class="update-actions"><button class="button update" type="button" data-action="check_for_updates">检查更新</button><button class="button update" id="installUpdate" type="button" data-action="install_available_update" hidden>安装并重启</button><button class="button" id="openRelease" type="button" data-action="open_available_release" hidden>查看 Release</button></div>
+            <div class="update-actions"><button class="button update" type="button" data-action="check_for_updates">检查更新</button><button class="button update" id="installUpdate" type="button" data-action="install_available_update" hidden>安装并重启</button><button class="button" id="openRelease" type="button" data-action="open_available_release" hidden>查看发布说明</button></div>
           </div>
           <div class="maintenance"><div class="utility-bar"><button class="button subtle" type="button" data-action="open_log">打开运行日志</button><button class="button subtle" type="button" data-action="reveal_data">显示数据目录</button></div></div>
         </section>
-      </div>
-
       <details class="runtime">
         <summary>运行详情</summary>
         <div class="runtime-grid">
@@ -309,6 +310,30 @@
           <div class="runtime-item"><span class="runtime-label">运行日志</span><code class="runtime-value" id="logPath">正在读取</code></div>
         </div>
       </details>
+      </div>
+
+      <section id="preferencesView" aria-labelledby="preferencesTitle" hidden>
+        <div class="preferences-intro"><h2 id="preferencesTitle">偏好设置</h2><p>按你的习惯调整连接与显示，修改后自动保存。</p></div>
+        <section class="preference-group" aria-labelledby="connectionTitle">
+          <h3 id="connectionTitle">连接行为</h3>
+          <div class="settings">
+            <label class="setting"><span class="setting-copy"><span class="setting-label">启动时连接 Codex</span><span class="setting-detail">打开启动器时，自动连接 Codex</span></span><span class="switch"><input id="autoConnectCodex" type="checkbox" /><span></span></span></label>
+            <label class="setting" id="autoOpenSetting"><span class="setting-copy"><span class="setting-label">连接后打开任务面板</span><span class="setting-detail" id="autoOpenDetail">连接就绪后自动显示 Panel</span></span><span class="switch"><input id="autoOpenPanel" type="checkbox" /><span></span></span></label>
+          </div>
+        </section>
+        <section class="preference-group" aria-labelledby="displayTitle">
+          <h3 id="displayTitle">显示</h3>
+          <div class="settings">
+            <label class="setting"><span class="setting-copy"><span class="setting-label">隐藏额度耗尽提示</span><span class="setting-detail">收起对话中的额度横幅，不改变实际额度</span></span><span class="switch"><input id="hideUsageBanner" type="checkbox" /><span></span></span></label>
+          </div>
+        </section>
+        <section class="preference-group" aria-labelledby="systemTitle">
+          <h3 id="systemTitle">系统</h3>
+          <div class="settings">
+            <label class="setting"><span class="setting-copy"><span class="setting-label">登录时启动</span><span class="setting-detail">登录电脑后自动运行 Codex Panel</span></span><span class="switch"><input id="autostart" type="checkbox" /><span></span></span></label>
+          </div>
+        </section>
+      </section>
     </main>
 
     <script>
@@ -401,6 +426,7 @@
       function renderPreferences(preferences) {
         document.getElementById("autoConnectCodex").checked = preferences.autoConnectCodex;
         document.getElementById("autoOpenPanel").checked = preferences.autoOpenPanel;
+        document.getElementById("hideUsageBanner").checked = preferences.hideUsageBanner === true;
         document.getElementById("autoOpenPanel").disabled = !preferences.autoConnectCodex;
         elements.autoOpenSetting.classList.toggle("disabled", !preferences.autoConnectCodex);
         elements.autoOpenDetail.textContent = preferences.autoConnectCodex ? "连接就绪后自动显示 Panel" : "需先开启“启动时连接 Codex”";
@@ -476,8 +502,17 @@
 
       document.querySelectorAll("button[data-action]").forEach((button) => button.addEventListener("click", () => run(button.dataset.action, button)));
       document.getElementById("dismissError").addEventListener("click", clearError);
+      document.querySelectorAll("button[data-view]").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll("button[data-view]").forEach((item) => {
+            const selected = item === button;
+            item.setAttribute("aria-pressed", String(selected));
+            document.getElementById(item.dataset.view).hidden = !selected;
+          });
+        });
+      });
 
-      for (const key of ["autoConnectCodex", "autoOpenPanel"]) {
+      for (const key of ["autoConnectCodex", "autoOpenPanel", "hideUsageBanner"]) {
         document.getElementById(key).addEventListener("change", async (event) => {
           clearError();
           const previous = currentState?.preferences?.[key];

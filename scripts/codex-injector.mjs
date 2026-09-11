@@ -2163,12 +2163,21 @@ function installPanelHostBinding(
       await Promise.race([
         (async () => {
           const executionContextId = await install();
+          let hideUsageBanner = false;
+          const preferencesFile = panelEnvironment("PREFERENCES_FILE");
+          if (preferencesFile) {
+            try {
+              const preferences = JSON.parse(await readFile(preferencesFile, "utf8"));
+              hideUsageBanner = preferences.hideUsageBanner === true;
+            } catch {}
+          }
           await cdp.send("Runtime.evaluate", {
             contextId: executionContextId,
             expression: `window.postMessage({
               type: ${JSON.stringify(hostHeartbeatMessage)},
               capability: ${JSON.stringify(hostCapability)},
               at: Date.now(),
+              hideUsageBanner: ${JSON.stringify(hideUsageBanner)},
               startupToken: ${JSON.stringify(startupToken)}
             }, window.location.origin)`,
             returnByValue: true,

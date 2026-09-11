@@ -15,6 +15,7 @@
   const STYLE_ID = "codex-panel-inject-style";
   const OWNED_ATTRIBUTE = "data-codex-panel-owned";
   const HIDDEN_ATTRIBUTE = "data-codex-panel-native-hidden";
+  const USAGE_BANNER_HIDDEN_ATTRIBUTE = "data-codex-panel-usage-banner-hidden";
   const HOST_ATTRIBUTE = "data-codex-panel-page-host";
   const NATIVE_SELECTED_ATTRIBUTE = "data-codex-panel-native-selected";
   const HOST_REQUEST_MESSAGE = "__codexPanelHostRequestV1";
@@ -143,6 +144,24 @@
   let suspendedNativeBrowserPanel = null;
   let active = false;
   let destroyed = false;
+  let hideUsageBanner = false;
+
+  function syncUsageBannerVisibility() {
+    const titles = new Set([
+      "You’re out of Codex and Work usage",
+      "You're out of Codex and Work usage",
+      "你的 Codex 和工作使用额度已用完",
+      "Codex 及「工作」用量已用盡",
+      "你的 Codex 和工作使用量已用完",
+    ]);
+    document.querySelectorAll("aside").forEach((banner) => {
+      const heading = banner.querySelector("h3");
+      const title = heading?.firstElementChild?.firstChild?.textContent?.trim()
+        || heading?.textContent?.trim();
+      const shouldHide = hideUsageBanner && titles.has(title) && !!banner.querySelector("button");
+      banner.toggleAttribute(USAGE_BANNER_HIDDEN_ATTRIBUTE, shouldHide);
+    });
+  }
 
   function persistPendingThreadAssociation() {
     try {
@@ -259,6 +278,9 @@
         position: relative !important;
         z-index: 31 !important;
         pointer-events: none !important;
+      }
+      [${USAGE_BANNER_HIDDEN_ATTRIBUTE}] {
+        display: none !important;
       }
       [${HIDDEN_ATTRIBUTE}="true"] {
         visibility: hidden !important;
@@ -2089,6 +2111,8 @@
     if (!message || typeof message !== "object" || message.capability !== HOST_CAPABILITY) return;
     if (message.type === HOST_HEARTBEAT_MESSAGE) {
       hostHeartbeatAt = Number(message.at) || 0;
+      hideUsageBanner = message.hideUsageBanner === true;
+      syncUsageBannerVisibility();
       window[HOST_STARTUP_TOKEN_NAME] = message.startupToken ?? null;
       return;
     }
@@ -2338,6 +2362,7 @@
     if (destroyed || reattachTimer !== null) return;
     reattachTimer = window.setTimeout(() => {
       reattachTimer = null;
+      syncUsageBannerVisibility();
       if (closePanelForNativeThreadChange()) return;
       ensureEntry();
       if (mountActivePage()) reloadFrame();
@@ -2347,6 +2372,7 @@
   }
 
   function refresh() {
+    syncUsageBannerVisibility();
     ensureEntry();
     if (mountActivePage()) reloadFrame();
     void publishPendingThreadAssociation();
@@ -2388,6 +2414,8 @@
     hostContextTimer = null;
     observer?.disconnect();
     observer = null;
+    hideUsageBanner = false;
+    syncUsageBannerVisibility();
     cancelFrameReadyWaiters(new Error("任务面板已关闭"));
     hostRequests.forEach(({ reject, timeout }) => {
       window.clearTimeout(timeout);

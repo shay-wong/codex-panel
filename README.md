@@ -96,6 +96,8 @@ Existing browser settings and drafts are migrated from `taskboard.*` keys to `pa
 
 ### Recommended: use the Codex Panel desktop app
 
+The launcher separates **Runtime overview** from **Preferences**. In **Preferences → Display**, **Hide exhausted-usage banner** is off by default. Enable it to hide the Codex and Work exhausted-usage banner while connected; disable it to restore the banner. The choice survives restarts and does not change account limits. See [banner visibility](docs/fork-capabilities.md#exhausted-usage-banner-visibility).
+
 `npm run codex:install` creates or refreshes `~/Applications/Codex Panel.app`, removes the previous managed `~/Applications/Codex.app` bootstrap, and migrates installations of the former Swift launcher. The desktop app is built with Tauri/Rust and uses the fixed data directory at `~/Library/Application Support/Codex Panel/data`, so moving or deleting the source repository does not break it. Open it from Finder or the explicit path:
 
 ```bash

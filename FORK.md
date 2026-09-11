@@ -58,6 +58,14 @@
 
 ## 活跃 Fork 能力
 
+### 额度耗尽横幅显示偏好
+
+- 生命周期：`长期保留`。目的：允许用户收起 Codex 对话中的额度耗尽横幅。
+- 行为不变量：启动器分为“运行概览”和“偏好设置”；前者展示服务状态与维护操作，后者按连接行为、显示、系统分组。“显示”中的“隐藏额度耗尽提示”默认关闭，保存到现有 `preferences.json`；通过受管 injector 心跳实时传递，关闭后恢复。仅匹配当前中英文 Codex 与工作额度耗尽横幅，其他额度及错误提示不变，不改变服务端限额，不修改官方 App。未识别的文案或结构保持显示。
+- 代码：`src-tauri/ui/index.html`、`src-tauri/src/main.rs`、`scripts/codex-injector.mjs`、`inject/codex-panel.user.js`。用户文档：`README.md`、`README.zh-CN.md`、`docs/fork-capabilities.md#exhausted-usage-banner-visibility`；发布记录：`CHANGELOG.md` Unreleased。
+- 来源：当前改动，提交后用 `git log -S'hide_usage_banner' -- src-tauri/src/main.rs` 定位。合并时保留默认关闭、设置持久化、心跳传递和精确横幅匹配；上游提供等价开关时可吸收并移除此项。
+- 验证：隔离启动器预览中切换开关，验证横幅隐藏与恢复、刷新后选择保留、其他提示仍显示；检查原生编译与 JavaScript 语法。未做正式环境自动化测试。
+
 项目模型列表包含 `gpt-6-astra`（显示为 `6 Astra`），支持 `low/medium/high/xhigh/max/ultra`，该模型默认强度为 `low`。菜单与宿主请求校验共用 `shared/panel-automation-options.mjs`，类型同步于 `.d.mts`，验证见 `test/panel-automation.test.mjs`。沿用既有模型选项维护策略，不改变已保存选择或自动化默认模型；后续上游提供等价选项时吸收其实现。
 
 ### 持久化项目 Key 与稳定 Issue ID

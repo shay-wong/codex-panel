@@ -30,6 +30,12 @@ Each project dashboard asks Codex for a daily progress summary. A failed generat
 
 ## Tauri/Rust desktop manager
 
+### Exhausted-usage banner visibility
+
+The launcher separates **运行概览** (Runtime overview), with service status and maintenance actions, from **偏好设置** (Preferences), with distinct connection, display, and system groups. Open **偏好设置 → 显示** and enable **隐藏额度耗尽提示** (Hide exhausted-usage banner). The preference defaults to off and is saved across restarts. While connected, changes reach Codex on the next host heartbeat, normally within two seconds. Turning it off restores the banner; no service restart is needed.
+
+This hides only the current English and Chinese Codex-and-Work exhausted-usage banner. It leaves other errors, model/image limits, account quotas, and usage enforcement unchanged. Other locales or a future Codex banner structure may remain visible. Panel does not patch the installed Codex application.
+
 On macOS, the explicit `npm run codex:install` command builds a standalone runtime under `~/Library/Application Support/Codex Panel`, creates or refreshes `~/Applications/Codex Panel.app`, and removes only older launcher installations carrying a Codex Panel ownership marker. Plain `npm ci` continues to install project dependencies without writing user-level integrations. The installed product is the upstream Tauri/Rust desktop foundation under the unchanged `Codex Panel` name; the former SwiftPM launcher is no longer a product or build path.
 
 The app runs from the macOS menu bar. Its menu exposes runtime status; an embedded Panel entry point; one state-aware start/stop item; separate restart, browser, log, and data-directory actions; launch-at-login; and independent connect-on-launch and open-after-connect preferences, with the latter two enabled by default. Restart and browser actions are enabled only while the managed service is running. A fresh renderer heartbeat, matching source hash, startup token, and mounted entry are required before the status becomes healthy. Unexpected integration exits use bounded recovery delays of 2, 5, and 15 seconds, and a fourth failure inside 60 seconds suppresses further automatic recovery.

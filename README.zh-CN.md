@@ -96,6 +96,8 @@ npm run codex:install
 
 ### 推荐：使用 Codex Panel 桌面端
 
+启动器将“运行概览”和“偏好设置”分开。进入“偏好设置 → 显示”可开启“隐藏额度耗尽提示”，默认关闭。开启后会在连接期间隐藏 Codex 和工作额度耗尽横幅，关闭后恢复；选择会记住并在重启后生效，不改变账户额度。详见[横幅显示设置](docs/fork-capabilities.md#exhausted-usage-banner-visibility)。
+
 `npm run codex:install` 会创建或刷新 `~/Applications/Codex Panel.app`，删除之前由本项目管理的 `~/Applications/Codex.app` 引导器，并迁移旧 Swift 启动器。桌面端基于 Tauri/Rust，固定使用 `~/Library/Application Support/Codex Panel/data` 数据目录，因此移动或删除源仓库也不会使它失效。可以从 Finder 或明确路径打开：
 
 ```bash

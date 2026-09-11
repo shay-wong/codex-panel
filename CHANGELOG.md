@@ -4,6 +4,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Separated runtime overview and grouped preferences in the launcher, and added a persistent display toggle to hide the Codex-and-Work exhausted-usage banner while connected without changing account limits.
+
 - Adopted signed in-app update downloads and user-confirmed installation/restart for fork releases, with a fork-owned build-time verification key and macOS update-package generation.
 
 - Merged upstream through `c346e8e` (`1.1.23-beta.1`): improved Jira configuration/sync ordering, AI permission and process handling, comment attachment retries, document editing, realtime subscriptions, board performance, and launcher lifecycle handling while preserving Fork integrations.

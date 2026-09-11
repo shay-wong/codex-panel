@@ -155,6 +155,8 @@ struct LauncherPidRecord {
 struct LauncherPreferences {
     auto_connect_codex: bool,
     auto_open_panel: bool,
+    #[serde(default)]
+    hide_usage_banner: bool,
 }
 
 #[derive(Serialize)]
@@ -172,6 +174,7 @@ impl Default for LauncherPreferences {
         Self {
             auto_connect_codex: true,
             auto_open_panel: true,
+            hide_usage_banner: false,
         }
     }
 }
@@ -2122,6 +2125,7 @@ fn start_launcher_locked(
         .env_clear()
         .envs(sanitized_process_environment())
         .env("CODEX_PANEL_DATA_DIR", &state.data_directory)
+        .env("CODEX_PANEL_PREFERENCES_FILE", &state.preferences_path)
         .env(
             "CODEX_PANEL_RUNTIME_FILE",
             state.data_directory.join("launcher-runtime.json"),
@@ -2475,12 +2479,13 @@ fn set_launcher_preference(
     key: String,
     enabled: bool,
 ) -> Result<LauncherPreferences, String> {
-    if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel") {
+    if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel" | "hideUsageBanner") {
         return Err("未知的偏好设置".to_string());
     }
     update_preferences(&state, |preferences| match key.as_str() {
         "autoConnectCodex" => preferences.auto_connect_codex = enabled,
         "autoOpenPanel" => preferences.auto_open_panel = enabled,
+        "hideUsageBanner" => preferences.hide_usage_banner = enabled,
         _ => unreachable!(),
     })
 }
