@@ -8,7 +8,8 @@ function validSkillReference(skill) {
     && typeof skill === "object"
     && !Array.isArray(skill)
     && typeof skill.name === "string"
-    && /^[a-z0-9-]{1,100}$/i.test(skill.name)
+    && /^[a-z0-9_-]+(?::[a-z0-9_-]+)?$/i.test(skill.name)
+    && skill.name.length <= 256
     && typeof skill.displayName === "string"
     && skill.displayName.length > 0
     && skill.displayName.length <= 1_024
@@ -159,7 +160,7 @@ function parseHostRequest(payload, parseAutomationRequest) {
       || (
         Array.isArray(request.skills)
         && request.skills.length > 0
-        && request.skills.length <= 8
+        && request.skills.length <= 41
         && request.skills.every(validSkillReference)
       )
     )
@@ -243,9 +244,10 @@ function parseHostRequest(payload, parseAutomationRequest) {
       )
     )
     && (request.useWorktree === undefined || typeof request.useWorktree === "boolean")
+    && (request.collaborationMode === undefined || request.collaborationMode === "default")
     && (request.threadId === undefined || (
       typeof request.threadId === "string" && /^[a-z0-9-]{1,128}$/i.test(request.threadId)
-      && Array.isArray(request.skills) && request.skills.length <= 8
+      && Array.isArray(request.skills) && request.skills.length <= 41
       && request.skills.every(validSkillReference)
     ))
   ) {
@@ -271,6 +273,16 @@ export async function continueTaskConversation(request, call) {
   try {
     const started = await call('turn/start', {
       threadId,
+      ...(request.collaborationMode === "default" ? {
+        collaborationMode: {
+          mode: "default",
+          settings: {
+            model: resumed.model,
+            reasoning_effort: resumed.reasoningEffort ?? null,
+            developer_instructions: null,
+          },
+        },
+      } : {}),
       input: [
         { type: 'text', text: instruction, text_elements: [] },
         ...skills.map(({ name, path }) => ({ type: 'skill', name, path })),

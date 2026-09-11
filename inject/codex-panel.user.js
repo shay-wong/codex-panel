@@ -1316,6 +1316,26 @@
     throw new Error("Codex 没有切换到新建本地工作树");
   }
 
+  async function selectNativeCollaborationMode(mode, composer) {
+    if (mode !== "plan" && mode !== "default") return;
+    const root = composer.closest("[data-codex-composer-root]");
+    if (!root) throw new Error("Codex 中找不到当前对话输入框");
+    const planLabels = ["Plan", "计划", "計劃", "方案"];
+    const isPlanMode = () => Array.from(root.querySelectorAll("button[aria-label]"))
+      .some((button) => planLabels.includes(button.getAttribute("aria-label"))
+        && isInteractiveElement(button));
+    const expected = mode === "plan";
+    if (isPlanMode() === expected) return;
+    composer.focus();
+    dispatchHostMessage({ type: "run-command", id: "composer.togglePlanMode" });
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline) {
+      if (isPlanMode() === expected) return;
+      await new Promise((resolve) => window.setTimeout(resolve, 40));
+    }
+    throw new Error(expected ? "Codex 没有切换到计划模式" : "Codex 没有退出计划模式");
+  }
+
   async function createThreadForTask(payload) {
     const taskId = typeof payload?.taskId === "string" ? payload.taskId.trim() : "";
     const identifier = typeof payload?.identifier === "string" ? payload.identifier.trim() : "";
@@ -1330,10 +1350,11 @@
       ? payload.skillReferences
       : [{ name: skillName, displayName: skillDisplayName, path: skillPath }];
     const skillReferences = rawSkillReferences.length > 0
-      && rawSkillReferences.length <= 8
+      && rawSkillReferences.length <= 41
       && rawSkillReferences.every((skill) => (
         typeof skill?.name === "string"
-        && /^[a-z0-9-]{1,100}$/i.test(skill.name.trim())
+        && /^[a-z0-9_-]+(?::[a-z0-9_-]+)?$/i.test(skill.name.trim())
+        && skill.name.trim().length <= 256
         && typeof skill?.displayName === "string"
         && skill.displayName.trim()
         && typeof skill?.path === "string"
@@ -1380,6 +1401,7 @@
           title,
           useWorktree: false,
           skills: skillReferences,
+          collaborationMode: "default",
         }, TASK_CONVERSATION_REQUEST_TIMEOUT_MS);
         await requestHost("bind-native-claim", {
           reservationId,
@@ -1442,6 +1464,7 @@
           },
         });
         const composer = await waitForPreparedComposer(identifier, []);
+        await selectNativeCollaborationMode(payload.collaborationMode, composer);
         setPendingThreadAssociation({
           taskId,
           identifier,
@@ -1502,6 +1525,7 @@
         skills: skillReferences,
       });
       const composer = await waitForPreparedComposer(identifier, []);
+      await selectNativeCollaborationMode(autoSubmit ? "default" : payload.collaborationMode, composer);
       const selectedProjectId = projectless
         ? ""
         : (await selectedNativeProjectId()) || payload.codexProjectId;

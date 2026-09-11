@@ -76,6 +76,7 @@ if (args[0] === "debug") {
   const codexStatePath = path.join(directory, "codex-state.json");
   await writeFile(codexStatePath, JSON.stringify({
     "local-projects": {
+      local: { rootPaths: [workspace] },
       api: { rootPaths: [workspace] },
       web: { rootPaths: [workspace] },
     },
@@ -84,6 +85,8 @@ if (args[0] === "debug") {
     dataDirectory: directory,
     codexExecutable,
     codexStatePath,
+    codexProcessesPath: path.join(directory, "processes.json"),
+    processEnv: { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin` },
     skillPath: "/skills/manage-panel/SKILL.md",
     skillsDirectory: path.join(directory, "skills"),
   });
@@ -188,7 +191,8 @@ if (args[0] === "debug") {
     });
     assert.equal(result.context.plan, null);
     assert.match(result.composerText, /请规划下面这个 Jira 需求/);
-    assert.deepEqual(result.skills.map((skill) => skill.id), ["grill-with-docs", "to-spec", "to-tickets"]);
+    assert.deepEqual(result.skills, []);
+    assert.equal(result.collaborationMode, "plan");
     assert.equal(app.aiChat.listThreads().length, 0);
 
     let planningThreadId = "codex-native-jira-plan";
@@ -199,7 +203,7 @@ if (args[0] === "debug") {
       codexProjectId: "local",
       codexProjectKind: "local",
       codexHostId: "local",
-      workspacePath: path.resolve(new URL("..", import.meta.url).pathname),
+      workspacePath: workspace,
     });
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
       version: jira.version,
@@ -258,6 +262,7 @@ if (args[0] === "debug") {
 
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
       version: jira.version,
+      projectId: "api",
     });
     assert.equal(result.context.plan.threadId, planningThreadId);
     assert.match(result.composerText, /- API \(api\)/);
@@ -355,6 +360,7 @@ if (args[0] === "debug") {
     );
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
       version: jira.version,
+      projectId: "api",
     });
     assert.equal(result.context.plan.threadId, planningThreadId);
     assert.equal(result.context.plan.needsReview, true);
@@ -455,6 +461,7 @@ if (args[0] === "debug") {
     );
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
       version: jira.version,
+      projectId: "web",
     });
     planningThreadId = "codex-native-jira-plan-move-review";
     result = await api(baseUrl, `/api/tasks/${jira.id}/jira-planning`, "POST", {
@@ -548,14 +555,15 @@ if (args[0] === "debug") {
     const prepareReplanResponse = await fetch(`${baseUrl}/api/tasks/${jira.id}/jira-lifecycle`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
-      body: JSON.stringify({ version: reopened.lifecycle.version, action: "replan" }),
+      body: JSON.stringify({ version: reopened.lifecycle.version, action: "replan", projectId: "web" }),
     });
     assert.equal(prepareReplanResponse.status, 200);
     const preparedReplan = await prepareReplanResponse.json();
     assert.equal(preparedReplan.context.lifecycle.pending.kind, "reopened");
     assert.equal(preparedReplan.context.plan.threadId, previousPlanningThreadId);
     assert.match(preparedReplan.composerText, /Jira 内容或关联仓库已经变化/);
-    assert.deepEqual(preparedReplan.skills.map((skill) => skill.id), ["grill-with-docs", "to-spec", "to-tickets"]);
+    assert.deepEqual(preparedReplan.skills, []);
+    assert.equal(preparedReplan.collaborationMode, "plan");
     assert.deepEqual(app.aiChat.listThreads().map((thread) => thread.id).sort(), previousThreadIds);
 
     await app.aiChat.createThread({

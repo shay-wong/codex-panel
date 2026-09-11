@@ -234,6 +234,7 @@ export function buildCodexPrompt(thread, { message, skills, attachmentPaths }, s
 
   return [
     `[$manage-panel](${skillPath}) e-panel`,
+    ...selectedSkills.map((skill) => `[$${skill.id}](${skill.path})`),
     "",
     "<panel_context>",
     ...context,

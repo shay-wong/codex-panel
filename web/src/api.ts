@@ -35,6 +35,7 @@ import type {
   TaskDraft,
   TaskStatus,
   TaskUpdate,
+  WorkflowSettings,
 } from "./types";
 
 const DEFAULT_USER_ACTOR: ActorIdentity = {
@@ -315,6 +316,19 @@ export async function publishHostRuntime(context: HostContext): Promise<void> {
       workspacePath: project?.workspacePath ?? null,
     }),
   });
+}
+
+export async function getWorkflowSettings(signal?: AbortSignal): Promise<WorkflowSettings> {
+  const data = await request<{ settings: WorkflowSettings }>("/api/local/workflow-settings", { signal });
+  return data.settings;
+}
+
+export async function saveWorkflowSettings(settings: WorkflowSettings): Promise<WorkflowSettings> {
+  const data = await request<{ settings: WorkflowSettings }>("/api/local/workflow-settings", {
+    method: "PUT",
+    body: JSON.stringify(settings),
+  });
+  return data.settings;
 }
 
 export async function getAiChatCatalog(
@@ -709,11 +723,13 @@ export async function resolveJiraLifecycle(
 ): Promise<{
   context: JiraTaskContext;
   composerText?: string;
+  collaborationMode?: "plan" | "default";
   skills?: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
 }> {
   return request<{
     context: JiraTaskContext;
     composerText?: string;
+    collaborationMode?: "plan" | "default";
     skills?: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
   }>(
     `/api/tasks/${encodeURIComponent(taskId)}/jira-lifecycle`,
@@ -767,11 +783,13 @@ export async function startJiraPlanning(
 ): Promise<{
   context: JiraTaskContext;
   composerText?: string;
+  collaborationMode?: "plan" | "default";
   skills?: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
 }> {
   return request<{
     context: JiraTaskContext;
     composerText?: string;
+    collaborationMode?: "plan" | "default";
     skills?: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
   }>(
     `/api/tasks/${encodeURIComponent(task.id)}/jira-planning`,

@@ -28,6 +28,7 @@ import { withoutPanelLauncherEnvironment } from "../shared/codex-environment.mjs
 import { AiChatService } from "./ai-chat.mjs";
 import { resolveAiWorkspace, resolveMappedAiWorkspace } from "./ai-chat-catalog.mjs";
 import { ClaimQueueService } from "./claim-queue.mjs";
+import { WORKFLOW_STAGES, resolveWorkflow, workflowNotice } from "./workflow-settings.mjs";
 import { decodeComposerReferenceKey } from "./composer-reference.mjs";
 import { createCloudConfigStore } from "./cloud-config.mjs";
 import {
@@ -2372,9 +2373,8 @@ export function createPanelServer(options = {}) {
   const pendingJiraSimpleStarts = new Map();
   // ponytail: one in-process reservation per Jira is enough while this server owns all local mutations.
   const pendingJiraReopenActions = new Map();
-  const jiraPlanningSkillIds = ["grill-with-docs", "to-spec", "to-tickets"];
 
-  function jiraPlanningPrompt(jiraTask, projects, review, plan) {
+  function jiraPlanningPrompt(jiraTask, projects, review, plan, workflow) {
     const repositories = projects.length > 0
       ? projects.map((project) => `- ${project.name} (${project.id})`).join("\n")
       : "- 尚未关联仓库；可以先澄清需求，但发布 tickets 前必须让用户在 Jira 详情中关联仓库。";
@@ -2401,26 +2401,13 @@ export function createPanelServer(options = {}) {
       "必须保留并纳入新计划约束的已开始成果:",
       preservedWork,
       "",
-      "这是规划会话，不授权修改仓库代码或开始执行 Issue。先使用 grill-with-docs 澄清需求并维护相关文档；确认后使用 to-spec 生成本地 Spec，再使用 to-tickets 拆分 tracer-bullet tickets。",
+      "这是规划会话，不授权修改仓库代码或开始执行 Issue。先澄清需求、分析相关代码与文档，再形成 Spec 和按依赖顺序拆分的 tickets，包含范围、验收条件与目标仓库。",
+      workflow.mode === "custom"
+        ? `按顺序使用已选择的 Skill：${workflow.skills.map((skill) => skill.id).join(" → ")}。`
+        : "使用 Codex Plan 模式讨论并输出方案；用户确认方案并退出 Plan 模式后，才保存 Spec 和发布 tickets。",
+      workflowNotice(workflow),
       `保存 Spec 与发布 tickets 时使用 manage-panel 中的 Jira planning 命令，Jira 标识固定为 ${jiraTask.id}。发布前必须让用户确认拆分结果，并确认每个 ticket 都选择了已关联仓库。`,
     ].join("\n");
-  }
-
-  async function jiraPlanningSkills(projectId) {
-    const catalog = await aiChat.getCatalog(projectId);
-    const skillsById = new Map(catalog.skills.map((skill) => [skill.id, skill]));
-    const missing = jiraPlanningSkillIds.filter((skillId) => !skillsById.has(skillId));
-    if (missing.length > 0) {
-      throw new ApiError(
-        409,
-        "JIRA_PLANNING_SKILL_UNAVAILABLE",
-        `Jira planning Skills are unavailable: ${missing.join(", ")}`,
-      );
-    }
-    return jiraPlanningSkillIds.map((skillId) => {
-      const skill = skillsById.get(skillId);
-      return { id: skill.id, label: skill.label, path: skill.path };
-    });
   }
 
   function resolveJiraPlanningProjectId(context, selectedProjectId) {
@@ -2502,9 +2489,9 @@ export function createPanelServer(options = {}) {
         "This Jira issue already uses the simple execution flow",
       );
     }
-    const projectId = context.projects[0]?.id ?? DEFAULT_PROJECT_ID;
-    const skills = await jiraPlanningSkills(projectId);
     if (!threadId) {
+      const projectId = resolveJiraPlanningProjectId(context, selectedProjectId);
+      const workflow = await resolveWorkflow(database, aiChat, projectId, "planning");
       return {
         context,
         composerText: jiraPlanningPrompt(
@@ -2512,8 +2499,10 @@ export function createPanelServer(options = {}) {
           context.projects,
           Boolean(context.plan),
           context.plan,
+          workflow,
         ),
-        skills,
+        skills: workflow.skills,
+        collaborationMode: workflow.mode === "default" ? "plan" : "default",
       };
     }
 
@@ -2560,12 +2549,14 @@ export function createPanelServer(options = {}) {
     return context;
   }
 
-  async function prepareJiraReplan(jiraTaskId, version) {
+  async function prepareJiraReplan(jiraTaskId, version, selectedProjectId) {
     const context = jiraReplanContext(jiraTaskId, version);
+    const workflow = await resolveWorkflow(database, aiChat, resolveJiraPlanningProjectId(context, selectedProjectId), "planning");
     return {
       context,
-      composerText: jiraPlanningPrompt(context.jira, context.projects, true, context.plan),
-      skills: await jiraPlanningSkills(context.projects[0]?.id ?? DEFAULT_PROJECT_ID),
+      composerText: jiraPlanningPrompt(context.jira, context.projects, true, context.plan, workflow),
+      skills: workflow.skills,
+      collaborationMode: workflow.mode === "default" ? "plan" : "default",
     };
   }
 
@@ -2842,7 +2833,7 @@ export function createPanelServer(options = {}) {
   }
 
   function runJiraReplan(jiraTaskId, version, threadId, projectId) {
-    if (!threadId) return prepareJiraReplan(jiraTaskId, version);
+    if (!threadId) return prepareJiraReplan(jiraTaskId, version, projectId);
     return runJiraReopenAction(
       jiraTaskId,
       version,
@@ -3382,6 +3373,40 @@ export function createPanelServer(options = {}) {
           }
         }
         return methodNotAllowed(response, ["GET", "PUT"]);
+      }
+
+      if (pathname === "/api/local/workflow-settings") {
+        assertNoQuery(url.searchParams, "Workflow settings routes");
+        if (request.method === "GET") {
+          return sendJson(response, 200, { settings: database.getWorkflowSettings() });
+        }
+        if (request.method === "PUT") {
+          const body = await readJson(request);
+          assertPlainObject(body);
+          assertAllowedKeys(body, new Set(WORKFLOW_STAGES));
+          for (const stage of WORKFLOW_STAGES) {
+            if (!Array.isArray(body[stage]) || body[stage].length > 20
+              || body[stage].some((id) => typeof id !== "string" || id.length > 256 || !/^[a-z0-9_-]+(?::[a-z0-9_-]+)?$/i.test(id))
+              || new Set(body[stage]).size !== body[stage].length
+              || body[stage].some((id) => ["manage-panel", "handoff-panel"].includes(id))) {
+              throw new ApiError(400, "INVALID_FIELD", `'${stage}' must contain up to 20 unique workflow Skill IDs`);
+            }
+          }
+          if (new Set([...body.execution, ...body.review]).size > 20) {
+            throw new ApiError(400, "INVALID_FIELD", "Execution and review together support up to 20 unique Skills");
+          }
+          return sendJson(response, 200, { settings: database.saveWorkflowSettings(body) });
+        }
+        return methodNotAllowed(response, ["GET", "PUT"]);
+      }
+
+      if (pathname === "/api/local/workflow") {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        assertAllowedQuery(url.searchParams, new Set(["stage", "projectId"]), "Workflow resolution");
+        const stage = url.searchParams.get("stage");
+        if (!WORKFLOW_STAGES.includes(stage)) throw new ApiError(400, "INVALID_FIELD", "Unknown workflow stage");
+        const projectId = validateProjectId(url.searchParams.get("projectId") ?? DEFAULT_PROJECT_ID);
+        return sendJson(response, 200, await resolveWorkflow(database, aiChat, projectId, stage));
       }
 
       if (pathname === "/api/local/jira-settings") {

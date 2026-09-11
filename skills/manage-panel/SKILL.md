@@ -58,8 +58,8 @@ For version conflicts outside the initial claim, read the issue again, reconcile
 When the conversation was opened from a Jira issue and the initial instruction provides its exact Jira task ID:
 
 1. Treat Jira as the requirement and the generated Panel Issues as repository-owned execution work. Do not edit repository code in the planning conversation.
-2. After `to-spec`, save the Spec as the Jira planning artifact with `jira planning save`; do not create a Panel Issue for the Spec.
-3. After `to-tickets` and explicit user approval of the breakdown, publish one manifest with `jira planning publish`; do not create the tickets one by one.
+2. After the Spec is approved, save it as the Jira planning artifact with `jira planning save`; do not create a Panel Issue for the Spec. Follow the planning Skills selected in Panel global workflow settings, or Codex Plan when none are selected. Native Plan mode is read-only: wait until the user approves the plan and exits Plan mode before saving or publishing.
+3. After explicit user approval of the ticket breakdown, publish one manifest with `jira planning publish`; do not create the tickets one by one. Personal `to-spec` or `to-tickets` Skills are optional.
 4. Read `jira planning get` immediately before each planning save or publish and pass the returned `plan.version` with `--if-version`.
 5. Every ticket must target a repository already linked to the Jira issue. If the user explicitly names the missing repository in this conversation, link it with `jira repositories set` before saving or publishing; otherwise stop and ask the user to select one. Published tickets start in `backlog`; dependency keys become blocking relations, including across linked repositories.
 6. If Jira content or linked repositories changed, stop publication and continue the planning conversation so the user can review the updated plan.

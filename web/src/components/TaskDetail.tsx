@@ -167,6 +167,7 @@ interface TaskDetailProps {
       text: string;
       skills: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
       replanLifecycleVersion?: number;
+      collaborationMode?: "plan" | "default";
     },
   ) => Promise<void>;
   onExecutionStarted: (taskId: string) => void;
@@ -971,7 +972,7 @@ export function TaskDetail({
         setJiraContext(latest);
         return;
       }
-      const result = await startJiraPlanning(latest.jira);
+      const result = await startJiraPlanning(latest.jira, undefined, projectId);
       const { context } = result;
       setJiraContext(context);
       if (context.jira) setCurrentTask(context.jira);
@@ -979,6 +980,7 @@ export function TaskDetail({
         await onOpenJiraPlanning(context.jira, projectId, {
           text: result.composerText,
           skills: result.skills,
+          collaborationMode: result.collaborationMode,
         });
       }
     } catch (error) {
@@ -1007,7 +1009,7 @@ export function TaskDetail({
     setJiraPlanningProjectAction(null);
     onError(null);
     try {
-      const result = await resolveJiraLifecycle(jiraContext.jira.id, lifecycle.version, "replan");
+      const result = await resolveJiraLifecycle(jiraContext.jira.id, lifecycle.version, "replan", undefined, projectId);
       setJiraContext(result.context);
       if (result.context.jira) setCurrentTask(result.context.jira);
       if (result.composerText && result.skills && result.context.jira) {
@@ -1015,6 +1017,7 @@ export function TaskDetail({
           text: result.composerText,
           skills: result.skills,
           replanLifecycleVersion: lifecycle.version,
+          collaborationMode: result.collaborationMode,
         });
       }
     } catch (error) {

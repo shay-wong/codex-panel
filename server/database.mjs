@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { defaultWorkflowSettings } from "./workflow-settings.mjs";
 
 import {
   DEFAULT_LABEL_NAMES,
@@ -808,6 +809,11 @@ export class PanelDatabase {
 
       CREATE INDEX IF NOT EXISTS ai_chat_events_thread_created
         ON ai_chat_events(thread_id, created_at, id);
+
+      CREATE TABLE IF NOT EXISTS workflow_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        settings TEXT NOT NULL
+      );
 
       CREATE TABLE IF NOT EXISTS automation_settings (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -1983,6 +1989,19 @@ export class PanelDatabase {
         ? { code: row.error_code ?? "JIRA_SYNC_FAILED", message: row.error_message }
         : null,
     };
+  }
+
+  getWorkflowSettings() {
+    const row = this.database.prepare("SELECT settings FROM workflow_settings WHERE id = 1").get();
+    return row ? JSON.parse(row.settings) : defaultWorkflowSettings();
+  }
+
+  saveWorkflowSettings(settings) {
+    this.database.prepare(`
+      INSERT INTO workflow_settings (id, settings) VALUES (1, ?)
+      ON CONFLICT(id) DO UPDATE SET settings = excluded.settings
+    `).run(JSON.stringify(settings));
+    return this.getWorkflowSettings();
   }
 
   getJiraSettings() {

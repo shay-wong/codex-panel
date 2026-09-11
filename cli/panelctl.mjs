@@ -30,6 +30,7 @@ const BOOLEAN_OPTIONS = new Set(["json", "clear-binding-thread", "help"]);
 const GLOBAL_OPTIONS = new Set(["runtime-file"]);
 
 const COMMAND_OPTIONS = new Map([
+  ["workflow get", new Set(["project", "json"])],
   ["project list", new Set(["json"])],
   ["project create", new Set(["id", "name", "issue-key", "workspace-path", "json"])],
   ["project map", new Set(["workspace-path", "json"])],
@@ -126,6 +127,7 @@ const HELP_TEXT = new Map([
   ["", `Usage: panelctl RESOURCE ACTION [options]
 
 Commands:
+  workflow get planning|execution|review|handoff [--project PROJECT_ID] [--json]
   context current [--cwd PATH] [--json]
   project list
   project create --name NAME [--id ID] [--issue-key KEY] [--workspace-path PATH]
@@ -333,7 +335,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map/readme, conversation bind, cloud login/status/logout, issue list/get/create/update/move/archive/restore/tree/relation, jira repositories/planning, comment list/add/update/delete, attachment list/download/upload, context current",
+      "Expected one of: workflow get, project list/create/map/readme, conversation bind, cloud login/status/logout, issue list/get/create/update/move/archive/restore/tree/relation, jira repositories/planning, comment list/add/update/delete, attachment list/download/upload, context current",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -342,7 +344,7 @@ async function execute(parsed, overrides) {
   const env = parsed.options["runtime-file"] === undefined
     ? processEnv
     : { ...processEnv, CODEX_PANEL_RUNTIME_FILE: parsed.options["runtime-file"] };
-  const usesCompanionControl = command.startsWith("cloud ") || command === "project map";
+  const usesCompanionControl = command.startsWith("cloud ") || command === "project map" || command === "workflow get";
   const hasCompanionUrl = env.CODEX_PANEL_COMPANION_URL !== undefined
     || env.CODEX_TASKBOARD_COMPANION_URL !== undefined;
   const target = usesCompanionControl || hasCompanionUrl
@@ -350,6 +352,12 @@ async function execute(parsed, overrides) {
     : await resolvePanelBaseUrl(env, overrides);
   const api = createApiClient(overrides, target);
   switch (command) {
+    case "workflow get": {
+      expectOperandCount(parsed, 1);
+      const query = new URLSearchParams({ stage: parsed.operands[0] });
+      if (parsed.options.project) query.set("projectId", parsed.options.project);
+      return api.request("GET", `/api/local/workflow?${query}`);
+    }
     case "project list":
       expectOperandCount(parsed, 0);
       return api.request("GET", "/api/projects");

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { ApiError } from "./database.mjs";
+import { resolveWorkflow, workflowNotice } from "./workflow-settings.mjs";
 
 const CODEX_AGENT_ACTOR = {
   type: "agent",
@@ -24,13 +25,20 @@ function isTransientError(error) {
     .test(errorText(error));
 }
 
-function executionPrompt(task, executionIdentifier = task.identifier, peers = [], reuse = false) {
+function executionPrompt(task, executionIdentifier = task.identifier, peers = [], reuse = false, execution, review) {
   const branchInstruction = executionIdentifier === task.identifier
     ? `创建分支时使用任务标识 ${executionIdentifier}。`
     : `创建分支时使用 Jira 标识 ${executionIdentifier}，不要使用 Panel Issue 标识 ${task.identifier}。`;
   return [
-    "\uFFFC",
     `自动执行 ${executionIdentifier} 对应的 Panel 议题 ${task.identifier}：${task.title}`,
+    execution.skills.length
+      ? `实施阶段按顺序使用：${execution.skills.map((skill) => skill.id).join(" → ")}。`
+      : "使用 Codex 默认开发流程，读取项目约定、实现需求并运行相关验证。",
+    workflowNotice(execution),
+    review.skills.length
+      ? `审核阶段按顺序使用：${review.skills.map((skill) => skill.id).join(" → ")}。审核流程以此配置为准。`
+      : "验证后、提交前运行官方 Codex 审核命令 codex review --uncommitted，读取结果并修复实际问题；若改动已提交则使用 codex review --base <本次开发起点的提交SHA> 覆盖本次全部改动。不要把自行总结当成已执行官方审核。",
+    workflowNotice(review),
     branchInstruction,
     ...(peers.length > 1 ? [
       `同一 Jira、同一仓库的执行议题：${peers.map((peer) => `${peer.identifier}（${peer.status}）`).join('、')}。共用当前执行对话、分支和工作树，按依赖顺序逐项处理；每张议题独立绑定、记录进度和审核结果。本轮只处理 ${task.identifier}，后续议题由队列继续派发；不要执行尚未授权的 backlog 议题。`,
@@ -211,11 +219,9 @@ export class ClaimQueueService {
           codexProjectId: owner.threadBinding.codexProjectId,
           useWorktree: false,
         } : await this.prepareExecution(next.task);
-        const catalog = await this.aiChat.getCatalog(next.task.projectId);
-        const implement = catalog.skills.find((skill) => skill.id === "implement");
-        if (!implement) {
-          throw new ApiError(409, "IMPLEMENT_SKILL_UNAVAILABLE", "The implement Skill is unavailable");
-        }
+        const execution = await resolveWorkflow(this.database, this.aiChat, next.task.projectId, "execution");
+        const review = await resolveWorkflow(this.database, this.aiChat, next.task.projectId, "review");
+        const skills = [...new Map([...execution.skills, ...review.skills].map((skill) => [skill.id, skill])).values()];
         const jira = this.database.getJiraContext(next.task.id).jira;
         const executionIdentifier = jira?.externalKey ?? next.task.identifier;
         reservation.workspacePath = prepared.workspacePath;
@@ -226,7 +232,8 @@ export class ClaimQueueService {
           identifier: executionIdentifier,
           panelIdentifier: next.task.identifier,
           title: `${executionIdentifier} · ${next.task.title}`,
-          instruction: executionPrompt(next.task, executionIdentifier, peers, Boolean(owner)),
+          instruction: executionPrompt(next.task, executionIdentifier, peers, Boolean(owner), execution, review),
+          collaborationMode: "default",
           workspacePath: prepared.workspacePath,
           workspaceLabel: prepared.workspaceLabel,
           projectName: prepared.projectName,
@@ -237,7 +244,7 @@ export class ClaimQueueService {
           useWorktree: prepared.useWorktree !== false,
           skillReferences: [
             { name: "manage-panel", displayName: "Manage Panel", path: this.managePanelSkillPath },
-            { name: implement.id, displayName: implement.label, path: implement.path },
+            ...skills.map((skill) => ({ name: skill.id, displayName: skill.label, path: skill.path })),
           ],
         };
       } catch (error) {
@@ -480,9 +487,12 @@ export class ClaimQueueService {
       task = this.#moveTask(task, "in_progress");
       claim = this.database.setClaimThread(task.id, thread.id);
       attempt = this.database.createClaimAttempt({ taskId: task.id, threadId: thread.id });
+      const execution = await resolveWorkflow(this.database, this.aiChat, task.projectId, "execution");
+      const review = await resolveWorkflow(this.database, this.aiChat, task.projectId, "review");
+      const skillIds = [...new Set([...execution.skills, ...review.skills].map((skill) => skill.id))];
       const run = await this.aiChat.startTurn(thread.id, {
-        message: executionPrompt(task),
-        skillIds: ["implement"],
+        message: [...skillIds.map(() => "\uFFFC"), executionPrompt(task, task.identifier, [], false, execution, review)].join("\n\n"),
+        skillIds,
       });
       this.database.attachClaimAttemptRun(attempt.id, run.id);
       this.activeExecutions.set(task.id, {

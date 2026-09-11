@@ -123,6 +123,13 @@ export interface AiChatSkill {
   scope: "user" | "repo" | "system" | "admin";
 }
 
+export interface WorkflowSettings {
+  planning: string[];
+  execution: string[];
+  review: string[];
+  handoff: string[];
+}
+
 export interface AiChatAttachmentInput {
   filename: string;
   contentType: string;

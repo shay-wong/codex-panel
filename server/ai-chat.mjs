@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { signalProcessTree } from "../shared/process-tree.mjs";
 import { ApiError } from "./database.mjs";
+import { resolveWorkflow, workflowNotice } from "./workflow-settings.mjs";
 import { resolveCodexPermissions } from "../shared/codex-permissions.mjs";
 import {
   ComposerCatalog,
@@ -607,7 +608,12 @@ export class AiChatService {
       );
     }
 
-    const skillIds = input.skillIds ?? [];
+    const handoffWorkflow = handoff
+      ? await resolveWorkflow(this.database, this, thread.origin.projectId, "handoff", catalog)
+      : null;
+    const skillIds = handoffWorkflow
+      ? handoffWorkflow.skills.map((skill) => skill.id)
+      : input.skillIds ?? [];
     const availableSkills = new Map(
       catalog.skills
         .filter((skill) => skill.id !== "manage-panel")
@@ -619,9 +625,14 @@ export class AiChatService {
       }
     }
     const selectedSkills = skillIds.map((skillId) => availableSkills.get(skillId));
+    const handoffMessage = handoff ? [
+      ...selectedSkills.map(() => SKILL_MARKER),
+      workflowNotice(handoffWorkflow),
+      handoffPrompt(handoffIssue.identifier, handoff.note),
+    ].join("\n\n") : null;
 
     if (resolved.codexProjectKind === "remote") {
-      return this.#startRemoteTurn(thread, input, resolved, selectedSkills);
+      return this.#startRemoteTurn(thread, input, resolved, selectedSkills, handoffIssue, handoffMessage);
     }
 
     const attachments = input.attachments ?? [];
@@ -635,9 +646,7 @@ export class AiChatService {
       const prompt = buildCodexPrompt(
         thread,
         {
-          message: handoff
-            ? handoffPrompt(handoffIssue.identifier, handoff.note)
-            : input.message,
+          message: handoffMessage ?? input.message,
           skills: selectedSkills,
           attachmentPaths,
         },
@@ -930,6 +939,7 @@ export class AiChatService {
     appServer,
     userInput,
     userEvent,
+    handoffIssue = null,
     temporaryDirectory = null,
   }) {
     const settings = appServerThreadSettings(thread, resolved);
@@ -973,6 +983,8 @@ export class AiChatService {
       appServerThreadId,
       turnId: null,
       interrupted: false,
+      handoffIssue,
+      handoffSummary: "",
       temporaryDirectory,
       resolveCompletion,
     };
@@ -1007,9 +1019,9 @@ export class AiChatService {
     };
   }
 
-  async #startRemoteTurn(thread, input, resolved, selectedSkills) {
+  async #startRemoteTurn(thread, input, resolved, selectedSkills, handoffIssue = null, handoffMessage = null) {
     const userInput = [];
-    const messageParts = input.message.split(SKILL_MARKER);
+    const messageParts = (handoffMessage ?? input.message).split(SKILL_MARKER);
     for (const [index, text] of messageParts.entries()) {
       if (text) userInput.push({ type: "text", text });
       const skill = selectedSkills[index];
@@ -1020,6 +1032,7 @@ export class AiChatService {
     }
     const userEventData = {};
     if (selectedSkills.length > 0) userEventData.skillIds = selectedSkills.map((skill) => skill.id);
+    if (handoffIssue) userEventData.handoff = true;
     if ((input.attachments ?? []).length > 0) {
       userEventData.attachments = input.attachments.map(({ filename, contentType, size }) => ({
         filename,
@@ -1032,6 +1045,7 @@ export class AiChatService {
       resolved,
       appServer: this.#runtimeForTarget(resolved).appServer,
       userInput,
+      handoffIssue,
       userEvent: {
         content: input.message,
         data: Object.keys(userEventData).length > 0 ? userEventData : undefined,
@@ -1210,6 +1224,7 @@ export class AiChatService {
     if (notification.method === "item/completed") {
       const normalized = normalizedAppServerItem(params.item);
       if (!normalized) return;
+      if (active.handoffIssue && normalized.role === "assistant") active.handoffSummary = normalized.content;
       const event = this.database.insertAiChatEvent({
         threadId: active.threadId,
         runId: active.run.id,
@@ -1239,6 +1254,16 @@ export class AiChatService {
     if (status === "interrupted") publicError = "Interrupted";
     if (status === "failed") publicError = cappedError(error) || "Codex turn failed";
     try {
+      if (status === "completed" && active.handoffIssue) {
+        try {
+          const summary = active.handoffSummary.trim();
+          if (!summary) throw new Error("Codex did not return a handoff summary");
+          this.#recordHandoff(active.threadId, active.handoffIssue.id, summary);
+        } catch (cause) {
+          status = "failed";
+          publicError = cappedError(cause);
+        }
+      }
       if (status === "failed") {
         const errorEvent = this.database.insertAiChatEvent({
           threadId: active.threadId,

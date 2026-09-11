@@ -3071,6 +3071,7 @@ export function App() {
       text: string;
       skills: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
       replanLifecycleVersion?: number;
+      collaborationMode?: "plan" | "default";
     },
   ) {
     if (!embedded || window.parent === window) {
@@ -3138,6 +3139,7 @@ export function App() {
           ? "Jira 规划"
           : "Jira 重新规划"}`,
         instruction: composer.text,
+        collaborationMode: composer.collaborationMode,
         skillName: skillReferences[0].name,
         skillDisplayName: skillReferences[0].displayName,
         skillPath: skillReferences[0].path,

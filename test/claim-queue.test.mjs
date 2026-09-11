@@ -173,7 +173,7 @@ test("native claim starts only after Codex returns a complete project binding", 
     const reservation = await queue.reserveNextNativeClaim();
     assert.equal(reservation.taskId, task.id);
     assert.equal(reservation.autoSubmit, true);
-    assert.deepEqual(reservation.skillReferences.map((skill) => skill.name), ["manage-panel", "implement"]);
+    assert.deepEqual(reservation.skillReferences.map((skill) => skill.name), ["manage-panel"]);
     assert.equal(item.database.getClaimQueueItem(task.id).state, "running");
     assert.equal(item.database.getTask(task.id).status, "todo");
 
