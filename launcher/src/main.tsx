@@ -6,15 +6,17 @@ import App from "./App";
 import "./launcher.css";
 
 function Launcher() {
-  const [appearance, setAppearance] = useState<"dark" | "light">(() => (
-    window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
-  ));
+  const [followSystem, setFollowSystem] = useState(() => window.localStorage.getItem("codex-panel.follow-system-appearance") !== "false");
+  const [systemAppearance, setSystemAppearance] = useState<"dark" | "light">(() => window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const changed = () => setAppearance(media.matches ? "dark" : "light");
+    const changed = () => setSystemAppearance(media.matches ? "dark" : "light");
+    const preferenceChanged = (event: Event) => setFollowSystem((event as CustomEvent<boolean>).detail);
     media.addEventListener("change", changed);
-    return () => media.removeEventListener("change", changed);
+    window.addEventListener("codex-panel-appearance-preference", preferenceChanged);
+    return () => { media.removeEventListener("change", changed); window.removeEventListener("codex-panel-appearance-preference", preferenceChanged); };
   }, []);
+  const appearance = followSystem ? systemAppearance : "light";
   return <Theme appearance={appearance} accentColor="gray" grayColor="gray" radius="medium" scaling="95%"><App /></Theme>;
 }
 

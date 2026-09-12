@@ -66,6 +66,8 @@ export function App() {
   const opening = !needsStart && snapshot.openRequestPending && ready;
   const queued = !needsStart && snapshot.openRequestPending && !ready;
 
+  const [followSystemAppearance, setFollowSystemAppearance] = useState(() => window.localStorage.getItem("codex-panel.follow-system-appearance") !== "false");
+
   function acceptState(next: LauncherState) {
     setState(next);
     setSnapshot(next.snapshot);
@@ -217,8 +219,8 @@ export function App() {
                   <Text as="p" id="message" size="2" color="gray" mt="2" aria-live="polite">{snapshot.message}</Text>
               <Flex className="lifecycle-actions" align="center" gap="2" wrap="wrap" mt="4" aria-label="服务控制">
                 <Button id="serviceToggle" variant="soft" {...actionProps(hasProcess ? "stop_service" : "start_service")}><LinearIcon name={hasProcess ? "pause" : "play"} />{hasProcess ? "停止服务" : "启动服务"}</Button>
-                <Button id="restartService" variant="ghost" {...actionProps("reconnect_codex", !hasProcess)}>重启</Button>
-                <Button id="browserPanel" variant="ghost" {...actionProps("open_browser_panel", !hasProcess)}>在浏览器中打开<LinearIcon name="openExternal" /></Button>
+                <Button id="restartService" variant="soft" {...actionProps("reconnect_codex", !hasProcess)}><span className="action-icon" aria-hidden="true">↻</span>重启服务</Button>
+                <Button id="browserPanel" variant="soft" {...actionProps("open_browser_panel", !hasProcess)}><LinearIcon name="openExternal" />在浏览器中打开</Button>
               </Flex>
             </section>
             <div className="status-card-grid" aria-label="组件状态">{componentStates.map(component => <div className={`status-card ${component.tone}`} key={component.id} id={`${component.id}Component`}>
@@ -254,6 +256,8 @@ export function App() {
               <Heading as="h2" size="2" id="displayTitle" mb="2">显示与系统</Heading>
               <div className="preference-rows">
                 <Setting id="hideUsageBanner" title="隐藏额度耗尽提示" detail="收起对话中的额度横幅，不改变实际额度" checked={preferences?.hideUsageBanner ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("hideUsageBanner", enabled)} />
+                <Separator size="4" />
+                <Setting id="followSystemAppearance" title="跟随系统外观" detail="自动适配 macOS 的浅色或深色模式" checked={followSystemAppearance} onChange={enabled => { setFollowSystemAppearance(enabled); window.localStorage.setItem("codex-panel.follow-system-appearance", String(enabled)); window.dispatchEvent(new CustomEvent("codex-panel-appearance-preference", { detail: enabled })); }} />
                 <Separator size="4" />
                 <Setting id="autostart" title="登录时启动" detail="登录电脑后自动运行 Codex Panel" checked={state?.autostart ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("autostart", enabled)} />
               </div>
