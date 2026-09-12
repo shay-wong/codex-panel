@@ -221,10 +221,10 @@ export function App() {
                 <Button id="browserPanel" variant="ghost" {...actionProps("open_browser_panel", !hasProcess)}>在浏览器中打开<LinearIcon name="openExternal" /></Button>
               </Flex>
             </section>
-            <div className="component-list" aria-label="组件状态">{componentStates.map(component => <Flex key={component.id} id={`${component.id}Component`} align="center" justify="between" gap="3">
-              <Text size="2" color="gray">{component.label}</Text>
-              <Flex align="center" gap="2"><span className={`status-dot ${component.tone}`} /><Text id={`${component.id}Status`} size="1">{component.text}</Text></Flex>
-            </Flex>)}</div>
+            <div className="status-card-grid" aria-label="组件状态">{componentStates.map(component => <div className={`status-card ${component.tone}`} key={component.id} id={`${component.id}Component`}>
+              <Flex align="center" justify="between" gap="3"><Text size="1" color="gray">{component.label}</Text><span className={`status-dot ${component.tone}`} /></Flex>
+              <Text id={`${component.id}Status`} as="div" size="2" weight="medium" mt="3">{component.text}</Text>
+            </div>)}</div>
             <Box mt="4">
               <Flex gap="2" wrap="wrap">
                 <Button variant="outline" {...actionProps("open_log")}>运行日志</Button>
