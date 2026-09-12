@@ -1009,6 +1009,7 @@ test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized
         description: "Write a temporary handoff",
         path: "/fixture/handoff/SKILL.md",
         scope: "user",
+        canonicalPath: "/fixture/handoff/SKILL.md",
       },
       {
         id: "real-skill",
@@ -1016,6 +1017,7 @@ test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized
         description: "Real fixture skill",
         path: "/fixture/real-skill/SKILL.md",
         scope: "repo",
+        canonicalPath: "/fixture/real-skill/SKILL.md",
       },
     ]);
 
