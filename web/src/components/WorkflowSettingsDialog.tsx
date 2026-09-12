@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import {
   Box, Button, Checkbox, Flex, Heading, IconButton, Popover,
-  ScrollArea, Separator, Text, TextField, Theme,
+  ScrollArea, Separator, Text, TextArea, TextField, Theme,
 } from "@radix-ui/themes";
 import "@radix-ui/themes/styles.css";
 
 import { getAiChatCatalog, getWorkflowSettings, saveWorkflowSettings } from "../api";
 import { useTaskboardI18n } from "../i18n";
-import type { AiChatSkill, WorkflowSettings } from "../types";
+import type { AiChatSkill, WorkflowSettings, WorkflowStage } from "../types";
+import promptDefaults from "../../../shared/workflow-prompts.json";
 import { LinearIcon } from "./LinearIcon";
 
 export function WorkflowSettingsDialog({ projectId, onClose }: {
@@ -22,9 +23,9 @@ export function WorkflowSettingsDialog({ projectId, onClose }: {
   const [catalogError, setCatalogError] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [openStage, setOpenStage] = useState<keyof WorkflowSettings | null>(null);
+  const [openStage, setOpenStage] = useState<WorkflowStage | null>(null);
   const [search, setSearch] = useState("");
-  const stages: Array<{ id: keyof WorkflowSettings; label: string; defaultLabel: string }> = [
+  const stages: Array<{ id: WorkflowStage; label: string; defaultLabel: string }> = [
     { id: "planning", label: text("AI 规划", "AI planning"), defaultLabel: text("Codex Plan 模式", "Codex Plan mode") },
     { id: "execution", label: text("任务执行", "Task execution"), defaultLabel: text("Codex 默认执行", "Codex default execution") },
     { id: "review", label: text("代码审核", "Code review"), defaultLabel: "Codex Review" },
@@ -63,7 +64,7 @@ export function WorkflowSettingsDialog({ projectId, onClose }: {
         if (!existing || (!existing.id.includes(":") && skill.id.includes(":"))) byPath.set(key, skill);
       }
       const ids = new Map(candidates.map((skill) => [skill.id, byPath.get(skill.canonicalPath || skill.path || skill.id)!.id]));
-      for (const stage of Object.keys(saved) as Array<keyof WorkflowSettings>) {
+      for (const stage of ["planning", "execution", "review", "handoff"] as const) {
         saved[stage] = [...new Set(saved[stage].map((id) => ids.get(id) ?? id))];
       }
       setSkills([...byPath.values()]);
@@ -76,8 +77,12 @@ export function WorkflowSettingsDialog({ projectId, onClose }: {
     return () => controller.abort();
   }, [projectId]);
 
-  function updateStage(stage: keyof WorkflowSettings, ids: string[]) {
+  function updateStage(stage: WorkflowStage, ids: string[]) {
     setSettings((current) => current && { ...current, [stage]: ids });
+  }
+
+  function updatePrompt(stage: WorkflowStage, prompt: string) {
+    setSettings((current) => current && { ...current, prompts: { ...current.prompts, [stage]: prompt } });
   }
 
   async function save() {
@@ -113,7 +118,7 @@ export function WorkflowSettingsDialog({ projectId, onClose }: {
             </IconButton>
           </Flex>
           <Text as="p" size="1" color="gray">{text("所有项目共用，仅对新发起的操作生效。", "Shared by all projects. Applies to new actions only.")}</Text>
-          <Text as="p" size="1" color="gray" mt="1">{text("未选择 Skill 时使用默认流程；多个 Skill 按顺序执行。", "Leave a stage empty to use its default. Selected Skills run in order.")}</Text>
+          <Text as="p" size="1" color="gray" mt="1">{text("编辑完整流程模板，并选择、排序需要的 Skill。任务信息与 Panel 固定规则单独附带。", "Edit complete workflow templates and choose ordered Skills. Task context and fixed Panel rules are attached separately.")}</Text>
         </Box>
         <ScrollArea type="auto" scrollbars="vertical" style={{ flex: 1, minHeight: 0 }}>
           <Box px="5" pb="3">
@@ -186,6 +191,22 @@ export function WorkflowSettingsDialog({ projectId, onClose }: {
                         </ol>
                       </Box>
                     )}
+                    <Box mt="3">
+                      <Flex align="center" justify="between" mb="2">
+                        <Text as="label" htmlFor={`prompt-${stage.id}`} size="2" weight="medium">{text("流程模板", "Workflow template")}</Text>
+                        <Button type="button" variant="ghost" size="1" disabled={saving} onClick={() => updatePrompt(stage.id, promptDefaults[stage.id].prompt)}>{text("恢复默认提示词", "Reset prompt")}</Button>
+                      </Flex>
+                      <TextArea id={`prompt-${stage.id}`} aria-label={text(`${stage.label}提示词`, `${stage.label} prompt`)} value={settings.prompts?.[stage.id] ?? promptDefaults[stage.id].prompt} onChange={(event) => updatePrompt(stage.id, event.target.value)} disabled={saving} rows={12} maxLength={4000} style={{ resize: "vertical", minHeight: 280, lineHeight: 1.7 }} />
+                      <Text as="p" size="1" color="gray" mt="2">{text("可修改步骤与输出格式；留空使用默认模板。", "Edit steps and output format; leave blank for the default template.")}</Text>
+                      <Text as="p" size="1" color="gray" mt="2">{text("{{skill_instructions}} 自动填入所选 Skill 的调用顺序；未选 Skill 时填入：", "{{skill_instructions}} inserts the selected Skill order; without Skills it inserts: ")}{promptDefaults[stage.id].defaultMethod}</Text>
+                      <Box mt="3">
+                        <details>
+                          <summary style={{ cursor: "pointer", fontSize: 12 }}>{text("Panel 自动附带内容（不可编辑）", "Automatically attached by Panel (read-only)")}</summary>
+                          <Text as="p" size="1" color="gray" mt="2">{promptDefaults[stage.id].context}</Text>
+                          <Text as="p" size="1" color="gray" mt="2">{promptDefaults[stage.id].rules}</Text>
+                        </details>
+                      </Box>
+                    </Box>
                     {selected.length >= 20 && <Text as="p" size="1" color="gray" mt="2" role="status">{text("每个阶段最多选择 20 个 Skill。", "Each stage supports up to 20 Skills.")}</Text>}
                   </Box>
                 </section>

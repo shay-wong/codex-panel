@@ -31,22 +31,16 @@ function executionPrompt(task, executionIdentifier = task.identifier, peers = []
     : `创建分支时使用 Jira 标识 ${executionIdentifier}，不要使用 Panel Issue 标识 ${task.identifier}。`;
   return [
     `自动执行 ${executionIdentifier} 对应的 Panel 议题 ${task.identifier}：${task.title}`,
-    execution.skills.length
-      ? `实施阶段按顺序使用：${execution.skills.map((skill) => skill.id).join(" → ")}。`
-      : "使用 Codex 默认开发流程，读取项目约定、实现需求并运行相关验证。",
     workflowNotice(execution),
-    review.skills.length
-      ? `审核阶段按顺序使用：${review.skills.map((skill) => skill.id).join(" → ")}。审核流程以此配置为准。`
-      : "验证后、提交前运行官方 Codex 审核命令 codex review --uncommitted，读取结果并修复实际问题；若改动已提交则使用 codex review --base <本次开发起点的提交SHA> 覆盖本次全部改动。不要把自行总结当成已执行官方审核。",
+    `实施阶段提示词：\n${execution.prompt}`,
     workflowNotice(review),
+    `审核阶段提示词：\n${review.prompt}`,
+    `Panel 固定规则：\n${execution.rules}\n${review.rules}`,
     branchInstruction,
     ...(peers.length > 1 ? [
       `同一 Jira、同一仓库的执行议题：${peers.map((peer) => `${peer.identifier}（${peer.status}）`).join('、')}。共用当前执行对话、分支和工作树，按依赖顺序逐项处理；每张议题独立绑定、记录进度和审核结果。本轮只处理 ${task.identifier}，后续议题由队列继续派发；不要执行尚未授权的 backlog 议题。`,
     ] : []),
     ...(reuse ? ['继续使用当前会话已有的分支和工作树，不要重新创建分支、工作树或执行对话。'] : []),
-    "开始前读取该议题的最新描述和全部评论，并严格按当前内容实施。不要创建第二个执行对话。",
-    "完成实现、验证和本地代码审核后，在议题中记录关键改动、验证结果和剩余限制，并移动到 in_review。",
-    "如果必须等待用户输入，在议题中提出明确问题并移动到 blocked；如果实施或测试确认失败，也记录原因并移动到 blocked。",
   ].join("\n\n");
 }
 

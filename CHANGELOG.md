@@ -4,6 +4,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Added complete editable workflow templates alongside Skills, with automatic Skill instructions, per-stage reset, and visible fixed Panel rules for planning, execution, review, and handoff.
+
 - Deduplicate workflow Skill choices pointing to the same file, preferring namespaced IDs and retaining existing selections.
 
 - Fixed hidden exhausted-usage banners flashing when switching conversations by hiding them before deferred page refreshes.

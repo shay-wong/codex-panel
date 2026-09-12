@@ -124,11 +124,13 @@ export interface AiChatSkill {
   scope: "user" | "repo" | "system" | "admin";
 }
 
+export type WorkflowStage = "planning" | "execution" | "review" | "handoff";
 export interface WorkflowSettings {
   planning: string[];
   execution: string[];
   review: string[];
   handoff: string[];
+  prompts?: Partial<Record<WorkflowStage, string>>;
 }
 
 export interface AiChatAttachmentInput {

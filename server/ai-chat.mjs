@@ -82,13 +82,12 @@ function parseHandoffCommand(message) {
   return extractHandoffOptions(match[1] ?? "");
 }
 
-function handoffPrompt(issueIdentifier, note) {
+function handoffPrompt(issueIdentifier, note, workflow) {
   return [
     `Create a durable handoff summary for issue ${issueIdentifier} from this conversation.`,
-    "Return only concise Markdown for the next Codex task. Do not use tools, modify files, or update the issue yourself.",
-    "Include confirmed goals and scope, decisions and constraints, concrete implementation context discussed, remaining questions or risks, and the recommended next action.",
-    "Preserve exact identifiers, file paths, commands, and acceptance details only when they appeared in the conversation. Do not invent missing facts.",
-    "Write in the language primarily used by the user in this conversation.",
+    workflow.prompt,
+    `Panel 固定规则：\n${workflow.rules}`,
+    "当前使用内嵌交接入口，只返回摘要，由 Panel 发布。不要使用工具或修改文件。",
     ...(note ? [`The user asked you to emphasize: ${note}`] : []),
   ].join("\n");
 }
@@ -628,7 +627,7 @@ export class AiChatService {
     const handoffMessage = handoff ? [
       ...selectedSkills.map(() => SKILL_MARKER),
       workflowNotice(handoffWorkflow),
-      handoffPrompt(handoffIssue.identifier, handoff.note),
+      handoffPrompt(handoffIssue.identifier, handoff.note, handoffWorkflow),
     ].join("\n\n") : null;
 
     if (resolved.codexProjectKind === "remote") {

@@ -2401,12 +2401,11 @@ export function createPanelServer(options = {}) {
       "必须保留并纳入新计划约束的已开始成果:",
       preservedWork,
       "",
-      "这是规划会话，不授权修改仓库代码或开始执行 Issue。先澄清需求、分析相关代码与文档，再形成 Spec 和按依赖顺序拆分的 tickets，包含范围、验收条件与目标仓库。",
-      workflow.mode === "custom"
-        ? `按顺序使用已选择的 Skill：${workflow.skills.map((skill) => skill.id).join(" → ")}。`
-        : "使用 Codex Plan 模式讨论并输出方案；用户确认方案并退出 Plan 模式后，才保存 Spec 和发布 tickets。",
+      workflow.prompt,
       workflowNotice(workflow),
-      `保存 Spec 与发布 tickets 时使用 manage-panel 中的 Jira planning 命令，Jira 标识固定为 ${jiraTask.id}。发布前必须让用户确认拆分结果，并确认每个 ticket 都选择了已关联仓库。`,
+      "Panel 固定规则：",
+      workflow.rules,
+      `Jira planning 命令使用的 Jira 标识固定为 ${jiraTask.id}。`,
     ].join("\n");
   }
 
@@ -3383,7 +3382,7 @@ export function createPanelServer(options = {}) {
         if (request.method === "PUT") {
           const body = await readJson(request);
           assertPlainObject(body);
-          assertAllowedKeys(body, new Set(WORKFLOW_STAGES));
+          assertAllowedKeys(body, new Set([...WORKFLOW_STAGES, "prompts"]));
           for (const stage of WORKFLOW_STAGES) {
             if (!Array.isArray(body[stage]) || body[stage].length > 20
               || body[stage].some((id) => typeof id !== "string" || id.length > 256 || !/^[a-z0-9_-]+(?::[a-z0-9_-]+)?$/i.test(id))
@@ -3391,6 +3390,11 @@ export function createPanelServer(options = {}) {
               || body[stage].some((id) => ["manage-panel", "handoff-panel"].includes(id))) {
               throw new ApiError(400, "INVALID_FIELD", `'${stage}' must contain up to 20 unique workflow Skill IDs`);
             }
+          }
+          if (body.prompts !== undefined && (!body.prompts || typeof body.prompts !== "object" || Array.isArray(body.prompts)
+            || Object.keys(body.prompts).some((stage) => !WORKFLOW_STAGES.includes(stage)
+              || typeof body.prompts[stage] !== "string" || body.prompts[stage].length > 4000))) {
+            throw new ApiError(400, "INVALID_FIELD", "'prompts' must contain workflow stage prompt strings");
           }
           if (new Set([...body.execution, ...body.review]).size > 20) {
             throw new ApiError(400, "INVALID_FIELD", "Execution and review together support up to 20 unique Skills");

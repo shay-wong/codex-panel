@@ -6,6 +6,10 @@ This page indexes the user-visible differences maintained by `shay-wong/codex-pa
 
 ## Configurable AI workflows
 
+Each stage includes a complete editable multiline workflow template (up to 4,000 characters) alongside its ordered Skills. A custom template replaces the default steps. **Reset prompt** restores that stage's template without changing its Skills; blank text uses the default. Templates are shared across local projects and apply to new operations, including when Skills are empty or unavailable. Task identity, context, and fixed Panel rules are attached separately; expand **Automatically attached by Panel** to see what is retained.
+
+The placeholder `{{skill_instructions}}` inserts the selected Skill order, or the stage's default method when Skills are empty or unavailable. You can move it within the template or replace it with your own instructions. Selected Skills remain attached to the task even if you remove the placeholder. Only this exact placeholder is substituted; other text stays literal. The default review method below applies when the template retains this placeholder. Fixed rules, including planning authorization, publication confirmation, and Panel state reporting, are not replaced by custom templates.
+
 Search by Skill name or ID, with or without a leading `$` (for example, `$shay-skills:review`).
 Entries pointing to the same file appear once, preferring a namespaced ID. Existing alias selections are mapped to that entry in the editor and persisted when you save.
 
@@ -22,7 +26,7 @@ Select installed Skills in the order they should run. A stage accepts up to 20 S
 
 Existing conversations keep their bindings and context. Saving settings affects new operations, and an upgrade does not infer preferences from installed Skills. To retain the previous custom planning flow, select `grill-with-docs`, `to-spec`, and `to-tickets` in that order; select `implement` for execution if desired. The bundled `manage-panel` and `handoff-panel` integration Skills remain installed independently of these choices. Custom Skills may have their own dependencies or behavior.
 
-Agents can inspect the effective selection with `panelctl workflow get planning --project PROJECT_ID --json` (also `execution`, `review`, or `handoff`); the result includes `skills`, `missing`, and `mode`. The local API exposes `GET/PUT /api/local/workflow-settings` for the four stage arrays and `GET /api/local/workflow?stage=planning&projectId=PROJECT_ID` for resolution.
+Agents can inspect the effective selection with `panelctl workflow get planning --project PROJECT_ID --json` (also `execution`, `review`, or `handoff`); the result includes `skills`, `missing`, `mode`, the resolved `prompt`, and separate fixed `rules`. The local API exposes `GET/PUT /api/local/workflow-settings` for the four stage arrays and optional `prompts` object keyed by stage, and `GET /api/local/workflow?stage=planning&projectId=PROJECT_ID` for resolution.
 
 Native Plan selection still depends on Codex's composer controls, and default review requires an installed Codex CLI with its review command. Configurable Skills remove personal workflow dependencies, not the requirement for Codex or the version coupling of native integration.
 

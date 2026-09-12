@@ -75,6 +75,8 @@ npm run panelctl -- issue create \
 
 ## 配置 AI 工作流
 
+每个阶段都可在 Skill 选择旁编辑完整流程模板，修改步骤与输出格式，也可恢复默认。`{{skill_instructions}}` 自动填入所选 Skill 顺序或该阶段的默认方式。自定义模板替换默认步骤；任务上下文与 Panel 固定规则单独附带，可在编辑器中展开查看。
+
 服务运行时，在 Codex Panel App 的“偏好设置 → 工作流 → 配置工作流”打开内嵌编辑器，分别为 AI 规划、任务执行、代码审核、任务交接选择有顺序的已安装 Skill，所有本地项目共用。阶段留空时分别使用 Codex 原生 Plan、默认 Codex 执行、官方 Codex CLI 审核、Panel 内置交接。任一选中 Skill 在目标项目不可用时，整个阶段使用默认流程并提示缺失项。修改只影响新操作，不改动已有对话。需要沿用原规划流程时，依次选择 `grill-with-docs`、`to-spec`、`to-tickets`；执行阶段可选 `implement`。不会根据本机安装情况自动配置。默认行为与限制见[英文详细说明](docs/fork-capabilities.md#configurable-ai-workflows)。
 
 ## 安装 Codex Skills
