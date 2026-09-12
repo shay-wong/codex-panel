@@ -28,7 +28,12 @@ button, input { font: inherit; }
 .status-symbol.running { background: var(--green-3); color: var(--green-11); }
 .status-symbol.error { background: var(--red-3); color: var(--red-11); }
 .status-symbol svg { width: 20px; height: 20px; }
-.lifecycle-actions { column-gap: 18px; }
+.lifecycle-actions { gap: 10px; }
+.lifecycle-actions .rt-Button { height: 40px; padding-inline: 16px; gap: 8px; border: 1px solid var(--gray-7); border-radius: 9px; background: var(--gray-4); color: var(--gray-12); font-size: 14px; font-weight: 500; }
+.lifecycle-actions .rt-Button:where(:not(:disabled)):hover { background: var(--gray-5); border-color: var(--gray-8); }
+.lifecycle-actions .rt-Button:where(:not(:disabled)):active { background: var(--gray-6); }
+.lifecycle-actions .rt-Button:disabled { background: var(--gray-3); border-color: var(--gray-5); color: var(--gray-8); }
+.lifecycle-actions svg, .lifecycle-actions .action-icon { width: 16px; height: 16px; font-size: 16px; line-height: 1; }
 .refresh-icon { font-size: 22px; line-height: 1; font-family: system-ui, sans-serif; }
 .status-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .status-card { min-height: 92px; padding: 14px; border: 1px solid var(--gray-4); border-radius: 12px; background: var(--gray-2); }
