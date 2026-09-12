@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Badge, Box, Button, Callout, Card, Dialog, Flex, Heading, IconButton, Separator, Switch, Tabs, Text, Tooltip } from "@radix-ui/themes";
+import { Badge, Box, Button, Callout, Card, Flex, Heading, IconButton, Separator, Switch, Tabs, Text, Tooltip } from "@radix-ui/themes";
 import { LinearIcon } from "../../web/src/components/LinearIcon";
 
 export type LauncherSnapshot = {
@@ -180,7 +180,7 @@ export function App() {
   ];
 
   return <div className={`launcher${busy ? " busy" : ""}`}>
-    <Tabs.Root value={view} onValueChange={setView} orientation="vertical" className="launcher-layout">
+    <Tabs.Root value={view} onValueChange={next => { setView(next); setWorkflowUrl(""); }} orientation="vertical" className="launcher-layout">
       <aside className="launcher-sidebar">
         <Flex align="center" gap="2" className="launcher-brand">
           <picture aria-hidden="true"><source srcSet="icon-dark.png" media="(prefers-color-scheme: dark)" /><img className="brand-icon" src="icon-light.png" alt="" /></picture>
@@ -197,11 +197,11 @@ export function App() {
           </Button>
         </div>
       </aside>
-    <main className="launcher-main">
-      <header className="page-heading">
+    <main key={workflowUrl ? "workflow" : view} className={`launcher-main${workflowUrl ? " workflow-page" : ""}`}>
+      {!workflowUrl && <header className="page-heading">
         <Box><Heading as="h2" size="5">{view === "overview" ? "运行概览" : view === "preferences" ? "偏好设置" : "关于"}</Heading><Text as="p" size="1" color="gray" mt="1">{view === "overview" ? "管理本机服务与 Codex 连接" : view === "preferences" ? "所有项目共用的工作流与使用偏好" : "应用信息与版本更新"}</Text></Box>
         {iconAction("refresh", "launcher_ui_state", "刷新状态", <span className="refresh-icon" aria-hidden="true">↻</span>)}
-      </header>
+      </header>}
       {error && <Callout.Root id="errorNotice" color="red" size="1" role="alert" mb="4">
         <Callout.Icon><LinearIcon name="alert" /></Callout.Icon>
         <Callout.Text id="errorText" className="launcher-error">{error}</Callout.Text>
@@ -241,6 +241,7 @@ export function App() {
             ].map(([id, label, value]) => <Box key={id}><Text as="div" size="1" color="gray">{label}</Text><code id={id} title={value}>{value}</code></Box>)}</div></details>
           </Tabs.Content>
           <Tabs.Content value="preferences" id="preferencesView">
+            {workflowUrl ? <iframe ref={workflowFrame} id="workflowFrame" src={workflowUrl} title="全局工作流设置" sandbox="allow-scripts allow-same-origin allow-forms" referrerPolicy="no-referrer" /> : <>
             <section className="preference-section" aria-labelledby="workflowTitle">
               <Card className="workflow-entry"><Flex className="preference-row" align="center" justify="between" gap="3"><Box><Heading as="h3" size="2" id="workflowTitle">全局工作流</Heading><Text as="p" id="workflowDetail" size="1" color="gray" mt="1">{hasProcess ? "选择规划、执行、审核与交接的 Skill" : "启动 Panel 服务后可配置"}</Text></Box><Button id="configureWorkflows" variant="soft" {...actionProps("workflow_settings_url", !hasProcess)}>配置工作流<LinearIcon name="chevronRight" /></Button></Flex></Card>
             </section>
@@ -262,6 +263,7 @@ export function App() {
                 <Setting id="autostart" title="登录时启动" detail="登录电脑后自动运行 Codex Panel" checked={state?.autostart ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("autostart", enabled)} />
               </div>
             </section>
+            </>}
           </Tabs.Content>
           <Tabs.Content value="about" id="aboutView">
             <Flex align="center" gap="4" mb="5">
@@ -280,12 +282,6 @@ export function App() {
           </Tabs.Content>
     </main>
     </Tabs.Root>
-    <Dialog.Root open={Boolean(workflowUrl)} onOpenChange={open => { if (!open) setWorkflowUrl(""); }}>
-      <Dialog.Content className="workflow-dialog" aria-describedby={undefined}>
-        <Dialog.Title className="visually-hidden">全局工作流设置</Dialog.Title>
-        {workflowUrl && <iframe ref={workflowFrame} id="workflowFrame" src={workflowUrl} title="全局工作流设置" sandbox="allow-scripts allow-same-origin allow-forms" referrerPolicy="no-referrer" />}
-      </Dialog.Content>
-    </Dialog.Root>
   </div>;
 }
 

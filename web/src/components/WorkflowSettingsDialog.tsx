@@ -113,9 +113,9 @@ export function WorkflowSettingsDialog({ projectId, onClose }: {
         <Box px="5" pt="4" pb="3">
           <Flex align="center" justify="between" gap="3" mb="2">
             <Heading as="h2" size="3" id="workflow-settings-title">{text("工作流设置", "Workflow settings")}</Heading>
-            <IconButton variant="ghost" size="1" type="button" disabled={saving} onClick={onClose} aria-label={text("关闭", "Close")}>
-              <LinearIcon name="close" />
-            </IconButton>
+            <Button variant="ghost" size="1" type="button" disabled={saving} onClick={onClose}>
+              <LinearIcon name="chevronLeft" />{text("返回偏好设置", "Back to preferences")}
+            </Button>
           </Flex>
           <Text as="p" size="1" color="gray">{text("所有项目共用，仅对新发起的操作生效。", "Shared by all projects. Applies to new actions only.")}</Text>
           <Text as="p" size="1" color="gray" mt="1">{text("编辑完整流程模板，并选择、排序需要的 Skill。任务信息与 Panel 固定规则单独附带。", "Edit complete workflow templates and choose ordered Skills. Task context and fixed Panel rules are attached separately.")}</Text>
