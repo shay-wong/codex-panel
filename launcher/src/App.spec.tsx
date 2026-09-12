@@ -131,6 +131,8 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(screen.getByRole("switch", { name: "登录时启动" }).getAttribute("aria-checked")).toBe("false");
   await click(button("configureWorkflows"));
   expect((screen.getByTitle("全局工作流设置") as HTMLIFrameElement).src).toBe(workflowUrl);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(document.getElementById("preferencesView")?.contains(screen.getByTitle("全局工作流设置"))).toBe(true);
   await advance(300);
   await act(async () => {
     window.dispatchEvent(new MessageEvent("message", {
@@ -140,6 +142,7 @@ it("keeps launcher feedback, live status and global preferences working through 
     }));
   });
   expect(screen.queryByTitle("全局工作流设置")).toBeNull();
+  expect(button("configureWorkflows")).toBeTruthy();
   view.unmount();
   expect(unlisten).toHaveBeenCalledOnce();
 });
