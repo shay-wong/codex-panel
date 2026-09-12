@@ -197,7 +197,7 @@ export function App() {
           </Button>
         </div>
       </aside>
-    <main className={`launcher-main${workflowUrl ? " workflow-page" : ""}`}>
+    <main key={workflowUrl ? "workflow" : view} className={`launcher-main${workflowUrl ? " workflow-page" : ""}`}>
       {!workflowUrl && <header className="page-heading">
         <Box><Heading as="h2" size="5">{view === "overview" ? "运行概览" : view === "preferences" ? "偏好设置" : "关于"}</Heading><Text as="p" size="1" color="gray" mt="1">{view === "overview" ? "管理本机服务与 Codex 连接" : view === "preferences" ? "所有项目共用的工作流与使用偏好" : "应用信息与版本更新"}</Text></Box>
         {iconAction("refresh", "launcher_ui_state", "刷新状态", <span className="refresh-icon" aria-hidden="true">↻</span>)}

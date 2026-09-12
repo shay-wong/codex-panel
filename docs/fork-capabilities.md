@@ -6,7 +6,7 @@ This page indexes the user-visible differences maintained by `shay-wong/codex-pa
 
 ## Configurable AI workflows
 
-Open **Preferences → Configure workflows** in the App to navigate to the workflow page. The sidebar remains available. Save or choose **Back to preferences** to return; leaving without saving discards edits.
+Open **Preferences → Configure workflows** in the App to navigate to the workflow page. The sidebar remains available and stays fixed while the content fades and slides into place; reduced-motion preferences are respected. Save or choose **Back to preferences** to return; leaving without saving discards edits.
 
 Each stage includes a complete editable multiline workflow template (up to 4,000 characters) alongside its ordered Skills. A custom template replaces the default steps. **Reset prompt** restores that stage's template without changing its Skills; blank text uses the default. Templates are shared across local projects and apply to new operations, including when Skills are empty or unavailable. Task identity, context, and fixed Panel rules are attached separately; expand **Automatically attached by Panel** to see what is retained.
 
