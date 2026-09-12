@@ -72,15 +72,15 @@ process.stdout.write(JSON.stringify({
 
 test("handoff-panel remains an explicit wrapper around the installed handoff Skill", () => {
   assert.match(skillSource, /\$handoff-panel --issue ISSUE-ID/);
-  assert.match(skillSource, /~\/\.agents\/skills\/handoff\/SKILL\.md/);
-  assert.match(skillSource, /Follow all of its instructions exactly/);
+  assert.match(skillSource, /panelctl workflow get handoff --project PROJECT_ID --json/);
+  assert.match(skillSource, /Never assume a personal `handoff` Skill is installed/);
+  assert.match(skillSource, /the built-in handoff will be used/);
   assert.match(skillSource, /publisher validates that the target is an existing, non-archived Issue/);
-  assert.match(skillSource, /Reuse the base handoff document verbatim/);
-  assert.match(skillSource, /Never change the behavior or files of the original `\$handoff` Skill/);
-  const baseHandoffIndex = skillSource.indexOf("Read the installed base Skill");
+  assert.match(skillSource, /Reuse the temporary handoff document verbatim/);
+  const workflowIndex = skillSource.indexOf("panelctl workflow get handoff");
   const publishIndex = skillSource.indexOf("publish the document");
-  assert.ok(baseHandoffIndex >= 0);
-  assert.ok(publishIndex > baseHandoffIndex, "Panel publication must follow the base handoff");
+  assert.ok(workflowIndex >= 0);
+  assert.ok(publishIndex > workflowIndex, "Panel publication must follow workflow resolution");
   assert.doesNotMatch(skillSource, /Before creating the handoff, run `panelctl issue get/);
   assert.match(agentMetadata, /allow_implicit_invocation: false/);
   assert.match(installerSource, /handoff-panel/);
