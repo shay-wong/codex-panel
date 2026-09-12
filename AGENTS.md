@@ -12,6 +12,12 @@ The primary objective is to make the requested function work. Focus on the featu
 
 This ordering does not waive higher-priority safety or security requirements. Keep validation that is necessary at real external boundaries, such as user input or external APIs, but do not expand it into hypothetical protection beyond the requested path.
 
+## Checkout selection
+
+- 普通直接开发默认复用当前 checkout，必要时原地创建分支，不自动新建 worktree。
+- 通过 Panel Issue 派发的代码任务按下方交付流程使用独立 worktree；同一任务及其后续调整复用已有 worktree。
+- 仅在并行冲突、独立版本验证或用户明确要求时额外创建 worktree。测试运行时的数据与工作空间隔离，不等于源代码必须使用新 worktree。
+
 ## Development and test isolation
 
 - Every development, preview, demo, test, or mock Panel runtime must use a newly created isolated temporary data directory and disposable workspace. Never reuse production Panel data, databases, configuration, credentials, Codex state, or real project workspaces.
@@ -23,7 +29,7 @@ This ordering does not waive higher-priority safety or security requirements. Ke
 
 # Panel Delivery Workflow
 
-Use this workflow when the user asks to process Panel work.
+仅在用户要求处理 Panel Issue 或通过 Panel 派发任务时使用本流程。直接要求修改本仓库代码或界面，不自动触发此交付流程。
 
 ## 1. Read and claim work
 
@@ -40,7 +46,7 @@ Use this workflow when the user asks to process Panel work.
 - Group closely related issues in one conversation and worktree when they share the same feature chain and this reduces duplicate work or merge conflicts.
 - Run independent work in parallel when the paths do not conflict. Queue conflict-prone work and keep it visible.
 - Research, triage, replies, and other work that does not change code normally do not need a worktree.
-- For code changes, start from verified current `origin/main`, create a feature branch, and use a worktree. Never implement directly on `main`.
+- 本流程新派发的代码任务从已核实的当前 `origin/main` 创建功能分支和独立 worktree，不直接在 `main` 实现。同一任务的后续修改复用已绑定的分支和 worktree，不重复创建。
 - Keep task conversations visible and traceable. Do not pin newly created task conversations. Do not pass this no-pin rule, or restrictions on subagents, into the delegated task prompt unless the user requests it for that task.
 - Every newly dispatched task conversation uses the same model and reasoning level as the coordinating conversation.
 - Bind each claimed issue to the actual conversation, branch, and worktree used for it, and record the grouping decision in the issue.
