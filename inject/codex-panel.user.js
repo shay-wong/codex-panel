@@ -177,6 +177,11 @@
         projectId: pendingThreadAssociation.projectId,
         codexHostId: pendingThreadAssociation.codexHostId,
         workspacePath: pendingThreadAssociation.workspacePath,
+        executionPreparation: pendingThreadAssociation.executionPreparation,
+        useWorktree: pendingThreadAssociation.useWorktree,
+        threadId: pendingThreadAssociation.threadId,
+        previousTurnId: pendingThreadAssociation.previousTurnId,
+        developmentContext: pendingThreadAssociation.developmentContext,
         submitted: pendingThreadAssociation.submitted,
         expiresAt: pendingThreadAssociation.expiresAt,
       }));
@@ -973,7 +978,7 @@
     }
     if (!pending.submitted || pending.confirming) return;
     const threadId = normalizeThreadId(threadIdFromLocation());
-    if (!threadId || pending.existingThreadIds.has(threadId)) return;
+    if (!threadId || (pending.threadId ? threadId !== pending.threadId : pending.existingThreadIds.has(threadId))) return;
     if (
       pending.projectId
         ? !findThreadRowInProject(threadId, pending.projectId)
@@ -981,19 +986,29 @@
     ) return;
     pending.confirming = true;
     try {
-      await requestHost("confirm-task-conversation", {
+      const confirmed = await requestHost("confirm-task-conversation", {
         threadId,
         codexHostId: pending.codexHostId || "local",
         targetRoot: pending.workspacePath,
         identifier: pending.identifier,
         title: pending.title || pending.identifier,
+        ...(pending.executionPreparation ? {
+          executionPreparation: true,
+          codexProjectId: pending.projectId,
+          useWorktree: pending.useWorktree === true,
+          previousTurnId: pending.previousTurnId,
+        } : {}),
       }, TASK_CONVERSATION_REQUEST_TIMEOUT_MS);
       if (pendingThreadAssociation !== pending) return;
       setPendingThreadAssociation(null);
       lastNativeThreadId = threadId;
       postToFrame({
         type: "panel:thread-created",
-        payload: { taskId: pending.taskId, threadId },
+        payload: { taskId: pending.taskId, threadId, ...(pending.executionPreparation ? {
+          executionPreparation: true,
+          threadBinding: confirmed.threadBinding,
+          developmentContext: pending.developmentContext ?? confirmed.developmentContext,
+        } : {}) },
       });
     } catch (error) {
       if (pendingThreadAssociation !== pending) return;
@@ -1275,13 +1290,23 @@
     ));
   }
 
-  async function selectNativeWorktree() {
-    const trigger = Array.from(document.querySelectorAll(
-      '[data-composer-navigation-target="run-location"]',
-    )).find(isInteractiveElement);
+  async function selectNativeWorktree(useWorktree = true) {
+    const labels = useWorktree ? NATIVE_WORKTREE_LABELS : ["local", "本地", "本機"];
+    const destination = useWorktree ? "新建本地工作树" : "本地目录";
+    const readyDeadline = Date.now() + 4_000;
+    let trigger;
+    while (!trigger && Date.now() < readyDeadline) {
+      trigger = Array.from(document.querySelectorAll(
+        '[data-composer-navigation-target="run-location"]',
+      )).find(isInteractiveElement);
+      if (!trigger) await new Promise((resolve) => window.setTimeout(resolve, 40));
+    }
     if (!trigger) throw new Error("Codex 没有显示运行位置选择器");
+    if (labels.includes(normalizedLabel(trigger.textContent))) return;
     trigger.click();
     const deadline = Date.now() + 4_000;
+    let menuOpened = false;
+    let itemSelected = false;
     while (Date.now() < deadline) {
       const expanded = Array.from(document.querySelectorAll(
         '[data-composer-navigation-target="run-location"]',
@@ -1296,24 +1321,28 @@
         await new Promise((resolve) => window.setTimeout(resolve, 40));
         continue;
       }
+      menuOpened = true;
       const item = Array.from(document.querySelectorAll('[role="menuitem"]')).find((candidate) => (
         isInteractiveElement(candidate)
-        && NATIVE_WORKTREE_LABELS.includes(normalizedLabel(candidate.textContent))
+        && labels.includes(normalizedLabel(candidate.textContent))
       ));
       if (!item) {
         await new Promise((resolve) => window.setTimeout(resolve, 40));
         continue;
       }
       item.click();
+      itemSelected = true;
       while (Date.now() < deadline) {
         const selected = Array.from(document.querySelectorAll(
           '[data-composer-navigation-target="run-location"]',
         )).find(isInteractiveElement);
-        if (selected && NATIVE_WORKTREE_LABELS.includes(normalizedLabel(selected.textContent))) return;
+        if (selected && labels.includes(normalizedLabel(selected.textContent))) return;
         await new Promise((resolve) => window.setTimeout(resolve, 40));
       }
     }
-    throw new Error("Codex 没有切换到新建本地工作树");
+    throw new Error(!menuOpened ? "Codex 运行位置菜单未打开"
+      : !itemSelected ? `Codex 运行位置菜单中未找到${destination}`
+        : `Codex 未确认已切换到${destination}`);
   }
 
   async function selectNativeCollaborationMode(mode, composer) {
@@ -1387,6 +1416,33 @@
     pendingThreadCreation = taskId;
     setPendingThreadAssociation(null);
     try {
+      if (!autoSubmit && payload.executionPreparation && payload.threadBinding) {
+        const binding = payload.threadBinding;
+        await openThread(binding);
+        const deadline = Date.now() + 8_000;
+        while (normalizeThreadId(threadIdFromLocation()) !== binding.threadId && Date.now() < deadline) {
+          await new Promise((resolve) => window.setTimeout(resolve, 40));
+        }
+        if (normalizeThreadId(threadIdFromLocation()) !== binding.threadId) {
+          throw new Error("Codex 未打开已绑定的执行对话");
+        }
+        const prepared = await requestHostTaskComposerPrefill({
+          instruction, skills: skillReferences, threadId: binding.threadId,
+        });
+        const composer = await waitForPreparedComposer(identifier, []);
+        await selectNativeCollaborationMode("default", composer);
+        setPendingThreadAssociation({
+          taskId, identifier, title, composer, existingThreadIds: nativeThreadIds(),
+          threadId: binding.threadId, previousTurnId: prepared.previousTurnId,
+          developmentContext: payload.developmentContext,
+          executionPreparation: true, useWorktree: false,
+          projectId: binding.codexProjectId, codexHostId: binding.codexHostId,
+          workspacePath: binding.workspacePath, submitted: false, confirming: false,
+          expiresAt: Date.now() + THREAD_ASSOCIATION_TIMEOUT_MS,
+        });
+        postToFrame({ type: "panel:thread-prepared", payload: { taskId } });
+        return;
+      }
       if (autoSubmit && payload.threadBinding) {
         const binding = payload.threadBinding;
         const started = await requestHost("start-task-conversation", {
@@ -1517,6 +1573,9 @@
         },
       });
       const existingThreadIds = nativeThreadIds();
+      if (autoSubmit || payload.executionPreparation) {
+        await selectNativeWorktree(payload.useWorktree !== false);
+      }
       await requestHostTaskComposerPrefill({
         instruction,
         skillDisplayName,
@@ -1530,7 +1589,6 @@
         ? ""
         : (await selectedNativeProjectId()) || payload.codexProjectId;
       if (autoSubmit) {
-        if (payload?.useWorktree !== false) await selectNativeWorktree();
         const started = await requestHostTaskConversationStart({
           taskId,
           previousThreadId,
@@ -1559,6 +1617,8 @@
         projectId: selectedProjectId,
         codexHostId: "local",
         workspacePath,
+        executionPreparation: payload.executionPreparation === true,
+        useWorktree: payload.useWorktree === true,
         submitted: false,
         confirming: false,
         expiresAt: Date.now() + THREAD_ASSOCIATION_TIMEOUT_MS,
@@ -2050,13 +2110,14 @@
     return requestHost("load-frame", { frameName, frameCapability: capability });
   }
 
-  function requestHostTaskComposerPrefill({ instruction, skillDisplayName, skillName, skillPath, skills }) {
+  function requestHostTaskComposerPrefill({ instruction, skillDisplayName, skillName, skillPath, skills, threadId }) {
     return requestHost("prefill-task-composer", {
       instruction,
       skillDisplayName,
       skillName,
       skillPath,
       skills,
+      ...(threadId ? { threadId } : {}),
     }, COMPOSER_PREFILL_REQUEST_TIMEOUT_MS);
   }
 
@@ -2088,6 +2149,7 @@
     if (
       nativeClaimPollInFlight
       || pendingThreadCreation
+      || (pendingThreadAssociation && Date.now() <= pendingThreadAssociation.expiresAt)
       || !hasLiveHostBinding()
     ) return;
     nativeClaimPollInFlight = true;

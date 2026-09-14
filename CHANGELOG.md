@@ -4,6 +4,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Manual execution now prepares an unsent Codex draft, defaults to the current directory, and offers a new worktree option. Existing execution contexts are reused; only confirmed submission links the issue and starts execution. Automatic claiming still submits automatically. Run-location setup precedes prefill, and dispatch failures no longer claim that an unsent execution stopped.
+
 - Workflow configuration now opens as a page inside Preferences instead of a modal, keeping sidebar navigation available and returning to Preferences after saving. Page changes use a short fade-and-slide transition that respects reduced motion.
 
 - Added complete editable workflow templates alongside Skills, with automatic Skill instructions, per-stage reset, and visible fixed Panel rules for planning, execution, review, and handoff.

@@ -689,6 +689,13 @@ export async function claimTask(taskId: string): Promise<Task> {
   return data.task;
 }
 
+export async function prepareTaskExecution(taskId: string, useWorktree: boolean): Promise<Record<string, unknown>> {
+  return request(`/api/local/tasks/${encodeURIComponent(taskId)}/prepare-execution`, {
+    method: "POST",
+    body: JSON.stringify({ useWorktree }),
+  });
+}
+
 export async function getJiraTaskContext(
   taskId: string,
   signal?: AbortSignal,
@@ -838,10 +845,10 @@ export async function createTask(projectId: string, draft: TaskDraft, threadId?:
   return data.task;
 }
 
-export async function updateTask(task: Task, draft: TaskUpdate, threadId?: string): Promise<Task> {
+export async function updateTask(task: Task, draft: TaskUpdate, threadId?: string, threadBinding?: CodexThreadBinding): Promise<Task> {
   const data = await request<{ task: Task }>(`/api/tasks/${encodeURIComponent(task.id)}`, {
     method: "PATCH",
-    body: JSON.stringify({ version: task.version, ...draft, ...(threadId ? { threadId } : {}) }),
+    body: JSON.stringify({ version: task.version, ...draft, ...(threadId ? { threadId } : {}), ...(threadBinding ? { threadBinding } : {}) }),
   });
   return data.task;
 }

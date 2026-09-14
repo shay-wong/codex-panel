@@ -663,7 +663,7 @@ test("issues open an unsent native Codex composer in the exact workspace with a 
     /if \(autoSubmit\) \{[\s\S]*?requestHostTaskConversationStart\([\s\S]*?bind-native-claim/,
   );
   assert.match(source, /data-composer-navigation-target="run-location"/);
-  assert.match(createThreadSource, /await selectNativeWorktree\(\)/);
+  assert.match(createThreadSource, /await selectNativeWorktree\(payload\.useWorktree !== false\)/);
   assert.match(injectorSource, /nativeDevelopmentContext\([\s\S]*?result\.thread\.cwd/);
   assert.match(injectorSource, /gitValue\(root, \["branch", "--show-current"\]\)/);
   assert.match(
@@ -736,9 +736,83 @@ test("native worktree selection waits for the menu to open", async () => {
       item,
       now: () => { timestamp += 1_000; return timestamp; },
     }),
-    /Codex 没有切换到新建本地工作树/,
+    /Codex 运行位置菜单未打开/,
   );
   assert.equal(itemClicks, 0);
+});
+
+test("execution prepares location before prefill and submits only automatic claims", async () => {
+  for (const mode of ["manual", "automatic", "location-failure"]) {
+    const calls = [];
+    let pending = null;
+    const run = vm.runInNewContext(`(() => {
+      let pendingThreadCreation = null;
+      let lastNativeProjectId = "project";
+      let lastNativeThreadId = "";
+      ${createThreadSource}
+      return createThreadForTask;
+    })()`, {
+      window: { electronBridge: { sendMessageFromView() {} } },
+      normalizeThreadId: (id) => id || "",
+      threadIdFromLocation: () => "",
+      setPendingThreadAssociation: (value) => { pending = value; },
+      resolveNativeProject: async () => ({ projectId: "project", targetRoot: "/disposable/repo" }),
+      ensureProjectRows: async () => {},
+      projectRowById: () => ({ getAttribute: () => "false", querySelector: () => ({ click() {} }) }),
+      waitForNativeProject: async () => "project",
+      closePanel() {}, dispatchHostMessage() {}, nativeThreadIds: () => new Set(),
+      selectNativeWorktree: async (value) => {
+        calls.push(["location", value]);
+        if (mode === "location-failure") throw new Error("menu did not open");
+      },
+      requestHostTaskComposerPrefill: async () => { calls.push(["prefill"]); },
+      waitForPreparedComposer: async () => ({}),
+      selectNativeCollaborationMode: async () => {},
+      selectedNativeProjectId: async () => "project",
+      requestHostTaskConversationStart: async () => { calls.push(["send"]); return { threadBinding: {} }; },
+      requestHost: async (action) => { calls.push([action]); },
+      postToFrame: (message) => { calls.push([message.type]); },
+      THREAD_ASSOCIATION_TIMEOUT_MS: 60_000,
+    });
+    await run({
+      taskId: "task", identifier: "TEST-1", title: "Test", instruction: "Execute TEST-1",
+      workspacePath: "/disposable/repo", codexProjectId: "project",
+      executionPreparation: true, autoSubmit: mode === "automatic", useWorktree: mode !== "manual",
+      reservationId: "reservation",
+      skillReferences: [{ name: "manage-panel", displayName: "Manage Panel", path: "/fake/SKILL.md" }],
+    });
+    assert.deepEqual(calls.map(([action]) => action), mode === "location-failure"
+      ? ["location", "panel:thread-create-error"]
+      : mode === "automatic" ? ["location", "prefill", "send", "bind-native-claim"]
+        : ["location", "prefill", "panel:thread-prepared"]);
+    if (mode === "manual") {
+      assert.equal(calls[0][1], false);
+      assert.equal(pending.submitted, false);
+      assert.equal(pending.executionPreparation, true);
+    }
+  }
+});
+
+test("automatic dispatch leaves a pending manual draft alone", async () => {
+  const start = source.indexOf("async function pollNativeClaim");
+  const end = source.indexOf("\n  function frameMatchesPanelUrl", start);
+  let requests = 0;
+  const poll = vm.runInNewContext(`(() => {
+    let nativeClaimPollInFlight = false;
+    const pendingThreadCreation = null;
+    let pendingThreadAssociation = { expiresAt: Date.now() + 60_000 };
+    ${source.slice(start, end)}
+    return async () => {
+      await pollNativeClaim();
+      pendingThreadAssociation = null;
+      await pollNativeClaim();
+    };
+  })()`, {
+    hasLiveHostBinding: () => true,
+    requestHost: async () => { requests += 1; return {}; },
+  });
+  await poll();
+  assert.equal(requests, 1);
 });
 
 test("local Jira planning resolves the saved Codex project before applying its workspace", () => {
@@ -834,6 +908,39 @@ test("only the prepared composer submit unlocks thread association", () => {
   assert.equal(pending.submitted, false);
   markSubmitted(pending, { type: "keydown", target: editor, key: "Enter", shiftKey: false, isComposing: false });
   assert.equal(pending.submitted, true);
+});
+
+test("manual execution confirms a new user turn before returning its actual binding", async () => {
+  const start = injectorSource.indexOf("async function confirmTaskConversationViaCdp");
+  const end = injectorSource.indexOf("\nasync function startTaskConversationViaCdp", start);
+  let reads = 0;
+  const calls = [];
+  const confirm = vm.runInNewContext(`(${injectorSource.slice(start, end)})`, {
+    setTimeout: (resolve) => resolve(),
+    normalizeWorkspaceRoot: (value) => value,
+    gitValue: () => "feature",
+    requestCodexAppServerViaCdp: async (_cdp, _host, method, payload) => {
+      calls.push([method, payload]);
+      if (method === "thread/read") {
+        reads += 1;
+        return { thread: { id: "existing", cwd: "/disposable/repo", turns: [{
+          id: reads === 1 ? "previous" : "submitted",
+          items: [{ type: "userMessage", content: [{ type: "text", text: "Execute TEST-1" }] }],
+        }] } };
+      }
+      return {};
+    },
+  });
+  const result = await confirm({}, {
+    threadId: "existing", previousTurnId: "previous", identifier: "TEST-1", title: "Execution",
+    targetRoot: "/disposable/repo", codexProjectId: "project", codexHostId: "local",
+    executionPreparation: true, useWorktree: false,
+  });
+  assert.equal(reads, 2);
+  assert.equal(result.threadBinding.workspacePath, "/disposable/repo");
+  assert.equal(result.threadBinding.threadId, "existing");
+  assert.equal(result.developmentContext.branch, "feature");
+  assert.equal(calls.filter(([method]) => method === "thread/name/set").length, 1);
 });
 
 test("a submitted issue draft publishes only after project and host confirmation", async () => {

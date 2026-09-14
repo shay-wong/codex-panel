@@ -30,7 +30,7 @@ function executionPrompt(task, executionIdentifier = task.identifier, peers = []
     ? `创建分支时使用任务标识 ${executionIdentifier}。`
     : `创建分支时使用 Jira 标识 ${executionIdentifier}，不要使用 Panel Issue 标识 ${task.identifier}。`;
   return [
-    `自动执行 ${executionIdentifier} 对应的 Panel 议题 ${task.identifier}：${task.title}`,
+    `执行 ${executionIdentifier} 对应的 Panel 议题 ${task.identifier}：${task.title}`,
     workflowNotice(execution),
     `实施阶段提示词：\n${execution.prompt}`,
     workflowNotice(review),
@@ -115,6 +115,66 @@ export class ClaimQueueService {
     this.onQueueChanged(claim);
     this.#wake();
     return { task: this.database.getTask(task.id), claim };
+  }
+
+  async prepareManualExecution(taskId, useWorktree = false) {
+    const task = this.database.getTask(taskId);
+    if (!task) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${taskId}' does not exist`);
+    this.database.assertIssueExecutionAllowed(taskId);
+    const claim = this.database.getClaimQueueItem(taskId);
+    if (task.archivedAt || task.source !== "local"
+      || !(task.status === "todo" || (task.status === "blocked" && claim?.lastError))
+      || ["queued", "retry_wait", "running"].includes(claim?.state)) {
+      throw new ApiError(409, "CLAIM_TASK_STATUS", "Only waiting issues can prepare execution");
+    }
+    const peers = this.database.jiraExecutionPeers(taskId);
+    if (peers.some((peer) => peer.id !== taskId && (
+      peer.status === "in_progress"
+      || (peer.status === "blocked" && (peer.threadBinding || this.database.getClaimQueueItem(peer.id)))
+      || this.nativeReservations.has(peer.id)
+      || this.database.getClaimQueueItem(peer.id)?.state === "running"
+    ))) {
+      throw new ApiError(409, "CLAIM_THREAD_BUSY", "同一 Jira 的执行对话正在处理其他议题");
+    }
+    if (task.relations.blockedBy.some((dependency) => !["done", "canceled"].includes(dependency.status)
+      && !(dependency.status === "in_review" && peers.some((peer) => peer.id === dependency.id)))) {
+      throw new ApiError(409, "CLAIM_DEPENDENCY_PENDING", "Complete the blocking issues before execution");
+    }
+    const owners = peers.filter((peer) => peer.threadBinding && peer.developmentContext
+      && ["in_review", "done"].includes(peer.status));
+    const prerequisites = owners.filter((peer) => task.relations.blockedBy.some((dependency) => dependency.id === peer.id));
+    const candidates = prerequisites.length ? prerequisites : owners;
+    if (!task.threadBinding && new Set(candidates.map((peer) => JSON.stringify(peer.threadBinding))).size > 1) {
+      throw new ApiError(409, "CLAIM_THREAD_CONFLICT", "同一 Jira 存在多个执行上下文，请先绑定要继续的会话");
+    }
+    const owner = task.threadBinding ? task : candidates[0];
+    const prepared = owner ? {
+      workspacePath: owner.threadBinding.workspacePath,
+      codexProjectId: owner.threadBinding.codexProjectId,
+    } : await this.prepareExecution(task);
+    const execution = await resolveWorkflow(this.database, this.aiChat, task.projectId, "execution");
+    const review = await resolveWorkflow(this.database, this.aiChat, task.projectId, "review");
+    const skills = [...new Map([...execution.skills, ...review.skills].map((skill) => [skill.id, skill])).values()];
+    const identifier = this.database.getJiraContext(taskId).jira?.externalKey ?? task.identifier;
+    return {
+      taskId, identifier, title: `${identifier} · ${task.title}`,
+      instruction: [
+        executionPrompt(task, identifier, [], Boolean(owner), execution, review),
+        "执行位置已由用户在准备阶段选择。使用本次 Codex 任务的实际运行目录；需要分支时在该目录内创建，不要另建 worktree 或执行对话。",
+      ].join("\n\n"),
+      collaborationMode: "default", autoSubmit: false, executionPreparation: true,
+      workspacePath: prepared.workspacePath,
+      projectName: prepared.projectName,
+      codexProjectId: prepared.codexProjectId ?? task.projectId,
+      codexProjectKind: "local", codexHostId: "local",
+      threadBinding: owner?.threadBinding ?? null,
+      developmentContext: owner?.developmentContext ?? task.developmentContext,
+      useWorktree: !owner && !task.developmentContext && useWorktree,
+      skillReferences: [
+        { name: "manage-panel", displayName: "Manage Panel", path: this.managePanelSkillPath },
+        ...skills.map((skill) => ({ name: skill.id, displayName: skill.label, path: skill.path })),
+      ],
+    };
   }
 
   resumeFromUserComment(taskId) {
@@ -553,7 +613,7 @@ export class ClaimQueueService {
       task = this.#moveTask(task, "blocked");
     }
     const comment = this.database.createComment(taskId, {
-      body: `自动执行已停止：${message}`,
+      body: `${attemptId ? "自动执行已停止" : "执行派发失败，未确认开始"}：${message}`,
       actor: CODEX_AGENT_ACTOR,
     });
     this.onCommentCreated({ comment, task: this.database.getTask(taskId) });

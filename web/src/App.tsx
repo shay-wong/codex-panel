@@ -41,6 +41,7 @@ import {
   migrateProjectIssueKey as migrateProjectIssueKeyRequest,
   moveTask as moveTaskRequest,
   publishHostRuntime,
+  prepareTaskExecution,
   removeTaskRelation,
   resolveJiraLifecycle,
   resolvePanelUrl,
@@ -149,6 +150,7 @@ import {
   type CodexThreadBinding,
   type Comment,
   type DevelopmentScan,
+  type DevelopmentContext,
   type HostContext,
   type IssueRelationOrigin,
   type IssueRelationType,
@@ -1509,7 +1511,10 @@ export function App() {
       }
 
       if (message.type === "panel:thread-created" && message.payload) {
-        const payload = message.payload as { taskId?: unknown; threadId?: unknown };
+        const payload = message.payload as {
+          taskId?: unknown; threadId?: unknown; executionPreparation?: boolean;
+          threadBinding?: CodexThreadBinding; developmentContext?: DevelopmentContext | null;
+        };
         if (typeof payload.taskId !== "string" || typeof payload.threadId !== "string") return;
         const taskId = payload.taskId;
         if (pendingRemoteThreadClaimsRef.current.has(payload.taskId)) {
@@ -1524,7 +1529,20 @@ export function App() {
         const cachedTask = tasksRef.current.find((candidate) => candidate.id === taskId);
         if (!threadId || (!jiraPlanning && !cachedTask)) return;
         void (async () => {
-          const task = jiraPlanning ? await getTask(taskId) : cachedTask!;
+          const task = jiraPlanning || payload.executionPreparation ? await getTask(taskId) : cachedTask!;
+          if (payload.executionPreparation) {
+            if (!payload.threadBinding || payload.threadBinding.threadId !== threadId) {
+              throw new Error("Codex 未返回已确认的执行位置");
+            }
+            if (task.threadBinding && task.threadBinding.threadId !== threadId) {
+              throw new Error("议题已绑定到其他对话，请刷新后检查");
+            }
+            return updateTaskRequest(task, {
+              ...taskToDraft(task),
+              status: ["todo", "blocked"].includes(task.status) ? "in_progress" : task.status,
+              developmentContext: task.developmentContext ?? payload.developmentContext ?? null,
+            }, threadId, payload.threadBinding);
+          }
           const alreadyLinked = task.threadBinding?.threadId === threadId
             || task.legacyLocalThreadId === threadId;
           if (!jiraPlanning && alreadyLinked) return task;
@@ -3155,6 +3173,22 @@ export function App() {
     });
   }
 
+  async function prepareExecution(task: Task, useWorktree: boolean) {
+    if (!embedded || window.parent === window) {
+      throw new Error(text("请在 Codex App 中准备执行。", "Prepare execution in the Codex app."));
+    }
+    if (openingThreadTaskId) return;
+    setOpeningThreadTaskId(task.id);
+    setActionError(null);
+    try {
+      const payload = await prepareTaskExecution(task.id, useWorktree);
+      postEmbeddedHostMessage({ type: "panel:create-thread", payload });
+    } catch (error) {
+      setOpeningThreadTaskId(null);
+      throw error;
+    }
+  }
+
   async function openTaskInThread(task: Task) {
     const taskProject = projects.find((project) => project.id === task.projectId);
     const savedRemoteIdentity = projectCodexIdentities[task.projectId]?.codexProjectKind === "remote"
@@ -4008,6 +4042,7 @@ export function App() {
               requestId: (current?.requestId ?? 0) + 1,
             }))}
             onOpenInThread={openTaskInThread}
+            onPrepareExecution={prepareExecution}
             onOpenJiraPlanning={openJiraPlanningInThread}
             onExecutionStarted={(taskId) => setPendingExecutionOpen({
               taskId,

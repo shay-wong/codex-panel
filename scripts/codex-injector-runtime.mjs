@@ -145,6 +145,9 @@ function parseHostRequest(payload, parseAutomationRequest) {
   ) return { id, request, error: null };
   if (
     request.action === "prefill-task-composer"
+    && (request.threadId === undefined || (typeof request.threadId === "string"
+      && request.threadId.length > 0 && request.threadId.length <= 240
+      && !/[\u0000-\u001f\u007f]/.test(request.threadId)))
     && typeof request.instruction === "string"
     && request.instruction.length > 0
     && request.instruction.length <= 16_384
@@ -182,6 +185,16 @@ function parseHostRequest(payload, parseAutomationRequest) {
   }
   if (
     request.action === "confirm-task-conversation"
+    && (request.executionPreparation === undefined || typeof request.executionPreparation === "boolean")
+    && (!request.executionPreparation || (
+      request.codexHostId === "local"
+      && typeof request.useWorktree === "boolean"
+      && typeof request.codexProjectId === "string"
+      && request.codexProjectId.length > 0 && request.codexProjectId.length <= 240
+      && !/[\u0000-\u001f\u007f]/.test(request.codexProjectId)
+      && (request.previousTurnId == null || (typeof request.previousTurnId === "string"
+        && request.previousTurnId.length > 0 && request.previousTurnId.length <= 240))
+    ))
     && typeof request.threadId === "string"
     && request.threadId.length > 0
     && request.threadId.length <= 240

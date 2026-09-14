@@ -13,7 +13,6 @@ import {
   addJiraTaskLink,
   archiveJiraConversations,
   attachmentDownloadUrl,
-  claimTask,
   createComment,
   deleteComment,
   getJiraTaskContext,
@@ -171,6 +170,7 @@ interface TaskDetailProps {
     },
   ) => Promise<void>;
   onExecutionStarted: (taskId: string) => void;
+  onPrepareExecution: (task: Task, useWorktree: boolean) => Promise<void>;
   onCopy: (text: string, announcement: string) => void;
   onEnsureJiraProjects: (projectIds: string[]) => Promise<void>;
   openingThread: boolean;
@@ -517,6 +517,7 @@ export function TaskDetail({
   onOpenInThread,
   onOpenJiraPlanning,
   onExecutionStarted,
+  onPrepareExecution,
   onCopy,
   onEnsureJiraProjects,
   openingThread,
@@ -552,6 +553,7 @@ export function TaskDetail({
   >(null);
   const [jiraArchiveSaving, setJiraArchiveSaving] = useState(false);
   const [claiming, setClaiming] = useState(false);
+  const [executionLocation, setExecutionLocation] = useState("current");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentsError, setAttachmentsError] = useState<TaskDetailError | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -609,6 +611,7 @@ export function TaskDetail({
     if (taskChanged) {
       setEditingDescription(false);
       setChangeStatusToTodo(false);
+      setExecutionLocation("current");
     }
   }, [task]);
 
@@ -1033,9 +1036,7 @@ export function TaskDetail({
     setClaiming(true);
     onError(null);
     try {
-      const claimed = await claimTask(currentTask.id);
-      setCurrentTask(claimed);
-      onExecutionStarted(claimed.id);
+      await onPrepareExecution(currentTask, executionLocation === "worktree");
     } catch (error) {
       onError(messageFor(error));
     } finally {
@@ -1597,7 +1598,7 @@ export function TaskDetail({
     && (currentTask.status === "todo" || (currentTask.status === "blocked" && claimRetryable))
     && !claimActive;
   const claimLabel = claiming
-    ? text("正在加入队列…", "Adding to queue…")
+    ? text("正在准备…", "Preparing…")
     : claimState === "running"
       ? text("自动执行中", "Running automatically")
       : claimState === "queued"
@@ -1611,13 +1612,13 @@ export function TaskDetail({
               : claimState === "blocked"
                 ? claimWaitingForInput
                   ? text("等待你的回复", "Waiting for your reply")
-                  : text("重新执行", "Run again")
+                  : text("重新准备执行", "Prepare again")
                 : claimState === "failed"
                   ? text("自动执行已停止", "Automatic execution stopped")
                   : claimState === "completed"
                     ? text("自动执行已完成", "Automatic execution completed")
                     : currentTask.status === "todo"
-                      ? text("立即执行", "Run now")
+                      ? text("准备执行", "Prepare execution")
                       : text("仅待认领可执行", "Available only while waiting");
   async function openActivityTask(identifier: string) {
     try {
@@ -2263,18 +2264,37 @@ export function TaskDetail({
           <aside className="issue-properties" aria-label={text("议题属性", "Issue properties")}>
             <div className="detail-primary-actions">
               {currentTask.source === "local" && (
-                <button
-                  className="detail-run-action"
-                  type="button"
-                  disabled={!claimEnabled || claiming}
-                  aria-busy={claiming || claimState === "running"}
-                  onClick={() => void executeNow()}
-                >
-                  {claiming || claimState === "running"
-                    ? <span className="ai-chat-spinner" aria-hidden="true" />
-                    : <LinearIcon name={claimState === "completed" ? "check" : "play"} />}
-                  <span>{claimLabel}</span>
-                </button>
+                <>
+                  {claimEnabled && !currentTask.threadBinding && !currentTask.developmentContext && (
+                    <select
+                      className="detail-execution-location"
+                      aria-label={text("执行位置", "Execution location")}
+                      value={executionLocation}
+                      disabled={claiming || openingThread}
+                      onChange={(event) => setExecutionLocation(event.target.value)}
+                    >
+                      <option value="current">{text("当前目录", "Current directory")}</option>
+                      <option value="worktree">{text("新建 worktree", "New worktree")}</option>
+                    </select>
+                  )}
+                  <button
+                    className="detail-run-action"
+                    type="button"
+                    disabled={!claimEnabled || claiming || openingThread}
+                    aria-busy={claiming || claimState === "running"}
+                    onClick={() => void executeNow()}
+                  >
+                    {claiming || claimState === "running"
+                      ? <span className="ai-chat-spinner" aria-hidden="true" />
+                      : <LinearIcon name={claimState === "completed" ? "check" : "play"} />}
+                    <span>{claimLabel}</span>
+                  </button>
+                  {claimEnabled && (
+                    <small className="detail-execution-hint">
+                      {text("准备后请在 Codex 中发送，发送后才开始执行。", "Send in Codex after preparation to start execution.")}
+                    </small>
+                  )}
+                </>
               )}
               <button
                 className="detail-open-thread-action"

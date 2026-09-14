@@ -1533,7 +1533,9 @@ async function confirmTaskConversationViaCdp(cdp, request) {
         { threadId: request.threadId, includeTurns: true },
         3_000,
       );
-      const firstUserText = result?.thread?.turns
+      const turns = result?.thread?.turns ?? [];
+      const confirmationTurns = request.executionPreparation ? turns.slice(-1) : turns;
+      const firstUserText = confirmationTurns
         ?.flatMap((turn) => turn?.items ?? [])
         .find((item) => item?.type === "userMessage")
         ?.content?.filter((content) => content?.type === "text")
@@ -1541,12 +1543,24 @@ async function confirmTaskConversationViaCdp(cdp, request) {
         .join("\n") ?? "";
       if (
         result?.thread?.id === request.threadId
+        && (!request.previousTurnId || turns.at(-1)?.id !== request.previousTurnId)
         && (
           !request.targetRoot
+          || (request.executionPreparation && request.useWorktree)
           || normalizeWorkspaceRoot(result.thread.cwd) === normalizeWorkspaceRoot(request.targetRoot)
         )
         && firstUserText.includes(request.identifier)
       ) {
+        let context = null;
+        if (request.executionPreparation) {
+          if (request.useWorktree) {
+            context = nativeDevelopmentContext(result.thread.cwd, request.targetRoot, true);
+          } else {
+            let branch = null;
+            try { branch = gitValue(result.thread.cwd, ["branch", "--show-current"]) || null; } catch {}
+            context = { workspacePath: result.thread.cwd, developmentContext: branch ? { type: "branch", branch } : null };
+          }
+        }
         try {
           await requestCodexAppServerViaCdp(
             cdp,
@@ -1567,7 +1581,16 @@ async function confirmTaskConversationViaCdp(cdp, request) {
             10_000,
           );
         }
-        return { confirmed: true };
+        return { confirmed: true, ...(context ? {
+          threadBinding: {
+            threadId: request.threadId,
+            codexProjectId: request.codexProjectId,
+            codexProjectKind: "local",
+            codexHostId: request.codexHostId,
+            workspacePath: context.workspacePath,
+          },
+          developmentContext: context.developmentContext,
+        } : {}) };
       }
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 80));
@@ -2082,9 +2105,13 @@ function installPanelHostBinding(
             : reconcilePanelAutomation(request, rpc);
         })()
       ),
-      prefill: (request) => (
-        prefillTaskComposerViaCdp(cdp, undefined, request)
-      ),
+      prefill: async (request) => {
+        const existing = request.threadId ? await requestCodexAppServerViaCdp(
+          cdp, "local", "thread/read", { threadId: request.threadId, includeTurns: true }, 3_000,
+        ) : null;
+        const result = await prefillTaskComposerViaCdp(cdp, undefined, request);
+        return { ...result, ...(existing ? { previousTurnId: existing.thread?.turns?.at(-1)?.id ?? null } : {}) };
+      },
       startConversation: (request) => (
         getOrStartTaskConversation(cdp, undefined, request)
       ),

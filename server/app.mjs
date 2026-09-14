@@ -2268,14 +2268,15 @@ export function createPanelServer(options = {}) {
     if (options.prepareClaimExecution) return await options.prepareClaimExecution(task);
     const current = database.getTask(task.id) ?? task;
     const context = await resolveAiChatContext(current.projectId);
-    const workspacePath = await canonicalWorkspace(context.workspacePath);
+    const workspacePath = await canonicalWorkspace(current.developmentContext?.type === "worktree"
+      ? current.developmentContext.path : context.workspacePath);
     return {
       task: current,
       workspacePath,
       workspaceKey: workspacePath,
       projectName: context.project?.name ?? database.getProject(current.projectId)?.name,
       codexProjectId: current.projectId,
-      useWorktree: current.developmentContext?.type !== "branch",
+      useWorktree: !current.developmentContext,
     };
   }
 
@@ -3784,6 +3785,20 @@ export function createPanelServer(options = {}) {
           });
         }
         throw new ApiError(404, "NOT_FOUND", "Native claim action not found");
+      }
+
+      const prepareExecutionRoute = pathname.match(/^\/api\/local\/tasks\/([^/]+)\/prepare-execution$/);
+      if (prepareExecutionRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "POST /api/local/tasks/:id/prepare-execution");
+        const body = await readJson(request);
+        assertPlainObject(body);
+        assertAllowedKeys(body, new Set(["useWorktree"]));
+        if (typeof body.useWorktree !== "boolean") {
+          throw new ApiError(400, "INVALID_FIELD", "useWorktree must be a boolean");
+        }
+        const taskId = decodeRouteSegment(prepareExecutionRoute[1], "Task id");
+        return sendJson(response, 200, await claimQueue.prepareManualExecution(taskId, body.useWorktree));
       }
 
       const taskClaimRoute = pathname.match(/^\/api\/local\/tasks\/([^/]+)\/claim$/);

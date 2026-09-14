@@ -169,6 +169,16 @@ test("native claim starts only after Codex returns a complete project binding", 
     }),
   });
   try {
+    const prepared = await queue.prepareManualExecution(task.id);
+    assert.equal(prepared.autoSubmit, false);
+    assert.equal(prepared.useWorktree, false);
+    assert.equal(prepared.executionPreparation, true);
+    assert.match(prepared.instruction, /实施阶段提示词/);
+    assert.match(prepared.instruction, /审核阶段提示词/);
+    assert.equal(item.database.getTask(task.id).status, "todo");
+    assert.equal(item.database.getTask(task.id).threadBinding, null);
+    assert.equal(item.database.getClaimQueueItem(task.id), null);
+    assert.equal((await queue.prepareManualExecution(task.id, true)).useWorktree, true);
     queue.enqueue(task.id);
     const reservation = await queue.reserveNextNativeClaim();
     assert.equal(reservation.taskId, task.id);
@@ -192,6 +202,48 @@ test("native claim starts only after Codex returns a complete project binding", 
     assert.equal(item.database.listClaimAttempts(task.id)[0].runId, null);
   } finally {
     queue.close();
+    await item.close();
+  }
+});
+
+test("manual preparation API leaves the issue waiting until its confirmed binding is saved", async () => {
+  const item = await fixture();
+  const app = createPanelServer({
+    dataDirectory: path.join(item.directory, "api"),
+    processEnv: { CODEX_HOME: path.join(item.directory, "codex") },
+    codexExecutable: process.execPath,
+    skillsDirectory: path.join(item.directory, "skills"),
+    skillPath: path.join(item.directory, "skills/manage-panel/SKILL.md"),
+    prepareClaimExecution: async () => ({ workspacePath: item.directory }),
+  });
+  try {
+    app.database.createProject({ id: "manual", name: "Manual", workspacePath: item.directory });
+    const task = app.database.createTask({ ...item.createTask("Manual API"), projectId: "manual", actor });
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    const url = `http://127.0.0.1:${address.port}`;
+    const prepared = await fetch(`${url}/api/local/tasks/${task.id}/prepare-execution`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ useWorktree: false }),
+    });
+    assert.equal(prepared.status, 200);
+    assert.equal((await prepared.json()).autoSubmit, false);
+    assert.equal(app.database.getTask(task.id).status, "todo");
+    assert.equal(app.database.getClaimQueueItem(task.id), null);
+    const threadBinding = {
+      threadId: "confirmed-user-thread", codexProjectId: "manual", codexProjectKind: "local",
+      codexHostId: "local", workspacePath: item.directory,
+    };
+    const bound = await fetch(`${url}/api/tasks/${task.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ version: task.version, status: "in_progress", threadBinding,
+        developmentContext: { type: "branch", branch: "manual" } }),
+    });
+    assert.equal(bound.status, 200);
+    const updated = (await bound.json()).task;
+    assert.equal(updated.status, "in_progress");
+    assert.equal(updated.threadBinding.threadId, threadBinding.threadId);
+    assert.equal(updated.developmentContext.branch, "manual");
+  } finally {
+    await app.close();
     await item.close();
   }
 });
