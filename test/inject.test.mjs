@@ -180,7 +180,7 @@ function nativeControl({ textContent, left = 0, style = {}, onClick = () => {} }
   };
 }
 
-function selectNativeWorktreeHarness({ triggers, item, now }) {
+function selectNativeWorktreeHarness({ triggers, item, now, useWorktree = true }) {
   const helperStart = source.indexOf("function isInteractiveElement");
   const helperEnd = source.indexOf("\n  function normalizeThreadId", helperStart);
   const selectStart = source.indexOf("async function selectNativeWorktree");
@@ -199,7 +199,7 @@ function selectNativeWorktreeHarness({ triggers, item, now }) {
   return vm.runInNewContext(`(async () => {
     ${source.slice(helperStart, helperEnd)}
     ${source.slice(selectStart, selectEnd)}
-    await selectNativeWorktree();
+    await selectNativeWorktree(${useWorktree});
   })()`, {
     Date: { now },
     document,
@@ -718,6 +718,23 @@ test("native worktree selection skips stale covered controls", async () => {
   assert.equal(staleClicks, 0);
   assert.equal(triggerClicks, 1);
   assert.equal(itemClicks, 1);
+});
+
+test("local preparation reads visible labels instead of hidden responsive text", async () => {
+  for (const [textContent, innerText] of [
+    ["本地模式本地", "本地"],
+    ["Work locallyLocal", "Local"],
+    ["本機作業本機", "本機"],
+    ["本地模式", "本地模式"],
+  ]) {
+    let timestamp = 0;
+    const trigger = nativeControl({ textContent });
+    trigger.innerText = innerText;
+    await selectNativeWorktreeHarness({
+      triggers: [trigger], item: null, useWorktree: false,
+      now: () => { timestamp += 1_000; return timestamp; },
+    });
+  }
 });
 
 test("native worktree selection waits for the menu to open", async () => {

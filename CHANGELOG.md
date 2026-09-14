@@ -4,6 +4,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed planning and manual execution stopping at an empty composer when Codex includes hidden responsive labels in its local run-location control.
+
 - Ordinary tasks now support AI planning, persistent inline Specs, and approved decomposition into backlog sub-issues with dependencies. Planning and later authorized execution reuse the same conversation; Jira-specific repository and publication rules remain conditional.
 
 - Task entry now attaches only Manage Panel and reads workflow configuration when a relevant stage begins. Research tasks verify sources and findings without invoking implementation or code-review Skills; authorized code work continues to use the configured Skills and custom prompts.

@@ -1293,7 +1293,8 @@
   }
 
   async function selectNativeWorktree(useWorktree = true) {
-    const labels = useWorktree ? NATIVE_WORKTREE_LABELS : ["local", "本地", "本機"];
+    const labels = useWorktree ? NATIVE_WORKTREE_LABELS : ["local", "work locally", "本地", "本地模式", "本機", "本機作業"];
+    const visibleLabel = (element) => normalizedLabel(element.innerText ?? element.textContent);
     const destination = useWorktree ? "新建本地工作树" : "本地目录";
     const readyDeadline = Date.now() + 4_000;
     let trigger;
@@ -1304,7 +1305,7 @@
       if (!trigger) await new Promise((resolve) => window.setTimeout(resolve, 40));
     }
     if (!trigger) throw new Error("Codex 没有显示运行位置选择器");
-    if (labels.includes(normalizedLabel(trigger.textContent))) return;
+    if (labels.includes(visibleLabel(trigger))) return;
     trigger.click();
     const deadline = Date.now() + 4_000;
     let menuOpened = false;
@@ -1326,7 +1327,7 @@
       menuOpened = true;
       const item = Array.from(document.querySelectorAll('[role="menuitem"]')).find((candidate) => (
         isInteractiveElement(candidate)
-        && labels.includes(normalizedLabel(candidate.textContent))
+        && labels.includes(visibleLabel(candidate))
       ));
       if (!item) {
         await new Promise((resolve) => window.setTimeout(resolve, 40));
@@ -1338,7 +1339,7 @@
         const selected = Array.from(document.querySelectorAll(
           '[data-composer-navigation-target="run-location"]',
         )).find(isInteractiveElement);
-        if (selected && labels.includes(normalizedLabel(selected.textContent))) return;
+        if (selected && labels.includes(visibleLabel(selected))) return;
         await new Promise((resolve) => window.setTimeout(resolve, 40));
       }
     }

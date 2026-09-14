@@ -1,5 +1,7 @@
 # Codex Panel
 
+Planning and manual execution recognize the visible Codex run-location label, so hidden responsive text no longer blocks composer prefill.
+
 The project model picker includes **6 Astra** (`gpt-6-astra`), with reasoning levels through `max` and `ultra`.
 
 Ordinary tasks also support **Plan with AI**, persistent inline Specs, and approved breakdowns into backlog sub-issues with dependencies. Planning can continue into authorized execution in the same conversation. Jira alone adds linked-repository and ticket-publication rules. See [task planning](docs/fork-capabilities.md#plan-ordinary-tasks-and-split-sub-issues).

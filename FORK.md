@@ -304,6 +304,7 @@
 
 ### Panel 持久化自动执行队列
 
+- 运行位置可见标签兼容（本次修复）：Codex 本地按钮同时渲染长短标签时必须读取 `innerText`，不能把隐藏文字拼接后误判为未选中并阻断预填。支持本地模式当前中英繁体名称。代码 `inject/codex-panel.user.js`；验证 `node --test test/inject.test.mjs`；定位 `git log -S'const visibleLabel' -- inject/codex-panel.user.js`。
 - 手动执行准备（本次变更）：`prepareManualExecution` 只读生成 Manage Panel 入口草稿，Agent 按需读取工作流配置；项目与运行位置选择先于预填，实际发送经 host 确认后再通过已有任务更新接口绑定并进入处理中。等待草稿发送时暂停新的原生自动派发；未开始的派发错误不得称为执行停止。代码：`web/src/components/TaskDetail.tsx`、`web/src/App.tsx`、`server/claim-queue.mjs`、`inject/codex-panel.user.js`、`scripts/codex-injector.mjs`；验证：`test/claim-queue.test.mjs`、`test/inject.test.mjs`；定位：`git log -S'prepareManualExecution' -- server/claim-queue.mjs`。合并时保留手动发送边界，上游等价吸收后移除此补充。
 
 - 同 Jira 执行复用（本次变更）：同一 Jira、同一仓库的已授权任务串行复用已有执行绑定、分支和 worktree；当前规划发布的任务按 publication 限定范围，返工不复用已完成的历史批次。每张 Issue 独立保存状态和活动，同仓库依赖可在前置待审核且存在执行上下文时继续，跨仓库依赖仍等待完成。已有独立绑定保持不变，不迁移正在执行的会话；同组存在运行或等待回复/失败待处理的执行时不创建另一执行。共享会话忙时有限重试，工作区不匹配时阻塞。队列会话字段允许多任务共享，迁移原子保留历史；真实会话绑定并进入执行/审核后同步队列状态并清除旧错误，历史评论和尝试保留。共享组尚有未完成任务时不得清理 worktree。代码：`server/claim-queue.mjs`、`server/database.mjs`、`server/app.mjs`、`inject/codex-panel.user.js`、`scripts/codex-injector.mjs`、`scripts/codex-injector-runtime.mjs`；验证：`test/claim-queue.test.mjs`、`test/injector-host-runtime.test.mjs`。提交后使用 `git log -S'jiraExecutionPeers' -- server/database.mjs` 定位；合并时保留共享绑定与串行派发约束。
