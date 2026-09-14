@@ -24,6 +24,7 @@ export async function resolveWorkflow(database, aiChat, projectId, stage, catalo
     ? `按顺序使用已选择的 Skill：${skills.map((skill) => skill.id).join(" → ")}。`
     : definition.defaultMethod;
   return {
+    appliesWhen: definition.appliesWhen,
     skills,
     missing,
     mode: skills.length ? "custom" : "default",

@@ -178,6 +178,7 @@
         codexHostId: pendingThreadAssociation.codexHostId,
         workspacePath: pendingThreadAssociation.workspacePath,
         executionPreparation: pendingThreadAssociation.executionPreparation,
+        planningPreparation: pendingThreadAssociation.planningPreparation,
         useWorktree: pendingThreadAssociation.useWorktree,
         threadId: pendingThreadAssociation.threadId,
         previousTurnId: pendingThreadAssociation.previousTurnId,
@@ -1006,6 +1007,7 @@
         type: "panel:thread-created",
         payload: { taskId: pending.taskId, threadId, ...(pending.executionPreparation ? {
           executionPreparation: true,
+          planningPreparation: pending.planningPreparation === true,
           threadBinding: confirmed.threadBinding,
           developmentContext: pending.developmentContext ?? confirmed.developmentContext,
         } : {}) },
@@ -1430,12 +1432,13 @@
           instruction, skills: skillReferences, threadId: binding.threadId,
         });
         const composer = await waitForPreparedComposer(identifier, []);
-        await selectNativeCollaborationMode("default", composer);
+        await selectNativeCollaborationMode(payload.collaborationMode === "plan" ? "plan" : "default", composer);
         setPendingThreadAssociation({
           taskId, identifier, title, composer, existingThreadIds: nativeThreadIds(),
           threadId: binding.threadId, previousTurnId: prepared.previousTurnId,
           developmentContext: payload.developmentContext,
           executionPreparation: true, useWorktree: false,
+          planningPreparation: payload.planningPreparation === true,
           projectId: binding.codexProjectId, codexHostId: binding.codexHostId,
           workspacePath: binding.workspacePath, submitted: false, confirming: false,
           expiresAt: Date.now() + THREAD_ASSOCIATION_TIMEOUT_MS,
@@ -1618,6 +1621,7 @@
         codexHostId: "local",
         workspacePath,
         executionPreparation: payload.executionPreparation === true,
+        planningPreparation: payload.planningPreparation === true,
         useWorktree: payload.useWorktree === true,
         submitted: false,
         confirming: false,

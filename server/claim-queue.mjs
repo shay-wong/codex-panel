@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import { ApiError } from "./database.mjs";
-import { resolveWorkflow, workflowNotice } from "./workflow-settings.mjs";
 
 const CODEX_AGENT_ACTOR = {
   type: "agent",
@@ -25,17 +24,16 @@ function isTransientError(error) {
     .test(errorText(error));
 }
 
-function executionPrompt(task, executionIdentifier = task.identifier, peers = [], reuse = false, execution, review) {
+function executionPrompt(task, executionIdentifier = task.identifier, peers = [], reuse = false) {
   const branchInstruction = executionIdentifier === task.identifier
     ? `创建分支时使用任务标识 ${executionIdentifier}。`
     : `创建分支时使用 Jira 标识 ${executionIdentifier}，不要使用 Panel Issue 标识 ${task.identifier}。`;
   return [
     `执行 ${executionIdentifier} 对应的 Panel 议题 ${task.identifier}：${task.title}`,
-    workflowNotice(execution),
-    `实施阶段提示词：\n${execution.prompt}`,
-    workflowNotice(review),
-    `审核阶段提示词：\n${review.prompt}`,
-    `Panel 固定规则：\n${execution.rules}\n${review.rules}`,
+    `先使用 Manage Panel 读取议题 ${task.identifier} 的最新描述、全部评论和相关附件，按实际工作判断适用阶段；通过 panelctl workflow get <阶段> --project PROJECT_ID --json 读取当前配置，PROJECT_ID 使用 issue get 返回的 task.projectId。遵循返回的适用条件、提示词、固定规则及 Skill 路径。`,
+    `通过 panelctl issue planning get ${task.id} --json 读取已保存的 Spec；需要先规划时进入 planning，保存方案不代表授权实现。`,
+    "纯调研、解释或结论报告不启用实现与代码审核 Skill：核实来源、结论依据和未确定事项后交付。只有获授权的实现工作才进入 execution；本次涉及代码修改或用户明确要求代码审核时才进入 review。配置本身不扩大任务授权。",
+    "只处理当前已授权议题，复用当前执行对话。完成适用阶段和必要验证后记录结果并移动到 in_review；需要用户输入或无法继续时记录原因并移动到 blocked。不自动标记 done。",
     branchInstruction,
     ...(peers.length > 1 ? [
       `同一 Jira、同一仓库的执行议题：${peers.map((peer) => `${peer.identifier}（${peer.status}）`).join('、')}。共用当前执行对话、分支和工作树，按依赖顺序逐项处理；每张议题独立绑定、记录进度和审核结果。本轮只处理 ${task.identifier}，后续议题由队列继续派发；不要执行尚未授权的 backlog 议题。`,
@@ -152,14 +150,11 @@ export class ClaimQueueService {
       workspacePath: owner.threadBinding.workspacePath,
       codexProjectId: owner.threadBinding.codexProjectId,
     } : await this.prepareExecution(task);
-    const execution = await resolveWorkflow(this.database, this.aiChat, task.projectId, "execution");
-    const review = await resolveWorkflow(this.database, this.aiChat, task.projectId, "review");
-    const skills = [...new Map([...execution.skills, ...review.skills].map((skill) => [skill.id, skill])).values()];
     const identifier = this.database.getJiraContext(taskId).jira?.externalKey ?? task.identifier;
     return {
       taskId, identifier, title: `${identifier} · ${task.title}`,
       instruction: [
-        executionPrompt(task, identifier, [], Boolean(owner), execution, review),
+        executionPrompt(task, identifier, [], Boolean(owner)),
         "执行位置已由用户在准备阶段选择。使用本次 Codex 任务的实际运行目录；需要分支时在该目录内创建，不要另建 worktree 或执行对话。",
       ].join("\n\n"),
       collaborationMode: "default", autoSubmit: false, executionPreparation: true,
@@ -172,7 +167,6 @@ export class ClaimQueueService {
       useWorktree: !owner && !task.developmentContext && useWorktree,
       skillReferences: [
         { name: "manage-panel", displayName: "Manage Panel", path: this.managePanelSkillPath },
-        ...skills.map((skill) => ({ name: skill.id, displayName: skill.label, path: skill.path })),
       ],
     };
   }
@@ -273,9 +267,6 @@ export class ClaimQueueService {
           codexProjectId: owner.threadBinding.codexProjectId,
           useWorktree: false,
         } : await this.prepareExecution(next.task);
-        const execution = await resolveWorkflow(this.database, this.aiChat, next.task.projectId, "execution");
-        const review = await resolveWorkflow(this.database, this.aiChat, next.task.projectId, "review");
-        const skills = [...new Map([...execution.skills, ...review.skills].map((skill) => [skill.id, skill])).values()];
         const jira = this.database.getJiraContext(next.task.id).jira;
         const executionIdentifier = jira?.externalKey ?? next.task.identifier;
         reservation.workspacePath = prepared.workspacePath;
@@ -286,7 +277,7 @@ export class ClaimQueueService {
           identifier: executionIdentifier,
           panelIdentifier: next.task.identifier,
           title: `${executionIdentifier} · ${next.task.title}`,
-          instruction: executionPrompt(next.task, executionIdentifier, peers, Boolean(owner), execution, review),
+          instruction: executionPrompt(next.task, executionIdentifier, peers, Boolean(owner)),
           collaborationMode: "default",
           workspacePath: prepared.workspacePath,
           workspaceLabel: prepared.workspaceLabel,
@@ -298,7 +289,6 @@ export class ClaimQueueService {
           useWorktree: prepared.useWorktree !== false,
           skillReferences: [
             { name: "manage-panel", displayName: "Manage Panel", path: this.managePanelSkillPath },
-            ...skills.map((skill) => ({ name: skill.id, displayName: skill.label, path: skill.path })),
           ],
         };
       } catch (error) {
@@ -541,12 +531,9 @@ export class ClaimQueueService {
       task = this.#moveTask(task, "in_progress");
       claim = this.database.setClaimThread(task.id, thread.id);
       attempt = this.database.createClaimAttempt({ taskId: task.id, threadId: thread.id });
-      const execution = await resolveWorkflow(this.database, this.aiChat, task.projectId, "execution");
-      const review = await resolveWorkflow(this.database, this.aiChat, task.projectId, "review");
-      const skillIds = [...new Set([...execution.skills, ...review.skills].map((skill) => skill.id))];
       const run = await this.aiChat.startTurn(thread.id, {
-        message: [...skillIds.map(() => "\uFFFC"), executionPrompt(task, task.identifier, [], false, execution, review)].join("\n\n"),
-        skillIds,
+        message: executionPrompt(task),
+        skillIds: [],
       });
       this.database.attachClaimAttemptRun(attempt.id, run.id);
       this.activeExecutions.set(task.id, {

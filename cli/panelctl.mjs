@@ -41,6 +41,7 @@ const COMMAND_OPTIONS = new Map([
   ["cloud logout", new Set(["json"])],
   ["issue list", new Set(["project", "status", "archived", "json"])],
   ["issue get", new Set(["json"])],
+  ["issue planning", new Set(["spec-file", "if-version", "json"])],
   [
     "issue create",
     new Set([
@@ -138,6 +139,7 @@ Commands:
   cloud login --url URL --actor-name NAME
   cloud status|logout
   issue list|get|create|update|move|archive|restore|tree|relation
+  issue planning get|save ISSUE_ID [--spec-file FILE --if-version N] [--json]
   jira repositories set JIRA_ID --projects PROJECT_ID,... --if-version N
   jira planning ISSUE_ID [--spec-file FILE] [--tickets-file FILE] [--if-version N]
   comment list ISSUE_ID [--after CURSOR]
@@ -187,6 +189,7 @@ Actions:
     [--if-version N] [--json]
   archive ISSUE_ID [--thread-id ID] [--if-version N] [--json]
   restore ISSUE_ID [--thread-id ID] [--if-version N] [--json]
+  planning get|save ISSUE_ID [--spec-file FILE --if-version N] [--json]
   tree ISSUE_ID --direction descendants|ancestors --depth N [--json]
   relation add|remove ISSUE_ID --type parent|blocks|blocked_by|related
     --issue RELATED_ISSUE_ID [--thread-id ID] [--if-version N] [--json]
@@ -196,6 +199,17 @@ Priorities: none, urgent, high, medium, low
 
 Example:
   panelctl issue get LOCAL-275 --json`],
+  ["issue planning", `Usage: panelctl issue planning get|save ISSUE_ID [--spec-file FILE --if-version N] [--json]
+
+Read or save the task Spec without changing task status or description.
+Read first and pass the returned plan.version to save. An unsaved ordinary task starts at version 1.
+Jira tasks use their existing Jira plan; start Jira planning before saving.
+
+Options:
+  --spec-file FILE  UTF-8 Markdown Spec to save
+  --if-version N   Current plan.version from issue planning get
+  --json           Make the JSON output contract explicit
+  --help           Show this help`],
   ["conversation bind", `Usage: panelctl conversation bind ISSUE_ID [--thread-id ID] [--json]
 
 Bind the current Codex conversation to one Panel Issue or Jira requirement without changing its status or fields.
@@ -335,7 +349,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: workflow get, project list/create/map/readme, conversation bind, cloud login/status/logout, issue list/get/create/update/move/archive/restore/tree/relation, jira repositories/planning, comment list/add/update/delete, attachment list/download/upload, context current",
+      "Expected one of: workflow get, project list/create/map/readme, conversation bind, cloud login/status/logout, issue list/get/planning/create/update/move/archive/restore/tree/relation, jira repositories/planning, comment list/add/update/delete, attachment list/download/upload, context current",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -440,6 +454,8 @@ async function execute(parsed, overrides) {
         parsed.options,
         overrides,
       );
+    case "issue planning":
+      return taskPlanning(api, parsed.operands, parsed.options, overrides);
     case "jira repositories":
       return jiraRepositories(api, parsed.operands, parsed.options);
     case "jira planning":
@@ -527,6 +543,32 @@ async function jiraRepositories(api, operands, options) {
     version: explicitVersion(options["if-version"]),
     projectIds: parseProjectIds(requiredOption(options, "projects")),
   });
+}
+
+async function taskPlanning(api, operands, options, overrides) {
+  if (operands.length !== 2 || !["get", "save"].includes(operands[0])) {
+    throw usageError("issue planning expects: get|save ISSUE_ID");
+  }
+  const [action, taskId] = operands;
+  if (action === "get") {
+    if (options["spec-file"] || options["if-version"]) {
+      throw usageError("issue planning get does not accept write options");
+    }
+    return api.request("GET", `${taskPath(taskId)}/planning`);
+  }
+  const version = explicitVersion(options["if-version"]);
+  const specPath = resolveInputPath(requiredOption(options, "spec-file"), overrides);
+  let spec;
+  try {
+    spec = await (overrides.readFile ?? readFile)(specPath, "utf8");
+  } catch (error) {
+    throw new PanelctlError(`Cannot read task spec file: ${specPath}`, {
+      code: "FILE_READ_FAILED",
+      exitCode: 2,
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return api.request("PUT", `${taskPath(taskId)}/planning/spec`, { version, spec });
 }
 
 async function jiraPlanning(api, operands, options, overrides) {

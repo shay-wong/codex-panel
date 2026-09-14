@@ -76,7 +76,9 @@ test("global workflow settings drive default, custom and unavailable-Skill actio
     queue.enqueue(makeTask("Default execution").id);
     const defaultClaim = await queue.reserveNextNativeClaim();
     assert.deepEqual(defaultClaim.skillReferences.map((skill) => skill.name), ["manage-panel"]);
-    assert.match(defaultClaim.instruction, /codex review --uncommitted/);
+    assert.match(defaultClaim.instruction, /panelctl workflow get/);
+    assert.doesNotMatch(defaultClaim.instruction, /codex review --uncommitted/);
+    assert.match((await request("/api/local/workflow?stage=review&projectId=demo")).prompt, /codex review --uncommitted/);
     const custom = { planning: ["my:clarify", "my:spec"], execution: ["my:implement"], review: ["my:review"], handoff: ["my:handoff"] };
     const skillIds = Object.values(custom).flat();
     custom.prompts = { planning: "Clarify requirements first.\n{{skill_instructions}}\nList acceptance criteria.", execution: "Implement the confirmed scope.", review: "Check transaction boundaries.", handoff: "List decisions and pending work." };
@@ -91,10 +93,35 @@ test("global workflow settings drive default, custom and unavailable-Skill actio
     assert.match(planned.composerText, /Panel 固定规则/);
     queue.enqueue(makeTask("Custom execution").id);
     const customClaim = await queue.reserveNextNativeClaim();
-    assert.deepEqual(customClaim.skillReferences.map((skill) => skill.name), ["manage-panel", "my:implement", "my:review"]);
+    assert.deepEqual(customClaim.skillReferences.map((skill) => skill.name), ["manage-panel"]);
     assert.doesNotMatch(customClaim.instruction, /codex review --uncommitted/);
-    assert.ok(customClaim.instruction.includes(custom.prompts.execution));
-    assert.ok(customClaim.instruction.includes(custom.prompts.review));
+    assert.ok(!customClaim.instruction.includes(custom.prompts.execution));
+    assert.ok(!customClaim.instruction.includes(custom.prompts.review));
+    const researchTask = makeTask("Compare projects without changing code");
+    const catalog = app.aiChat.getCatalog;
+    app.aiChat.getCatalog = async () => { throw new Error("Preparation must not resolve unused stage Skills"); };
+    const research = await queue.prepareManualExecution(researchTask.id);
+    assert.deepEqual(research.skillReferences.map((skill) => skill.name), ["manage-panel"]);
+    assert.match(research.instruction, /纯调研、解释或结论报告不启用实现与代码审核 Skill/);
+    assert.equal(app.database.getTask(researchTask.id).status, "todo");
+    assert.equal(app.database.getClaimQueueItem(researchTask.id), null);
+    app.aiChat.getCatalog = catalog;
+    // Settings changed after preparation are read when the agent enters a stage.
+    custom.prompts.execution = "Implement the newly confirmed scope.";
+    await request("/api/local/workflow-settings", custom);
+    for (const stage of ["execution", "review"]) {
+      let stageOutput = "";
+      assert.equal(await panelctl(["workflow", "get", stage, "--project", "demo", "--json"], {
+        env: { CODEX_PANEL_COMPANION_URL: baseUrl }, cwd: workspace,
+        stdout: { write: (chunk) => { stageOutput += chunk; } }, stderr: { write: (chunk) => assert.fail(chunk) },
+      }), 0);
+      const resolved = JSON.parse(stageOutput);
+      assert.equal(resolved.prompt, custom.prompts[stage]);
+      assert.deepEqual(resolved.skills.map((skill) => skill.id), custom[stage]);
+      assert.equal(resolved.skills[0].path, path.join(directory, custom[stage][0], "SKILL.md"));
+      assert.match(resolved.appliesWhen, /纯调研/);
+      assert.ok(resolved.rules);
+    }
     let output = "";
     assert.equal(await panelctl(["workflow", "get", "handoff", "--project", "demo", "--json"], {
       env: { CODEX_PANEL_COMPANION_URL: baseUrl }, cwd: workspace,
@@ -109,9 +136,14 @@ test("global workflow settings drive default, custom and unavailable-Skill actio
     assert.match((await planning()).composerText, /使用 Codex 原生 Plan 模式/);
     queue.enqueue(makeTask("Custom template without available Skills").id);
     const fallbackClaim = await queue.reserveNextNativeClaim();
-    assert.ok(fallbackClaim.instruction.includes(custom.prompts.review));
+    assert.ok(!fallbackClaim.instruction.includes(custom.prompts.review));
     assert.doesNotMatch(fallbackClaim.instruction, /codex review --uncommitted/);
     assert.match(fallbackClaim.instruction, /移动到 in_review/);
+    const fallbackReview = await request("/api/local/workflow?stage=review&projectId=demo");
+    assert.deepEqual(fallbackReview.missing, custom.review);
+    assert.deepEqual(fallbackReview.skills, []);
+    assert.equal(fallbackReview.mode, "default");
+    assert.equal(fallbackReview.prompt, custom.prompts.review);
     await request("/api/local/workflow-settings", { ...defaults, planning: ["/tmp/not-an-id"] }, 400);
     await request("/api/local/workflow-settings", { ...defaults, prompts: { planning: 123 } }, 400);
     const persisted = new PanelDatabase(app.options.databasePath);

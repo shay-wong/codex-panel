@@ -4,6 +4,10 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Ordinary tasks now support AI planning, persistent inline Specs, and approved decomposition into backlog sub-issues with dependencies. Planning and later authorized execution reuse the same conversation; Jira-specific repository and publication rules remain conditional.
+
+- Task entry now attaches only Manage Panel and reads workflow configuration when a relevant stage begins. Research tasks verify sources and findings without invoking implementation or code-review Skills; authorized code work continues to use the configured Skills and custom prompts.
+
 - Manual execution now prepares an unsent Codex draft, defaults to the current directory, and offers a new worktree option. Existing execution contexts are reused; only confirmed submission links the issue and starts execution. Automatic claiming still submits automatically. Run-location setup precedes prefill, and dispatch failures no longer claim that an unsent execution stopped.
 
 - Workflow configuration now opens as a page inside Preferences instead of a modal, keeping sidebar navigation available and returning to Preferences after saving. Page changes use a short fade-and-slide transition that respects reduced motion.

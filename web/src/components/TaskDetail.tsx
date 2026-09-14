@@ -17,6 +17,7 @@ import {
   deleteComment,
   getJiraTaskContext,
   getTask,
+  getTaskPlan,
   listAttachments,
   listComments,
   listTaskActivities,
@@ -25,6 +26,7 @@ import {
   resolveJiraLifecycle,
   resolvePanelUrl,
   saveJiraTaskProjects,
+  saveTaskPlan,
   startJiraPlanning,
   startSimpleJiraTask,
   uploadAttachment,
@@ -53,6 +55,7 @@ import type {
   Project,
   Recurrence,
   Task,
+  TaskPlan,
   TaskChangeActivity,
   TaskDraft,
   TaskPriority,
@@ -171,6 +174,7 @@ interface TaskDetailProps {
   ) => Promise<void>;
   onExecutionStarted: (taskId: string) => void;
   onPrepareExecution: (task: Task, useWorktree: boolean) => Promise<void>;
+  onPreparePlanning: (task: Task) => Promise<void>;
   onCopy: (text: string, announcement: string) => void;
   onEnsureJiraProjects: (projectIds: string[]) => Promise<void>;
   openingThread: boolean;
@@ -518,6 +522,7 @@ export function TaskDetail({
   onOpenJiraPlanning,
   onExecutionStarted,
   onPrepareExecution,
+  onPreparePlanning,
   onCopy,
   onEnsureJiraProjects,
   openingThread,
@@ -536,6 +541,10 @@ export function TaskDetail({
   >(null);
   const [savingProperty, setSavingProperty] = useState<string | null>(null);
   const [jiraContext, setJiraContext] = useState<JiraTaskContext | null>(null);
+  const [taskPlan, setTaskPlan] = useState<TaskPlan | null>(null);
+  const [specDraft, setSpecDraft] = useState<{ version: number; text: string } | null>(null);
+  const [savingSpec, setSavingSpec] = useState(false);
+  const [specError, setSpecError] = useState<TaskDetailError | null>(null);
   const [jiraContextLoading, setJiraContextLoading] = useState(jiraAvailable);
   const [jiraProjectIds, setJiraProjectIds] = useState<string[]>([]);
   const [jiraProjectSearch, setJiraProjectSearch] = useState("");
@@ -638,7 +647,36 @@ export function TaskDetail({
       },
     );
     return () => controller.abort();
-  }, [jiraAvailable, task.id, task.version, openingThread]);
+  }, [jiraAvailable, task.id, task.version, openingThread, commentsRevision]);
+
+  useEffect(() => {
+    setTaskPlan(null);
+    setSpecDraft(null);
+    setSpecError(null);
+  }, [task.id]);
+
+  useEffect(() => {
+    if (task.source !== "local") return;
+    const controller = new AbortController();
+    void getTaskPlan(task.id, controller.signal).then(setTaskPlan, (error) => {
+      if ((error as Error).name !== "AbortError") setSpecError(messageFor(error));
+    });
+    return () => controller.abort();
+  }, [task.id, task.source, task.version, commentsRevision]);
+
+  async function saveSpec() {
+    if (!specDraft || savingSpec) return;
+    setSavingSpec(true);
+    setSpecError(null);
+    try {
+      setTaskPlan(await saveTaskPlan(currentTask.id, specDraft.version, specDraft.text));
+      setSpecDraft(null);
+    } catch (error) {
+      setSpecError(messageFor(error));
+    } finally {
+      setSavingSpec(false);
+    }
+  }
 
   useEffect(() => {
     resizeTextarea(titleRef.current);
@@ -1850,6 +1888,42 @@ export function TaskDetail({
               )}
             </article>
 
+            {currentTask.source === "local" && (
+              <section className="task-spec-section" aria-label={text("规划 Spec", "Planning Spec")}>
+                <details>
+                  <summary>{text("规划 Spec", "Planning Spec")}{taskPlan?.updatedAt ? ` · v${taskPlan.version}` : ""}</summary>
+                  {specError && <p role="alert">{typeof specError === "string" ? specError : text(specError[0], specError[1])}</p>}
+                  {specDraft ? (
+                    <>
+                      <textarea
+                        className="task-spec-input"
+                        aria-label={text("Spec 内容", "Spec content")}
+                        value={specDraft.text}
+                        disabled={savingSpec}
+                        onChange={(event) => setSpecDraft({ ...specDraft, text: event.target.value })}
+                        rows={12}
+                      />
+                      <div className="task-spec-actions">
+                        <button className="button primary" type="button" disabled={savingSpec || !specDraft.text.trim()} onClick={() => void saveSpec()}>
+                          {savingSpec ? text("保存中…", "Saving…") : text("保存 Spec", "Save Spec")}
+                        </button>
+                        <button className="button" type="button" disabled={savingSpec} onClick={() => setSpecDraft(null)}>{text("取消", "Cancel")}</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {taskPlan?.spec
+                        ? <DescriptionDocument value={taskPlan.spec} referenceTasks={referenceTasks} onOpenTask={onOpenTask} />
+                        : <p>{text("尚未保存规划。可先 AI 规划，或直接编写 Spec。", "No saved plan. Plan with AI or write a Spec directly.")}</p>}
+                      <button className="button" type="button" disabled={!taskPlan} onClick={() => {
+                        if (taskPlan) setSpecDraft({ version: taskPlan.version, text: taskPlan.spec });
+                      }}>{text(taskPlan?.spec ? "编辑 Spec" : "编写 Spec", taskPlan?.spec ? "Edit Spec" : "Write Spec")}</button>
+                    </>
+                  )}
+                </details>
+              </section>
+            )}
+
             <IssueSubIssues
               task={currentTask}
               tasks={tasks}
@@ -2265,6 +2339,15 @@ export function TaskDetail({
             <div className="detail-primary-actions">
               {currentTask.source === "local" && (
                 <>
+                  <button
+                    className="detail-open-thread-action"
+                    type="button"
+                    disabled={openingThread || claiming || claimActive || Boolean(currentTask.archivedAt)}
+                    onClick={() => void onPreparePlanning(currentTask).catch((error) => onError(messageFor(error)))}
+                  >
+                    <ConversationIcon color="currentColor" />
+                    <span>{taskPlan?.spec || currentTask.threadBinding ? text("继续规划", "Continue planning") : text("AI 规划", "Plan with AI")}</span>
+                  </button>
                   {claimEnabled && !currentTask.threadBinding && !currentTask.developmentContext && (
                     <select
                       className="detail-execution-location"

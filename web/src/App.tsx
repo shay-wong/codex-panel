@@ -42,6 +42,7 @@ import {
   moveTask as moveTaskRequest,
   publishHostRuntime,
   prepareTaskExecution,
+  prepareTaskPlanning,
   removeTaskRelation,
   resolveJiraLifecycle,
   resolvePanelUrl,
@@ -391,6 +392,7 @@ const EVENT_NAMES = [
   "task.deleted",
   "task.relation.updated",
   "task.jira.updated",
+  "task.plan.updated",
   "comment.created",
   "comment.updated",
   "comment.deleted",
@@ -619,6 +621,12 @@ function LocalRealtimeSync({
       if (event.type === "project.updated" || event.type === "project.labels.updated") {
         setAiThreadsRevision((current) => current + 1);
         scheduleRefresh({ projects: true, tasks: affectsSelectedProject, projectId: eventProjectId });
+        return;
+      }
+      if (event.type === "task.plan.updated") {
+        if (!detailTaskId || !payload.taskId || payload.taskId === detailTaskId) {
+          setCommentsRevision((current) => current + 1);
+        }
         return;
       }
       if (event.type.startsWith("task.")) {
@@ -1512,7 +1520,7 @@ export function App() {
 
       if (message.type === "panel:thread-created" && message.payload) {
         const payload = message.payload as {
-          taskId?: unknown; threadId?: unknown; executionPreparation?: boolean;
+          taskId?: unknown; threadId?: unknown; executionPreparation?: boolean; planningPreparation?: boolean;
           threadBinding?: CodexThreadBinding; developmentContext?: DevelopmentContext | null;
         };
         if (typeof payload.taskId !== "string" || typeof payload.threadId !== "string") return;
@@ -1539,8 +1547,10 @@ export function App() {
             }
             return updateTaskRequest(task, {
               ...taskToDraft(task),
-              status: ["todo", "blocked"].includes(task.status) ? "in_progress" : task.status,
-              developmentContext: task.developmentContext ?? payload.developmentContext ?? null,
+              status: !payload.planningPreparation && ["todo", "blocked"].includes(task.status) ? "in_progress" : task.status,
+              developmentContext: payload.planningPreparation
+                ? task.developmentContext
+                : task.developmentContext ?? payload.developmentContext ?? null,
             }, threadId, payload.threadBinding);
           }
           const alreadyLinked = task.threadBinding?.threadId === threadId
@@ -3173,15 +3183,17 @@ export function App() {
     });
   }
 
-  async function prepareExecution(task: Task, useWorktree: boolean) {
+  async function prepareExecution(task: Task, useWorktree: boolean, planning = false) {
     if (!embedded || window.parent === window) {
-      throw new Error(text("请在 Codex App 中准备执行。", "Prepare execution in the Codex app."));
+      throw new Error(planning
+        ? text("请在 Codex App 中准备规划。", "Prepare planning in the Codex app.")
+        : text("请在 Codex App 中准备执行。", "Prepare execution in the Codex app."));
     }
     if (openingThreadTaskId) return;
     setOpeningThreadTaskId(task.id);
     setActionError(null);
     try {
-      const payload = await prepareTaskExecution(task.id, useWorktree);
+      const payload = planning ? await prepareTaskPlanning(task.id) : await prepareTaskExecution(task.id, useWorktree);
       postEmbeddedHostMessage({ type: "panel:create-thread", payload });
     } catch (error) {
       setOpeningThreadTaskId(null);
@@ -4043,6 +4055,7 @@ export function App() {
             }))}
             onOpenInThread={openTaskInThread}
             onPrepareExecution={prepareExecution}
+            onPreparePlanning={(task) => prepareExecution(task, false, true)}
             onOpenJiraPlanning={openJiraPlanningInThread}
             onExecutionStarted={(taskId) => setPendingExecutionOpen({
               taskId,

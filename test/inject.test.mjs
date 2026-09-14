@@ -793,6 +793,43 @@ test("execution prepares location before prefill and submits only automatic clai
   }
 });
 
+test("planning and execution prefill the same bound conversation in the requested mode", async () => {
+  const modes = [];
+  const drafts = [];
+  let pending;
+  const run = vm.runInNewContext(`(() => {
+    let pendingThreadCreation = null;
+    ${createThreadSource}
+    return createThreadForTask;
+  })()`, {
+    normalizeThreadId: (id) => id,
+    threadIdFromLocation: () => "planning-thread",
+    setPendingThreadAssociation: (value) => { pending = value; },
+    openThread: async (binding) => { assert.equal(binding.threadId, "planning-thread"); },
+    requestHostTaskComposerPrefill: async (draft) => { drafts.push(draft); return { previousTurnId: "previous" }; },
+    waitForPreparedComposer: async () => ({}),
+    selectNativeCollaborationMode: async (mode) => { modes.push(mode); },
+    nativeThreadIds: () => new Set(["planning-thread"]),
+    postToFrame: (message) => { assert.equal(message.type, "panel:thread-prepared"); },
+    THREAD_ASSOCIATION_TIMEOUT_MS: 60_000,
+  });
+  for (const planning of [true, false]) {
+    await run({
+      taskId: "task", identifier: "TEST-1", title: "Plan task", instruction: "Read TEST-1 Spec",
+      executionPreparation: true, planningPreparation: planning,
+      collaborationMode: planning ? "plan" : "default", autoSubmit: false,
+      threadBinding: { threadId: "planning-thread", codexProjectId: "project", codexHostId: "local", workspacePath: "/disposable/repo" },
+      skillReferences: [{ name: "manage-panel", displayName: "Manage Panel", path: "/fake/SKILL.md" }],
+    });
+    assert.equal(pending.threadId, "planning-thread");
+    assert.equal(pending.planningPreparation, planning);
+    assert.equal(pending.submitted, false);
+  }
+  assert.deepEqual(modes, ["plan", "default"]);
+  assert.equal(drafts.length, 2);
+  assert.ok(drafts.every((draft) => draft.threadId === "planning-thread"));
+});
+
 test("automatic dispatch leaves a pending manual draft alone", async () => {
   const start = source.indexOf("async function pollNativeClaim");
   const end = source.indexOf("\n  function frameMatchesPanelUrl", start);

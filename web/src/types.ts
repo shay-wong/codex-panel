@@ -573,6 +573,12 @@ export interface JiraLifecycle {
   version: number;
 }
 
+export interface TaskPlan {
+  spec: string;
+  version: number;
+  updatedAt: string | null;
+}
+
 export interface JiraPlan {
   threadId: string | null;
   status: "planning" | "review" | "publishing" | "published";

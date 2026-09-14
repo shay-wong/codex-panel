@@ -32,6 +32,7 @@ When another workflow needs the Jira reference linked to an execution Issue, run
    - Create a new issue only when no existing issue reasonably tracks the requirement.
    - Do not create, append, or relate a tiny or trivial request that does not benefit from durable tracking.
 3. Before executing an issue, read the latest issue content and all comments. Treat comments as part of the current requirements, especially when completed work has been returned for changes.
+   - Read `issue planning get ISSUE_ID` for its saved Spec; for a sub-issue, also read the parent task's Spec through `task.relations.parent.id` and apply only the child's authorized scope. Then follow **Select applicable workflow stages** below. An execution entry does not automatically authorize implementation or code review.
    - A comment headed `AI 对话交接` is a handoff summary from a prior Codex conversation, created either by embedded chat or `$handoff-panel`. Use the latest such comment as prior discussion context, while newer issue content and later comments take precedence.
    - In a description or comment, `![alt](/api/attachments/<id>/content)` marks an inline image at that exact position in the text.
    - When understanding that image is necessary, use `attachment download` to save it locally, then inspect the saved file with an available image-viewing tool.
@@ -45,13 +46,36 @@ When another workflow needs the Jira reference linked to an execution Issue, run
 7. To claim a `todo` issue, move it to `in_progress` with `--if-version` from the latest read before starting implementation. The claim and every later owned `issue move` must pass the complete saved `threadBinding`: `threadId`, `codexProjectId`, `codexProjectKind`, `codexHostId`, and `workspacePath`, using all five explicit `--binding-*` options. If any identity field is unavailable, stop before claiming; never create a legacy binding containing only `threadId`. Preserve an existing complete binding exactly and never take over a binding owned by another conversation. If the claim reports a version conflict or a new read shows changed status or requirements, skip the issue and do not implement it.
 8. Include `--if-version <version>` on every concurrent update, using the version returned by the latest read.
 9. Before requesting review, verify the requested work and acceptance criteria.
-10. After implementation and self-verification, add a comment summarizing the key changes, verification, result, and remaining risks; then move the issue to `in_review`. Never move it directly to `done`.
+10. After the applicable work and self-verification, add a comment summarizing the key changes, verification, result, and remaining risks; then move the issue to `in_review`. For research, include sources, findings, and uncertainties instead of a code-review result. Never move it directly to `done`.
 11. Move an issue from `in_review` to `done` only when the user explicitly confirms acceptance or explicitly asks to mark it complete. Codex self-verification alone is not sufficient.
 12. Move work that cannot continue to `blocked`, and work that will not continue to `canceled`.
 
 Use `issue list --archived true|false|all` when archived state matters. Issue creation and updates support `--start-date`; `issue update --project` moves an issue to another project while preserving its linked conversation when no other conversation change is requested.
 
 For version conflicts outside the initial claim, read the issue again, reconcile the newer state, and retry with its current version.
+
+## Select applicable workflow stages
+
+After reading the issue and comments, determine the requested work from its content and the user's authorization, not its title, status, or the name of the entry button. Do not require the user to classify the issue.
+
+- Pure research, explanations, comparisons, and findings reports: investigate, check sources and evidence, state uncertainties, and deliver the findings. Do not load or invoke implementation or code-review Skills. Saving a research report alone does not turn it into a coding task. `in_review` means awaiting user confirmation, not that a code-review Skill ran.
+- Authorized implementation: before editing, run `panelctl workflow get execution --project PROJECT_ID --json` using `task.projectId` from `issue get`.
+- Code changes or an explicit code-review request: before review, run `panelctl workflow get review --project PROJECT_ID --json`. A read-only review of existing code can use this stage without first entering implementation.
+- Planning, Spec creation, or task decomposition for any task: use `planning`, regardless of Jira association. An explicit handoff uses `handoff`, retaining its authorization boundary in `$handoff-panel`.
+
+For each applicable stage, read the current configuration at stage entry. Check `appliesWhen`, apply `prompt` together with `rules`, and read each returned `skills[].path` (`SKILL.md`) in order before following it. Skill paths come from the target project's catalog; do not guess paths or substitute an installed Skill by name. These instructions do not authorize editing the Skills themselves. When `mode` is `default`, follow the returned default method in `prompt`; if `missing` is nonempty, report the unavailable Skills and follow the returned fallback. A failed configuration read is not an empty configuration: report the failure before proceeding with that stage.
+
+Skip stages that do not apply, even when they have configured Skills or custom prompts. If research later leads to authorized code changes, enter the execution and review stages then; a recommendation to change code is not authorization. Record the stages used or skipped briefly in the final result, without claiming a skipped review was completed.
+
+## Planning and Specs for all tasks
+
+Planning is available for ordinary tasks, including backlog tasks and research, as well as Jira requirements. Read `workflow get planning --project PROJECT_ID --json`, the latest issue, comments, attachments, `issue planning get ISSUE_ID --json`, and `issue tree ISSUE_ID --direction descendants --depth 1 --json` before forming a plan. An execution Issue linked to Jira still owns its own Spec; only a task whose `source` is `jira` uses the Jira publication flow below.
+
+Save an approved ordinary-task Spec with `issue planning save ISSUE_ID --spec-file SPEC.md --if-version N --json`, using `plan.version` from a fresh `issue planning get`. A never-saved ordinary Spec has version 1. Keep the Spec on the main task; do not replace its description or create a separate Spec Issue. On a version conflict, reconcile with the saved Spec before retrying.
+
+An ordinary main task can be split into multiple sub-issues. After the user approves the breakdown, use `issue create --project PROJECT_ID --status backlog` for each missing child, then `issue relation add CHILD_ID --type parent --issue MAIN_ID --if-version CHILD_VERSION`. Add `blocked_by` or `blocks` relations for the approved dependencies, reading each issue's latest version before the relation write. Use the existing task tree and Spec to reuse children when continuing a partially completed breakdown. Ordinary parent and dependency relations currently require the same project. Report the created identifiers and verify them with `issue tree` and `issue get`.
+
+Planning preparation only fills a draft. The user sends it manually; binding that conversation and saving the Spec do not start implementation or change the task's status. Native Plan mode is read-only: after approval, leave Plan mode to save the Spec or create children. Saving or approving a plan does not itself authorize implementation. If the user subsequently authorizes execution, read the saved Spec and applicable execution configuration, and continue in the same bound conversation. Child creation alone never starts those children.
 
 ## Jira planning conversations
 

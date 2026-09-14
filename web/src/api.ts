@@ -30,6 +30,7 @@ import type {
   ProjectReadmeAttachment,
   ProjectSummary,
   Task,
+  TaskPlan,
   TaskChangeActivity,
   PanelMetadata,
   TaskDraft,
@@ -694,6 +695,22 @@ export async function prepareTaskExecution(taskId: string, useWorktree: boolean)
     method: "POST",
     body: JSON.stringify({ useWorktree }),
   });
+}
+
+export async function prepareTaskPlanning(taskId: string): Promise<Record<string, unknown>> {
+  return request(`/api/local/tasks/${encodeURIComponent(taskId)}/prepare-planning`, { method: "POST" });
+}
+
+export async function getTaskPlan(taskId: string, signal?: AbortSignal): Promise<TaskPlan | null> {
+  const result = await request<{ plan: TaskPlan | null }>(`/api/tasks/${encodeURIComponent(taskId)}/planning`, { signal });
+  return result.plan;
+}
+
+export async function saveTaskPlan(taskId: string, version: number, spec: string): Promise<TaskPlan> {
+  const result = await request<{ plan: TaskPlan }>(`/api/tasks/${encodeURIComponent(taskId)}/planning/spec`, {
+    method: "PUT", body: JSON.stringify({ version, spec }),
+  });
+  return result.plan;
 }
 
 export async function getJiraTaskContext(

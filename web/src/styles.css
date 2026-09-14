@@ -13657,3 +13657,25 @@ button.activity-change-value:hover {
   .dashboard-metric { border-left: 0; border-top: var(--border-hairline) solid var(--border); }
   .dashboard-metric:first-child { border-top: 0; }
 }
+
+.task-spec-section {
+  margin: 16px 0;
+  padding: 12px 0;
+  border-block: var(--border-hairline) solid var(--border);
+}
+
+.task-spec-section summary { cursor: pointer; font-weight: 500; }
+.task-spec-section details > :not(summary) { margin-top: 12px; }
+.task-spec-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px;
+  resize: vertical;
+  color: var(--text-primary);
+  background: var(--surface);
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+}
+.task-spec-actions { display: flex; gap: 8px; }

@@ -3787,6 +3787,41 @@ export function createPanelServer(options = {}) {
         throw new ApiError(404, "NOT_FOUND", "Native claim action not found");
       }
 
+      const preparePlanningRoute = pathname.match(/^\/api\/local\/tasks\/([^/]+)\/prepare-planning$/);
+      if (preparePlanningRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "POST /api/local/tasks/:id/prepare-planning");
+        await assertEmptyRequestBody(request, "POST /api/local/tasks/:id/prepare-planning");
+        const task = database.getTask(decodeRouteSegment(preparePlanningRoute[1], "Task id"));
+        if (!task) throw new ApiError(404, "TASK_NOT_FOUND", "Task not found");
+        if (task.archivedAt || task.source !== "local") {
+          throw new ApiError(409, "TASK_PLANNING_UNAVAILABLE", "Use the active task's planning entry");
+        }
+        const workflow = await resolveWorkflow(database, aiChat, task.projectId, "planning");
+        const prepared = task.threadBinding ?? await prepareClaimExecution(task);
+        return sendJson(response, 200, {
+          taskId: task.id, identifier: task.identifier, title: `${task.identifier} · ${task.title}`,
+          instruction: [
+            `请规划 Panel 议题 ${task.identifier}：${task.title}`,
+            `先通过 Manage Panel 读取最新描述、全部评论、附件和 issue planning get ${task.id} --json 返回的 Spec。`,
+            workflow.prompt, workflowNotice(workflow), workflow.rules,
+            `Spec 保存在当前议题 ${task.id}，使用 issue planning get/save；保存前读取 plan.version。`,
+          ].join("\n\n"),
+          collaborationMode: workflow.mode === "default" ? "plan" : "default",
+          autoSubmit: false, executionPreparation: true, planningPreparation: true,
+          workspacePath: prepared.workspacePath, projectName: prepared.projectName,
+          codexProjectId: prepared.codexProjectId ?? task.projectId,
+          codexProjectKind: prepared.codexProjectKind ?? "local",
+          codexHostId: prepared.codexHostId ?? "local",
+          threadBinding: task.threadBinding, developmentContext: task.developmentContext,
+          useWorktree: false,
+          skillReferences: [
+            { name: "manage-panel", displayName: "Manage Panel", path: resolved.nativeSkillPath },
+            ...workflow.skills.map((skill) => ({ name: skill.id, displayName: skill.label, path: skill.path })),
+          ],
+        });
+      }
+
       const prepareExecutionRoute = pathname.match(/^\/api\/local\/tasks\/([^/]+)\/prepare-execution$/);
       if (prepareExecutionRoute) {
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
@@ -4301,6 +4336,20 @@ export function createPanelServer(options = {}) {
           200,
           await runSimpleJiraStart(jiraTaskId, version, actorFromRequest(request)),
         );
+      }
+
+      const taskPlanningRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/planning(\/spec)?$/);
+      if (taskPlanningRoute) {
+        const taskId = decodeRouteSegment(taskPlanningRoute[1], "Task id");
+        assertNoQuery(url.searchParams, "/api/tasks/:id/planning");
+        const method = taskPlanningRoute[2] ? "PUT" : "GET";
+        if (request.method !== method) return methodNotAllowed(response, [method]);
+        if (method === "GET") return sendJson(response, 200, { plan: database.getTaskPlan(taskId) });
+        const { version, spec } = parseJiraPlanSpec(await readJson(request));
+        const plan = database.saveTaskPlanSpec(taskId, version, spec);
+        const task = database.getTask(taskId);
+        events.emit("task.plan.updated", { taskId: task.id, task });
+        return sendJson(response, 200, { plan });
       }
 
       const jiraPlanSpecRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-planning\/spec$/);

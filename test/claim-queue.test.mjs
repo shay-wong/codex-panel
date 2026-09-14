@@ -173,8 +173,8 @@ test("native claim starts only after Codex returns a complete project binding", 
     assert.equal(prepared.autoSubmit, false);
     assert.equal(prepared.useWorktree, false);
     assert.equal(prepared.executionPreparation, true);
-    assert.match(prepared.instruction, /实施阶段提示词/);
-    assert.match(prepared.instruction, /审核阶段提示词/);
+    assert.match(prepared.instruction, /panelctl workflow get/);
+    assert.match(prepared.instruction, /纯调研、解释或结论报告不启用实现与代码审核 Skill/);
     assert.equal(item.database.getTask(task.id).status, "todo");
     assert.equal(item.database.getTask(task.id).threadBinding, null);
     assert.equal(item.database.getClaimQueueItem(task.id), null);

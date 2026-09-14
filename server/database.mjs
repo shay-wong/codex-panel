@@ -1245,6 +1245,14 @@ export class PanelDatabase {
 
       ${JIRA_SIMPLE_START_ITEMS_TABLE.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS")}
 
+      CREATE TABLE IF NOT EXISTS task_plans (
+        task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+        spec TEXT NOT NULL DEFAULT '',
+        version INTEGER NOT NULL CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS jira_plans (
         jira_task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
         thread_id TEXT UNIQUE REFERENCES ai_chat_threads(id) ON DELETE SET NULL,
@@ -3132,6 +3140,36 @@ export class PanelDatabase {
         task: task ? taskRelationSummaryFromRow(task) : null,
       };
     });
+  }
+
+  getTaskPlan(taskId) {
+    const task = this.#requireTask(taskId);
+    if (task.source === "jira") return this.getJiraPlan(task.id);
+    const row = this.database.prepare("SELECT * FROM task_plans WHERE task_id = ?").get(task.id);
+    return {
+      spec: row?.spec ?? "",
+      version: row?.version ?? 1,
+      createdAt: row?.created_at ?? null,
+      updatedAt: row?.updated_at ?? null,
+    };
+  }
+
+  saveTaskPlanSpec(taskId, version, spec) {
+    const task = this.#requireTask(taskId);
+    if (task.source === "jira") return this.saveJiraPlanSpec(task.id, version, spec);
+    const timestamp = now();
+    const result = this.database.prepare(`
+      INSERT INTO task_plans (task_id, spec, version, created_at, updated_at)
+      SELECT ?, ?, ?, ?, ?
+      WHERE ? = 1 OR EXISTS (SELECT 1 FROM task_plans WHERE task_id = ? AND version = ?)
+      ON CONFLICT(task_id) DO UPDATE
+      SET spec = excluded.spec, version = excluded.version, updated_at = excluded.updated_at
+      WHERE task_plans.version = ?
+    `).run(task.id, spec, version + 1, timestamp, timestamp, version, task.id, version, version);
+    if (result.changes === 0) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Task plan changed since it was read");
+    }
+    return this.getTaskPlan(task.id);
   }
 
   getJiraPlan(jiraTaskId) {

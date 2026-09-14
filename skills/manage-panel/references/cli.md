@@ -47,6 +47,14 @@ Every issue or comment write must be attributed to a Codex conversation. In Code
 
 Every successful command writes one JSON object with `schemaVersion` to stdout. The current schema version is `2`. Errors write one JSON object to stderr. Exit codes are `0` for success, `2` for invalid input, `3` when the service is unavailable, `4` for API or response errors, and `5` for conflicts.
 
+## Read workflow configuration
+
+```bash
+panelctl workflow get execution --project PROJECT_ID --json
+```
+
+Replace `execution` with `review`, `planning`, or `handoff` for those stages. Use the exact `task.projectId` from `issue get`. This read-only command resolves the current global stage configuration against that project's Skill catalog through the active local service. It returns `appliesWhen`, `prompt`, `rules`, `mode`, ordered `skills` (`id`, `label`, `path`), and `missing` Skill IDs. Read each selected `SKILL.md` before following it. No custom Skills means the returned prompt describes the default method; unavailable selections return the existing default fallback. This command does not start a stage, send a message, or change the issue. Pure research skips execution and code review; query only stages applicable to the authorized work.
+
 ## Read issues
 
 ```bash
@@ -175,6 +183,26 @@ panelctl comment delete COMMENT_ID --if-version N [--thread-id ID] [--json]
 Without `--after`, `comment list` returns the full list and a `nextCursor`. Keep that cursor and pass it to the next read of the same issue to receive only new or modified comments. `--body-file` reads UTF-8 content and passes it to the normal comment write path.
 
 Each comment JSON object independently records the most recent conversation that created or changed that comment as `threadId`. Comment operations never change the parent issue's `threadId`.
+
+## Task planning and sub-issues
+
+```bash
+panelctl issue planning get ISSUE_ID --json
+panelctl issue planning save ISSUE_ID --spec-file SPEC.md --if-version N --json
+```
+
+These commands save and read the task's Spec without replacing its description, changing its status, or starting execution. Read `plan.version` before saving; an ordinary task with no saved Spec returns an empty plan at version 1. A stale save returns `VERSION_CONFLICT`; read and reconcile instead of overwriting. Jira tasks use their existing Jira plan record; linked ordinary execution tasks retain their own Spec.
+
+After approval, split an ordinary main task using the existing Issue and relation commands:
+
+```bash
+panelctl issue tree MAIN_ID --direction descendants --depth 1 --json
+panelctl issue create --project PROJECT_ID --title "Child scope" --description-file CHILD.md --status backlog --json
+panelctl issue relation add CHILD_ID --type parent --issue MAIN_ID --if-version CHILD_VERSION --json
+panelctl issue relation add CHILD_ID --type blocked_by --issue PREREQUISITE_ID --if-version LATEST_CHILD_VERSION --json
+```
+
+Use returned identifiers and fresh versions; reuse existing children when resuming. The child and parent must belong to the same project. Repeat for the approved child scopes, then verify the main task's tree and child dependencies. Saving a Spec or creating backlog children does not authorize implementation. Ordinary planning can continue into authorized execution in the same conversation.
 
 ## Jira planning
 

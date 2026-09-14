@@ -22,6 +22,12 @@ test("the panel skill coordinates safe issue execution and review handoff", () =
   assert.match(skillSource, /completed work has been returned for changes/i);
   assert.match(skillSource, /claim a `todo` issue, move it to `in_progress` with `--if-version`/i);
   assert.match(skillSource, /version conflict[\s\S]*skip the issue and do not implement/i);
+  assert.match(skillSource, /Pure research[\s\S]*Do not load or invoke implementation or code-review Skills/i);
+  assert.match(skillSource, /Saving a research report alone does not turn it into a coding task/i);
+  assert.match(skillSource, /workflow get execution --project PROJECT_ID --json/);
+  assert.match(skillSource, /workflow get review --project PROJECT_ID --json/);
+  assert.match(skillSource, /read each returned `skills\[\]\.path`/i);
+  assert.match(skillSource, /A failed configuration read is not an empty configuration/i);
 
   assert.match(
     skillSource,
