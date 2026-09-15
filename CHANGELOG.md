@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- macOS releases provide an ad-hoc signed universal DMG without requiring Apple notarization; first launch may require allowing the app in Privacy & Security. Update archives retain independent signature verification.
+
 - Immediate Jira start identifies missing repositories without a Spec, asks unresolved questions inline, and queues separate persisted execution scopes for multiple repositories.
 
 - Jira planning can associate multiple repositories from requirement and repository evidence, preserve existing links, and record selection reasons; only ambiguous choices require clarification. Added read-only repository candidate discovery, including unregistered device workspaces.

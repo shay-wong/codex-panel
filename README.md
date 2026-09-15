@@ -1,5 +1,7 @@
 # Codex Panel
 
+macOS releases provide a universal DMG for Apple Silicon and Intel, ad-hoc signed without Apple notarization. First launch may require allowing the app in System Settings → Privacy & Security.
+
 **Create and start** also works without linked repositories: a read-only Codex check selects repositories and their individual scopes, then starts the existing execution queue. Ambiguities are answered inline before any execution; no Spec is required. A single linked repository goes straight to execution, while multiple linked repositories retain their selection and receive separate scopes.
 
 Jira AI planning can identify and associate one or several repositories from the requirement and repository documentation. Clear selections are saved with reasons; ambiguous choices are clarified, existing manual links are retained, and native Plan mode remains read-only until exited. No fixed Jira-project mapping is required. See [Jira repository association](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues).

@@ -1,0 +1,125 @@
+name: Release macOS
+
+on:
+  push:
+    tags:
+      - "v*-fork"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-macos-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'shay-wong/codex-panel'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      CODEX_PANEL_UPDATER_PUBLIC_KEY: ${{ vars.CODEX_PANEL_UPDATER_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Validate release version and signing configuration
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          test -n "$CODEX_PANEL_UPDATER_PUBLIC_KEY"
+          test -n "$TAURI_SIGNING_PRIVATE_KEY"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import { parse } from 'smol-toml';
+          import { releaseMetadata } from './scripts/release-metadata.mjs';
+          const json = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
+          const version = json('package.json').version;
+          assert.equal(json('package-lock.json').version, version);
+          assert.equal(json('package-lock.json').packages[''].version, version);
+          assert.equal(json('src-tauri/tauri.conf.json').version, version);
+          const cargo = parse(fs.readFileSync('src-tauri/Cargo.toml', 'utf8')).package;
+          assert.equal(cargo.version, version);
+          const lock = parse(fs.readFileSync('src-tauri/Cargo.lock', 'utf8'));
+          assert.equal(lock.package.find((entry) => entry.name === cargo.name).version, version);
+          const metadata = releaseMetadata(version, process.env.RELEASE_TAG, ['arm64', 'x86_64']);
+          fs.appendFileSync(process.env.GITHUB_ENV, `RELEASE_DMG=${metadata.assetNames[0]}\nRELEASE_ARCHIVE=${metadata.archive}\n`);
+          NODE
+      - name: Check release metadata and updater signatures
+        run: node --test test/release-metadata.test.mjs test/updater-signature.test.mjs
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: rustup toolchain uninstall stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: macos-universal
+          cache-bin: false
+      - run: npm run app:prepare -- --target universal-apple-darwin
+      - name: Build universal App without Apple credentials
+        run: >-
+          npm run tauri -- build --target universal-apple-darwin --bundles app
+          --no-sign --ci --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - name: Ad-hoc sign and verify App
+        run: |
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Panel.app"
+          EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          codesign --force --options runtime --entitlements src-tauri/Entitlements.plist --sign - "$APP/Contents/MacOS/$EXECUTABLE"
+          codesign --force --options runtime --entitlements src-tauri/Entitlements.plist --sign - "$APP"
+          npm run app:preflight -- "$APP"
+          npm run app:verify-packaged-panelctl -- "$APP"
+      - name: Package DMG and sign updater
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Panel.app"
+          mkdir -p "$RUNNER_TEMP/dmg-content" "$RUNNER_TEMP/release-assets"
+          ditto "$APP" "$RUNNER_TEMP/dmg-content/Codex Panel.app"
+          ln -s /Applications "$RUNNER_TEMP/dmg-content/Applications"
+          hdiutil create -volname "Codex Panel" -srcfolder "$RUNNER_TEMP/dmg-content" -ov -format UDZO "$RUNNER_TEMP/release-assets/$RELEASE_DMG"
+          hdiutil verify "$RUNNER_TEMP/release-assets/$RELEASE_DMG"
+          node scripts/create-macos-updater.mjs "$APP" "$RUNNER_TEMP/release-assets" "$RELEASE_TAG"
+          test -s "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE"
+          test -s "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE.sig"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-release-${{ github.sha }}
+          path: ${{ runner.temp }}/release-assets
+          if-no-files-found: error
+      - name: Publish release with DMG first
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+          macOS 通用版，支持 Apple Silicon 与 Intel。此版本使用临时签名，未经 Apple 公证；首次打开可能需要在“系统设置 → 隐私与安全性”中允许打开。更新包使用 Codex Panel 独立密钥签名验证。
+
+          已有本地 0.1.0 开发版需手动安装一次，以切换到独立 Fork 版本线。
+
+          Universal macOS build for Apple Silicon and Intel. Ad-hoc signed, not Apple-notarized; first launch may require allowing the app in System Settings → Privacy & Security. Update archives are signed with the Codex Panel updater key.
+
+          Local 0.1.0 development builds require a one-time manual installation to switch to the independent fork version line.
+          NOTES
+          printf '\n[中文更新日志](https://github.com/%s/blob/%s/CHANGELOG.zh-CN.md) · [Changelog](https://github.com/%s/blob/%s/CHANGELOG.md)\n' "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$GITHUB_REPOSITORY" "$RELEASE_TAG" >> "$RUNNER_TEMP/release-notes.md"
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --draft --title "Codex Panel $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/release-assets/$RELEASE_DMG"
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE.sig" "$RUNNER_TEMP/release-assets/latest.json"
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets > "$RUNNER_TEMP/uploaded-assets.json"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const { assets } = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/uploaded-assets.json`, 'utf8'));
+          assert.deepEqual(assets.map((asset) => asset.name), [process.env.RELEASE_DMG, process.env.RELEASE_ARCHIVE, `${process.env.RELEASE_ARCHIVE}.sig`, 'latest.json']);
+          assert.ok(assets.every((asset) => asset.state === 'uploaded' && asset.size > 0));
+          NODE
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,tagName

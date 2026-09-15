@@ -128,15 +128,11 @@ Panel participates in Codex’s native navigation history: Back returns to the p
 
 ## Signed in-app updates
 
+macOS releases use ad-hoc App signing without Apple notarization, while update archives retain Tauri signature verification. First launch may require allowing the app in System Settings → Privacy & Security.
+
 Panel uses Tauri's updater to download and verify an available fork release before installation. Click **Install update** and confirm to replace the App and restart Panel. Download or signature failure leaves the installed App and data intact; installation failure attempts to restore the owned Panel service. Windows continues to use the Release page, matching upstream's current limitation. Linux requires a supported signed package in that release's metadata.
 
-Release builds must supply `CODEX_PANEL_UPDATER_PUBLIC_KEY` with the fork's Tauri/minisign public key; never use the upstream public key. A build without this key reports that in-app installation is unavailable. Keep the corresponding `TAURI_SIGNING_PRIVATE_KEY` and optional `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the release environment only. Public-key configuration is compiled into the launcher, not loaded from mutable user settings.
-
 Fork releases use independent versions starting at `0.0.1-fork`, tagged `v0.0.1-fork`; upstream merges only update the recorded baseline. Existing local `0.1.0` builds need a one-time manual installation because `0.0.1-fork` is lower; subsequent updates follow normal increasing version order.
-
-For macOS, set all release version fields to `X.Y.Z-fork`, build and sign the App with the public key configured, then run `node scripts/create-macos-updater.mjs <Codex Panel.app> <output-directory> vX.Y.Z-fork`. The script checks the bundle identity/version and platform signatures, detects its actual architectures, signs the archive, verifies the updater signature against the public key, and writes `latest.json`. Upload the DMG first, then the generated `.app.tar.gz`, `.sig`, and `latest.json` to that exact `shay-wong/codex-panel` release. Publishing is a separate action; running the script does not upload anything. Normal local installs do not require the signing secret.
-
-The updater reads `releases/download/<selected-fork-tag>/latest.json`, so GitHub's handling of prerelease tags does not redirect it to another channel. An actual signed release and a launcher built with its public key are required before the installed application can update itself.
 
 ## Link embedded AI conversations to issues
 

@@ -1,5 +1,7 @@
 # Codex Panel
 
+macOS Release 提供 Apple Silicon 与 Intel 通用 DMG，使用临时签名（ad-hoc），未经 Apple 公证。首次打开可能需要在“系统设置 → 隐私与安全性”中允许打开。
+
 未关联仓库时也可“识别仓库并开始”：Codex 只读识别仓库及各自范围，明确后进入现有执行队列；有歧义时在详情内补充回答，执行前不要求 Spec。单个已关联仓库直接执行，多个已关联仓库保留选择并分别确定范围。
 
 Jira AI 规划可根据需求与仓库文档识别并关联一个或多个仓库：明确时自动保存并记录理由，有歧义才询问，保留已有手动关联；原生 Plan 模式退出后才写入。无需配置固定 Jira 项目映射。参见 [Jira 仓库关联](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues)。
