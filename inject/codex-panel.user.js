@@ -2420,7 +2420,11 @@
     }
     if (handleNativeDestinationCommand(event.target)) return;
     if (!active || !nativeNavigation) return;
-    closePanel(false);
+    // Let the native button finish its own navigation before removing the
+    // panel overlay; synchronous teardown cancels scheduled pages and history.
+    window.setTimeout(() => {
+      if (active && !destroyed) closePanel(false);
+    }, 0);
   }
 
   function onDesktopAppEntry(event) {

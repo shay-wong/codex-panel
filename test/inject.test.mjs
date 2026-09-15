@@ -345,8 +345,7 @@ test("opening Panel suppresses native selection and contextual header until clos
   assert.match(source, /NATIVE_SELECTED_ATTRIBUTE/);
   assert.match(source, /app-shell-header-context-menu-surface/);
   assert.match(source, /restoreNativeSelection\(\)/);
-  assert.match(source, /function onDocumentClick[\s\S]*closePanel\(false\);/);
-  assert.doesNotMatch(source, /setTimeout\(\(\) => closePanel\(false\), 0\)/);
+  assert.match(source, /function onDocumentClick[\s\S]*setTimeout\([\s\S]*closePanel\(false\)/);
 });
 
 test("the embedded header fills the native titlebar without clipping or a full-page no-drag region", () => {
@@ -1292,10 +1291,12 @@ test("native destinations close Panel without global history interception", () =
     `(${source.slice(clickStart, clickEnd)})`,
     {
       active: true,
+      destroyed: false,
       isNativePageNavigation,
       handleNativeDestinationCommand: () => false,
       normalizeThreadId: (value) => String(value || "").replace(/^(?:local|cloud):/i, ""),
       closePanel: () => { activityCloseCount += 1; },
+      window: { setTimeout: (callback) => callback() },
     },
   );
   onActivityClick({ target: activityTarget("View activity, needs attention") });
@@ -1321,12 +1322,14 @@ test("native destinations close Panel without global history interception", () =
   assert.ok(clickEnd > clickStart, "document click handler must be extractable");
   const clickResult = vm.runInNewContext(`(() => {
     let active = true;
+    let destroyed = false;
     let lastNativeThreadId = "thread-1";
     let closeCount = 0;
     const normalizeThreadId = (value) => String(value || "").replace(/^(?:local|cloud):/i, "");
     const isNativePageNavigation = (target) => target.navigate;
     const handleNativeDestinationCommand = () => false;
     const closePanel = () => { closeCount += 1; };
+    const window = { setTimeout: (callback) => callback() };
     ${source.slice(clickStart, clickEnd)}
     const row = { getAttribute: () => "local:thread-2" };
     onDocumentClick({ target: { navigate: false, closest: () => row } });

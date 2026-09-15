@@ -14,6 +14,8 @@ Explicit Jira conversation binding initializes a missing planning record so the 
 
 A local-first issue board that runs in a browser and can be embedded in Codex through the standalone CDP launcher or its injection script. The same HTTP API powers the React UI and the `panelctl` CLI used by the bundled Codex Skill.
 
+Native Codex navigation, including Scheduled Tasks and browser back/forward controls, remains usable while the embedded Panel is open.
+
 Each project dashboard generates a daily Codex summary. If generation fails, Panel retries after 5, 15, and 60 minutes, then stops automatic attempts; the dashboard keeps a manual retry action available, and any successful generation resets the retry sequence.
 
 Jira issue-link activity opens the corresponding Panel issue for both current links and historical unlink records, even when the target repository is not loaded in the Jira view.

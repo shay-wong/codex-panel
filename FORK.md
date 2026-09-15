@@ -62,6 +62,7 @@
 
 ### 全局可定制 AI 工作流
 
+- 原生导航兼容（本次修复）：Panel 打开时不阻断 Codex 的定时任务入口及浏览器返回、前进导航；捕获原生导航点击后延迟关闭遮罩，让原生事件先完成。代码：`inject/codex-panel.user.js`；验证：`node --test test/inject.test.mjs`；定位：`git log -S'Let the native button finish' -- inject/codex-panel.user.js`。合并时保留原生导航优先，不能恢复同步 teardown。
 原规划会话执行状态衔接（本次修复）：规划与执行固定规则及 Manage Panel 明确要求，用户授权实现后、编辑前，用最新版本和原完整会话绑定执行 `issue move --status in_progress`，验证后进入 `in_review`；不依赖再次点击 Panel，不从任意会话消息推断执行。已有对话须重读更新后的 Skill 或执行配置。沿用本节生命周期及用户文档。代码：`shared/workflow-prompts.json`、`skills/manage-panel/SKILL.md`；验证：`node --test test/task-planning-api.test.mjs`；定位：`git log -S'Continue from planning into execution' -- skills/manage-panel/SKILL.md`。合并时保留固定规则不受自定义模板替换及原会话绑定、Spec、子任务范围约束。
 
 按需阶段读取（本次变更）：手动准备、原生自动派发及内嵌队列都使用 Manage Panel 入口，不提前附加实现/审核 Skill 或模板。Agent 读取需求后通过现有 `panelctl workflow get STAGE --project PROJECT_ID --json` 获取适用阶段的当前配置，再按序读取 `skills[].path`。纯调研（包括保存报告）核实依据后交付，跳过代码阶段；代码改动或明确代码审核请求才进入审核。`in_review` 不是已运行代码审核的证明。适用条件固定在 `shared/workflow-prompts.json`，不新增任务类型、数据库字段或调度器；模型遵循情况需真实任务验证，接口测试不能证明。验证：`test/workflow-settings.test.mjs` 覆盖只附加入口、准备后更新配置、CLI 返回路径/提示词/适用条件及缺失回退；来源定位：`git log -S'Select applicable workflow stages' -- skills/manage-panel/SKILL.md`。合并时保留按需读取与授权边界，上游等价吸收后移除此补充。
