@@ -67,6 +67,7 @@ test("ordinary planning prepares manually, saves Spec and splits backlog sub-iss
     assert.equal(prepared.planningPreparation, true);
     assert.equal(prepared.workspacePath, workspace);
     assert.equal(prepared.useWorktree, false);
+    assert.match(prepared.instruction, /issue move --status in_progress/);
     assert.deepEqual(prepared.skillReferences.map((skill) => skill.name), ["manage-panel"]);
     assert.deepEqual(app.database.getTask(parent.id), parent);
     assert.equal(app.database.getClaimQueueItem(parent.id), null);
@@ -94,7 +95,7 @@ test("ordinary planning prepares manually, saves Spec and splits backlog sub-iss
     async function cli(args) {
       let output = "";
       const exitCode = await panelctl([...args, "--json"], {
-        cwd: workspace, env: { CODEX_PANEL_URL: baseUrl, CODEX_THREAD_ID: "planning-fixture" },
+        cwd: workspace, env: { CODEX_PANEL_URL: baseUrl, CODEX_THREAD_ID: "planning-confirmed-thread" },
         stdout: { write: (chunk) => { output += chunk; } }, stderr: { write: (chunk) => assert.fail(chunk) },
       });
       assert.equal(exitCode, 0);
@@ -137,6 +138,28 @@ test("ordinary planning prepares manually, saves Spec and splits backlog sub-iss
     assert.match(execution.instruction, /issue planning get/);
     assert.equal(app.database.getClaimQueueItem(parent.id), null);
     assert.equal(app.database.getTask(parent.id).status, "todo");
+
+    // The agent continues in the planning conversation, without a native
+    // submission event or automatic claim. Existing CLI state writes own this transition.
+    const workflow = await cli(["workflow", "get", "execution", "--project", "planning"]);
+    assert.match(workflow.rules, /原规划会话收到执行授权/);
+    const bindingArgs = [
+      "--binding-thread-id", threadBinding.threadId,
+      "--binding-codex-project-id", threadBinding.codexProjectId,
+      "--binding-codex-project-kind", threadBinding.codexProjectKind,
+      "--binding-codex-host-id", threadBinding.codexHostId,
+      "--binding-workspace-path", workspace,
+    ];
+    for (const status of ["in_progress", "in_review"]) {
+      const { task: latest } = await cli(["issue", "get", parent.id]);
+      await cli(["issue", "move", parent.id, "--status", status, "--if-version", String(latest.version), ...bindingArgs]);
+      const { task: observed } = await request(`/api/tasks/${parent.id}`);
+      assert.equal(observed.status, status);
+      assert.deepEqual(observed.threadBinding, threadBinding);
+      assert.equal(app.database.getClaimQueueItem(parent.id), null);
+      assert.deepEqual((await request(`/api/tasks/${parent.id}/planning`)).plan, saved);
+      for (const child of children) assert.equal(app.database.getTask(child.id).status, "backlog");
+    }
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });

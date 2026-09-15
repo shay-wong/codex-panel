@@ -6,7 +6,7 @@ Planning and manual execution recognize the visible Codex run-location label, so
 
 The project model picker includes **6 Astra** (`gpt-6-astra`), with reasoning levels through `max` and `ultra`.
 
-Ordinary tasks also support **Plan with AI**, persistent inline Specs, and approved breakdowns into backlog sub-issues with dependencies. Planning can continue into authorized execution in the same conversation. Jira alone adds linked-repository and ticket-publication rules. See [task planning](docs/fork-capabilities.md#plan-ordinary-tasks-and-split-sub-issues).
+Ordinary tasks also support **Plan with AI**, persistent inline Specs, and approved breakdowns into backlog sub-issues with dependencies. Planning can continue into authorized execution in the same conversation: the agent records **In progress** before implementation and **In review** after verification, without another Panel execution click. Jira alone adds linked-repository and ticket-publication rules. See [task planning](docs/fork-capabilities.md#plan-ordinary-tasks-and-split-sub-issues).
 
 Explicit Jira conversation binding initializes a missing planning record so the same conversation can save its Spec and publish tickets. Existing plans are preserved. See [Jira planning](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues).
 

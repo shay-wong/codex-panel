@@ -4,6 +4,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Same-conversation planning-to-execution instructions now require the agent to record `in_progress` before implementing and `in_review` after verification, preserving the planning binding without another Panel execution click.
+
 - Fixed task details showing an execution-start action during manual execution. In-progress tasks now reflect the board's conversation activity and open their existing conversation.
 
 - Fixed Continue planning incorrectly reporting that a bound conversation did not open when native navigation leaves the window URL unchanged.

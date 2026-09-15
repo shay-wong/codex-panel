@@ -8,6 +8,8 @@
 
 项目模型选择支持 **6 Astra**（`gpt-6-astra`），思考强度包含 `max` 和 `ultra`。
 
+在原规划对话里明确要求实现后，Agent 按 Manage Panel 规则先保留原绑定、回写“处理中”，再开始改代码；验证完成后回写“待审核”，不需要再点 Panel 的执行按钮。规划讨论和保存 Spec 不改变状态。这是 Agent 主动回写，已有对话需读取更新后的 Manage Panel 或执行阶段配置才能采用新规则。
+
 显式绑定 Jira 会话时会补建缺失的规划记录，让同一会话可以继续保存 Spec 和发布 tickets；已有规划保持不变。参见 [Jira 规划](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues)。
 
 [English](README.md) | [Fork 能力（英文）](docs/fork-capabilities.md)
