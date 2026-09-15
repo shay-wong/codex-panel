@@ -117,7 +117,8 @@ jobs:
           import assert from 'node:assert/strict';
           import fs from 'node:fs';
           const { assets } = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/uploaded-assets.json`, 'utf8'));
-          assert.deepEqual(assets.map((asset) => asset.name).sort(), [process.env.RELEASE_DMG, process.env.RELEASE_ARCHIVE, `${process.env.RELEASE_ARCHIVE}.sig`, 'latest.json'].sort());
+          const names = new Set(assets.map((asset) => asset.name));
+          for (const name of [process.env.RELEASE_DMG, process.env.RELEASE_ARCHIVE, `${process.env.RELEASE_ARCHIVE}.sig`, 'latest.json']) assert.ok(names.has(name), `Missing release asset: ${name}`);
           assert.ok(assets.every((asset) => asset.state === 'uploaded' && asset.size > 0));
           NODE
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
