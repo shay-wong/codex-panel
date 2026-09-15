@@ -35,7 +35,7 @@ test("a new status entry overrides the old draft status and restores the remaini
     root: projectRoot,
     configFile: false,
     logLevel: "error",
-    server: { host: "127.0.0.1", port: 0, strictPort: true },
+    server: { host: "127.0.0.1", port: 5173, strictPort: false },
   });
   const profile = await mkdtemp(path.join(os.tmpdir(), "task-editor-create-status-"));
 

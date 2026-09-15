@@ -195,7 +195,7 @@ test("issue activity opens formal execution in Codex and keeps it out of tempora
   assert.match(appSource, /openingThread=\{openingThreadTaskId !== null\}/);
   assert.match(appSource, /const alreadyLinked = task\.threadBinding\?\.threadId === threadId[\s\S]*?if \(!jiraPlanning && alreadyLinked\) return task;[\s\S]*?else if \(!alreadyLinked\)/);
   assert.match(appSource, /\.then\(\(updated\) => \{[\s\S]*?if \(jiraPlanning\) \{[\s\S]*?setOpeningThreadTaskId\(null\)/);
-  assert.match(detailSource, /\}, \[jiraAvailable, task\.id, task\.version, openingThread\]\);/);
+  assert.match(detailSource, /\}, \[jiraAvailable, task\.id, task\.version, openingThread, commentsRevision\]\);/);
   assert.match(appSource, /event\.type === "claim\.updated"[\s\S]*?setAiThreadsRevision\(\(current\) => current \+ 1\)/);
   assert.match(appSource, /candidate\.origin\.issueId === pendingExecutionOpen\.taskId[\s\S]*?candidate\.purpose === "formal"[\s\S]*?candidate\.currentRun\?\.status === "running"/);
   assert.match(styles, /\.activity-conversation-link \{[\s\S]*?background: var\(--surface\)/);

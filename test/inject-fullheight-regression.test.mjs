@@ -96,6 +96,15 @@ function fixtureHtml(origin) {
     </main>
     <output id="result"></output>
     <script>
+      const navigationEntries = [{ pathname: "/", search: "", hash: "", state: null }];
+      let navigationIndex = 0;
+      const nativeNavigator = {
+        get location() { return navigationEntries[navigationIndex]; },
+        push(location, state) { navigationEntries.splice(++navigationIndex, navigationEntries.length, { ...location, state }); },
+        replace(location, state) { navigationEntries[navigationIndex] = { ...location, state }; },
+        go(delta) { navigationIndex = Math.max(0, Math.min(navigationEntries.length - 1, navigationIndex + delta)); },
+      };
+      document.querySelector("aside").__reactFiber$fixture = { memoizedProps: { navigator: nativeNavigator }, return: null };
       window.__CODEX_PANEL_URL__ = ${JSON.stringify(`${origin}/panel?host=codex`)};
       window.__CODEX_PANEL_MANAGED_ORIGIN__ = ${JSON.stringify(origin)};
       window.__CODEX_PANEL_PRIVATE_FRAME__ = true;

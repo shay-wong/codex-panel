@@ -20,7 +20,7 @@ test("the Panel skill selects the injected or packaged CLI without guessing", ()
 test("the panel skill coordinates safe issue execution and review handoff", () => {
   assert.match(skillSource, /read the latest issue content and all comments/i);
   assert.match(skillSource, /completed work has been returned for changes/i);
-  assert.match(skillSource, /claim a `todo` issue, move it to `in_progress` with `--if-version`/i);
+  assert.match(skillSource, /Before starting authorized implementation, move the current execution issue to `in_progress` with `--if-version`/i);
   assert.match(skillSource, /version conflict[\s\S]*skip the issue and do not implement/i);
   assert.match(skillSource, /Pure research[\s\S]*Do not load or invoke implementation or code-review Skills/i);
   assert.match(skillSource, /Saving a research report alone does not turn it into a coding task/i);
