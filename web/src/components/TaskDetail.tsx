@@ -119,6 +119,7 @@ import { DescriptionDocument } from "./DescriptionDocument";
 type TaskDetailError = string | readonly [string, string];
 
 interface TaskDetailProps {
+  processingRunning?: boolean;
   codexThreadProgress?: Record<string, { running: boolean } | null>;
   task: Task;
   tasks: Task[];
@@ -494,6 +495,7 @@ function AiConversationActivity({
 }
 
 export function TaskDetail({
+  processingRunning = false,
   codexThreadProgress = {},
   task,
   tasks,
@@ -1635,8 +1637,14 @@ export function TaskDetail({
     && !jiraPausePending
     && (currentTask.status === "todo" || (currentTask.status === "blocked" && claimRetryable))
     && !claimActive;
+  const showProcessing = currentTask.status === "in_progress" && !claimActive;
+  const canOpenProcessing = showProcessing && Boolean(currentTask.threadBinding || currentTask.legacyLocalThreadId);
   const claimLabel = claiming
     ? text("正在准备…", "Preparing…")
+    : canOpenProcessing
+      ? processingRunning
+        ? text("正在处理 · 查看对话", "Processing · Open conversation")
+        : text("处理中 · 查看对话", "In progress · Open conversation")
     : claimState === "running"
       ? text("自动执行中", "Running automatically")
       : claimState === "queued"
@@ -1657,7 +1665,7 @@ export function TaskDetail({
                     ? text("自动执行已完成", "Automatic execution completed")
                     : currentTask.status === "todo"
                       ? text("准备执行", "Prepare execution")
-                      : text("仅待认领可执行", "Available only while waiting");
+                      : taskStatusLabel(language, currentTask.status);
   async function openActivityTask(identifier: string) {
     try {
       onOpenTask(await getTask(identifier));
@@ -2363,12 +2371,18 @@ export function TaskDetail({
                   <button
                     className="detail-run-action"
                     type="button"
-                    disabled={!claimEnabled || claiming || openingThread}
-                    aria-busy={claiming || claimState === "running"}
-                    onClick={() => void executeNow()}
+                    disabled={(!claimEnabled && !canOpenProcessing) || claiming || openingThread}
+                    aria-busy={claiming || claimState === "running" || (showProcessing && processingRunning)}
+                    onClick={() => {
+                      if (canOpenProcessing) {
+                        if (currentTask.threadBinding) onOpenThread(currentTask.threadBinding);
+                        else if (currentTask.legacyLocalThreadId) onOpenLegacyLocalThread(currentTask.legacyLocalThreadId);
+                      } else void executeNow();
+                    }}
                   >
-                    {claiming || claimState === "running"
+                    {claiming || claimState === "running" || (showProcessing && processingRunning)
                       ? <span className="ai-chat-spinner" aria-hidden="true" />
+                      : showProcessing ? <ConversationIcon color="currentColor" />
                       : <LinearIcon name={claimState === "completed" ? "check" : "play"} />}
                     <span>{claimLabel}</span>
                   </button>

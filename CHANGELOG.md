@@ -4,6 +4,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed task details showing an execution-start action during manual execution. In-progress tasks now reflect the board's conversation activity and open their existing conversation.
+
 - Fixed Continue planning incorrectly reporting that a bound conversation did not open when native navigation leaves the window URL unchanged.
 
 - Fixed planning and manual execution stopping at an empty composer when Codex includes hidden responsive labels in its local run-location control.

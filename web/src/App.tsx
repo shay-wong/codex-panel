@@ -4016,6 +4016,7 @@ export function App() {
         {detailTask && (selectedProject || isAllProjects) ? (
           <TaskDetail
             key={detailTask.id}
+            processingRunning={taskPresentations[detailTask.id]?.processing.running}
             codexThreadProgress={hostContext?.threadRunning && hostContext.threadId
               ? { ...codexThreadProgress, [normalizeCodexThreadId(hostContext.threadId)]: { running: true } }
               : codexThreadProgress}
