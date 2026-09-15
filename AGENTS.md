@@ -183,9 +183,9 @@ Use this local review classification:
 - Release only when the user requests it or explicitly includes release in the task.
 - Merge all included product PRs first. Use a minimal version PR for the required version fields; do not alter release infrastructure without a separate requirement.
 - Use an independent Fork version starting at `0.0.1-fork` and a tag in the form `vX.Y.Z-fork`. Release notes contain product changes only.
-- Keep the DMG as the first release asset.
+- Verify the release asset set and signatures; asset display order must not block publication.
 - Record live build, signing, notarization, upload, and publication progress in the Panel.
-- Verify the tag target, release target, workflow result, asset order, and updater metadata.
+- Verify the tag target, release target, workflow result, asset completeness, and updater metadata.
 - Merging code does not authorize closing a linked GitHub Issue. Keep it open after merge and report that the implementation is merged and awaiting release.
 - Close a linked GitHub Issue only after a new version containing the change is published and verified. Reply with the merged PR and released version before closing, then record the closure in the local issue.
 - Do not overwrite the App in `/Applications`; leave the installed version available for update-check verification.

@@ -97,7 +97,7 @@ jobs:
           name: macos-release-${{ github.sha }}
           path: ${{ runner.temp }}/release-assets
           if-no-files-found: error
-      - name: Publish release with DMG first
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -111,14 +111,12 @@ jobs:
           Local 0.1.0 development builds require a one-time manual installation to switch to the independent fork version line.
           NOTES
           printf '\n[中文更新日志](https://github.com/%s/blob/%s/CHANGELOG.zh-CN.md) · [Changelog](https://github.com/%s/blob/%s/CHANGELOG.md)\n' "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$GITHUB_REPOSITORY" "$RELEASE_TAG" >> "$RUNNER_TEMP/release-notes.md"
-          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --draft --title "Codex Panel $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/release-assets/$RELEASE_DMG"
-          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE.sig" "$RUNNER_TEMP/release-assets/latest.json"
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --draft --title "Codex Panel $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/release-assets/$RELEASE_DMG" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE.sig" "$RUNNER_TEMP/release-assets/latest.json"
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[]' | jq -s --arg tag "$RELEASE_TAG" 'map(select(.tag_name == $tag and .draft == true)) | if length == 1 then .[0] else error("Expected one draft release") end' > "$RUNNER_TEMP/uploaded-assets.json"
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
           import fs from 'node:fs';
           const { assets } = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/uploaded-assets.json`, 'utf8'));
-          assert.equal(assets[0]?.name, process.env.RELEASE_DMG);
           assert.deepEqual(assets.map((asset) => asset.name).sort(), [process.env.RELEASE_DMG, process.env.RELEASE_ARCHIVE, `${process.env.RELEASE_ARCHIVE}.sig`, 'latest.json'].sort());
           assert.ok(assets.every((asset) => asset.state === 'uploaded' && asset.size > 0));
           NODE

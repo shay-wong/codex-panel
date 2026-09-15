@@ -184,22 +184,22 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 #### Agent 发布配置与操作
 
 - 发布规范和 Actions 配置集中在本节；用户文档只说明下载、安装、更新及其限制，不承载 Agent 授权规则或维护操作。
-- GitHub 资产按名称排序，DMG 使用 `00_` 前缀保持首位；发布校验读取 REST 资产集合，检查 DMG 首位和完整文件集合，不要求其余文件的上传顺序。
+- 发布校验只核对资产集合、上传状态及签名，不限制显示或上传顺序；DMG 使用正常文件名，不添加排序前缀。
 - 首次生成并安全备份 Tauri 更新密钥（`npm run tauri -- signer generate --help`）；后续版本沿用同一密钥，私钥不得入库。
 - GitHub Actions 仓库 Variable `CODEX_PANEL_UPDATER_PUBLIC_KEY` 填公钥文件内容；Secret `TAURI_SIGNING_PRIVATE_KEY` 填私钥文件内容；可选 Secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 填私钥密码。公钥编译进 App，私钥仅用于更新包签名；缺少密钥时发布构建失败。
 - 发布前同步 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json` 的版本及中英文更新日志，完成适用检查。
 - 按 Git 授权规则推送发布提交到 `origin/main`，再推送指向该提交的 `vX.Y.Z-fork` 标签，触发 Release macOS。此工作流只发布 macOS 通用版。
-- 完成后核实标签目标、工作流结果、DMG 首位，以及 `.app.tar.gz`、`.sig` 和 `latest.json`；在隔离环境验证安装，不覆盖用户已安装 App。上传失败可能留下 Draft Release，先核实失败原因和已有资产，不强制移动已发布标签。
+- 完成后核实标签目标、工作流结果、DMG，以及 `.app.tar.gz`、`.sig` 和 `latest.json`；在隔离环境验证安装，不覆盖用户已安装 App。上传失败可能留下 Draft Release，先核实失败原因和已有资产，不强制移动已发布标签。
 
 
-- 本次发布流程：按用户确认采用免费 ad-hoc App 签名，不依赖 Developer ID 或 Apple 公证，保留 Node 官方签名与独立 Tauri 更新验签。`.github/workflows/release-macos.yml` 仅响应本 Fork 的 `v*-fork` 标签并核实版本、main 祖先关系；构建通用 App、验证打包 CLI、生成 DMG 与更新资产，DMG 首位上传后发布。公钥来自 Actions Variable，私钥来自 Secret。用户安装说明：中英文 README、`docs/fork-capabilities.md` 和更新日志；发布配置维护于本节；验证：`actionlint .github/workflows/release-macos.yml`、现有发布元数据和验签检查、实际 Actions 构建。来源定位：`git log -S'Ad-hoc sign and verify App' -- .github/workflows/release-macos.yml`。合并时不得恢复上游付费签名、公证和 Beta 版本前置条件；获得证书后按新的明确要求调整。
+- 本次发布流程：按用户确认采用免费 ad-hoc App 签名，不依赖 Developer ID 或 Apple 公证，保留 Node 官方签名与独立 Tauri 更新验签。`.github/workflows/release-macos.yml` 仅响应本 Fork 的 `v*-fork` 标签并核实版本、main 祖先关系；构建通用 App、验证打包 CLI、生成 DMG 与更新资产，资产上传完成后发布。公钥来自 Actions Variable，私钥来自 Secret。用户安装说明：中英文 README、`docs/fork-capabilities.md` 和更新日志；发布配置维护于本节；验证：`actionlint .github/workflows/release-macos.yml`、现有发布元数据和验签检查、实际 Actions 构建。来源定位：`git log -S'Ad-hoc sign and verify App' -- .github/workflows/release-macos.yml`。合并时不得恢复上游付费签名、公证和 Beta 版本前置条件；获得证书后按新的明确要求调整。
 
 - 生命周期：`长期保留`。
 - 原始目的：采用上游下载、验签、用户确认安装与重启流程，同时只更新 Fork 自身。
 - 行为不变量：版本发现继续使用 Fork Release 和规范 `vX.Y.Z-fork`；每个候选从精确 tag 下读取 `latest.json`，包地址属于相同 Fork Release。Tauri 插件验签成功前不得安装；构建公钥来自 `CODEX_PANEL_UPDATER_PUBLIC_KEY`，禁止使用上游公钥，未配置时明确不可安装。自动检查可下载准备，但安装必须确认。仅停止自有服务，失败尝试恢复，成功重启；Windows 按上游仍不支持自动安装。更新不迁移/覆盖用户数据目录。
 - 代码及验证：`src-tauri/src/main.rs`、`src-tauri/build.rs`、`src-tauri/Cargo.toml`、`launcher/src/App.tsx`、`launcher/src/launcher.css`、`scripts/create-macos-updater.mjs`、`scripts/release-metadata.mjs`、`scripts/verify-updater-signature.mjs`；`test/launcher-ui.test.mjs`、`test/release-metadata.test.mjs`、`test/updater-signature.test.mjs` 及 Rust updater 定向测试。
 - 用户文档：`README.md`、`README.zh-CN.md`、`docs/fork-capabilities.md#signed-in-app-updates`；来源为当前行为调整，可用 `git log -S'prepare_update' -- src-tauri/src/main.rs` 定位。
-- 合并指引：沿用上游 updater 下载/验签/install API，保留 Fork 身份、公钥和下载链限定；不重写验证器到产品运行路径。发布脚本检测实际 macOS 架构，先验证 App 再签名归档、验证 updater 签名后生成元数据。DMG 排首位；私钥只在发布环境中使用。
+- 合并指引：沿用上游 updater 下载/验签/install API，保留 Fork 身份、公钥和下载链限定；不重写验证器到产品运行路径。发布脚本检测实际 macOS 架构，先验证 App 再签名归档、验证 updater 签名后生成元数据。资产顺序不作为发布条件；私钥只在发布环境中使用。
 - 移除条件：停止 Fork 独立发布。验证需隔离签名样本和假宿主；真实更新验收必须使用 Fork 公钥构建的安装包和对应签名 Release，不能用生产安装自测。
 
 ### 自包含安装 Panel runtime、Skills 与 CLI
