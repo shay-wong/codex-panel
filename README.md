@@ -14,7 +14,7 @@ Explicit Jira conversation binding initializes a missing planning record so the 
 
 A local-first issue board that runs in a browser and can be embedded in Codex through the standalone CDP launcher or its injection script. The same HTTP API powers the React UI and the `panelctl` CLI used by the bundled Codex Skill.
 
-Native Codex navigation closes the embedded Panel to reveal its destination, including the current Chinese Scheduled label and the sidebar Back/Forward controls.
+Native Codex navigation closes the embedded Panel to reveal its destination, including the current Chinese Scheduled label and the Back/Forward controls in the sidebar or separate app titlebar.
 
 Each project dashboard generates a daily Codex summary. If generation fails, Panel retries after 5, 15, and 60 minutes, then stops automatic attempts; the dashboard keeps a manual retry action available, and any successful generation resets the retry sequence.
 

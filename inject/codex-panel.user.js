@@ -2370,7 +2370,10 @@
     const clickable = target?.closest?.("button,a,[role='button'],[data-app-action-sidebar-thread-id]");
     if (!clickable || clickable === entry || clickable.closest(`#${ENTRY_ID}`)) return false;
     if (buttonMatches(clickable, NATIVE_HEADER_DESTINATION_LABELS)) return true;
-    if (clickable.closest("aside") && buttonMatches(clickable, NATIVE_HISTORY_LABELS)) return true;
+    if (buttonMatches(clickable, NATIVE_HISTORY_LABELS) && (
+      clickable.closest("aside")
+      || clickable.closest("div")?.querySelector('[data-app-shell-sidebar-trigger][aria-controls="app-shell-sidebar"]')
+    )) return true;
     const threadRow = clickable.closest("[data-app-action-sidebar-thread-id]");
     if (threadRow) return clickable === threadRow;
     if (!clickable.closest("aside nav[role='navigation']")) return false;

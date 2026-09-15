@@ -1263,6 +1263,7 @@ test("native destinations close Panel without global history interception", () =
       entry: null,
       ENTRY_ID: "codex-panel-entry",
       NATIVE_HEADER_DESTINATION_LABELS: nativeHeaderLabels,
+      NATIVE_HISTORY_LABELS: [],
       NATIVE_PAGE_LABELS: [],
       buttonMatches: (button, labels) => labels.includes(
         String(button.textContent || button.getAttribute("aria-label") || "")
@@ -1955,7 +1956,7 @@ test("host integration stays thin", () => {
 
 test("current native Scheduled, Back and Forward clicks reveal their destination behind Panel", async () => {
   const { JSDOM } = await import("jsdom");
-  const dom = new JSDOM(`<aside><header><button aria-label="返回"></button><button aria-label="前进"></button></header><nav role="navigation"><button>定时任务</button><button>插件</button></nav></aside><main><section id="native" hidden></section><section id="panel"></section></main>`);
+  const dom = new JSDOM(`<div><button data-app-shell-sidebar-trigger="true" aria-controls="app-shell-sidebar" aria-label="隐藏侧边栏"></button><button aria-label="返回"></button><button aria-label="前进"></button></div><aside><nav role="navigation"><button>定时任务</button><button>插件</button></nav></aside><main><section id="native" hidden></section><section id="panel"></section></main>`);
   const { window } = dom;
   const { document } = window;
   const native = document.getElementById("native");
@@ -1977,7 +1978,7 @@ test("current native Scheduled, Back and Forward clicks reveal their destination
   document.addEventListener("click", handler, true);
   const results = [];
   try {
-    for (const button of document.querySelectorAll("button")) {
+    for (const button of document.querySelectorAll("button:not([data-app-shell-sidebar-trigger])")) {
       const label = button.getAttribute("aria-label") || button.textContent;
       button.addEventListener("click", () => { native.textContent = label; });
       panel.hidden = false;
