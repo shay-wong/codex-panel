@@ -49,6 +49,7 @@
     "網站",
     "sites",
     "已安排",
+    "定时任务",
     "已排程",
     "scheduled",
     "插件",
@@ -68,6 +69,7 @@
     "view activity",
     "view activity, needs attention",
   ];
+  const NATIVE_HISTORY_LABELS = ["返回", "前进", "上一步", "向前", "back", "forward"];
   // TODO: Prefer stable command IDs if Codex exposes them, then support every app locale.
   const NATIVE_DESTINATION_COMMAND_LABELS = [
     ...NATIVE_PAGE_LABELS,
@@ -2368,6 +2370,7 @@
     const clickable = target?.closest?.("button,a,[role='button'],[data-app-action-sidebar-thread-id]");
     if (!clickable || clickable === entry || clickable.closest(`#${ENTRY_ID}`)) return false;
     if (buttonMatches(clickable, NATIVE_HEADER_DESTINATION_LABELS)) return true;
+    if (clickable.closest("aside") && buttonMatches(clickable, NATIVE_HISTORY_LABELS)) return true;
     const threadRow = clickable.closest("[data-app-action-sidebar-thread-id]");
     if (threadRow) return clickable === threadRow;
     if (!clickable.closest("aside nav[role='navigation']")) return false;
@@ -2420,8 +2423,7 @@
     }
     if (handleNativeDestinationCommand(event.target)) return;
     if (!active || !nativeNavigation) return;
-    // Let the native button finish its own navigation before removing the
-    // panel overlay; synchronous teardown cancels scheduled pages and history.
+    // Close after the click so the native handler can use the existing DOM.
     window.setTimeout(() => {
       if (active && !destroyed) closePanel(false);
     }, 0);

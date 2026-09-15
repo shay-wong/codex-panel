@@ -4,7 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
-- Fixed native scheduled-task and browser back/forward navigation while the embedded Panel is open by letting the native navigation event complete before closing the Panel overlay.
+- Fixed the embedded Panel remaining over native navigation destinations: recognize the current Chinese Scheduled label and the sidebar Back/Forward controls outside the navigation list, then close Panel after the native click.
 - Hide **Open in new conversation** for tasks with an existing bound or Jira planning conversation.
 
 - Same-conversation planning-to-execution instructions now require the agent to record `in_progress` before implementing and `in_review` after verification, preserving the planning binding without another Panel execution click.

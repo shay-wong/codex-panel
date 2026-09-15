@@ -1,5 +1,7 @@
 # Fork capabilities
 
+Native Scheduled navigation and the sidebar Back/Forward buttons close the embedded Panel to reveal the destination. The injection recognizes the current Chinese **定时任务** label and history buttons outside the sidebar navigation list.
+
 
 Continue planning confirms the active native conversation before prefill, including navigation that leaves the window URL unchanged.
 Planning and manual execution inspect the visible run-location label; hidden responsive labels no longer cause local selection to time out before prefill.

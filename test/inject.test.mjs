@@ -1952,3 +1952,40 @@ test("host integration stays thin", () => {
   assert.doesNotMatch(source, /import\s*\(/);
   assert.doesNotMatch(source, /window\.fetch\s*=/);
 });
+
+test("current native Scheduled, Back and Forward clicks reveal their destination behind Panel", async () => {
+  const { JSDOM } = await import("jsdom");
+  const dom = new JSDOM(`<aside><header><button aria-label="返回"></button><button aria-label="前进"></button></header><nav role="navigation"><button>定时任务</button><button>插件</button></nav></aside><main><section id="native" hidden></section><section id="panel"></section></main>`);
+  const { window } = dom;
+  const { document } = window;
+  const native = document.getElementById("native");
+  const panel = document.getElementById("panel");
+  const extract = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
+  const handler = vm.runInNewContext(`(() => {
+    const ENTRY_ID = "codex-panel-entry", entry = null;
+    let active = true, destroyed = false, lastNativeThreadId = "";
+    const normalizeThreadId = value => value || "";
+    const handleNativeDestinationCommand = () => false;
+    const closePanel = () => { panel.hidden = true; native.hidden = false; };
+    ${extract('const NATIVE_PAGE_LABELS', '\n\n  const previous')}
+    ${extract('function normalizedLabel', '\n\n  function isInteractiveElement')}
+    ${extract('function buttonMatches', '\n\n  function findReferenceButton')}
+    ${extract('function isNativePageNavigation', '\n\n  function handleNativeDestinationCommand')}
+    ${extract('function onDocumentClick', '\n\n  function onDesktopAppEntry')}
+    return onDocumentClick;
+  })()`, { window, panel, native });
+  document.addEventListener("click", handler, true);
+  const results = [];
+  try {
+    for (const button of document.querySelectorAll("button")) {
+      const label = button.getAttribute("aria-label") || button.textContent;
+      button.addEventListener("click", () => { native.textContent = label; });
+      panel.hidden = false;
+      native.hidden = true;
+      button.click();
+      await new Promise(resolve => window.setTimeout(resolve, 5));
+      results.push([label, native.textContent === label && !native.hidden && panel.hidden]);
+    }
+    assert.deepEqual(results, [["返回", true], ["前进", true], ["定时任务", true], ["插件", true]]);
+  } finally { window.close(); }
+});
