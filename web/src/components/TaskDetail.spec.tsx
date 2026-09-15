@@ -43,6 +43,7 @@ it("shows manual conversation activity and opens its binding without preparing a
   let result: ReturnType<typeof render>;
   await act(async () => { result = render(view(true)); });
   const running = screen.getByRole("button", { name: "正在处理 · 查看对话" });
+  expect(screen.queryByRole("button", { name: "在新对话打开" })).toBeNull();
   expect(running.getAttribute("aria-busy")).toBe("true");
   fireEvent.click(running);
   expect(open).toHaveBeenCalledWith(binding);
@@ -52,4 +53,6 @@ it("shows manual conversation activity and opens its binding without preparing a
   await act(async () => { result.rerender(view(false, { ...task, status: "todo" })); });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "准备执行" })); });
   expect(prepare).toHaveBeenCalledOnce();
+  await act(async () => { result.rerender(view(false, { ...task, status: "todo", threadBinding: null, threadId: null })); });
+  expect(screen.getByRole("button", { name: "在新对话打开" })).toBeTruthy();
 });

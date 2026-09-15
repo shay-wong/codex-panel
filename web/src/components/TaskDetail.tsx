@@ -2393,17 +2393,19 @@ export function TaskDetail({
                   )}
                 </>
               )}
-              <button
-                className="detail-open-thread-action"
-                type="button"
-                disabled={openingThread}
-                onClick={() => onOpenInThread(currentTask)}
-              >
-                <NewConversationIcon color="currentColor" />
-                <span>{openingThread
-                  ? text("正在打开…", "Opening…")
-                  : text("在新对话打开", "Open in new conversation")}</span>
-              </button>
+              {!currentTask.threadBinding && !currentTask.legacyLocalThreadId && !jiraContext?.plan?.threadId && (
+                <button
+                  className="detail-open-thread-action"
+                  type="button"
+                  disabled={openingThread}
+                  onClick={() => onOpenInThread(currentTask)}
+                >
+                  <NewConversationIcon color="currentColor" />
+                  <span>{openingThread
+                    ? text("正在打开…", "Opening…")
+                    : text("在新对话打开", "Open in new conversation")}</span>
+                </button>
+              )}
               {currentTask.externalUrl && (
                 <a
                   className="detail-copy-action detail-external-action"
