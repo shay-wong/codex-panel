@@ -2404,7 +2404,8 @@ export function TaskDetail({
                   )}
                 </>
               )}
-              {!currentTask.threadBinding && !currentTask.legacyLocalThreadId && !jiraContext?.plan?.threadId && (
+              {(currentTask.source === "local" && currentTask.threadBinding?.codexProjectKind !== "remote"
+                || !currentTask.threadBinding && !currentTask.legacyLocalThreadId && !jiraContext?.plan?.threadId) && (
                 <button
                   className="detail-open-thread-action"
                   type="button"

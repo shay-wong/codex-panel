@@ -329,7 +329,7 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 
 ### Panel 持久化自动执行队列
 
-- 手动执行详情状态（本次修复）：`in_progress` 且没有活动自动派发时，详情执行按钮复用卡片的 `processing.running`，显示处理中并打开已有绑定会话，不得重新准备执行；回到 `todo` 恢复准备入口。已有完整绑定、旧本地绑定或 Jira 规划对话时隐藏“在新对话打开”，没有对话时保留创建入口。代码：`web/src/App.tsx`、`web/src/components/TaskDetail.tsx`；验证：`npx vitest run web/src/components/TaskDetail.spec.tsx --environment jsdom`；定位：`git log -S'canOpenProcessing' -- web/src/components/TaskDetail.tsx`。沿用本节生命周期与用户文档；上游等价吸收后移除此补充。
+- 手动执行详情状态（本次修复）：`in_progress` 且没有活动自动派发时，详情执行按钮复用卡片的 `processing.running`，显示处理中并打开已有绑定会话，不得重新准备执行；回到 `todo` 恢复准备入口。本地任务即使已有会话也保留“在新对话打开”；显式新对话走 `newConversation`，跳过旧会话读取和恢复，确认原生 home composer 可见后预填，首次发送后复用现有绑定更新流程。SSH 和 Jira 专用入口沿用原有生命周期。代码：`web/src/App.tsx`、`web/src/components/TaskDetail.tsx`；验证：`npx vitest run web/src/components/TaskDetail.spec.tsx --environment jsdom`；定位：`git log -S'canOpenProcessing' -- web/src/components/TaskDetail.tsx`。沿用本节生命周期与用户文档；上游等价吸收后移除此补充。
 - 运行位置可见标签兼容（本次修复）：Codex 本地按钮同时渲染长短标签时必须读取 `innerText`，不能把隐藏文字拼接后误判为未选中并阻断预填。支持本地模式当前中英繁体名称。代码 `inject/codex-panel.user.js`；验证 `node --test test/inject.test.mjs`；定位 `git log -S'const visibleLabel' -- inject/codex-panel.user.js`。
 - 手动执行准备（本次变更）：`prepareManualExecution` 只读生成 Manage Panel 入口草稿，Agent 按需读取工作流配置；项目与运行位置选择先于预填，实际发送经 host 确认后再通过已有任务更新接口绑定并进入处理中。等待草稿发送时暂停新的原生自动派发；未开始的派发错误不得称为执行停止。代码：`web/src/components/TaskDetail.tsx`、`web/src/App.tsx`、`server/claim-queue.mjs`、`inject/codex-panel.user.js`、`scripts/codex-injector.mjs`；验证：`test/claim-queue.test.mjs`、`test/inject.test.mjs`；定位：`git log -S'prepareManualExecution' -- server/claim-queue.mjs`。合并时保留手动发送边界，上游等价吸收后移除此补充。
 

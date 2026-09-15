@@ -809,6 +809,60 @@ test("execution prepares location before prefill and submits only automatic clai
   }
 });
 
+test("explicit new conversation waits for its composer and never recovers the old thread", async () => {
+  for (const opens of [true, false]) {
+    const calls = [];
+    let pending, navigated = false, polls = 0, timestamp = 0;
+    const run = vm.runInNewContext(`(() => {
+      let pendingThreadCreation = null, lastNativeThreadId = "old-thread";
+      ${createThreadSource}
+      return createThreadForTask;
+    })()`, {
+      Date: { now: () => timestamp += 1000 },
+      window: { electronBridge: { sendMessageFromView() {} }, setTimeout: (callback) => callback() },
+      document: { querySelectorAll: (selector) => {
+        assert.ok(navigated);
+        assert.match(selector, /data-composer-placement="home"/);
+        return opens && ++polls >= 2 ? [{ getClientRects: () => [1] }] : [];
+      } },
+      normalizeThreadId: (id) => id || "",
+      threadIdFromLocation: () => "old-thread",
+      setPendingThreadAssociation: (value) => { pending = value; },
+      closePanel() {},
+      dispatchHostMessage: async (message) => {
+        assert.equal(message.path, "/");
+        navigated = true;
+        calls.push("navigate-new");
+      },
+      nativeThreadIds: () => new Set(["old-thread"]),
+      requestHostTaskComposerPrefill: async (request) => {
+        assert.ok(polls >= 2);
+        assert.equal(request.threadId, undefined);
+        calls.push("prefill-new");
+      },
+      waitForPreparedComposer: async () => ({}),
+      selectNativeCollaborationMode: async () => {},
+      requestHost: async () => { throw new Error("must not read the old conversation"); },
+      postToFrame: (message) => calls.push(message.type),
+      THREAD_ASSOCIATION_TIMEOUT_MS: 60_000,
+    });
+    await run({
+      taskId: "task", identifier: "TEST-1", title: "Test", instruction: "Continue TEST-1",
+      newConversation: true, recoverExisting: true, projectless: true,
+      threadBinding: { threadId: "old-thread" },
+      skillReferences: [{ name: "manage-panel", displayName: "Manage Panel", path: "/fake/SKILL.md" }],
+    });
+    assert.deepEqual(calls, opens
+      ? ["navigate-new", "prefill-new", "panel:thread-prepared"]
+      : ["navigate-new", "panel:thread-create-error"]);
+    if (opens) {
+      assert.equal(pending.threadId, undefined);
+      assert.equal(pending.submitted, false);
+      assert.ok(pending.existingThreadIds.has("old-thread"));
+    } else assert.equal(pending, null);
+  }
+});
+
 test("planning and execution prefill the same bound conversation in the requested mode", async () => {
   const modes = [];
   const drafts = [];

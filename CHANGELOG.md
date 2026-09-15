@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Local tasks with an existing conversation can open a new unsent conversation with task and handoff context, without waiting for the old conversation to respond.
+
 ## 0.0.1-fork — 2026-09-15
 
 - macOS releases provide an ad-hoc signed universal DMG without requiring Apple notarization; first launch may require allowing the app in Privacy & Security. Update archives retain independent signature verification.

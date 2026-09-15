@@ -1365,7 +1365,7 @@
     pendingThreadCreation = taskId;
     setPendingThreadAssociation(null);
     try {
-      if (!autoSubmit && payload.executionPreparation && payload.threadBinding) {
+      if (!payload.newConversation && !autoSubmit && payload.executionPreparation && payload.threadBinding) {
         const binding = payload.threadBinding;
         await openThread(binding);
         const deadline = Date.now() + 8_000;
@@ -1418,7 +1418,7 @@
         await openThread(started.threadBinding);
         return;
       }
-      if (payload?.recoverExisting === true && !autoSubmit) {
+      if (!payload.newConversation && payload?.recoverExisting === true && !autoSubmit) {
         const codexHostId = typeof payload?.codexHostId === "string"
           ? payload.codexHostId.trim() || "local"
           : "local";
@@ -1523,6 +1523,18 @@
         },
       });
       const existingThreadIds = nativeThreadIds();
+      if (payload.newConversation) {
+        const deadline = Date.now() + 8_000;
+        let ready = false;
+        while (Date.now() < deadline) {
+          ready = Array.from(document.querySelectorAll(
+            '[data-codex-composer-root][data-composer-placement="home"] [data-codex-composer="true"][contenteditable="true"]'
+          )).some((editor) => editor.getClientRects().length > 0);
+          if (ready) break;
+          await new Promise((resolve) => window.setTimeout(resolve, 40));
+        }
+        if (!ready) throw new Error("Codex 未打开新对话输入框");
+      }
       if (autoSubmit || payload.executionPreparation) {
         await selectNativeWorktree(payload.useWorktree !== false);
       }

@@ -32,6 +32,7 @@ it("shows manual conversation activity and opens its binding without preparing a
     activityKey: "fixture", activityUpdatedAt: "2026-09-15T00:00:00.000Z", externalUrl: null,
   };
   const open = vi.fn();
+  const openNew = vi.fn();
   const prepare = vi.fn();
   const props = {
     task, tasks: [task], referenceTasks: [],
@@ -40,13 +41,15 @@ it("shows manual conversation activity and opens its binding without preparing a
     jiraRepositoryProjects: [], currentUser: actor,
     jiraAvailable: false, availableLabels: [], developmentScan: { workspacePath: null, contexts: [] },
     developmentScanLoading: false, commentsRevision: 0, attachmentsRevision: 0, aiChatThreads: [],
-    openingThread: false, onOpenThread: open, onPrepareExecution: prepare, onError: vi.fn(),
+    openingThread: false, onOpenThread: open, onOpenInThread: openNew, onPrepareExecution: prepare, onError: vi.fn(),
   } as unknown as ComponentProps<typeof TaskDetail>;
   const view = (running: boolean, current = task) => <TaskboardLanguageProvider language="zh"><TaskDetail {...props} task={current} processingRunning={running} /></TaskboardLanguageProvider>;
   let result: ReturnType<typeof render>;
   await act(async () => { result = render(view(true)); });
   const running = screen.getByRole("button", { name: "正在处理 · 查看对话" });
-  expect(screen.queryByRole("button", { name: "在新对话打开" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "在新对话打开" }));
+  expect(openNew).toHaveBeenCalledWith(task);
+  expect(open).not.toHaveBeenCalled();
   expect(running.getAttribute("aria-busy")).toBe("true");
   fireEvent.click(running);
   expect(open).toHaveBeenCalledWith(binding);

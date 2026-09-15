@@ -3296,6 +3296,7 @@ export function App() {
         skillName: "manage-panel",
         skillDisplayName: "Manage Panel",
         skillPath: managePanelSkillPath,
+        newConversation: true,
         projectName: taskProject?.name,
         codexProjectId: codexProjectContext?.codexProjectId ?? (
           taskProject?.id === GLOBAL_PROJECT_ID ? hostContext?.projectId : taskProject?.id
