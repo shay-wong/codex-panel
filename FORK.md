@@ -51,7 +51,7 @@
 - 权威上游版本来源：精确合并基线中的 `package.json`
 - 当前 Fork 版本来源：`package.json`、`package-lock.json` 根包条目、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock` 的 launcher 条目
 - 精确基线的上游版本：`1.1.23`（上游发布标签为 `v1.1.23-beta.1`）
-- 当前 Fork 版本：`0.0.1-fork`（待发布）
+- 当前 Fork 版本：`0.0.1-fork`（发布标签 `v0.0.1-fork`）
 - 匹配的 Fork 标签或 GitHub Release：无
 
 Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标签为 `vX.Y.Z-fork`；后续按 Fork 自身变更递增。上游版本只记录合并基线，不决定、重置或覆盖 Fork 版本。此决定替代旧的 `<upstream-version>-fork.<N>` 策略，后续应用 fork-doc 时以本仓库约定为准。
