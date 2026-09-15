@@ -140,6 +140,7 @@ Commands:
   cloud status|logout
   issue list|get|create|update|move|archive|restore|tree|relation
   issue planning get|save ISSUE_ID [--spec-file FILE --if-version N] [--json]
+  jira repositories list
   jira repositories set JIRA_ID --projects PROJECT_ID,... --if-version N
   jira planning ISSUE_ID [--spec-file FILE] [--tickets-file FILE] [--if-version N]
   comment list ISSUE_ID [--after CURSOR]
@@ -218,9 +219,11 @@ Options:
   --thread-id ID  Override CODEX_THREAD_ID
   --json          Make the JSON output contract explicit
   --help          Show this help`],
-  ["jira repositories", `Usage: panelctl jira repositories set JIRA_ID --projects PROJECT_ID,... --if-version N [--json]
+  ["jira repositories", `Usage: panelctl jira repositories list [--json]
+       panelctl jira repositories set JIRA_ID --projects PROJECT_ID,... --if-version N [--json]
 
-Replace the repositories linked to a Jira requirement with an explicitly selected project list.
+List available repository candidates, or replace a Jira requirement’s linked repositories.
+List merges saved Panel projects with current device workspaces without creating projects.
 
 Options:
   --projects IDS  Comma-separated Panel project IDs
@@ -536,8 +539,30 @@ async function execute(parsed, overrides) {
 }
 
 async function jiraRepositories(api, operands, options) {
+  if (operands.length === 1 && operands[0] === "list") {
+    if (options.projects || options["if-version"]) {
+      throw usageError("jira repositories list does not accept write options");
+    }
+    const [{ projects }, { workspaces }] = await Promise.all([
+      api.request("GET", "/api/projects"),
+      api.request("GET", "/api/device-workspaces"),
+    ]);
+    const persisted = new Map(projects.map((project) => [project.id, project]));
+    const ids = new Set([...persisted.keys(), ...Object.keys(workspaces)]);
+    return { repositories: [...ids].flatMap((id) => {
+      const project = persisted.get(id);
+      const workspacePath = workspaces[id] || project?.workspacePath;
+      if (id === DEFAULT_PROJECT_ID || project?.source === "jira" || !workspacePath) return [];
+      return [{
+        id,
+        name: project?.name || workspacePath.split(/[\\/]/).filter(Boolean).at(-1) || id,
+        workspacePath,
+        persisted: Boolean(project),
+      }];
+    }) };
+  }
   if (operands.length !== 2 || operands[0] !== "set") {
-    throw usageError("jira repositories expects: set JIRA_ID");
+    throw usageError("jira repositories expects: list | set JIRA_ID");
   }
   return api.request("PUT", `${taskPath(operands[1])}/jira-context`, {
     version: explicitVersion(options["if-version"]),

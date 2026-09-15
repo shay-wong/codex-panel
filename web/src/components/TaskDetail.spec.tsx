@@ -1,11 +1,14 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
+import { getJiraTaskContext, startSimpleJiraTask } from "../api";
 import { TaskDetail } from "./TaskDetail";
 import { TaskboardLanguageProvider } from "../i18n";
 
 vi.mock("../api", async (original) => ({
   ...await original<typeof import("../api")>(),
+  getJiraTaskContext: vi.fn(),
+  startSimpleJiraTask: vi.fn(),
   getTaskPlan: async () => ({ spec: "", version: 1, updatedAt: null }),
   listComments: async () => [],
   listTaskActivities: async () => [],
@@ -55,4 +58,23 @@ it("shows manual conversation activity and opens its binding without preparing a
   expect(prepare).toHaveBeenCalledOnce();
   await act(async () => { result.rerender(view(false, { ...task, status: "todo", threadBinding: null, threadId: null })); });
   expect(screen.getByRole("button", { name: "在新对话打开" })).toBeTruthy();
+});
+
+
+it("identifies repositories from immediate start and continues after clarification", async () => {
+  const actor = { type: "user", id: "fixture", name: "Fixture", avatarUrl: null };
+  const task = { id: "jira", identifier: "JIRA:TEST:1", externalKey: "TEST-1", projectId: "jira", title: "Client feature", description: "", creatorType: "user", creatorId: "fixture", creatorName: "Fixture", creatorAvatarUrl: null, status: "todo", priority: "none", labels: [], version: 1, source: "jira", claim: null, threadBinding: null, legacyLocalThreadId: null, conversationRefs: [], assignee: actor, relations: { parent: null, subIssues: [], blockedBy: [], blocks: [], related: [] }, createdAt: "2026-09-15T00:00:00Z", updatedAt: "2026-09-15T00:00:00Z", archivedAt: null, developmentContext: null };
+  const context = { jira: task, projects: [], issues: [], plan: null, simpleStart: null, lifecycle: { pending: null, duplicateOf: null, pausedIssueIds: [] } };
+  vi.mocked(getJiraTaskContext).mockResolvedValue(context as never);
+  vi.mocked(startSimpleJiraTask).mockResolvedValueOnce({ context, question: "哪个客户端负责？" } as never).mockResolvedValueOnce({ context } as never);
+  const props = { task, tasks: [task], project: { id: "jira", name: "Jira" }, projects: [{ id: "jira", name: "Jira", source: "jira" }], jiraRepositoryProjects: [], currentUser: actor, jiraAvailable: true, availableLabels: [], developmentScan: { workspacePath: null, contexts: [] }, commentsRevision: 0, attachmentsRevision: 0, aiChatThreads: [], onError: vi.fn(), onAiChatThreadsRefresh: vi.fn() } as unknown as ComponentProps<typeof TaskDetail>;
+  await act(async () => { render(<TaskboardLanguageProvider language="zh"><TaskDetail {...props} /></TaskboardLanguageProvider>); });
+  const start = screen.getByRole("button", { name: "识别仓库并开始" });
+  expect(start.hasAttribute("disabled")).toBe(false);
+  await act(async () => { fireEvent.click(start); });
+  expect(screen.getByText("哪个客户端负责？")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("补充仓库职责或执行范围"), { target: { value: "Android 客户端" } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "继续识别并开始" })); });
+  expect(vi.mocked(startSimpleJiraTask).mock.calls.at(-1)?.[1]).toContain("Android 客户端");
+  expect(screen.queryByText("哪个客户端负责？")).toBeNull();
 });

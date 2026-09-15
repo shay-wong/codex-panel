@@ -1,3 +1,5 @@
+import { signalProcessTree } from "../shared/process-tree.mjs";
+import { identifyJiraRepositories } from "./jira-repositories.mjs";
 import { createHmac, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { chmod, mkdir, open, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
@@ -2372,13 +2374,14 @@ export function createPanelServer(options = {}) {
     }),
   });
   const pendingJiraSimpleStarts = new Map();
+  const repositoryAnalysisChildren = new Set();
   // ponytail: one in-process reservation per Jira is enough while this server owns all local mutations.
   const pendingJiraReopenActions = new Map();
 
   function jiraPlanningPrompt(jiraTask, projects, review, plan, workflow) {
     const repositories = projects.length > 0
       ? projects.map((project) => `- ${project.name} (${project.id})`).join("\n")
-      : "- 尚未关联仓库；可以先澄清需求，但发布 tickets 前必须让用户在 Jira 详情中关联仓库。";
+      : "- 尚未关联仓库；先读取候选仓库及职责资料，根据需求判断并补齐关联，不要求用户先手动选择。";
     const preservedItems = plan?.items.filter((item) => (
       item.task && ["in_progress", "in_review", "blocked", "done"].includes(item.task.status)
     )) ?? [];
@@ -2398,6 +2401,7 @@ export function createPanelServer(options = {}) {
       "",
       "关联仓库:",
       repositories,
+      "仓库自动关联：通过 panelctl jira repositories list 查询候选；阅读最新 Jira 描述、评论、附件和已有规划，并结合候选项目 README、相关仓库文档或代码判断，可关联多个仓库。证据明确时按 Manage Panel 的仓库自动关联步骤保存并说明理由，有歧义才询问具体分歧；保留已有手动关联，不依据当前目录或名称猜测。原生 Plan 模式先形成判断，退出只读模式后保存。关联不启动执行、不发布 tickets。",
       "",
       "必须保留并纳入新计划约束的已开始成果:",
       preservedWork,
@@ -2675,8 +2679,61 @@ export function createPanelServer(options = {}) {
     return { context: database.getJiraContext(jiraTaskId), plan };
   }
 
-  async function createAndStartSimpleJira(jiraTaskId, version, actor) {
-    const started = database.beginJiraSimpleStart(jiraTaskId, version);
+  async function createAndStartSimpleJira(jiraTaskId, version, actor, clarification) {
+    let scopes = {};
+    let context = database.getJiraContext(jiraTaskId);
+    if (!context.simpleStart) {
+      if (context.lifecycle?.pending) throw new ApiError(409, "JIRA_LIFECYCLE_PENDING", "请先处理 Jira 生命周期提醒");
+      if (!context.jira || context.jira.source !== "jira" || context.jira.archivedAt !== null || context.jira.status !== "todo"
+        || context.plan || context.lifecycle?.duplicateOf) {
+        throw new ApiError(409, "JIRA_SIMPLE_START_UNAVAILABLE", "当前 Jira 不可直接开始，请先处理规划或生命周期状态");
+      }
+      if (context.jira.version !== version) throw new ApiError(409, "VERSION_CONFLICT", "Jira 已变化，请刷新后重试");
+      if (context.projects.length !== 1) {
+        const deviceWorkspaces = await readCodexProjectWorkspaces(resolved.codexStatePath);
+        const saved = new Map(database.listProjects().map((project) => [project.id, project]));
+        const ids = context.projects.length ? context.projects.map((project) => project.id) : [...new Set([...saved.keys(), ...Object.keys(deviceWorkspaces)])];
+        const repositories = ids.flatMap((id) => {
+          const project = saved.get(id);
+          const workspacePath = deviceWorkspaces[id] || project?.workspacePath;
+          if (id === DEFAULT_PROJECT_ID || project?.source === "jira" || !workspacePath) return [];
+          return [{ id, name: project?.name || path.basename(workspacePath), workspacePath,
+            linked: context.projects.some((project) => project.id === id),
+            readme: project ? database.getProjectReadme(id).content : "" }];
+        });
+        const comments = database.listComments(jiraTaskId);
+        const attachments = [...database.listAttachments(jiraTaskId), ...comments.flatMap((comment) => comment.attachments ?? [])];
+        const analysis = await identifyJiraRepositories({
+          executable: resolved.codexExecutable, workspacePath: resolved.dataDirectory, env: codexProcessEnvironment,
+          jira: context.jira, comments,
+          attachments: attachments.map((attachment) => ({ ...attachment, localPath: path.join(resolved.attachmentsDirectory, attachment.id) })),
+          repositories, clarification, children: repositoryAnalysisChildren,
+        });
+        const latest = database.getJiraContext(jiraTaskId);
+        if (latest.jira.version !== version || latest.plan || latest.simpleStart) throw new ApiError(409, "VERSION_CONFLICT", "识别期间 Jira 已变化，请刷新后重试");
+        if (analysis.question) return { context: latest, question: analysis.question };
+        if (context.projects.some((project) => !analysis.selections.some((selection) => selection.projectId === project.id))) {
+          return { context: latest, question: "已有仓库中存在无法确定的执行范围，请说明各仓库职责，或手动调整关联后重试。" };
+        }
+        scopes = Object.fromEntries(analysis.selections.map((selection) => [selection.projectId, selection.scope]));
+        for (const selection of analysis.selections) {
+          if (!saved.has(selection.projectId)) {
+            const candidate = repositories.find((repository) => repository.id === selection.projectId);
+            const project = database.createProject({ id: candidate.id, name: candidate.name, workspacePath: candidate.workspacePath });
+            events.emit("project.created", { project });
+          }
+        }
+        context = database.setJiraProjects(jiraTaskId, version, analysis.selections.map((selection) => selection.projectId), actor, new Set(Object.keys(deviceWorkspaces)));
+        version = context.jira.version;
+        events.emit("task.jira.updated", { taskId: jiraTaskId, task: context.jira });
+        const comment = database.createComment(jiraTaskId, {
+          body: "AI 仓库关联与执行范围\n\n" + analysis.selections.map((selection) => `- ${selection.projectId}: ${selection.reason}\n  ${selection.scope}`).join("\n"), actor,
+        });
+        events.emit("comment.created", { comment, task: database.getTask(jiraTaskId) });
+        version = database.getTask(jiraTaskId).version;
+      }
+    }
+    const started = database.beginJiraSimpleStart(jiraTaskId, version, scopes);
     if (started.operation.status === "complete") {
       return {
         context: database.getJiraContext(jiraTaskId),
@@ -2695,7 +2752,9 @@ export function createPanelServer(options = {}) {
           id: item.taskId,
           projectId: item.projectId,
           title: started.jira.title,
-          description: started.jira.description,
+          description: item.scope
+            ? `## 本仓库执行范围\n${item.scope}\n\n## Jira 需求背景（仅实现本仓库范围）\n${started.jira.description}`
+            : started.jira.description,
           status: "backlog",
           priority: started.jira.priority,
           labels: started.jira.labels,
@@ -2715,6 +2774,15 @@ export function createPanelServer(options = {}) {
           "JIRA_SIMPLE_START_TASK_CONFLICT",
           `Issue '${task.identifier}' no longer belongs to the selected active repository`,
         );
+      }
+      if (item.scope && ["backlog", "todo"].includes(task.status)) {
+        const scopePrefix = `## 本仓库执行范围\n${item.scope}\n\n`;
+        if (!task.description.startsWith(scopePrefix)) {
+          task = database.updateTask(task.id, task.version, {
+            description: `${scopePrefix}${task.description}`,
+          }, undefined, undefined, actor);
+          events.emit("task.updated", { task });
+        }
       }
 
       let context = database.getJiraContext(jiraTaskId);
@@ -2770,10 +2838,10 @@ export function createPanelServer(options = {}) {
     };
   }
 
-  function runSimpleJiraStart(jiraTaskId, version, actor) {
+  function runSimpleJiraStart(jiraTaskId, version, actor, clarification) {
     const current = pendingJiraSimpleStarts.get(jiraTaskId);
     if (current) return current;
-    const operation = createAndStartSimpleJira(jiraTaskId, version, actor)
+    const operation = createAndStartSimpleJira(jiraTaskId, version, actor, clarification)
       .finally(() => pendingJiraSimpleStarts.delete(jiraTaskId));
     pendingJiraSimpleStarts.set(jiraTaskId, operation);
     return operation;
@@ -4330,11 +4398,15 @@ export function createPanelServer(options = {}) {
           throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Jira start routes do not accept query parameters");
         }
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
-        const { version } = parseJiraSimpleStart(await readJson(request));
+        const body = await readJson(request);
+        assertPlainObject(body);
+        assertAllowedKeys(body, new Set(["version", "clarification"]));
+        const version = parseVersion(body.version);
+        const clarification = stringField(body.clarification ?? "", "clarification", { maxLength: 20_000 });
         return sendJson(
           response,
           200,
-          await runSimpleJiraStart(jiraTaskId, version, actorFromRequest(request)),
+          await runSimpleJiraStart(jiraTaskId, version, actorFromRequest(request), clarification),
         );
       }
 
@@ -5110,6 +5182,8 @@ export function createPanelServer(options = {}) {
       return server.address();
     },
     async close() {
+      for (const child of repositoryAnalysisChildren) signalProcessTree(child, "SIGTERM");
+      await Promise.allSettled([...pendingJiraSimpleStarts.values()]);
       claimQueue.close();
       await jiraAutoComplete.close();
       for (const { localSocket, remoteSocket } of cloudRealtimeSockets) {

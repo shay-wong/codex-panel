@@ -555,6 +555,9 @@ export function TaskDetail({
   const [jiraPlanningProjectAction, setJiraPlanningProjectAction] = useState<"planning" | "replan" | null>(null);
   const [jiraPlanningProjectSearch, setJiraPlanningProjectSearch] = useState("");
   const [jiraSimpleStartSaving, setJiraSimpleStartSaving] = useState(false);
+  const [jiraRepositoryQuestion, setJiraRepositoryQuestion] = useState("");
+  const [jiraRepositoryAnswer, setJiraRepositoryAnswer] = useState("");
+  const [jiraRepositoryClarification, setJiraRepositoryClarification] = useState("");
   const [jiraPlanningSaving, setJiraPlanningSaving] = useState(false);
   const [jiraLifecycleSaving, setJiraLifecycleSaving] = useState<
     "pause" | "keep" | "rework" | "replan" | "migrate" | null
@@ -620,6 +623,9 @@ export function TaskDetail({
       setDescriptionSegments(createInlineMediaSegments(task.description, referenceTasks));
     }
     if (taskChanged) {
+      setJiraRepositoryQuestion("");
+      setJiraRepositoryAnswer("");
+      setJiraRepositoryClarification("");
       setEditingDescription(false);
       setChangeStatusToTodo(false);
       setExecutionLocation("current");
@@ -961,7 +967,13 @@ export function TaskDetail({
         setJiraContext(latest);
         return;
       }
-      const context = await startSimpleJiraTask(latest.jira);
+      const clarification = jiraRepositoryQuestion
+        ? `${jiraRepositoryClarification}\n问题：${jiraRepositoryQuestion}\n回答：${jiraRepositoryAnswer}`
+        : jiraRepositoryClarification;
+      const { context, question } = await startSimpleJiraTask(latest.jira, clarification);
+      setJiraRepositoryQuestion(question ?? "");
+      setJiraRepositoryClarification(clarification);
+      setJiraRepositoryAnswer("");
       setJiraContext(context);
       if (context.jira) setCurrentTask(context.jira);
     } catch (error) {
@@ -1567,14 +1579,13 @@ export function TaskDetail({
   const jiraLifecyclePending = jiraContext?.lifecycle?.pending ?? null;
   const jiraSimpleStartEnabled = jiraSimpleStartCreating || (
     currentTask.status === "todo"
-    && (jiraContext?.projects.length ?? 0) > 0
     && !jiraProjectsChanged
     && !jiraContext?.plan
     && !jiraContext?.lifecycle?.duplicateOf
     && !jiraLifecyclePending
   );
   const jiraSimpleStartLabel = jiraSimpleStartSaving
-    ? text("创建中…", "Creating…")
+    ? text("识别并启动中…", "Identifying and starting…")
     : jiraSimpleStartComplete
       ? text("已创建并开始", "Created and started")
       : jiraSimpleStartCreating
@@ -1588,7 +1599,7 @@ export function TaskDetail({
           : currentTask.status !== "todo"
             ? text("仅待认领可开始", "Only waiting Jira can start")
             : (jiraContext?.projects.length ?? 0) === 0
-              ? text("先关联仓库", "Link a repository first")
+              ? text("识别仓库并开始", "Identify repositories and start")
               : text("创建并开始", "Create and start");
   const jiraPlanStatusLabel = !jiraContext?.plan
     ? text("尚未规划", "Not planned")
@@ -2803,6 +2814,18 @@ export function TaskDetail({
                     )}
                   </div>
                 )}
+                {jiraRepositoryQuestion && (
+                  <div className="jira-context-empty" role="status">
+                    <p>{jiraRepositoryQuestion}</p>
+                    <label>
+                      {text("补充仓库职责或执行范围", "Clarify repository responsibilities or scope")}
+                      <textarea value={jiraRepositoryAnswer} onChange={(event) => setJiraRepositoryAnswer(event.target.value)} disabled={jiraSimpleStartSaving} />
+                    </label>
+                    <button className="button primary" type="button" disabled={jiraSimpleStartSaving || !jiraRepositoryAnswer.trim()} onClick={() => void createAndStartSimpleJira()}>
+                      {text("继续识别并开始", "Continue and start")}
+                    </button>
+                  </div>
+                )}
                 <div className="jira-context-actions">
                   <button
                     className={`jira-planning-button${jiraContext?.plan?.needsReview ? " needs-review" : ""}`}
@@ -2812,6 +2835,7 @@ export function TaskDetail({
                       || jiraPlanningSaving
                       || openingThread
                       || Boolean(jiraContext?.simpleStart)
+                      || jiraSimpleStartSaving
                       || Boolean(jiraContext?.lifecycle?.duplicateOf)
                       || Boolean(jiraLifecyclePending)
                     }
@@ -2826,7 +2850,7 @@ export function TaskDetail({
                   <button
                     className={`jira-simple-start-button${jiraSimpleStartComplete ? " is-complete" : ""}`}
                     type="button"
-                    disabled={jiraContextLoading || jiraSimpleStartSaving || jiraSimpleStartComplete || !jiraSimpleStartEnabled}
+                    disabled={jiraContextLoading || jiraSimpleStartSaving || jiraSimpleStartComplete || !jiraSimpleStartEnabled || Boolean(jiraRepositoryQuestion)}
                     aria-busy={jiraSimpleStartSaving}
                     onClick={() => void createAndStartSimpleJira()}
                   >

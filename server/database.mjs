@@ -25,6 +25,7 @@ const JIRA_SIMPLE_START_ITEMS_TABLE = `
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
     task_id TEXT NOT NULL,
     thread_id TEXT,
+    scope TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (operation_id, project_id),
@@ -982,6 +983,10 @@ export class PanelDatabase {
         FROM jira_simple_start_items_legacy;
         DROP TABLE jira_simple_start_items_legacy;
       `);
+    }
+
+    if (jiraSimpleStartItemColumns.length && !this.database.prepare("PRAGMA table_info(jira_simple_start_items)").all().some((column) => column.name === "scope")) {
+      this.database.exec("ALTER TABLE jira_simple_start_items ADD COLUMN scope TEXT");
     }
 
     const taskColumns = this.database.prepare("PRAGMA table_info(tasks)").all();
@@ -3565,7 +3570,7 @@ export class PanelDatabase {
 
   listJiraSimpleStartItems(jiraTaskId) {
     return this.database.prepare(`
-      SELECT items.project_id, items.task_id, items.thread_id
+      SELECT items.project_id, items.task_id, items.thread_id, items.scope
       FROM jira_simple_start_operations AS operations
       JOIN jira_simple_start_items AS items ON items.operation_id = operations.id
       WHERE operations.jira_task_id = ?
@@ -3574,10 +3579,11 @@ export class PanelDatabase {
       projectId: row.project_id,
       taskId: row.task_id,
       threadId: row.thread_id,
+      scope: row.scope,
     }));
   }
 
-  beginJiraSimpleStart(jiraTaskId, version) {
+  beginJiraSimpleStart(jiraTaskId, version, scopes = {}) {
     const jiraTask = this.#requireTask(jiraTaskId);
     this.#assertJiraMutationUnlocked(jiraTask.id);
     const existing = this.getJiraSimpleStartOperation(jiraTask.id);
@@ -3628,6 +3634,7 @@ export class PanelDatabase {
         projectId: project.id,
         taskId: linked[0]?.id ?? randomUUID(),
         threadId: null,
+        scope: scopes[project.id] ?? null,
       };
     });
     this.database.exec("BEGIN IMMEDIATE");
@@ -3639,14 +3646,15 @@ export class PanelDatabase {
       `).run(operationId, jiraTask.id, timestamp, timestamp);
       const insertItem = this.database.prepare(`
         INSERT INTO jira_simple_start_items (
-          operation_id, project_id, task_id, thread_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
+          operation_id, project_id, task_id, thread_id, created_at, updated_at, scope
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
       for (const item of items) {
         insertItem.run(
           operationId, item.projectId, item.taskId, item.threadId,
           timestamp,
           timestamp,
+          item.scope,
         );
       }
       this.database.exec("COMMIT");

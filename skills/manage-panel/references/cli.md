@@ -210,12 +210,13 @@ Use returned identifiers and fresh versions; reuse existing children when resumi
 
 ```bash
 panelctl jira planning get JIRA_OR_LINKED_ISSUE_ID [--json]
+panelctl jira repositories list [--json]
 panelctl jira repositories set JIRA_ID --projects PROJECT_ID,... --if-version N [--json]
 panelctl jira planning save JIRA_ID --spec-file SPEC.md --if-version N [--json]
 panelctl jira planning publish JIRA_ID --tickets-file TICKETS.json --if-version N [--json]
 ```
 
-`jira planning get` accepts a Jira task identity or a linked execution Issue identity and returns the Jira context plus `plan.version`. For a linked execution Issue, read `context.jira.externalKey`; a null `context.jira` means no Jira link exists. When the user explicitly asks to change repository links, resolve exact IDs with `project list`, then pass `context.jira.version` to `jira repositories set`; `--projects` replaces the complete linked-repository set, so include existing `context.projects` IDs when adding a repository. Remove or replace links only when the user explicitly asks, and never infer them from the current directory or conversation project. Save the synthesized Spec first. After the user approves the ticket breakdown, publish a JSON manifest in dependency order:
+`jira planning get` accepts a Jira task identity or a linked execution Issue identity and returns the Jira context plus `plan.version`. For a linked execution Issue, read `context.jira.externalKey`; a null `context.jira` means no Jira link exists. During authorized Jira planning, use `jira repositories list` to discover saved projects and unregistered device workspaces. It returns `repositories` with `id`, `name`, `workspacePath`, and `persisted`, without writes. Read project READMEs and relevant repository docs/code to identify responsibilities. Follow the Skill's automatic-association steps: clear evidence permits additions, ambiguity requires a focused question, and native Plan mode must end before writes. Register a selected `persisted: false` candidate with `project create` using its exact returned values. Pass fresh `context.jira.version` to `jira repositories set`; `--projects` replaces the complete set, so include every existing link. Remove links only on explicit request, preserve user exclusions, and record new associations with their reasons in an `AI 仓库关联` comment. Merely reading Jira or sharing its current directory does not authorize association. Save the synthesized Spec first. After the user approves the ticket breakdown, publish a JSON manifest in dependency order:
 
 ```json
 {

@@ -792,12 +792,12 @@ export async function archiveJiraConversations(
 
 export async function startSimpleJiraTask(
   task: Pick<Task, "id" | "version">,
-): Promise<JiraTaskContext> {
-  const data = await request<{ context: JiraTaskContext }>(
+  clarification?: string,
+): Promise<{ context: JiraTaskContext; question?: string }> {
+  return request<{ context: JiraTaskContext; question?: string }>(
     `/api/tasks/${encodeURIComponent(task.id)}/jira-simple-start`,
-    { method: "POST", body: JSON.stringify({ version: task.version }) },
+    { method: "POST", body: JSON.stringify({ version: task.version, clarification }) },
   );
-  return data.context;
 }
 
 export async function startJiraPlanning(

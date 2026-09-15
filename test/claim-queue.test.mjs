@@ -1071,6 +1071,15 @@ test("Jira simple start enters the manual queue even while automatic claiming is
 const args = process.argv.slice(2);
 if (args[0] === "debug") {
   process.stdout.write('{"models":[{"slug":"gpt-test","display_name":"GPT Test","description":"","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"}],"service_tiers":[]}]}');
+} else if (args[0] === "exec") {
+  let prompt = ""; process.stdin.setEncoding("utf8");
+  process.stdin.on("data", chunk => prompt += chunk);
+  process.stdin.on("end", () => {
+    const answer = prompt.includes("ANSWER_API")
+      ? { question: null, selections: [{ projectId: "repo", reason: "API responsibility", scope: "Implement API only" }, { projectId: "mobile", reason: "Client responsibility", scope: "Implement client only" }] }
+      : { question: "Which client owns this requirement?", selections: [] };
+    process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(answer) } }) + "\\n");
+  });
 } else if (args[0] === "app-server") {
   process.stdin.setEncoding("utf8"); let buffer = "";
   process.stdin.on("data", chunk => { buffer += chunk; let index;
@@ -1159,10 +1168,9 @@ if (args[0] === "debug") {
       updatedAt: timestamp,
     }], { originId, projectName: "Jira", syncedAt: timestamp });
     let jira = app.database.getTask("jira-claim-1");
-    app.database.setJiraProjects(jira.id, jira.version, ["repo"], actor);
     jira = app.database.getTask(jira.id);
 
-    const response = await fetch(
+    let response = await fetch(
       `http://127.0.0.1:${address.port}/api/tasks/${jira.id}/jira-simple-start`,
       {
         method: "POST",
@@ -1170,8 +1178,35 @@ if (args[0] === "debug") {
         body: JSON.stringify({ version: jira.version }),
       },
     );
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).question, "Which client owns this requirement?");
+    assert.equal(app.database.getJiraContext(jira.id).projects.length, 0);
+    assert.equal(app.database.getJiraContext(jira.id).issues.length, 0);
+    assert.equal(app.database.getTask(jira.id).status, "todo");
+    app.database.createProject({ id: "mobile", name: "Mobile", workspacePath: directory });
+    app.database.saveProjectAutomationPolicy("mobile", { enabledByUser: false, paused: true, intervalMinutes: 5, model: "gpt-test", reasoningEffort: "medium" });
+    let linkedContext = app.database.setJiraProjects(jira.id, jira.version, ["repo", "mobile"], actor);
+    const existingIssue = app.database.createTask({
+      projectId: "repo", title: "Existing API issue", description: "Keep the existing implementation notes",
+      status: "backlog", priority: "medium", labels: [], actor, assignee: actor,
+      workflowId: null, developmentContext: null, startDate: null, dueDate: null, recurrence: null,
+    });
+    linkedContext = app.database.addJiraTaskLink(jira.id, linkedContext.jira.version, existingIssue.id, actor);
+    jira = linkedContext.jira;
+    response = await fetch(`http://127.0.0.1:${address.port}/api/tasks/${jira.id}/jira-simple-start`, {
+      method: "POST", headers: { "content-type": "application/json", "x-panel-client": "panelctl" },
+      body: JSON.stringify({ version: jira.version, clarification: "ANSWER_API" }),
+    });
     assert.equal(response.status, 200, await response.text());
-    const item = app.database.listJiraSimpleStartItems(jira.id)[0];
+    const startedContext = app.database.getJiraContext(jira.id);
+    assert.equal(startedContext.plan, null);
+    assert.equal(startedContext.issues.length, 2);
+    assert.equal(startedContext.issues.find(issue => issue.projectId === "repo").id, existingIssue.id);
+    assert.match(app.database.getTask(existingIssue.id).description, /Keep the existing implementation notes/);
+    assert.match(app.database.getTask(startedContext.issues.find(issue => issue.projectId === "repo").id).description, /Implement API only/);
+    assert.match(app.database.getTask(startedContext.issues.find(issue => issue.projectId === "mobile").id).description, /Implement client only/);
+    assert.equal(app.database.listJiraSimpleStartItems(jira.id).find(item => item.projectId === "repo").scope, "Implement API only");
+    const item = app.database.listJiraSimpleStartItems(jira.id).find(item => item.projectId === "repo");
     const claim = app.database.getClaimQueueItem(item.taskId);
     assert.equal(claim.source, "manual");
     assert.equal(claim.state, "queued");

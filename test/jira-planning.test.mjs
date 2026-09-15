@@ -79,6 +79,7 @@ if (args[0] === "debug") {
       local: { rootPaths: [workspace] },
       api: { rootPaths: [workspace] },
       web: { rootPaths: [workspace] },
+      mobile: { rootPaths: [path.join(directory, "mobile")] },
     },
   }));
   const app = createPanelServer({
@@ -121,6 +122,13 @@ if (args[0] === "debug") {
       projectName: "Jira",
       syncedAt: timestamp,
     });
+
+    const candidates = await cli(baseUrl, directory, ["jira", "repositories", "list", "--json"]);
+    assert.equal(candidates.repositories.find((project) => project.id === "api").persisted, true);
+    assert.deepEqual(candidates.repositories.find((project) => project.id === "mobile"), {
+      id: "mobile", name: "mobile", workspacePath: path.join(directory, "mobile"), persisted: false,
+    });
+    assert.equal(app.database.listProjects().some((project) => project.id === "mobile"), false);
 
     const projectList = await api(baseUrl, "/api/projects", "GET");
     assert.equal(projectList.projects.find((project) => project.id === "api").workspacePath, workspace);
@@ -191,6 +199,8 @@ if (args[0] === "debug") {
     });
     assert.equal(result.context.plan, null);
     assert.match(result.composerText, /请规划下面这个 Jira 需求/);
+    assert.match(result.composerText, /panelctl jira repositories list/);
+    assert.match(result.composerText, /有歧义才询问/);
     assert.deepEqual(result.skills, []);
     assert.equal(result.collaborationMode, "plan");
     assert.equal(app.aiChat.listThreads().length, 0);
@@ -239,10 +249,16 @@ if (args[0] === "debug") {
     assert.equal(contextAfterBinding.plan.version, planningVersion);
     assert.equal(app.aiChat.listThreads().length, 1);
 
-    result = await api(baseUrl, `/api/tasks/${jira.id}/jira-context`, "PUT", {
-      version: jira.version,
-      projectIds: ["api", "web"],
-    });
+    result = await cli(baseUrl, directory, [
+      "jira", "repositories", "set", jira.id, "--projects", "api", "--if-version", String(jira.version),
+    ]);
+    result = await cli(baseUrl, directory, [
+      "jira", "repositories", "set", jira.id, "--projects", "api,web",
+      "--if-version", String(result.context.jira.version),
+    ]);
+    assert.equal(result.context.jira.status, jira.status);
+    assert.equal(result.context.issues.length, 0);
+    assert.equal(result.context.plan.threadId, planningThreadId);
     assert.deepEqual(result.context.projects.map((project) => project.id), ["api", "web"]);
     jira = result.context.jira;
 
