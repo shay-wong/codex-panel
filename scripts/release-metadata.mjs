@@ -13,7 +13,7 @@ export function releaseMetadata(packageVersion, releaseTag, architectures) {
   return {
     version: packageVersion,
     archive,
-    assetNames: [`${prefix}.dmg`, archive, `${archive}.sig`, "latest.json"],
+    assetNames: [`00_${prefix}.dmg`, archive, `${archive}.sig`, "latest.json"],
     url: `https://github.com/shay-wong/codex-panel/releases/download/${releaseTag}/${archive}`,
     platforms: supported.flatMap((value) => {
       const target = `darwin-${value === "arm64" ? "aarch64" : "x86_64"}`;

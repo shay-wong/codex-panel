@@ -7,6 +7,7 @@ test("fork updater metadata stays on the fork and advertises only bundled archit
   assert.match(metadata.url, /^https:\/\/github.com\/shay-wong\/codex-panel\/releases\/download\//);
   assert.deepEqual(metadata.platforms, ["darwin-aarch64", "darwin-aarch64-app"]);
   assert.ok(metadata.assetNames[0].endsWith(".dmg"));
+  assert.equal([...metadata.assetNames].sort()[0], metadata.assetNames[0]);
   assert.equal(releaseMetadata("0.0.1-fork", "v0.0.1-fork", ["arm64", "x86_64"]).platforms.length, 4);
   assert.throws(() => releaseMetadata("0.0.1", "v0.0.1", ["arm64"]));
   assert.throws(() => releaseMetadata("0.0.1-fork.1", "v0.0.1-fork.1", ["arm64"]));

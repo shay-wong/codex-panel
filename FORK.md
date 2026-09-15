@@ -184,6 +184,7 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 #### Agent 发布配置与操作
 
 - 发布规范和 Actions 配置集中在本节；用户文档只说明下载、安装、更新及其限制，不承载 Agent 授权规则或维护操作。
+- GitHub 资产按名称排序，DMG 使用 `00_` 前缀保持首位；发布校验读取 REST 资产集合，检查 DMG 首位和完整文件集合，不要求其余文件的上传顺序。
 - 首次生成并安全备份 Tauri 更新密钥（`npm run tauri -- signer generate --help`）；后续版本沿用同一密钥，私钥不得入库。
 - GitHub Actions 仓库 Variable `CODEX_PANEL_UPDATER_PUBLIC_KEY` 填公钥文件内容；Secret `TAURI_SIGNING_PRIVATE_KEY` 填私钥文件内容；可选 Secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 填私钥密码。公钥编译进 App，私钥仅用于更新包签名；缺少密钥时发布构建失败。
 - 发布前同步 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json` 的版本及中英文更新日志，完成适用检查。
