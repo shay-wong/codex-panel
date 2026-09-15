@@ -345,7 +345,7 @@ test("opening Panel suppresses native selection and contextual header until clos
   assert.match(source, /NATIVE_SELECTED_ATTRIBUTE/);
   assert.match(source, /app-shell-header-context-menu-surface/);
   assert.match(source, /restoreNativeSelection\(\)/);
-  assert.match(source, /function onDocumentClick[\s\S]*setTimeout\([\s\S]*closePanel\(false\)/);
+  assert.match(source, /function syncNativeNavigation[\s\S]*closePanel\(false\)/);
 });
 
 test("the embedded header fills the native titlebar without clipping or a full-page no-drag region", () => {
@@ -1137,304 +1137,6 @@ test("host navigation follows Codex's renderer message bus", () => {
   assert.doesNotMatch(source, /new CustomEvent\("codex-message-from-view"/);
 });
 
-test("native destinations close Panel without global history interception", () => {
-  const labelsStart = source.indexOf("const NATIVE_PAGE_LABELS");
-  const labelsEnd = source.indexOf("\n\n  const previous", labelsStart);
-  const navigationStart = source.indexOf("function isNativePageNavigation");
-  const navigationEnd = source.indexOf("\n\n  function handleNativeDestinationCommand", navigationStart);
-  const handlerStart = source.indexOf("function handleNativeDestinationCommand");
-  const handlerEnd = source.indexOf("\n\n  function onCommandMenuSelect", handlerStart);
-  const clickStart = source.indexOf("function onDocumentClick");
-  const clickEnd = source.indexOf("\n\n  function onDesktopAppEntry", clickStart);
-  assert.notEqual(labelsStart, -1, "native destination labels must exist");
-  assert.ok(labelsEnd > labelsStart, "native destination labels must be extractable");
-  assert.notEqual(handlerStart, -1, "native destination handler must exist");
-  assert.ok(handlerEnd > handlerStart, "native destination handler must be extractable");
-  assert.notEqual(navigationStart, -1, "native page navigation handler must exist");
-  assert.ok(navigationEnd > navigationStart, "native page navigation handler must be extractable");
-  assert.match(source, /const NATIVE_DESTINATION_COMMAND_LABELS = \[/);
-  assert.doesNotMatch(source, /installNativeHistoryInterceptor/);
-  assert.doesNotMatch(source, /historyInterceptors/);
-
-  const nativeDestinationLabels = vm.runInNewContext(
-    `(() => { ${source.slice(labelsStart, labelsEnd)}; return NATIVE_DESTINATION_COMMAND_LABELS; })()`,
-  );
-  const traditionalChineseDestinations = [
-    "外掛程式",
-    "網站",
-    "工作站",
-    "已排程",
-    "Pull Request",
-    "程序管理工具",
-  ];
-  for (const label of traditionalChineseDestinations) {
-    assert.ok(
-      nativeDestinationLabels.includes(label.toLowerCase()),
-      `production labels must include ${label}`,
-    );
-  }
-  const nativeHeaderLabels = vm.runInNewContext(
-    `(() => { ${source.slice(labelsStart, labelsEnd)}; return NATIVE_HEADER_DESTINATION_LABELS; })()`,
-  );
-  for (const label of [
-    "view activity, needs attention",
-    "查看活动，需要关注",
-    "查看活動",
-    "查看活動，有項目需要注意",
-    "查看活動，需要注意",
-  ]) {
-    assert.ok(nativeHeaderLabels.includes(label), `production labels must include ${label}`);
-  }
-
-  let active = true;
-  let destroyed = false;
-  let closeCount = 0;
-  const timers = [];
-  const window = {
-    location: { pathname: "/local/current" },
-    setTimeout: (callback) => {
-      timers.push(callback);
-      return timers.length;
-    },
-  };
-  const handleNativeDestinationCommand = vm.runInNewContext(
-    `(${source.slice(handlerStart, handlerEnd)})`,
-    {
-      get active() {
-        return active;
-      },
-      get destroyed() {
-        return destroyed;
-      },
-      NATIVE_DESTINATION_COMMAND_LABELS: nativeDestinationLabels,
-      closePanel: () => {
-        active = false;
-        closeCount += 1;
-      },
-      normalizedLabel: (value) => String(value || "").trim().toLowerCase(),
-      window,
-    },
-  );
-  const target = (label, global = true) => {
-    const item = { getAttribute: (name) => name === "data-value" ? label : null };
-    return {
-      closest: (selector) => selector === '.global-command-menu-dialog [cmdk-item][role="option"]' && global
-        ? item
-        : null,
-    };
-  };
-
-  for (const label of [
-    "切换到聊天",
-    "设置",
-    "settings 常规",
-    "command-menu-quick-chat-result:local:thread-1",
-    "插件",
-    ...traditionalChineseDestinations,
-  ]) {
-    active = true;
-    assert.equal(handleNativeDestinationCommand(target(label)), true, label);
-  }
-  assert.equal(closeCount, 5 + traditionalChineseDestinations.length);
-
-  active = true;
-  assert.equal(handleNativeDestinationCommand(target("切换到深色主题")), false);
-  timers.shift()();
-  assert.equal(closeCount, 5 + traditionalChineseDestinations.length);
-  assert.equal(active, true);
-
-  assert.equal(handleNativeDestinationCommand(target("打开其他原生页面")), false);
-  window.location.pathname = "/native-page";
-  timers.shift()();
-  assert.equal(closeCount, 6 + traditionalChineseDestinations.length);
-  assert.equal(active, false);
-
-  active = true;
-  assert.equal(handleNativeDestinationCommand(target("设置", false)), false);
-  assert.equal(timers.length, 0);
-  assert.equal(active, true);
-
-  destroyed = true;
-  assert.match(source, /const NATIVE_HEADER_DESTINATION_LABELS = \[/);
-  assert.match(source, /if \(buttonMatches\(clickable, NATIVE_HEADER_DESTINATION_LABELS\)\) return true/);
-  const isNativePageNavigation = vm.runInNewContext(
-    `(${source.slice(navigationStart, navigationEnd)})`,
-    {
-      entry: null,
-      ENTRY_ID: "codex-panel-entry",
-      NATIVE_HEADER_DESTINATION_LABELS: nativeHeaderLabels,
-      NATIVE_HISTORY_LABELS: [],
-      NATIVE_PAGE_LABELS: [],
-      buttonMatches: (button, labels) => labels.includes(
-        String(button.textContent || button.getAttribute("aria-label") || "")
-          .replace(/\s+/g, " ")
-          .trim()
-          .toLowerCase(),
-      ),
-    },
-  );
-  const activityTarget = (label) => {
-    const button = {
-      textContent: "",
-      getAttribute: (name) => name === "aria-label" ? label : null,
-      closest: () => null,
-      hasAttribute: () => false,
-    };
-    return {
-      closest: (selector) => selector.includes("button") ? button : null,
-    };
-  };
-  for (const label of nativeHeaderLabels) {
-    assert.equal(isNativePageNavigation(activityTarget(label)), true, label);
-  }
-  let activityCloseCount = 0;
-  const onActivityClick = vm.runInNewContext(
-    `(${source.slice(clickStart, clickEnd)})`,
-    {
-      active: true,
-      destroyed: false,
-      isNativePageNavigation,
-      handleNativeDestinationCommand: () => false,
-      normalizeThreadId: (value) => String(value || "").replace(/^(?:local|cloud):/i, ""),
-      closePanel: () => { activityCloseCount += 1; },
-      window: { setTimeout: (callback) => callback() },
-    },
-  );
-  onActivityClick({ target: activityTarget("View activity, needs attention") });
-  assert.equal(activityCloseCount, 1);
-  const threadRow = {
-    closest: (selector) => selector === "[data-app-action-sidebar-thread-id]" ? threadRow : null,
-    getAttribute: () => null,
-    hasAttribute: (name) => name === "data-app-action-sidebar-thread-id",
-  };
-  const threadBody = {
-    closest: (selector) => selector.includes("button") ? threadRow : null,
-  };
-  const threadToolButton = {
-    closest: (selector) => selector === "[data-app-action-sidebar-thread-id]" ? threadRow : null,
-    getAttribute: () => null,
-    hasAttribute: () => false,
-  };
-  const threadTool = {
-    closest: (selector) => selector.includes("button") ? threadToolButton : null,
-  };
-  assert.equal(isNativePageNavigation(threadBody), true, "thread row body navigates");
-  assert.equal(isNativePageNavigation(threadTool), false, "nested thread tools do not navigate");
-  assert.ok(clickEnd > clickStart, "document click handler must be extractable");
-  const clickResult = vm.runInNewContext(`(() => {
-    let active = true;
-    let destroyed = false;
-    let lastNativeThreadId = "thread-1";
-    let closeCount = 0;
-    const normalizeThreadId = (value) => String(value || "").replace(/^(?:local|cloud):/i, "");
-    const isNativePageNavigation = (target) => target.navigate;
-    const handleNativeDestinationCommand = () => false;
-    const closePanel = () => { closeCount += 1; };
-    const window = { setTimeout: (callback) => callback() };
-    ${source.slice(clickStart, clickEnd)}
-    const row = { getAttribute: () => "local:thread-2" };
-    onDocumentClick({ target: { navigate: false, closest: () => row } });
-    const afterTool = { lastNativeThreadId, closeCount };
-    onDocumentClick({ target: { navigate: true, closest: () => row } });
-    return { afterTool, afterRow: { lastNativeThreadId, closeCount } };
-  })()`);
-  assert.deepEqual(JSON.parse(JSON.stringify(clickResult)), {
-    afterTool: { lastNativeThreadId: "thread-1", closeCount: 0 },
-    afterRow: { lastNativeThreadId: "thread-2", closeCount: 1 },
-  });
-  assert.match(source, /panelNativeThreadId = normalizeThreadId\(\s*activeThreadRow\(\)\?\.getAttribute/);
-  const threadHandlerStart = source.indexOf("function closePanelForNativeThreadChange");
-  const threadHandlerEnd = source.indexOf("\n\n  function scheduleRefresh", threadHandlerStart);
-  assert.notEqual(threadHandlerStart, -1, "native thread change handler must exist");
-  const threadChanges = vm.runInNewContext(`(() => {
-    let active = true;
-    let lastNativeThreadId = "thread-1";
-    let panelNativeThreadId = "thread-1";
-    let currentThreadId = "thread-1";
-    let closeCount = 0;
-    const normalizeThreadId = (value) => String(value || "").replace(/^(?:local|cloud):/i, "");
-    const activeThreadRow = () => ({
-      getAttribute: () => "local:" + currentThreadId,
-    });
-    const closePanel = () => {
-      active = false;
-      closeCount += 1;
-    };
-    ${source.slice(threadHandlerStart, threadHandlerEnd)}
-    const unchanged = closePanelForNativeThreadChange();
-    currentThreadId = "thread-2";
-    lastNativeThreadId = "thread-2";
-    const changed = closePanelForNativeThreadChange();
-    return { unchanged, changed, closeCount, active, lastNativeThreadId };
-  })()`);
-  assert.deepEqual(JSON.parse(JSON.stringify(threadChanges)), {
-    unchanged: false,
-    changed: true,
-    closeCount: 1,
-    active: false,
-    lastNativeThreadId: "thread-2",
-  });
-  const initiallyUnknownThread = vm.runInNewContext(`(() => {
-    let active = true;
-    let lastNativeThreadId = "thread-1";
-    let panelNativeThreadId = "";
-    let currentThreadId = "thread-1";
-    let closeCount = 0;
-    const normalizeThreadId = (value) => String(value || "").replace(/^(?:local|cloud):/i, "");
-    const activeThreadRow = () => ({
-      getAttribute: () => "local:" + currentThreadId,
-    });
-    const closePanel = () => {
-      active = false;
-      closeCount += 1;
-    };
-    ${source.slice(threadHandlerStart, threadHandlerEnd)}
-    const established = closePanelForNativeThreadChange();
-    const unchanged = closePanelForNativeThreadChange();
-    currentThreadId = "thread-2";
-    const changed = closePanelForNativeThreadChange();
-    return { established, unchanged, changed, closeCount, active, lastNativeThreadId };
-  })()`);
-  assert.deepEqual(JSON.parse(JSON.stringify(initiallyUnknownThread)), {
-    established: false,
-    unchanged: false,
-    changed: true,
-    closeCount: 1,
-    active: false,
-    lastNativeThreadId: "thread-2",
-  });
-  assert.match(source, /if \(closePanelForNativeThreadChange\(\)\) return/);
-  assert.match(source, /document\.addEventListener\("cmdk-item-select", onCommandMenuSelect, true\)/);
-  assert.match(source, /document\.removeEventListener\("cmdk-item-select", onCommandMenuSelect, true\)/);
-});
-
-test("native notification app entries close Panel", () => {
-  const handlerStart = source.indexOf("function onDesktopAppEntry");
-  const handlerEnd = source.indexOf("\n\n  function closePanelForNativeThreadChange", handlerStart);
-  assert.ok(handlerEnd > handlerStart, "desktop app entry handler must be extractable");
-
-  const run = (data, eventSource = null) => vm.runInNewContext(`(() => {
-    let active = true;
-    let closeCount = 0;
-    const closePanel = () => { closeCount += 1; };
-    ${source.slice(handlerStart, handlerEnd)}
-    onDesktopAppEntry({ data, source: eventSource });
-    return closeCount;
-  })()`, { data, eventSource });
-  const notification = {
-    type: "desktop-app-entry-received",
-    receipt: { attribution: { channel: "push_notification", source: "native_notification" } },
-  };
-  assert.equal(run(notification), 1);
-  assert.equal(run(notification, {}), 0);
-  assert.equal(run({
-    type: "desktop-app-entry-received",
-    receipt: { attribution: { channel: "deep_link", source: "protocol" } },
-  }), 0);
-  assert.match(source, /window\.addEventListener\("message", onDesktopAppEntry\)/);
-  assert.match(source, /window\.removeEventListener\("message", onDesktopAppEntry\)/);
-});
-
 test("the standalone web page opens unlinked issues as prefilled empty Codex tasks", () => {
   assert.match(webApp, /const query = new URLSearchParams\(\)/);
   assert.match(webApp, /query\.set\("path", workspacePath\)/);
@@ -1539,7 +1241,7 @@ test("host context captures all Codex projects even when the sidebar section is 
   assert.match(source, /while \(!section && Date\.now\(\) < sectionDeadline\)/);
   assert.match(source, /isTrustedPanelOrigin\(panelUrl\.origin\)\s*\? captureHostContext\(\)\s*:\s*Promise\.resolve\(null\)/);
   assert.match(source, /let lastNativeThreadId = ""/);
-  assert.match(source, /clickedThreadId.*lastNativeThreadId/s);
+  assert.match(source, /function syncNativeNavigation[\s\S]*lastNativeThreadId = normalizeThreadId/);
   assert.match(source, /const currentThreadId = activeThreadId \|\| runningThreadId \|\| lastNativeThreadId/);
   assert.match(source, /const threadId = currentThreadId \|\| lastNativeThreadId \|\| normalizeThreadId\(threadIdFromLocation\(\)\)/);
   assert.match(source, /replace\(\/\^\(\?:local\|cloud\):\/i, ""\)/);
@@ -1937,8 +1639,8 @@ test("SSH task project selection uses its stable ID and local project IDs use bo
 test("cleanup removes observers, listeners, timers and owned DOM", () => {
   assert.match(source, /observer\?\.disconnect\(\)/);
   assert.match(source, /window\.removeEventListener\("message", onFrameMessage\)/);
-  assert.match(source, /document\.removeEventListener\("click", onDocumentClick, true\)/);
-  assert.match(source, /window\.removeEventListener\("popstate", onNativeRouteChange\)/);
+  assert.match(source, /detachNativeNavigation\?\.\(\)/);
+  assert.doesNotMatch(source, /onNativeRouteChange|NATIVE_HISTORY_LABELS|NATIVE_DESTINATION_COMMAND_LABELS/);
   assert.match(source, /window\.clearTimeout\(reattachTimer\)/);
   assert.match(source, /data-codex-panel-owned/);
   assert.match(source, /delete window\[SENTINEL_KEY\]/);
@@ -1954,39 +1656,90 @@ test("host integration stays thin", () => {
   assert.doesNotMatch(source, /window\.fetch\s*=/);
 });
 
-test("current native Scheduled, Back and Forward clicks reveal their destination behind Panel", async () => {
+test("Panel participates in the native memory router and restores its original methods", async () => {
   const { JSDOM } = await import("jsdom");
-  const dom = new JSDOM(`<div><button data-app-shell-sidebar-trigger="true" aria-controls="app-shell-sidebar" aria-label="隐藏侧边栏"></button><button aria-label="返回"></button><button aria-label="前进"></button></div><aside><nav role="navigation"><button>定时任务</button><button>插件</button></nav></aside><main><section id="native" hidden></section><section id="panel"></section></main>`);
-  const { window } = dom;
-  const { document } = window;
+  const { act, createElement, createContext } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const dom = new JSDOM('<div id="root"></div><main><section id="native"></section><section id="panel" hidden></section></main>');
+  const previousWindow = globalThis.window;
+  const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  globalThis.window = dom.window;
+  const { document } = dom.window;
   const native = document.getElementById("native");
   const panel = document.getElementById("panel");
-  const extract = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
-  const handler = vm.runInNewContext(`(() => {
-    const ENTRY_ID = "codex-panel-entry", entry = null;
-    let active = true, destroyed = false, lastNativeThreadId = "";
-    const normalizeThreadId = value => value || "";
-    const handleNativeDestinationCommand = () => false;
-    const closePanel = () => { panel.hidden = true; native.hidden = false; };
-    ${extract('const NATIVE_PAGE_LABELS', '\n\n  const previous')}
-    ${extract('function normalizedLabel', '\n\n  function isInteractiveElement')}
-    ${extract('function buttonMatches', '\n\n  function findReferenceButton')}
-    ${extract('function isNativePageNavigation', '\n\n  function handleNativeDestinationCommand')}
-    ${extract('function onDocumentClick', '\n\n  function onDesktopAppEntry')}
-    return onDocumentClick;
-  })()`, { window, panel, native });
-  document.addEventListener("click", handler, true);
-  const results = [];
+  const entries = [{ pathname: "/local/task-1", search: "?view=review", hash: "", state: { prefillPrompt: "do not replay" } }];
+  let index = 0, renderCount = 0;
+  const render = () => { native.textContent = navigator.location.pathname; renderCount++; };
+  // Same contract as Codex's MemoryRouter: one React listener; location changes synchronously.
+  const navigator = {
+    get location() { return entries[index]; },
+    push(path, state) { entries.splice(++index, entries.length, { ...path, state }); render(); },
+    replace(path, state) { entries[index] = { ...path, state }; render(); },
+    go(delta) { index = Math.max(0, Math.min(entries.length - 1, index + delta)); render(); },
+    listen() { throw Error("must not replace React's listener"); },
+  };
+  const originals = { push: navigator.push, replace: navigator.replace, go: navigator.go };
+  const root = createRoot(document.getElementById("root"));
+  const NavigationContext = createContext(null);
+  await act(() => root.render(createElement(NavigationContext.Provider, { value: { navigator } }, createElement("aside"))));
+  const start = source.indexOf("  function connectNativeNavigation()");
+  const end = source.indexOf("  function scheduleRefresh()", start);
+  const api = vm.runInNewContext(`(() => {
+    let nativeNavigator = null, detachNativeNavigation = null, lastNativeLocation = null, active = false, destroyed = false, lastNativeThreadId = "";
+    const PANEL_ROUTE_STATE = "__codexPanel";
+    const normalizeThreadId = value => value;
+    const publishPendingThreadAssociation = () => {};
+    const showPanel = () => { active = true; panel.hidden = false; native.hidden = true; };
+    const closePanel = () => { active = false; panel.hidden = true; native.hidden = false; };
+    ${source.slice(start, end)}
+    return { openPanel, leavePanel, closePanel, syncNativeNavigation, detach: () => detachNativeNavigation(), thread: () => lastNativeThreadId };
+  })()`, { document, panel, native });
+  const visible = (isPanel, pathname) => {
+    assert.equal(panel.hidden, !isPanel);
+    assert.equal(native.hidden, isPanel);
+    assert.equal(navigator.location.pathname, pathname);
+  };
   try {
-    for (const button of document.querySelectorAll("button:not([data-app-shell-sidebar-trigger])")) {
-      const label = button.getAttribute("aria-label") || button.textContent;
-      button.addEventListener("click", () => { native.textContent = label; });
-      panel.hidden = false;
-      native.hidden = true;
-      button.click();
-      await new Promise(resolve => window.setTimeout(resolve, 5));
-      results.push([label, native.textContent === label && !native.hidden && panel.hidden]);
-    }
-    assert.deepEqual(results, [["返回", true], ["前进", true], ["定时任务", true], ["插件", true]]);
-  } finally { window.close(); }
+    api.openPanel();
+    visible(true, "/local/task-1");
+    assert.equal(navigator.location.search, "?view=review");
+    assert.equal(navigator.location.state.prefillPrompt, undefined);
+    api.openPanel();
+    assert.equal(entries.length, 2, "opening an active Panel does not add history");
+    navigator.go(-1);
+    visible(false, "/local/task-1");
+    navigator.go(1);
+    visible(true, "/local/task-1");
+    navigator.push({ pathname: "/automations", search: "", hash: "" });
+    visible(false, "/automations");
+    navigator.go(-1);
+    visible(true, "/local/task-1");
+    navigator.go(1);
+    visible(false, "/automations");
+    api.openPanel();
+    navigator.replace({ pathname: "/local/task-2", search: "", hash: "" });
+    visible(false, "/local/task-2");
+    assert.equal(api.thread(), "task-2");
+    navigator.go(-1);
+    api.openPanel();
+    assert.equal(entries.length, 4, "opening Panel after Back discards the forward destination");
+    api.leavePanel();
+    visible(false, "/automations");
+    navigator.go(1);
+    visible(true, "/automations");
+    assert.equal(renderCount, 12, "each action invokes native navigation exactly once");
+    api.closePanel();
+    api.syncNativeNavigation();
+    visible(false, "/automations");
+    api.detach();
+    assert.equal(navigator.push, originals.push);
+    assert.equal(navigator.replace, originals.replace);
+    assert.equal(navigator.go, originals.go);
+  } finally {
+    await act(() => root.unmount());
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    globalThis.window = previousWindow;
+    dom.window.close();
+  }
 });

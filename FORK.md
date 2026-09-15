@@ -62,7 +62,7 @@
 
 ### 全局可定制 AI 工作流
 
-- 原生导航兼容（本次修复）：识别当前简体“定时任务”标签，以及侧栏中位于导航列表外、或独立顶栏中与原生侧栏开关同组的返回/前进按钮（不能要求一定属于 aside）；点击后关闭 Panel，让出原生目标页面。不能只依赖旧“已安排”标签或 window popstate。上一版仅延迟关闭没有覆盖这些入口，不能据此推断同步关闭会取消原生事件。代码：`inject/codex-panel.user.js`；验证：`node --test test/inject.test.mjs`，DOM 点击回归覆盖返回、前进、定时任务及插件正常路径；定位：`git log -S'NATIVE_HISTORY_LABELS' -- inject/codex-panel.user.js`。沿用原生嵌入能力生命周期及用户文档，合并时保留实际入口识别。
+- 原生导航历史（本次变更）：Panel 在 Codex MemoryRouter 中以同路径、独立 state 标记创建历史记录；返回和前进统一控制原生页面与 Panel 的显示。删除按钮标题、命令菜单、通知及会话变更关闭分支，不包装 window.history。连接通过 React 祖先 props 找到 navigator，只观察 push/replace/go，不占用 React 唯一 listen，卸载恢复原方法。沿用原生嵌入能力生命周期及用户文档；定位：`git log -S'PANEL_ROUTE_STATE' -- inject/codex-panel.user.js`。
 原规划会话执行状态衔接（本次修复）：规划与执行固定规则及 Manage Panel 明确要求，用户授权实现后、编辑前，用最新版本和原完整会话绑定执行 `issue move --status in_progress`，验证后进入 `in_review`；不依赖再次点击 Panel，不从任意会话消息推断执行。已有对话须重读更新后的 Skill 或执行配置。沿用本节生命周期及用户文档。代码：`shared/workflow-prompts.json`、`skills/manage-panel/SKILL.md`；验证：`node --test test/task-planning-api.test.mjs`；定位：`git log -S'Continue from planning into execution' -- skills/manage-panel/SKILL.md`。合并时保留固定规则不受自定义模板替换及原会话绑定、Spec、子任务范围约束。
 
 按需阶段读取（本次变更）：手动准备、原生自动派发及内嵌队列都使用 Manage Panel 入口，不提前附加实现/审核 Skill 或模板。Agent 读取需求后通过现有 `panelctl workflow get STAGE --project PROJECT_ID --json` 获取适用阶段的当前配置，再按序读取 `skills[].path`。纯调研（包括保存报告）核实依据后交付，跳过代码阶段；代码改动或明确代码审核请求才进入审核。`in_review` 不是已运行代码审核的证明。适用条件固定在 `shared/workflow-prompts.json`，不新增任务类型、数据库字段或调度器；模型遵循情况需真实任务验证，接口测试不能证明。验证：`test/workflow-settings.test.mjs` 覆盖只附加入口、准备后更新配置、CLI 返回路径/提示词/适用条件及缺失回退；来源定位：`git log -S'Select applicable workflow stages' -- skills/manage-panel/SKILL.md`。合并时保留按需读取与授权边界，上游等价吸收后移除此补充。
@@ -215,13 +215,13 @@
 
 - 生命周期：`等待上游吸收`
 - 原始目的：修复 Codex 会话页的主内容 frame 覆盖原生标题栏时，Panel 入口变为选中但页面没有挂载，以及 Panel 激活后通过全局命令菜单、活动视图或通知无法返回原生目的地的问题。
-- 行为不变量：主内容 frame 只要覆盖大部分 viewport 就可以作为挂载锚点，不得因其顶部位于原生标题栏上方而拒绝；会话页、Plugins 和 Sites 均能直接切换到 Panel。再次点击 Panel 入口时，URL 中的 `project` 参数优先；没有该参数时恢复上次选择的任意项目，包括“所有项目”。Panel 激活时，从全局命令菜单以鼠标或 Enter 选择对话、工作、Codex、设置、技能、已安排任务、新会话等简中、繁中或英文原生目的地，打开活动视图，或由通知切换当前原生对话，都必须先恢复原生内容；主题、复制等非导航命令、相同对话的普通刷新及普通 History 状态同步不得关闭 Panel。当前 App DOM 只暴露本地化标题而不暴露稳定命令 ID，因此其他界面语言留待 Codex 提供稳定标识后支持。
+- 行为不变量：主内容 frame 只要覆盖大部分 viewport 就可以作为挂载锚点，不得因其顶部位于原生标题栏上方而拒绝；会话页、Plugins 和 Sites 均能直接切换到 Panel。再次点击 Panel 入口时，URL 中的 `project` 参数优先；没有该参数时恢复上次选择的任意项目，包括“所有项目”。Panel 与原生目的地共享 MemoryRouter 历史；Back 返回原页面，Forward 恢复面板，从面板导航到原生目的地后可以返回面板。不再依赖语言或点击入口；非导航操作与相同 location 的刷新保持显示状态。历史随当前 renderer 存活，不跨重载持久化。
 - 代码和测试路径：`inject/codex-panel.user.js`、`web/src/App.tsx`、`test/inject.test.mjs`、`test/project-home.test.mjs`。
 - 用户文档：`README.md` 和 `README.zh-CN.md` 的“Embed in Codex”/“嵌入 Codex”章节，以及 `docs/fork-capabilities.md`。
 - 来源：本次 Fork 修复；可用 `git log -S'conversation content frames can host Panel' -- test/inject.test.mjs`、`git log -S'handleNativeDestinationCommand' -- inject/codex-panel.user.js` 和 `git log -S'closePanelForNativeThreadChange' -- inject/codex-panel.user.js` 定位。
-- 合并指引：上游调整 Codex 主内容 DOM 或命令菜单时，应以页面实际覆盖范围和真实命令选择事件为准，不能重新要求 frame 位于原生标题栏下方，也不能通过全局 History 包装判断命令导航；若命令菜单暴露稳定命令 ID，应以 ID 替代本地化标题并补全其他语言。
+- 合并指引：上游调整 Codex 主内容 DOM、React 或路由时，检查祖先 navigator 的 location/push/replace/go 契约；不替换 React 的单一 listen，不再退回标题匹配或 window.history 推断。主内容挂载仍以实际覆盖范围为准。
 - 移除条件：上游提供等价的跨会话页和原生页面双向切换逻辑，并覆盖会话 frame 从 viewport 顶部开始、命令菜单鼠标与 Enter、活动通知、非导航命令和 History 状态同步场景。
-- 针对性验证：运行 `node --test --test-name-pattern='conversation content frames|native destinations' test/inject.test.mjs` 和 `node --test test/project-home.test.mjs`；选择“所有项目”，离开后再次点击 Panel 入口，确认没有 URL `project` 参数时恢复“所有项目”，显式 URL 参数仍覆盖记录。再通过全局命令菜单分别选择对话、插件和设置，确认原生目的地可见；打开活动视图并选择一条通知，确认通知目标可见；执行主题切换时 Panel 应保持打开。
+- 针对性验证：运行 `node --test --test-name-pattern='conversation content frames|Panel participates' test/inject.test.mjs` 和 `node --test test/project-home.test.mjs`；选择“所有项目”，离开后再次点击 Panel 入口，确认没有 URL `project` 参数时恢复“所有项目”，显式 URL 参数仍覆盖记录。再通过全局命令菜单分别选择对话、插件和设置，确认原生目的地可见；打开活动视图并选择一条通知，确认通知目标可见；执行主题切换时 Panel 应保持打开。
 
 ### 内嵌 AI 对话关联议题
 

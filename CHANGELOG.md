@@ -4,7 +4,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
-- Fixed the embedded Panel remaining over native navigation destinations: recognize the current Chinese Scheduled label and the Back/Forward controls in both the sidebar and the separate app titlebar, then close Panel after the native click.
+- Added Panel to native Codex Back/Forward history and replaced destination-specific close handlers with route-driven visibility.
 - Hide **Open in new conversation** for tasks with an existing bound or Jira planning conversation.
 
 - Same-conversation planning-to-execution instructions now require the agent to record `in_progress` before implementing and `in_review` after verification, preserving the planning binding without another Panel execution click.

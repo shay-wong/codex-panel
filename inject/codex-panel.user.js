@@ -35,72 +35,11 @@
   const MACOS_TITLEBAR_SAFE_LEFT = 80;
   const FRAME_REFRESH_PARAM = "__codex_panel_refresh";
   const PLUGIN_LABELS = ["插件", "外掛程式", "plugins", "プラグイン"];
-  const NATIVE_PAGE_LABELS = [
-    "新建任务",
-    "新聊天",
-    "新对话",
-    "new task",
-    "new chat",
-    "拉取请求",
-    "pull request",
-    "pull requests",
-    "站点",
-    "工作站",
-    "網站",
-    "sites",
-    "已安排",
-    "定时任务",
-    "已排程",
-    "scheduled",
-    "插件",
-    "外掛程式",
-    "plugins",
-  ];
   const PROJECT_SECTION_LABELS = ["projects", "项目"];
   const TASK_SECTION_LABELS = ["tasks", "任务", "chats", "对话"];
   const SEND_LABELS = ["send", "发送", "傳送"];
   const NATIVE_WORKTREE_LABELS = ["新建本地工作树", "新增本機工作樹", "new local worktree"];
-  const NATIVE_HEADER_DESTINATION_LABELS = [
-    "查看活动",
-    "查看活动，需要关注",
-    "查看活動",
-    "查看活動，有項目需要注意",
-    "查看活動，需要注意",
-    "view activity",
-    "view activity, needs attention",
-  ];
-  const NATIVE_HISTORY_LABELS = ["返回", "前进", "上一步", "向前", "back", "forward"];
-  // TODO: Prefer stable command IDs if Codex exposes them, then support every app locale.
-  const NATIVE_DESTINATION_COMMAND_LABELS = [
-    ...NATIVE_PAGE_LABELS,
-    "切换到聊天",
-    "切換至對話",
-    "switch to chat",
-    "切换到工作",
-    "切換至工作",
-    "switch to work",
-    "切换到 codex",
-    "切換至 codex",
-    "switch to codex",
-    "设置",
-    "設定",
-    "settings",
-    "前往技能",
-    "go to skills",
-    "管理已安排任务",
-    "管理已排程任務",
-    "manage scheduled tasks",
-    "新聊天",
-    "新對話",
-    "new chat",
-    "新建独立聊天",
-    "新增獨立對話",
-    "new standalone chat",
-    "进程管理器",
-    "程序管理工具",
-    "程序管理員",
-    "process manager",
-  ];
+  const PANEL_ROUTE_STATE = "__codexPanel";
 
   const previous = window[SENTINEL_KEY];
   if (previous?.sourceHash === SOURCE_HASH && typeof previous.refresh === "function") {
@@ -139,7 +78,9 @@
   let pendingThreadAssociation = null;
   let nativeClaimPollInFlight = false;
   let lastNativeThreadId = "";
-  let panelNativeThreadId = "";
+  let nativeNavigator = null;
+  let detachNativeNavigation = null;
+  let lastNativeLocation = null;
   let lastNativeProjectId = "";
   let currentCodexUserId = "";
   let codexProjectMetadata = new Map();
@@ -2345,17 +2286,13 @@
     if (restoreFocus) lastFocusedElement?.focus?.();
     lastFocusedElement = null;
     hostContextSnapshot = null;
-    panelNativeThreadId = "";
   }
 
-  function openPanel() {
+  function showPanel() {
     if (destroyed) return;
     if (!active) {
       lastFocusedElement = document.activeElement;
       hostContextSnapshot = readHostContext();
-      panelNativeThreadId = normalizeThreadId(
-        activeThreadRow()?.getAttribute("data-app-action-sidebar-thread-id"),
-      ) || normalizeThreadId(threadIdFromLocation()) || lastNativeThreadId;
     }
     const generation = ++openGeneration;
     active = true;
@@ -2366,99 +2303,71 @@
     void preparePanel(generation);
   }
 
-  function isNativePageNavigation(target) {
-    const clickable = target?.closest?.("button,a,[role='button'],[data-app-action-sidebar-thread-id]");
-    if (!clickable || clickable === entry || clickable.closest(`#${ENTRY_ID}`)) return false;
-    if (buttonMatches(clickable, NATIVE_HEADER_DESTINATION_LABELS)) return true;
-    if (buttonMatches(clickable, NATIVE_HISTORY_LABELS) && (
-      clickable.closest("aside")
-      || clickable.closest("div")?.querySelector('[data-app-shell-sidebar-trigger][aria-controls="app-shell-sidebar"]')
-    )) return true;
-    const threadRow = clickable.closest("[data-app-action-sidebar-thread-id]");
-    if (threadRow) return clickable === threadRow;
-    if (!clickable.closest("aside nav[role='navigation']")) return false;
-    if (clickable.hasAttribute("data-app-action-sidebar-section-toggle")) return false;
-    if (buttonMatches(clickable, NATIVE_PAGE_LABELS)) return true;
-    if (
-      clickable.matches("[role='button']")
-      && clickable.closest("[data-sidebar-chatgpt-conversation-key]")
-    ) return true;
-    return Boolean(clickable.closest(
-      "[data-app-action-sidebar-project-row],"
-      + "[data-app-action-sidebar-project-id]",
-    ));
-  }
-
-  function handleNativeDestinationCommand(target) {
-    const item = target?.closest?.(
-      '.global-command-menu-dialog [cmdk-item][role="option"]',
-    );
-    if (!active || !item) return false;
-    const value = normalizedLabel(item.getAttribute("data-value"));
-    if (
-      NATIVE_DESTINATION_COMMAND_LABELS.includes(value)
-      || value.startsWith("settings ")
-      || value.startsWith("command-menu-quick-chat-result:")
-    ) {
-      closePanel(false);
+  function connectNativeNavigation() {
+    if (nativeNavigator) return true;
+    const surface = document.querySelector("aside") || document.querySelector("main");
+    const fiberKey = surface && Object.keys(surface).find((key) => key.startsWith("__reactFiber$"));
+    // Codex's MemoryRouter exposes its navigator through the ancestor Router props.
+    // Do not call listen(): memory history has a single listener owned by React.
+    for (let fiber = surface?.[fiberKey]; fiber; fiber = fiber.return) {
+      const props = fiber.memoizedProps;
+      const navigator = props?.navigator || props?.value?.navigator;
+      if (!navigator?.location || !["push", "replace", "go"].every((name) => typeof navigator[name] === "function")) continue;
+      nativeNavigator = navigator;
+      const restore = [];
+      for (const name of ["push", "replace", "go"]) {
+        const original = navigator[name];
+        const wrapped = function (...args) {
+          const result = original.apply(this, args);
+          syncNativeNavigation();
+          return result;
+        };
+        navigator[name] = wrapped;
+        restore.push(() => { if (navigator[name] === wrapped) navigator[name] = original; });
+      }
+      detachNativeNavigation = () => {
+        restore.forEach((restoreMethod) => restoreMethod());
+        nativeNavigator = null;
+      };
       return true;
     }
-
-    const previousPath = window.location.pathname;
-    window.setTimeout(() => {
-      if (!destroyed && active && window.location.pathname !== previousPath) {
-        closePanel(false);
-      }
-    }, 0);
     return false;
   }
 
-  function onCommandMenuSelect(event) {
-    handleNativeDestinationCommand(event.target);
-  }
-
-  function onDocumentClick(event) {
-    const nativeNavigation = isNativePageNavigation(event.target);
-    if (nativeNavigation) {
-      const threadRow = event.target?.closest?.("[data-app-action-sidebar-thread-id]");
-      const clickedThreadId = normalizeThreadId(threadRow?.getAttribute?.("data-app-action-sidebar-thread-id"));
-      if (clickedThreadId) lastNativeThreadId = clickedThreadId;
+  function syncNativeNavigation() {
+    if (destroyed || !nativeNavigator) return;
+    const location = nativeNavigator.location;
+    if (location === lastNativeLocation) return;
+    lastNativeLocation = location;
+    const match = location.pathname.match(/^\/local\/([^/]+)$/);
+    if (match) lastNativeThreadId = normalizeThreadId(decodeURIComponent(match[1]));
+    if (location.state?.[PANEL_ROUTE_STATE] === true) {
+      if (!active) showPanel();
+    } else if (active) {
+      closePanel(false);
     }
-    if (handleNativeDestinationCommand(event.target)) return;
-    if (!active || !nativeNavigation) return;
-    // Close after the click so the native handler can use the existing DOM.
-    window.setTimeout(() => {
-      if (active && !destroyed) closePanel(false);
-    }, 0);
+    void publishPendingThreadAssociation();
   }
 
-  function onDesktopAppEntry(event) {
-    const message = event.data;
-    const attribution = message?.receipt?.attribution;
-    if (
-      !active
-      || event.source !== null
-      || message?.type !== "desktop-app-entry-received"
-      || attribution?.channel !== "push_notification"
-      || attribution?.source !== "native_notification"
-    ) return;
-    closePanel(false);
-  }
-
-  function closePanelForNativeThreadChange() {
-    if (!active) return false;
-    const currentThreadId = normalizeThreadId(
-      activeThreadRow()?.getAttribute("data-app-action-sidebar-thread-id"),
-    );
-    if (!currentThreadId) return false;
-    if (!panelNativeThreadId) {
-      panelNativeThreadId = currentThreadId;
-      return false;
+  function openPanel() {
+    if (destroyed || active) return;
+    if (!connectNativeNavigation()) {
+      throw new Error("无法连接 Codex 原生导航，请等待页面加载后重试");
     }
-    if (currentThreadId === panelNativeThreadId) return false;
-    lastNativeThreadId = currentThreadId;
-    closePanel(false);
-    return true;
+    const { pathname, search, hash, state } = nativeNavigator.location;
+    if (state?.[PANEL_ROUTE_STATE] === true) {
+      showPanel();
+    } else {
+      nativeNavigator.push({ pathname, search, hash }, { [PANEL_ROUTE_STATE]: true });
+    }
+  }
+
+  function leavePanel() {
+    if (nativeNavigator?.location.state?.[PANEL_ROUTE_STATE] === true) {
+      nativeNavigator.go(-1);
+    } else {
+      closePanel();
+    }
   }
 
   function scheduleRefresh() {
@@ -2467,7 +2376,8 @@
     if (reattachTimer !== null) return;
     reattachTimer = window.setTimeout(() => {
       reattachTimer = null;
-      if (closePanelForNativeThreadChange()) return;
+      connectNativeNavigation();
+      syncNativeNavigation();
       ensureEntry();
       if (mountActivePage()) reloadFrame();
       void publishPendingThreadAssociation();
@@ -2476,6 +2386,8 @@
   }
 
   function refresh() {
+    connectNativeNavigation();
+    syncNativeNavigation();
     syncUsageBannerVisibility();
     ensureEntry();
     if (mountActivePage()) reloadFrame();
@@ -2487,6 +2399,8 @@
     document.removeEventListener("DOMContentLoaded", mount);
     if (destroyed || observer || !document.documentElement) return;
     ensureEntry();
+    connectNativeNavigation();
+    syncNativeNavigation();
     observer = new MutationObserver(scheduleRefresh);
     observer.observe(document.documentElement, {
       childList: true,
@@ -2517,6 +2431,8 @@
     reattachTimer = null;
     if (hostContextTimer !== null) window.clearInterval(hostContextTimer);
     hostContextTimer = null;
+    detachNativeNavigation?.();
+    detachNativeNavigation = null;
     observer?.disconnect();
     observer = null;
     hideUsageBanner = false;
@@ -2530,15 +2446,10 @@
     pendingThreadCreation = null;
     pendingThreadAssociation = null;
     document.removeEventListener("DOMContentLoaded", mount);
-    document.removeEventListener("click", onDocumentClick, true);
     document.removeEventListener("click", markPendingThreadAssociationSubmitted, true);
     document.removeEventListener("keydown", markPendingThreadAssociationSubmitted, true);
-    document.removeEventListener("cmdk-item-select", onCommandMenuSelect, true);
     window.removeEventListener("message", onFrameMessage);
     window.removeEventListener("message", onHostBridgeMessage);
-    window.removeEventListener("message", onDesktopAppEntry);
-    window.removeEventListener("popstate", onNativeRouteChange);
-    window.removeEventListener("hashchange", onNativeRouteChange);
     window.removeEventListener("resize", scheduleRefresh);
     closePanel(false);
     document.querySelectorAll(`[${OWNED_ATTRIBUTE}="true"]`).forEach((node) => node.remove());
@@ -2553,11 +2464,6 @@
     panelOrigin = "";
     framePanelUrl = "";
     if (window[SENTINEL_KEY] === api) delete window[SENTINEL_KEY];
-  }
-
-  function onNativeRouteChange() {
-    if (active) closePanel(false);
-    void publishPendingThreadAssociation();
   }
 
   const api = {
@@ -2575,21 +2481,16 @@
     refresh,
     reloadFrame,
     open: openPanel,
-    close: closePanel,
+    close: leavePanel,
     destroy,
   };
   window[SENTINEL_KEY] = api;
 
   window.addEventListener("message", onFrameMessage);
   window.addEventListener("message", onHostBridgeMessage);
-  window.addEventListener("message", onDesktopAppEntry);
-  window.addEventListener("popstate", onNativeRouteChange);
-  window.addEventListener("hashchange", onNativeRouteChange);
   window.addEventListener("resize", scheduleRefresh);
-  document.addEventListener("click", onDocumentClick, true);
   document.addEventListener("click", markPendingThreadAssociationSubmitted, true);
   document.addEventListener("keydown", markPendingThreadAssociationSubmitted, true);
-  document.addEventListener("cmdk-item-select", onCommandMenuSelect, true);
   if (document.documentElement) mount();
   else document.addEventListener("DOMContentLoaded", mount, { once: true });
 })();

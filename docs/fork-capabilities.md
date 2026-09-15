@@ -1,6 +1,6 @@
 # Fork capabilities
 
-Native Scheduled navigation and the sidebar Back/Forward buttons close the embedded Panel to reveal the destination. The injection recognizes the current Chinese **定时任务** label and history buttons outside the sidebar navigation list, including the separate app titlebar identified by its native sidebar-toggle control.
+Panel participates in Codex’s native navigation history: Back returns to the page before Panel, Forward reopens Panel, and navigating from Panel to a native destination adds that destination to the same history. Route changes control visibility without matching button or command labels; utility actions that do not navigate leave Panel open.
 
 
 Continue planning confirms the active native conversation before prefill, including navigation that leaves the window URL unchanged.
@@ -124,7 +124,7 @@ The Panel sidebar entry opens from conversations as well as native pages such as
 
 This fix accepts a main content frame that covers most of the Codex viewport even when that frame also includes the native titlebar region.
 
-While Panel is active, selecting a native destination from Codex's global command menu restores the native view for both mouse and Enter selection. Chat, Work, Codex, Settings, Skills, Scheduled Tasks, new conversations, and other commands that change the native route are covered. Opening Activity or selecting a notification also restores its native destination instead of leaving it behind Panel. Utility commands such as theme changes leave Panel open. Route-neutral commands currently recognize Simplified Chinese, Traditional Chinese, and English labels because the command menu DOM exposes localized titles but no stable command identifier. Other UI languages remain pending until that identifier is available.
+Panel participates in Codex’s native navigation history: Back returns to the page before Panel, Forward reopens Panel, and navigating from Panel to a native destination adds that destination to the same history. Route changes control visibility without matching button or command labels; utility actions that do not navigate leave Panel open. The bridge uses the existing MemoryRouter found through React ancestor props, so Codex updates that change this structure require a compatibility check. It leaves the router’s React listener intact and restores the original navigation methods when unloaded. History is local to the current Codex renderer; reloading does not persist Panel entries.
 
 ## Signed in-app updates
 
