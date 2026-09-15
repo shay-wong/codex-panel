@@ -17,6 +17,65 @@ const packageJson = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
 );
 
+test("App Server diagnostics distinguish unmatched responses from successful replies without logging content", async () => {
+  const functionSource = source.slice(source.indexOf("async function requestCodexAppServerViaCdp("), source.indexOf("async function applyPanelAutomationPolicy("));
+  for (const mode of ["success", "wrong-host", "transport-error"]) {
+    const logs = [];
+    const request = vm.runInNewContext(`let codexAppServerRequestSequence = 0; const taskConversationAppServerTimeoutMs = 30000; ${functionSource}; requestCodexAppServerViaCdp`, {
+      process: { pid: 1 }, console: { error: (line) => logs.push(JSON.parse(line)) },
+    });
+    const cdp = { async send(method, { expression }) {
+      assert.equal(method, "Runtime.evaluate");
+      if (mode === "transport-error") throw new Error("Context destroyed");
+      let listener, timeout, sent;
+      const window = {
+        setTimeout(callback) { timeout = callback; return 1; }, clearTimeout() {},
+        addEventListener(type, callback) { listener = callback; },
+        removeEventListener() { listener = null; },
+        electronBridge: { sendMessageFromView(message) { sent = message; } },
+      };
+      const pending = vm.runInNewContext(expression, { window, document: { readyState: "complete" } });
+      await Promise.resolve();
+      listener({ data: { type: "mcp-response", hostId: mode === "wrong-host" ? "other" : "local", message: { id: sent.request.id, result: { secret: "response-content" } } }, stopImmediatePropagation() {} });
+      if (mode === "wrong-host") timeout();
+      const value = await pending;
+      assert.equal(listener, null);
+      return { result: { value } };
+    } };
+    const result = request(cdp, "local", "thread/read", { threadId: "thread-test", instruction: "private-prompt" }, 3000);
+    if (mode === "success") assert.equal((await result).secret, "response-content");
+    else await assert.rejects(result, mode === "wrong-host" ? /timed out/ : /Context destroyed/);
+    assert.equal(logs.length, 2);
+    assert.equal(logs[1].requestId, logs[0].requestId);
+    assert.equal(logs[1].timeoutMs, 3000);
+    assert.equal(logs[1].outcome, mode === "wrong-host" ? "timeout" : mode);
+    if (mode === "wrong-host") {
+      assert.equal(logs[1].matchingId, 1);
+      assert.equal(logs[1].matchingHost, 0);
+      assert.equal(logs[1].sent, true);
+    }
+    assert.doesNotMatch(JSON.stringify(logs), /private-prompt|response-content/);
+  }
+});
+
+test("composer diagnostics report the failing insertion stage without logging the prompt", async () => {
+  const functionSource = source.slice(source.indexOf("async function prefillTaskComposerViaCdp("), source.indexOf("async function sendHostResponse("));
+  const logs = [];
+  const prefill = vm.runInNewContext(`${functionSource}; prefillTaskComposerViaCdp`, {
+    realpath: async (value) => value,
+    console: { error: (line) => logs.push(JSON.parse(line)) },
+  });
+  const cdp = { async send(method) {
+    if (method === "Input.insertText") throw new Error("Input unavailable");
+    return { result: { value: { ready: true, matches: false } } };
+  } };
+  await assert.rejects(prefill(cdp, undefined, { skills: [], instruction: "private-prompt" }), /Input unavailable/);
+  assert.equal(logs[0].stage, "insert-instruction");
+  assert.equal(logs[0].editorReady, true);
+  assert.equal(logs[0].outcome, "error");
+  assert.doesNotMatch(JSON.stringify(logs), /private-prompt/);
+});
+
 test("the resident injector authenticates its launcher-managed Panel service", () => {
   assert.match(supervisorSource, /function createPanelSupervisor/);
   assert.match(source, /CODEX_PANEL_INSTANCE_TOKEN/);

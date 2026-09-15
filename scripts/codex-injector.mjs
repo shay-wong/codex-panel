@@ -1127,77 +1127,95 @@ async function requestCodexAppServerViaCdp(
     Date.now().toString(36),
     (++codexAppServerRequestSequence).toString(36),
   ].join("-");
-  const evaluation = await cdp.send("Runtime.evaluate", {
-    expression: `(() => new Promise((resolve) => {
-      const requestId = ${JSON.stringify(requestId)};
-      const bridge = window.electronBridge;
-      if (!bridge || typeof bridge.sendMessageFromView !== "function") {
-        resolve({ ok: false, error: "Codex App Server bridge is unavailable" });
-        return;
-      }
-      let settled = false;
-      const finish = (result) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timeout);
-        window.removeEventListener("message", onMessage, true);
-        resolve(result);
-      };
-      const onMessage = (event) => {
-        const message = event.data;
-        if (
-          !message
-          || typeof message !== "object"
-          || message.type !== "mcp-response"
-          || message.hostId !== ${JSON.stringify(hostId)}
-          || message.message?.id !== requestId
-        ) return;
-        event.stopImmediatePropagation();
-        if (message.message.error) {
-          finish({
-            ok: false,
-            error: message.message.error.message || "Codex App Server request failed",
-          });
+  const startedAt = Date.now();
+  const diagnostic = { requestId, method, hostId, threadId: params?.threadId ?? null, timeoutMs };
+  let outcome = "transport-error";
+  let responseDiagnostic;
+  console.error(JSON.stringify({ event: "panel.app-server.request", phase: "start", at: new Date().toISOString(), ...diagnostic }));
+  try {
+    const evaluation = await cdp.send("Runtime.evaluate", {
+      expression: `(() => new Promise((resolve) => {
+        const requestId = ${JSON.stringify(requestId)};
+        const bridge = window.electronBridge;
+        if (!bridge || typeof bridge.sendMessageFromView !== "function") {
+          resolve({ ok: false, error: "Codex App Server bridge is unavailable" });
           return;
         }
-        finish({ ok: true, result: message.message.result });
-      };
-      const timeout = window.setTimeout(
-        () => finish({ ok: false, error: "Codex App Server request timed out" }),
-        ${JSON.stringify(timeoutMs)},
-      );
-      window.addEventListener("message", onMessage, true);
-      Promise.resolve(bridge.sendMessageFromView({
-        type: "mcp-request",
-        hostId: ${JSON.stringify(hostId)},
-        request: {
-          id: requestId,
-          method: ${JSON.stringify(method)},
-          params: ${JSON.stringify(params)},
-        },
-        priority: "interactive",
-        source: "panel_thread_create",
-        timeoutMs: ${JSON.stringify(timeoutMs)},
-        expiresAtMs: Date.now() + ${JSON.stringify(timeoutMs)},
-      })).catch((error) => {
-        finish({
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
+        let settled = false;
+        const observed = { responses: 0, matchingId: 0, matchingHost: 0 };
+        let sent = false;
+        const finish = (result) => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timeout);
+          window.removeEventListener("message", onMessage, true);
+          resolve({ ...result, diagnostic: { ...observed, sent, documentReadyState: document.readyState } });
+        };
+        const onMessage = (event) => {
+          const message = event.data;
+          if (message?.type === "mcp-response") {
+            observed.responses++;
+            if (message.message?.id === requestId) observed.matchingId++;
+            if (message.hostId === ${JSON.stringify(hostId)}) observed.matchingHost++;
+          }
+          if (
+            !message
+            || typeof message !== "object"
+            || message.type !== "mcp-response"
+            || message.hostId !== ${JSON.stringify(hostId)}
+            || message.message?.id !== requestId
+          ) return;
+          event.stopImmediatePropagation();
+          if (message.message.error) {
+            finish({
+              ok: false,
+              error: message.message.error.message || "Codex App Server request failed",
+            });
+            return;
+          }
+          finish({ ok: true, result: message.message.result });
+        };
+        const timeout = window.setTimeout(
+          () => finish({ ok: false, error: "Codex App Server request timed out", failure: "timeout" }),
+          ${JSON.stringify(timeoutMs)},
+        );
+        window.addEventListener("message", onMessage, true);
+        Promise.resolve(bridge.sendMessageFromView({
+          type: "mcp-request",
+          hostId: ${JSON.stringify(hostId)},
+          request: {
+            id: requestId,
+            method: ${JSON.stringify(method)},
+            params: ${JSON.stringify(params)},
+          },
+          priority: "interactive",
+          source: "panel_thread_create",
+          timeoutMs: ${JSON.stringify(timeoutMs)},
+          expiresAtMs: Date.now() + ${JSON.stringify(timeoutMs)},
+        })).then(() => { sent = true; }).catch((error) => {
+          finish({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
         });
-      });
-    }))()`,
-    awaitPromise: true,
-    returnByValue: true,
-  });
-  if (evaluation.exceptionDetails) {
-    throw new Error(
-      evaluation.exceptionDetails.exception?.description
-      || "Codex App Server request failed",
-    );
+      }))()`,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    if (evaluation.exceptionDetails) {
+      throw new Error(
+        evaluation.exceptionDetails.exception?.description
+        || "Codex App Server request failed",
+      );
+    }
+    const response = evaluation.result.value;
+    responseDiagnostic = response?.diagnostic;
+    outcome = response?.ok ? "success" : response?.failure === "timeout" ? "timeout" : "rpc-error";
+    if (!response?.ok) throw new Error(response?.error || "Codex App Server request failed");
+    return response.result;
+  } finally {
+    console.error(JSON.stringify({ event: "panel.app-server.request", phase: "end", at: new Date().toISOString(), ...diagnostic, outcome, elapsedMs: Date.now() - startedAt, ...responseDiagnostic }));
   }
-  const response = evaluation.result.value;
-  if (!response?.ok) throw new Error(response?.error || "Codex App Server request failed");
-  return response.result;
 }
 
 async function applyPanelAutomationPolicy(
@@ -1824,170 +1842,182 @@ async function prefillTaskComposerViaCdp(cdp, executionContextId, request) {
     ...skill,
     resolvedPath: await realpath(skill.path).catch(() => skill.path),
   })));
-  const stageDeadline = () => Date.now() + 8_000;
-  const mentionDeadline = () => Date.now() + 15_000;
-  let deadline = stageDeadline();
-  while (Date.now() < deadline) {
-    const prepared = await cdp.send("Runtime.evaluate", {
-      expression: `(() => {
-        const instruction = ${JSON.stringify(instruction)};
-        const skills = ${JSON.stringify(resolvedSkills)};
-        const compact = (value) => String(value || "").replace(/\\s+/g, "");
-        const matchesSkill = (candidate, skill) => {
-          const name = candidate.getAttribute("skill-mention-name") || "";
-          const skillPath = candidate.getAttribute("skill-mention-path") || "";
-          return (name === skill.name || name.endsWith(":" + skill.name))
-            && (skillPath === skill.path || skillPath === skill.resolvedPath);
-        };
-        const editor = Array.from(document.querySelectorAll(
-          '[data-codex-composer="true"][contenteditable="true"]'
-        )).find((candidate) => candidate.getClientRects().length > 0);
-        if (!editor) return { ready: false };
-        const mentions = Array.from(editor.querySelectorAll("[skill-mention-name]"));
-        const skillsMatch = skills.every((skill) => mentions.some((candidate) => (
-          matchesSkill(candidate, skill)
-        )));
-        if (skillsMatch && compact(editor.textContent).includes(compact(instruction))) {
-          return { ready: true, matches: true };
-        }
-        editor.focus();
-        const selection = window.getSelection();
-        const range = document.createRange();
-        range.selectNodeContents(editor);
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-        return { ready: true, matches: false };
-      })()`,
-      contextId: executionContextId,
-      returnByValue: true,
-    });
-    if (!prepared.result.value?.ready) {
-      await new Promise((resolve) => setTimeout(resolve, 80));
-      continue;
-    }
-    if (prepared.result.value.matches) return { prefilled: true };
-    break;
-  }
-
-  for (const [skillIndex, skill] of resolvedSkills.entries()) {
-    await cdp.send("Input.insertText", { text: "$" });
-    let selectedSkill = false;
-    deadline = stageDeadline();
+  const startedAt = Date.now();
+  let stage = "locate-editor", skillIndexInProgress = null, editorReady = false, outcome = "error";
+  try {
+    const stageDeadline = () => Date.now() + 8_000;
+    const mentionDeadline = () => Date.now() + 15_000;
+    let deadline = stageDeadline();
     while (Date.now() < deadline) {
-      const selection = await cdp.send("Runtime.evaluate", {
+      const prepared = await cdp.send("Runtime.evaluate", {
         expression: `(() => {
-          const displayName = ${JSON.stringify(skill.displayName)};
-          const overlay = Array.from(document.querySelectorAll(
-            '[data-composer-overlay-floating-ui="true"]'
-          )).find((candidate) => candidate.getClientRects().length > 0);
-          if (!overlay) return { ready: false };
-          const button = Array.from(overlay.querySelectorAll(
-            'button[data-list-navigation-item="true"]'
-          )).find((candidate) => Array.from(candidate.querySelectorAll("span"))
-            .some((label) => (label.textContent || "").trim() === displayName));
-          if (!button) return { ready: true, found: false };
-          button.click();
-          return { ready: true, found: true };
-        })()`,
-        contextId: executionContextId,
-        returnByValue: true,
-      });
-      if (selection.result.value?.found) {
-        selectedSkill = true;
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 80));
-    }
-    if (!selectedSkill) throw new Error(`Timed out while selecting the ${skill.displayName} Skill`);
-
-    let mentionReady = false;
-    deadline = mentionDeadline();
-    while (Date.now() < deadline) {
-      const mention = await cdp.send("Runtime.evaluate", {
-        expression: `(() => {
-          const skillName = ${JSON.stringify(skill.name)};
-          const skillPath = ${JSON.stringify(skill.path)};
-          const resolvedPath = ${JSON.stringify(skill.resolvedPath)};
+          const instruction = ${JSON.stringify(instruction)};
+          const skills = ${JSON.stringify(resolvedSkills)};
+          const compact = (value) => String(value || "").replace(/\\s+/g, "");
+          const matchesSkill = (candidate, skill) => {
+            const name = candidate.getAttribute("skill-mention-name") || "";
+            const skillPath = candidate.getAttribute("skill-mention-path") || "";
+            return (name === skill.name || name.endsWith(":" + skill.name))
+              && (skillPath === skill.path || skillPath === skill.resolvedPath);
+          };
           const editor = Array.from(document.querySelectorAll(
             '[data-codex-composer="true"][contenteditable="true"]'
           )).find((candidate) => candidate.getClientRects().length > 0);
           if (!editor) return { ready: false };
-          const selected = Array.from(editor.querySelectorAll("[skill-mention-name]"))
-            .find((candidate) => {
-              const name = candidate.getAttribute("skill-mention-name") || "";
-              return name === skillName || name.endsWith(":" + skillName);
-            });
-          return {
-            ready: Boolean(selected),
-            pathMatches: [skillPath, resolvedPath].includes(
-              selected?.getAttribute("skill-mention-path") || ""
-            ),
-          };
+          const mentions = Array.from(editor.querySelectorAll("[skill-mention-name]"));
+          const skillsMatch = skills.every((skill) => mentions.some((candidate) => (
+            matchesSkill(candidate, skill)
+          )));
+          if (skillsMatch && compact(editor.textContent).includes(compact(instruction))) {
+            return { ready: true, matches: true };
+          }
+          editor.focus();
+          const selection = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(editor);
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+          return { ready: true, matches: false };
         })()`,
         contextId: executionContextId,
         returnByValue: true,
       });
-      if (mention.result.value?.ready) {
-        if (!mention.result.value.pathMatches) {
-          throw new Error(`Codex selected a different ${skill.displayName} Skill`);
-        }
-        mentionReady = true;
-        break;
+      if (!prepared.result.value?.ready) {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        continue;
       }
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      editorReady = true;
+      if (prepared.result.value.matches) { outcome = "success"; return { prefilled: true }; }
+      break;
     }
-    if (!mentionReady) {
-      throw new Error(`Timed out while creating the ${skill.displayName} Skill mention`);
-    }
-    if (skillIndex < resolvedSkills.length - 1) {
+
+    for (const [skillIndex, skill] of resolvedSkills.entries()) {
+      stage = "select-skill";
+      skillIndexInProgress = skillIndex;
+      await cdp.send("Input.insertText", { text: "$" });
+      let selectedSkill = false;
       deadline = stageDeadline();
       while (Date.now() < deadline) {
-        const closed = await cdp.send("Runtime.evaluate", {
-          expression: `(() => !Array.from(document.querySelectorAll(
-            '[data-composer-overlay-floating-ui="true"]'
-          )).some((candidate) => candidate.getClientRects().length > 0))()`,
+        const selection = await cdp.send("Runtime.evaluate", {
+          expression: `(() => {
+            const displayName = ${JSON.stringify(skill.displayName)};
+            const overlay = Array.from(document.querySelectorAll(
+              '[data-composer-overlay-floating-ui="true"]'
+            )).find((candidate) => candidate.getClientRects().length > 0);
+            if (!overlay) return { ready: false };
+            const button = Array.from(overlay.querySelectorAll(
+              'button[data-list-navigation-item="true"]'
+            )).find((candidate) => Array.from(candidate.querySelectorAll("span"))
+              .some((label) => (label.textContent || "").trim() === displayName));
+            if (!button) return { ready: true, found: false };
+            button.click();
+            return { ready: true, found: true };
+          })()`,
           contextId: executionContextId,
           returnByValue: true,
         });
-        if (closed.result.value === true) break;
+        if (selection.result.value?.found) {
+          selectedSkill = true;
+          break;
+        }
         await new Promise((resolve) => setTimeout(resolve, 80));
       }
-      await cdp.send("Input.insertText", { text: " " });
+      if (!selectedSkill) throw new Error(`Timed out while selecting the ${skill.displayName} Skill`);
+
+      stage = "verify-skill-mention";
+      let mentionReady = false;
+      deadline = mentionDeadline();
+      while (Date.now() < deadline) {
+        const mention = await cdp.send("Runtime.evaluate", {
+          expression: `(() => {
+            const skillName = ${JSON.stringify(skill.name)};
+            const skillPath = ${JSON.stringify(skill.path)};
+            const resolvedPath = ${JSON.stringify(skill.resolvedPath)};
+            const editor = Array.from(document.querySelectorAll(
+              '[data-codex-composer="true"][contenteditable="true"]'
+            )).find((candidate) => candidate.getClientRects().length > 0);
+            if (!editor) return { ready: false };
+            const selected = Array.from(editor.querySelectorAll("[skill-mention-name]"))
+              .find((candidate) => {
+                const name = candidate.getAttribute("skill-mention-name") || "";
+                return name === skillName || name.endsWith(":" + skillName);
+              });
+            return {
+              ready: Boolean(selected),
+              pathMatches: [skillPath, resolvedPath].includes(
+                selected?.getAttribute("skill-mention-path") || ""
+              ),
+            };
+          })()`,
+          contextId: executionContextId,
+          returnByValue: true,
+        });
+        if (mention.result.value?.ready) {
+          if (!mention.result.value.pathMatches) {
+            throw new Error(`Codex selected a different ${skill.displayName} Skill`);
+          }
+          mentionReady = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      }
+      if (!mentionReady) {
+        throw new Error(`Timed out while creating the ${skill.displayName} Skill mention`);
+      }
+      if (skillIndex < resolvedSkills.length - 1) {
+        deadline = stageDeadline();
+        while (Date.now() < deadline) {
+          const closed = await cdp.send("Runtime.evaluate", {
+            expression: `(() => !Array.from(document.querySelectorAll(
+              '[data-composer-overlay-floating-ui="true"]'
+            )).some((candidate) => candidate.getClientRects().length > 0))()`,
+            contextId: executionContextId,
+            returnByValue: true,
+          });
+          if (closed.result.value === true) break;
+          await new Promise((resolve) => setTimeout(resolve, 80));
+        }
+        await cdp.send("Input.insertText", { text: " " });
+      }
     }
-  }
 
-  await cdp.send("Input.insertText", { text: instruction });
+    stage = "insert-instruction";
+    await cdp.send("Input.insertText", { text: instruction });
+    stage = "verify-instruction";
 
-  deadline = stageDeadline();
-  while (Date.now() < deadline) {
-    const verified = await cdp.send("Runtime.evaluate", {
-      expression: `(() => {
-        const instruction = ${JSON.stringify(instruction)};
-        const skills = ${JSON.stringify(resolvedSkills)};
-        const compact = (value) => String(value || "").replace(/\\s+/g, "");
-        const matchesSkill = (candidate, skill) => {
-          const name = candidate.getAttribute("skill-mention-name") || "";
-          const skillPath = candidate.getAttribute("skill-mention-path") || "";
-          return (name === skill.name || name.endsWith(":" + skill.name))
-            && (skillPath === skill.path || skillPath === skill.resolvedPath);
-        };
-        const editor = Array.from(document.querySelectorAll(
-          '[data-codex-composer="true"][contenteditable="true"]'
-        )).find((candidate) => candidate.getClientRects().length > 0);
-        if (!editor) return false;
-        const mentions = Array.from(editor.querySelectorAll("[skill-mention-name]"));
-        const skillsMatch = skills.every((skill) => mentions.some((candidate) => (
-          matchesSkill(candidate, skill)
-        )));
-        return skillsMatch && compact(editor.textContent).includes(compact(instruction));
-      })()`,
-      contextId: executionContextId,
-      returnByValue: true,
-    });
-    if (verified.result.value === true) return { prefilled: true };
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    deadline = stageDeadline();
+    while (Date.now() < deadline) {
+      const verified = await cdp.send("Runtime.evaluate", {
+        expression: `(() => {
+          const instruction = ${JSON.stringify(instruction)};
+          const skills = ${JSON.stringify(resolvedSkills)};
+          const compact = (value) => String(value || "").replace(/\\s+/g, "");
+          const matchesSkill = (candidate, skill) => {
+            const name = candidate.getAttribute("skill-mention-name") || "";
+            const skillPath = candidate.getAttribute("skill-mention-path") || "";
+            return (name === skill.name || name.endsWith(":" + skill.name))
+              && (skillPath === skill.path || skillPath === skill.resolvedPath);
+          };
+          const editor = Array.from(document.querySelectorAll(
+            '[data-codex-composer="true"][contenteditable="true"]'
+          )).find((candidate) => candidate.getClientRects().length > 0);
+          if (!editor) return false;
+          const mentions = Array.from(editor.querySelectorAll("[skill-mention-name]"));
+          const skillsMatch = skills.every((skill) => mentions.some((candidate) => (
+            matchesSkill(candidate, skill)
+          )));
+          return skillsMatch && compact(editor.textContent).includes(compact(instruction));
+        })()`,
+        contextId: executionContextId,
+        returnByValue: true,
+      });
+      if (verified.result.value === true) { outcome = "success"; return { prefilled: true }; }
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+    throw new Error("Timed out while writing the issue instruction into the Codex composer");
+  } finally {
+    console.error(JSON.stringify({ event: "panel.composer.prefill", at: new Date().toISOString(), threadId: request.threadId ?? null, stage, outcome, editorReady, skillIndex: skillIndexInProgress, skillCount: resolvedSkills.length, elapsedMs: Date.now() - startedAt }));
   }
-  throw new Error("Timed out while writing the issue instruction into the Codex composer");
 }
 
 async function sendHostResponse(cdp, executionContextId, response) {
@@ -2106,11 +2136,22 @@ function installPanelHostBinding(
         })()
       ),
       prefill: async (request) => {
-        const existing = request.threadId ? await requestCodexAppServerViaCdp(
-          cdp, "local", "thread/read", { threadId: request.threadId, includeTurns: true }, 3_000,
-        ) : null;
-        const result = await prefillTaskComposerViaCdp(cdp, undefined, request);
-        return { ...result, ...(existing ? { previousTurnId: existing.thread?.turns?.at(-1)?.id ?? null } : {}) };
+        const startedAt = Date.now();
+        let stage = request.threadId ? "read-previous-turn" : "composer-prefill";
+        let outcome = "error";
+        const diagnostic = { event: "panel.composer.prepare", threadId: request.threadId ?? null };
+        console.error(JSON.stringify({ ...diagnostic, phase: "start", stage, at: new Date().toISOString() }));
+        try {
+          const existing = request.threadId ? await requestCodexAppServerViaCdp(
+            cdp, "local", "thread/read", { threadId: request.threadId, includeTurns: true }, 3_000,
+          ) : null;
+          stage = "composer-prefill";
+          const result = await prefillTaskComposerViaCdp(cdp, undefined, request);
+          outcome = "success";
+          return { ...result, ...(existing ? { previousTurnId: existing.thread?.turns?.at(-1)?.id ?? null } : {}) };
+        } finally {
+          console.error(JSON.stringify({ ...diagnostic, phase: "end", stage, outcome, elapsedMs: Date.now() - startedAt, at: new Date().toISOString() }));
+        }
       },
       startConversation: (request) => (
         getOrStartTaskConversation(cdp, undefined, request)
@@ -3058,6 +3099,9 @@ async function main() {
         supervisor,
         options.attachExisting,
         options.startupToken,
+        forwardCodexAppServerNotification,
+        registerRoutableCodexConnection,
+        unregisterRoutableCodexConnection,
       );
     } catch (error) {
       if (!options.watch) throw error;

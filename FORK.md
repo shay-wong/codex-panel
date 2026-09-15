@@ -62,6 +62,8 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 
 ## 活跃 Fork 能力
 
+- 原生对话预填诊断（维护用途）：`scripts/codex-injector.mjs` 记录 `panel.app-server.request` 的方法、请求 ID、host、会话 ID、实际超时、耗时及响应匹配计数；`panel.composer.prepare` 区分读取上一轮与预填，`panel.composer.prefill` 定位编辑器、Skill、文本插入及确认阶段。日志进入启动器 stderr，不记录提示词、消息正文、凭据或 Skill 路径。不调整超时或重试语义。验证：`node --test test/injector.test.mjs`；来源定位：`git log -S'panel.app-server.request' -- scripts/codex-injector.mjs`。待真实复现定位根因后重新评估日志保留范围。
+
 ### 全局可定制 AI 工作流
 
 - 原生导航历史（本次变更）：Panel 在 Codex MemoryRouter 中以同路径、独立 state 标记创建历史记录；返回和前进统一控制原生页面与 Panel 的显示。删除按钮标题、命令菜单、通知及会话变更关闭分支，不包装 window.history。连接通过 React 祖先 props 找到 navigator，只观察 push/replace/go，不占用 React 唯一 listen，卸载恢复原方法。沿用原生嵌入能力生命周期及用户文档；定位：`git log -S'PANEL_ROUTE_STATE' -- inject/codex-panel.user.js`。
