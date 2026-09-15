@@ -527,6 +527,9 @@
   }
 
   function threadIdFromLocation() {
+    // Native in-app navigation can leave the window URL unchanged.
+    const activeId = normalizeThreadId(activeThreadRow()?.getAttribute("data-app-action-sidebar-thread-id"));
+    if (activeId) return activeId;
     const source = `${window.location.pathname || ""}${window.location.search || ""}${window.location.hash || ""}`;
     const match = source.match(/(?:session|conversation|thread)(?:\/|=|:|-)([A-Za-z0-9_.-]+)/i)
       || source.match(/\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:[/?#]|$)/)
@@ -1427,7 +1430,7 @@
           await new Promise((resolve) => window.setTimeout(resolve, 40));
         }
         if (normalizeThreadId(threadIdFromLocation()) !== binding.threadId) {
-          throw new Error("Codex 未打开已绑定的执行对话");
+          throw new Error("Codex 未确认已切换到绑定对话");
         }
         const prepared = await requestHostTaskComposerPrefill({
           instruction, skills: skillReferences, threadId: binding.threadId,

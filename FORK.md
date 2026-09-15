@@ -1,5 +1,7 @@
 # Fork 维护说明
 
+
+继续规划导航确认（本次修复）：公共会话识别优先读取 `activeThreadRow` 的实际激活 ID，再回退 URL；不能使用导航前写入的 `lastNativeThreadId` 当作打开成功证据。此契约同时适用于预填前检查和发送后的绑定确认。代码 `inject/codex-panel.user.js`；验证 `node --test test/inject.test.mjs`，覆盖 URL 不变但正确会话已激活，以及其他会话激活时禁止预填；定位 `git log -S'Native in-app navigation' -- inject/codex-panel.user.js`。
 本文档是 `shay-wong/codex-panel` 面向维护者和 AI 编码代理的活跃差异台账，只记录相对于 `chuspeeism/dashi-taskboard` 有意保留的行为差异。
 
 ## 维护约定

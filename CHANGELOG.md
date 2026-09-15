@@ -4,6 +4,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed Continue planning incorrectly reporting that a bound conversation did not open when native navigation leaves the window URL unchanged.
+
 - Fixed planning and manual execution stopping at an empty composer when Codex includes hidden responsive labels in its local run-location control.
 
 - Ordinary tasks now support AI planning, persistent inline Specs, and approved decomposition into backlog sub-issues with dependencies. Planning and later authorized execution reuse the same conversation; Jira-specific repository and publication rules remain conditional.

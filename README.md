@@ -1,5 +1,7 @@
 # Codex Panel
 
+
+Continue planning recognizes the active native conversation even when the window URL remains unchanged.
 Planning and manual execution recognize the visible Codex run-location label, so hidden responsive text no longer blocks composer prefill.
 
 The project model picker includes **6 Astra** (`gpt-6-astra`), with reasoning levels through `max` and `ultra`.

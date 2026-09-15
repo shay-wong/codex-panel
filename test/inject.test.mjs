@@ -814,20 +814,27 @@ test("planning and execution prefill the same bound conversation in the requeste
   const modes = [];
   const drafts = [];
   let pending;
+  let timestamp = 0;
+  let activeId = "planning-thread";
+  const errors = [];
+  const locationSource = source.slice(source.indexOf("function threadIdFromLocation"), source.indexOf("\n  function activeThreadRow"));
   const run = vm.runInNewContext(`(() => {
     let pendingThreadCreation = null;
+    ${locationSource}
     ${createThreadSource}
     return createThreadForTask;
   })()`, {
     normalizeThreadId: (id) => id,
-    threadIdFromLocation: () => "planning-thread",
+    window: { location: { pathname: "/index.html", search: "", hash: "" }, setTimeout: (resolve) => resolve() },
+    Date: { now: () => { timestamp += 1_000; return timestamp; } },
+    activeThreadRow: () => ({ getAttribute: () => activeId }),
     setPendingThreadAssociation: (value) => { pending = value; },
     openThread: async (binding) => { assert.equal(binding.threadId, "planning-thread"); },
     requestHostTaskComposerPrefill: async (draft) => { drafts.push(draft); return { previousTurnId: "previous" }; },
     waitForPreparedComposer: async () => ({}),
     selectNativeCollaborationMode: async (mode) => { modes.push(mode); },
     nativeThreadIds: () => new Set(["planning-thread"]),
-    postToFrame: (message) => { assert.equal(message.type, "panel:thread-prepared"); },
+    postToFrame: (message) => { if (message.type === "panel:thread-create-error") errors.push(message.payload.error); },
     THREAD_ASSOCIATION_TIMEOUT_MS: 60_000,
   });
   for (const planning of [true, false]) {
@@ -838,6 +845,7 @@ test("planning and execution prefill the same bound conversation in the requeste
       threadBinding: { threadId: "planning-thread", codexProjectId: "project", codexHostId: "local", workspacePath: "/disposable/repo" },
       skillReferences: [{ name: "manage-panel", displayName: "Manage Panel", path: "/fake/SKILL.md" }],
     });
+    assert.deepEqual(errors, [], "An already active conversation must reach prefill even when the window URL is unchanged");
     assert.equal(pending.threadId, "planning-thread");
     assert.equal(pending.planningPreparation, planning);
     assert.equal(pending.submitted, false);
@@ -845,6 +853,15 @@ test("planning and execution prefill the same bound conversation in the requeste
   assert.deepEqual(modes, ["plan", "default"]);
   assert.equal(drafts.length, 2);
   assert.ok(drafts.every((draft) => draft.threadId === "planning-thread"));
+  activeId = "other-thread";
+  await run({
+    taskId: "task", identifier: "TEST-1", title: "Plan task", instruction: "Read TEST-1 Spec",
+    executionPreparation: true, planningPreparation: true, autoSubmit: false,
+    threadBinding: { threadId: "planning-thread", codexProjectId: "project", codexHostId: "local", workspacePath: "/disposable/repo" },
+    skillReferences: [{ name: "manage-panel", displayName: "Manage Panel", path: "/fake/SKILL.md" }],
+  });
+  assert.equal(drafts.length, 2, "Do not prefill a different active conversation");
+  assert.deepEqual(errors, ["Codex 未确认已切换到绑定对话"]);
 });
 
 test("automatic dispatch leaves a pending manual draft alone", async () => {
