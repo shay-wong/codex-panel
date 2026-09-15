@@ -12,7 +12,7 @@
 
 显式绑定 Jira 会话时会补建缺失的规划记录，让同一会话可以继续保存 Spec 和发布 tickets；已有规划保持不变。参见 [Jira 规划](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues)。
 
-[English](README.md) | [Fork 能力（英文）](docs/fork-capabilities.md)
+[English](README.md) | [Fork 能力（英文）](docs/fork-capabilities.md) | [更新日志](CHANGELOG.zh-CN.md)
 
 一个本地优先的 Issue 看板，可在浏览器中运行，也可以通过独立 CDP 启动器或注入脚本嵌入 Codex。React UI 与随附 Codex Skill 使用的 `panelctl` CLI 共用同一套 HTTP API。
 
@@ -131,7 +131,9 @@ open "$HOME/Applications/Codex Panel.app"
 
 管理窗口使用 Tauri WebView 承载的 React 与 Radix Themes；运行概览、分组偏好和内嵌工作流编辑器共用简洁控件与明暗主题，服务、进程和文件操作沿用现有 Rust command。左侧固定导航区分运行概览、偏好设置和关于，并在底部保留打开面板的主操作。版本信息、检查更新、安装更新与发布说明集中在关于页；日志与运行诊断保留在运行概览。右侧使用简洁状态摘要、带文字的服务操作和三行状态列表；偏好使用分组表单，将全局工作流入口单独突出。Codex 连接就绪与内嵌 Panel 实际可见会分别显示，等待 renderer 的打开请求会保持排队而不是误报失败，Panel 刚显示时触发的原生 Codex 操作也会短暂等待首个 host bridge heartbeat。异步操作按钮会至少显示 300ms loading，再短暂保留清晰的成功或失败状态；服务启动、停止和重启等待进程生命周期操作时，管理窗口仍保持响应；浏览器入口会校验并保留启动器的私有回环地址。启动偏好、更新与 Release、日志、数据目录和运行详情位于下方。窗口标题区与 macOS App/Dock 使用同一套带 `PANEL` 角标的 Codex 明暗图标，并跟随系统外观切换。
 
-应用最多每 24 小时自动检查一次 Fork 的 GitHub Releases，成功结果缓存 24 小时；临时失败 5 分钟后重试，匿名 API 限流则缓存到 GitHub 返回的重置时间。手动检查始终绕过缓存。检查会优先使用本机已登录的 `gh` CLI，无法使用时才回退到匿名 GitHub API，并分别提示额度耗尽、网络失败、暂无 Release、已是最新版本或发现新版本。只有规范化的 `vX.Y.Z-fork.N` 标签会成为更新候选，发现新版本后会在应用内下载并验证签名，只有用户确认后才安装并重启 Panel。仅接受 Fork 签名的更新；构建时未配置更新公钥会明确提示不可安装。详见[更新包配置](docs/fork-capabilities.md#signed-in-app-updates)。
+Fork 从 `0.0.1-fork`（标签 `v0.0.1-fork`）开始独立版本，不再随上游版本变化。已有本地 `0.1.0` 开发版需手动安装一次以切换到新版本线。
+
+应用最多每 24 小时自动检查一次 Fork 的 GitHub Releases，成功结果缓存 24 小时；临时失败 5 分钟后重试，匿名 API 限流则缓存到 GitHub 返回的重置时间。手动检查始终绕过缓存。检查会优先使用本机已登录的 `gh` CLI，无法使用时才回退到匿名 GitHub API，并分别提示额度耗尽、网络失败、暂无 Release、已是最新版本或发现新版本。只有规范化的 `vX.Y.Z-fork` 标签会成为更新候选，发现新版本后会在应用内下载并验证签名，只有用户确认后才安装并重启 Panel。仅接受 Fork 签名的更新；构建时未配置更新公钥会明确提示不可安装。详见[更新包配置](docs/fork-capabilities.md#signed-in-app-updates)。
 
 App bundle 内包含 Panel runtime、`panelctl`、两个 Panel Skills，以及用于运行它们的官方签名 Node.js runtime。macOS 安装器优先使用 `CODEX_PANEL_CODESIGN_IDENTITY`，其次使用可复用的本机 Apple Development 身份；两者都不可用时回退到 ad-hoc 签名。Windows 正式发行要求配置 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT`，并生成带 Authenticode 签名的 NSIS 安装包。
 

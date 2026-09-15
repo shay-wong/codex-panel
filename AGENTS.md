@@ -182,7 +182,7 @@ Use this local review classification:
 
 - Release only when the user requests it or explicitly includes release in the task.
 - Merge all included product PRs first. Use a minimal version PR for the required version fields; do not alter release infrastructure without a separate requirement.
-- Use a tag in the form `v<upstream-version>-fork.<N>`. Release notes contain product changes only.
+- Use an independent Fork version starting at `0.0.1-fork` and a tag in the form `vX.Y.Z-fork`. Release notes contain product changes only.
 - Keep the DMG as the first release asset.
 - Record live build, signing, notarization, upload, and publication progress in the Panel.
 - Verify the tag target, release target, workflow result, asset order, and updater metadata.
@@ -210,6 +210,6 @@ Before completing work that adds, changes, or removes intentional fork behavior,
 
 Reuse decisions in `FORK.md` while current evidence still supports them. Reconsider a decision only when new evidence adds, contradicts, invalidates, or leaves it unresolved.
 
-Every fork release must use `<upstream-version>-fork.<N>`. Reset to `fork.1` when the merged upstream version changes, and increment `N` for later releases on the same upstream version. This rule does not override the test-authorization requirements above.
+Fork releases use independent `X.Y.Z-fork` versions starting at `0.0.1-fork`, with `vX.Y.Z-fork` tags. Increment the Fork version for its own releases; upstream merges do not change or reset it. This rule does not override the test-authorization requirements above.
 
 Record-only and explicitly waiting issues are excluded from active implementation counts, but they must be reported accurately in the batch summary.

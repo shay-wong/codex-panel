@@ -1,7 +1,7 @@
 export function releaseMetadata(packageVersion, releaseTag, architectures) {
-  if (!/^\d+\.\d+\.\d+-fork\.[1-9]\d*$/.test(packageVersion)
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-fork$/.test(packageVersion)
     || releaseTag !== `v${packageVersion}`) {
-    throw new Error("Release tag must match the X.Y.Z-fork.N package version");
+    throw new Error("Release tag must match the X.Y.Z-fork package version");
   }
   const supported = [...new Set(architectures)].sort();
   if (!supported.length || supported.some((arch) => !["arm64", "x86_64"].includes(arch))) {

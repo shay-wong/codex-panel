@@ -9,7 +9,7 @@ import { verifyUpdaterSignature } from "./verify-updater-signature.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const [appArgument, outputArgument, tag] = process.argv.slice(2);
 if (!appArgument || !outputArgument || !tag) {
-  throw new Error("Usage: create-macos-updater.mjs <Codex Panel.app> <output-directory> <vX.Y.Z-fork.N>");
+  throw new Error("Usage: create-macos-updater.mjs <Codex Panel.app> <output-directory> <vX.Y.Z-fork>");
 }
 const app = path.resolve(appArgument);
 const output = path.resolve(outputArgument);

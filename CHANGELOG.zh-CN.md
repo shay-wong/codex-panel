@@ -1,0 +1,99 @@
+# 更新日志
+
+[English](CHANGELOG.md) | 简体中文
+
+本文记录 Fork 引入的用户可见变更。
+
+## 未发布
+
+- 从 `0.0.1-fork` 开始使用独立的 Fork 版本，发布标签为 `vX.Y.Z-fork`。已有本地 `0.1.0` 版本需手动安装一次以切换版本线。
+- 将 Panel 纳入 Codex 原生返回/前进历史，以路由状态统一控制面板显示，替代针对各个目的地的关闭处理。
+- 任务已有绑定会话或 Jira 规划会话时，隐藏“在新对话中打开”。
+- 同一会话从规划进入执行时，要求 Agent 在实现前记录 `in_progress`，验证后记录 `in_review`，保留规划会话绑定，无需再次点击 Panel 执行按钮。
+- 修复手动执行期间任务详情仍显示开始执行操作的问题。处理中的任务现在跟随看板的会话活动状态，并打开已有会话。
+- 修复原生导航未改变窗口 URL 时，“继续规划”误报绑定会话未打开的问题。
+- 修复 Codex 本地运行位置控件包含隐藏的响应式标签时，规划和手动执行停留在空输入框的问题。
+- 普通任务支持 AI 规划、持久化内联 Spec，以及经确认后拆分为带依赖的 backlog 子任务。规划和后续获授权的执行复用同一会话；Jira 专属的仓库和发布规则仅在适用时生效。
+- 任务入口只附加 Manage Panel，在进入相关阶段时读取工作流配置。调研任务核实来源和结论，不调用实现或代码审核 Skill；获授权的代码工作继续使用配置的 Skill 和自定义提示词。
+- 手动执行改为准备未发送的 Codex 草稿，默认使用当前目录，也可选择新建 worktree。复用已有执行上下文，确认发送后才关联 Issue 并开始执行；自动认领仍自动发送。运行位置设置先于预填，派发失败不再误报尚未发送的执行已停止。
+- 工作流配置改为在偏好设置内打开独立页面，保留侧栏导航，保存后返回偏好设置。页面切换使用简短的淡入位移动画，并遵循减少动态效果设置。
+- 在 Skill 配置旁增加完整可编辑的工作流模板，支持自动生成 Skill 指令、逐阶段重置，并展示规划、执行、审核和交接的固定 Panel 规则。
+- 对指向同一文件的工作流 Skill 选项去重，优先使用带命名空间的 ID，并保留已有选择。
+- 在延迟页面刷新之前隐藏已耗尽额度提示，修复切换会话时提示条闪现的问题。
+- 修复以 `$` 开头的工作流 Skill 搜索。
+- 使用 React 和 Radix Themes 重建 App 管理界面：固定侧栏导航、集中版本更新的关于页、紧凑运行状态行、分组偏好表单，以及与工作流编辑器共用的明暗主题控件；保留原生服务和更新操作。
+- 在 Codex Panel App 偏好设置中增加全局“工作流设置”，服务运行时可内嵌编辑规划、执行、审核和交接 Skill 的顺序。选择为空或不可用时，分别使用 Codex 原生 Plan、默认执行、官方 Codex CLI 审核和内置交接，不要求安装个人 Skill，并保留已有会话。
+- 启动器分离运行概览和分组偏好，增加持久化显示开关，可在连接期间隐藏 Codex 与工作额度耗尽提示，不改变账户额度。
+- Fork 更新支持在 App 内下载并验签，经用户确认后安装和重启；使用 Fork 自有的构建时验证公钥，并提供 macOS 更新包生成工具。
+- 合入上游至 `c346e8e`（`1.1.23-beta.1`）：改进 Jira 配置和同步顺序、AI 权限与进程处理、评论附件重试、文档编辑、实时订阅、看板性能及启动器生命周期，同时保留 Fork 集成。
+- 项目模型选择器增加“6 Astra”（`gpt-6-astra`），支持从 `low` 到 `ultra` 的推理级别。
+- 修复显式绑定 Jira 会话但尚无规划记录的情况：重新绑定同一会话会初始化规划，使 Spec 和 tickets 可以保存；已有规划及其会话保持不变。
+- 同一 Jira 需求、同一仓库的顺序 tickets 复用原生执行会话、分支和 worktree；保留逐 ticket 进度，确认接管执行后清除过期派发错误。
+- 修复看板显示运行中、原生会话活动却显示空闲的问题。两者统一使用已有会话进度数据源；会话数据不可用时显示未知状态。
+- 在“项目文档”之后增加可见的“项目设置”，修复历史本地 Issue 前缀的 Project Key 迁移，并支持通过 Panel Issue ID 或唯一关联 Jira key 只读查询任务。
+- 增加 `panelctl jira repositories set`，允许在发布 Spec 和 tickets 前，从 Codex 会话保存用户明确要求的 Jira 仓库关联。
+- 修复 Panel 侧栏入口，重新打开时恢复上次选择的项目，包括“所有项目”；显式 `project` 查询参数仍优先。
+- 修复 Jira Issue 关联活动：无论当前还是历史解除关联记录，都可打开对应 Panel Issue，即使 Jira 视图尚未加载其仓库。
+- 增加全局唯一 Project Key，生成稳定的 `KEY-N` Issue 标识；提供显式原子迁移操作，同步修改本地项目 Key 和匹配的 Issue 标识，不破坏任务或会话链接。旧项目尽可能保留首个有效前缀，冲突项目使用确定性后缀。
+- 修复本地 Panel 短暂请求失败：只读请求在 150 和 350 毫秒后重试，再显示服务暂时不可用；取消请求和写入请求不重放。
+- 修复 renderer 启动期间的 Codex 原生操作，短暂等待宿主桥接心跳，而非立即误报启动器未运行。
+- 修复 renderer 重载或绑定中断后的 Jira 规划：保留待处理意图，恢复包含精确 Jira key 的唯一 Codex 会话，接受旧版和当前 Skill payload，并在绑定后设置预期会话标题。
+- 按原因区分执行阻塞恢复：等待输入只在回复后恢复，执行失败提供“再次运行”，Jira 暂停的工作不能通过评论或手动执行重启。原生 worktree 选择忽略隐藏或被遮挡的控件，并等待实际菜单打开。
+- 合入上游至 `1.1.21`，包括稳定的 Codex 用户身份与头像恢复、精确受信任公共 Host、所有项目 backlog 迁移、逐 Issue 未读持久化、仪表盘待关注状态、本地化插件识别、Issue 描述布局、属性选择器修复和描述文件选择器焦点保留；保留 Jira 活动与正式会话、稳定 Panel 剪贴板引用、桌面行为，以及替代远程定时任务执行的持久化认领队列。
+- 修复从“所有项目”打开 Issue 时的范围切换：详情保留“所有项目”范围，标签和仓库开发上下文使用 Issue 自身所属项目。
+- 修复显式 Jira 会话绑定，保留已有规划会话；将执行、自动认领和手动绑定产生的会话统一展示在 Issue 活动中，不再重复提供详情快捷入口。
+- 修复显式会话绑定：已保存的本地 Codex 任务解析自身项目和 worktree 身份，不再依赖最近打开 Panel 的任务。
+- 增加 `panelctl conversation bind ISSUE_ID`，允许用户显式关联独立创建的 Codex 会话与 Panel Issue 或 Jira 需求，不修改状态或远端 Jira 字段。
+- 修复 Jira 规划草稿已包含有效结构化 Skill，却被误报缺少 `manage-panel`，导致新建 Codex 任务无法关联回 Jira 的问题。
+- Jira AI 规划预选 Skill 从 `grill-me` 改为 `grill-with-docs`，需求澄清同时维护规划文档。
+- 修复 `$manage-panel`：在任意会话提供精确 Jira 任务 ID 时，先解析其关联 Panel Issue，再按工作区查找上下文；这不授予 Jira 规划写入权限。
+- 修复 Jira 规划会话，先选择已保存仓库对应的 Codex 项目，再应用仓库工作区；筛选时保持仓库管理弹窗尺寸稳定。
+- 修复 Codex 返回带命名空间的 Skill mention 和符号链接解析目标，而非 Panel catalog 别名与链接路径时的 Jira 规划会话设置。
+- 修复较慢的 Codex Skill mention 在 Panel 输入框超时后才出现，导致 Jira 规划会话只准备了一部分的问题。
+- AI Skill catalog 开始使用 `js-yaml` 后，将这一已有生产依赖加入所有 Tauri runtime bundle，修复打包桌面服务启动失败。
+- 增加有次数限制的项目总结恢复：Codex 总结失败后分别等待 5、15、60 分钟重试，第四次失败后停止；保留手动重试，成功后重置序列。
+- 桌面启动器优先使用稳定的本地 Panel 端口 `47823`，不可用时回退私有随机端口；Codex CDP 保持独立随机地址。
+- WSL `panelctl` 支持发现 Windows Codex Panel 启动器 runtime，通过 `curl.exe` 访问 Windows 回环地址，并支持显式 `CODEX_PANEL_WSL_RUNTIME_FILE` 覆盖。
+- 修复一次性 Cloud 迁移：项目 README 图片元数据和内容完整迁移到 D1、R2，保留任务开始日期和 mention 创建的关系来源；不完整的 v2 包要求重新导出，避免静默丢失数据。
+- 修复 Codex 正常退出后的 Linux 桌面状态：管理器清除过期内嵌面板可见状态，显示等待 Codex，并保留重新打开所需的控制信号。
+- 修复 Windows 启动器启动：injector 保留 `panelctl` 使用的 runtime descriptor，不尝试创建 Unix 控制 socket；打开、状态和停止继续使用启动器自有子进程管道。
+- 为 Jira Data Center 和 Server 个人访问令牌增加 Bearer 认证；保留账户密码以及 Jira Cloud 邮箱/API token 的 Basic 认证。
+- 增加 Jira 需求与一个或多个仓库项目及执行 Issue 的显式关联，双方提供紧凑详情，Jira 刷新与本地执行分离。可搜索、滚动的仓库选择器包含所有本地 Codex 仓库，仅在保存关联时登记缺失的 Panel 项目。仓库活动显示项目名称，多仓库摘要显示首个仓库和 `+N`。执行 Issue 可在 Panel 内返回关联需求，需求详情保留外部 Jira 操作。待认领 Jira 需求保存仓库后，可为每个仓库创建并开始一个执行 Issue 和正式原生 Codex 任务；部分失败可恢复且不重复创建。复杂需求可改为打开正式原生规划任务，默认“帮我批准”（`workspace-write`）：无仓库时不关联项目，单仓库直接打开，多仓库先选择目标项目。Panel 填入可编辑提示词及所选 Skill，但不发送；通过直接符号链接安装的用户 Skill 保持结构化引用。确认后的 Spec 保存在 Jira，确认发布的仓库 tickets 成为带跨仓库依赖的关联 backlog Issue；规划过期时暂停未开始 Issue，重新规划不取消已开始工作。正式 Jira 规划和执行通过原生 Codex 路由打开，不进入仅供临时问答的右下角内嵌聊天。
+- 修复以 `#` 开始编号项的 Jira 描述，使其显示为有序列表而非超大标题；普通 Panel Issue Markdown 保持不变。
+- 修复只读 Markdown 任务列表中的行内代码，保持正常文字流，不再挤入复选框列逐字换行。
+- 允许 Jira 在关联仓库前进行 AI 规划，支持 Panel 管理的非 Git 工作区，并展示实际 Codex 启动诊断，而非仅显示退出码。
+- 增加 Jira 生命周期控制：Jira 进入处理中时只释放依赖已满足的前沿工作；回到等待或提前结束时，经确认执行非破坏性暂停，并尝试中断 macOS、Windows 上的活动 Codex turn，保留 Issue 暂停状态并报告中断失败。重新打开失败时保留历史 Issue、会话与规划，应用重新打开工作时串行处理并发 Jira 写入；已关闭重复需求保持可见，直到经确认保留关联或迁移到可访问的正式 Jira 需求。
+- 增加默认关闭的 Jira 自动完成设置。所有关联 Issue 均未归档且已完成后才完成 Jira；写入前核对远端更新时间和实时 transition，确认最终状态，重试临时失败，并提供接受远端或显式重试操作，不回滚本地完成状态。
+- 增加默认关闭的 Jira 会话自动归档设置，以及针对同一完成条件的 Jira 详情手动操作；保留本地执行记录、消息和 Codex thread ID，重新打开的工作使用新会话。
+- 用 Panel 持久化自动认领队列替代定时任务执行，覆盖手动、恢复、Jira 授权和周期扫描工作。项目自动化保存启用、暂停、间隔、模型及推理设置，全局默认项目并行数为 3，可逐项目覆盖为 1–8，不设跨项目总上限。正式执行使用 Codex 原生本地 worktree 流程以运行项目环境设置，再记录已确认的会话、worktree 和分支；Jira 关联工作使用 Jira key 作为任务和分支上下文。Panel 展示等待与运行容量，重试临时失败，在用户输入或服务重启后谨慎恢复，审核期间保留 worktree，仅清理已完成、干净且合并的 worktree，不改动用户自建 Codex 任务和定时任务。
+- 用上游本地 Jira REST 连接替代 Fork 专属 Jira CLI、provider 和定时任务工作流：完整分页后原子同步分配给自己的未关闭 Issue，重新检查缺失 Issue 而不删除未知状态，同步失败保留缓存，账户变更需要确认，Jira UI 展示同步健康状态，支持的变更直接写回 Jira。
+- 横向列表采用 Issue 看板的状态、列和卡片层级，有 Jira external key 时优先展示；纵向列表保持紧凑。
+- 合入上游 `1.1.6`，包括 Jira REST 集成、GFM 和 Mermaid 渲染、标签、会话身份、附件类型、Issue 引用、项目 README、所有项目视图、跨项目移动、Tauri/Rust 桌面基础和 Linux 安装包、DeepSeek Harness 集成、带 Agent/Skill/命令补全的新 AI Composer、可搜索 Issue 关系，以及 Windows AI/服务启动修复；保留 `Codex Panel` 产品身份，当时未纳入自动更新安装。
+- 产品、`$manage-panel` Skill、`panelctl` CLI、环境变量、集成协议、本地数据及未部署 Cloudflare 资源统一使用 `Panel` 命名，并迁移已有本地状态和受管链接。
+- 使用 Tauri/Rust 的 `~/Applications/Codex Panel.app` 菜单栏应用替代原 SwiftPM 管理器，恢复紧凑的状态与控制组合区，分别展示服务、Codex 和内嵌面板状态；窗口与菜单栏保持一致，提供按状态切换的启动/停止、独立重启、浏览器、日志、数据、启动偏好、更新与 Release 操作，以及可展开的运行详情。
+- 修复桌面浏览器操作，接受并保留启动器私有实例 token 路由；异步按钮至少展示 300 毫秒 loading，再保留明确的成功或失败反馈；服务启动、停止、重启等待进程生命周期处理时，管理窗口仍可响应。
+- Tauri bundle 包含随 macOS 外观切换的明暗 Codex Panel 品牌图标，管理窗口和 Dock 一致；同时包含托盘图标、官方签名的通用 Node.js runtime、Panel runtime、`panelctl` 和两个 Panel Skill。
+- 增加受管 Swift 到 Tauri 升级路径：原子替换前停止已验证的旧 injector 和精确匹配的 bundle 自有 Panel 服务，保留 `~/Library/Application Support/Codex Panel/data`。
+- 加固桌面 runtime：验证官方 ChatGPT 和内置 Codex 标识及 Team ID，拒绝符号链接，在 Windows 上不区分大小写地清除子进程注入变量，由 Rust 预占回环 Panel listener，并要求私有实例和启动 token。Windows 发布要求 Authenticode 签名，执行内置 Node 或 Panel 代码前验证 launcher 证书和嵌入签名程序的 runtime SHA-256 清单。
+- 修复管理器冷启动：跟踪官方 App 的真实 bundle 可执行文件，在实际 Codex 进程存活期间保留 CDP 参数和受管 Panel 服务，bundle 元数据不可读时报告错误，不猜测可执行文件名。
+- 修复管理器冷启动时的 macOS 权限归属：通过 LaunchServices 启动官方 App，不再让 ChatGPT 成为 injector 直接子进程，避免将 ChatGPT/Codex 的 TCC 权限请求显示为 Codex Panel 请求。
+- 修复管理器冷启动：等待 Codex 初始 `app://` 文档加载完成后，再执行 Panel iframe 所需的单次 CSP bypass 重载，避免官方回退错误页和 `ERR_BLOCKED_BY_CSP`。
+- 修复 Chromium 151 回环 iframe 阻止问题：使用仅针对子框架导航的兼容开关，为受管 Panel frame 委派本地网络权限，初始自动打开只消费一次，避免 frame 失败后反复将用户拉离会话。
+- 修复常驻 injector 刷新：启用 CSP bypass 后重载 Codex，重复点击启动器时复用健康常驻实例，并完整关闭退役本地服务连接。
+- 修复管理器状态和生命周期：“已连接”要求实时 renderer 心跳，“已内嵌”还要求 Panel 页面可见；待打开请求保留排队直到 injector 确认。Windows 打开/状态/停止使用自有子进程控制管道，发现已有 Codex CDP 端口时不停止其他端口，打开 Panel 不脱离受管 injector，停止或退出等待自有子进程结束，管理器启动的 ChatGPT/Codex 在管理器关闭后继续运行。
+- 修复启动器重新打开：Node 警告不再破坏 CDP 发现 JSON，单次 injector 命令有超时限制，异步控制响应完成前保持 socket 打开，显式自动打开请求在 renderer 状态协调后仍保留。
+- 修复过期 runtime descriptor 指向已复用或僵尸 PID 时的管理器启动：丢弃 descriptor，不向该进程发送信号；每次向受管 injector 发信号仍需重新验证所有权。
+- 进程所有权迁移到 Tauri/Rust 启动器时，保留 2/5/15 秒的有限集成恢复，以及仅用户可用、经 token 认证的控制。
+- 增加持久化每日一次自动和不使用缓存的手动 Fork 发布检查：优先使用有超时限制的本机已认证 `gh` CLI，回退匿名 GitHub API；临时失败只缓存 5 分钟，限流缓存至重置时间，分别展示限流、网络错误、暂无发布、当前版本和可用更新。当时仅接受规范化 `vX.Y.Z-fork.N` 发布和精确受信任的 release-tag URL；更新只打开 Release 页面，不包含更新器下载或安装依赖。
+- 修复正常 OpenAI 签名 ChatGPT 更新后的兼容性，无需重装 Panel；仍阻止未签名变更、签名身份变化、被篡改的 Codex Panel bundle、runtime 符号链接和签名 App 外部路径。
+- 记录生命周期取舍：关闭 Panel 后，管理器启动的 ChatGPT 及其未认证本地 CDP 继续运行，直到 ChatGPT 自身退出。
+- 修复独立启动器启动：等待 Codex 主 renderer，忽略辅助头像 renderer，避免在 Panel 内嵌前失败。
+- 修复 Panel 侧栏入口，可从 Codex 会话页以及 Plugins、Sites 页面打开。
+- 修复原生导航：Panel 激活时可选择对话、插件、设置、站点、Pull Requests、定时任务、活动通知等 Codex 目的地，同时主题切换和无关刷新不会关闭 Panel。
+- 为内嵌 AI 会话增加 Issue 关联和持久化交接摘要，包括从会话原项目跨项目安全加载、`/handoff`、`/交接`、全局基础优先的 `$handoff-panel --issue ISSUE-ID` 包装器原样发布临时文档、活动流条目、新原生 Codex 任务的交接上下文，以及首次发送后的原生会话自动关联。
+- 桌面内嵌 AI 聊天支持移动、调整大小和最大化，关闭或重载后恢复普通窗口位置、尺寸与最大化状态；移动端仍为全屏。
+- 修复内嵌 AI 消息中的本地 PNG、JPEG、GIF 和 WebP 图片：通过绑定消息事件的回环端点渲染，验证已保存 Markdown 引用和实际图片格式，不暴露通用本地文件 URL。
+- 修复“在对话中打开”：本地和 SSH 项目都打开本地化、未发送的 Issue 草稿；较慢 Skill 选择和多行交接不再导致只有 `$manage-panel` mention 而缺少 Issue 标识、标题与交接说明；仅在用户发送草稿后认领和绑定 SSH Issue。
+- Codex 项目、用户、会话、工作区、原生导航、任务创建、侧栏和自动化权限仅授予启动器管理的 Panel iframe origin；自定义 UI origin 仅可展示。
+- 用符合 Panel 明暗主题的菜单替代浏览器原生 Issue 属性下拉框。
+- 增加显式 `npm run codex:install` 命令：构建不依赖仓库目录的用户 runtime，将 `manage-panel`、`handoff-panel` 复制到 `~/.agents/skills`，将 `panelctl` 安装到 `~/.local/bin`，把已有本地数据快照保存到固定支持目录，并生成 macOS 启动器；`npm ci` 不写入用户级集成。

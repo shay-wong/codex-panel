@@ -1,8 +1,12 @@
 # Changelog
 
+English | [简体中文](CHANGELOG.zh-CN.md)
+
 This file records user-visible changes introduced by the fork.
 
 ## Unreleased
+
+- Start independent Fork versioning at `0.0.1-fork` with `vX.Y.Z-fork` release tags. Existing local `0.1.0` builds require a one-time manual installation.
 
 - Added Panel to native Codex Back/Forward history and replaced destination-specific close handlers with route-driven visibility.
 - Hide **Open in new conversation** for tasks with an existing bound or Jira planning conversation.

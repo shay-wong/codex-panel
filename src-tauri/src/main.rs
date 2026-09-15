@@ -221,40 +221,26 @@ struct PanelVersion {
     major: u64,
     minor: u64,
     patch: u64,
-    fork: Option<u64>,
 }
 
 impl PanelVersion {
     fn parse(value: &str) -> Option<Self> {
         let normalized = value.trim().strip_prefix('v').unwrap_or(value.trim());
-        let (core, fork) = match normalized.split_once("-fork.") {
-            Some((core, fork)) if !fork.is_empty() => (core, Some(fork.parse().ok()?)),
-            None => (normalized, None),
-            _ => return None,
-        };
+        let core = normalized.strip_suffix("-fork").unwrap_or(normalized);
         let mut components = core.split('.');
         let version = Self {
             major: components.next()?.parse().ok()?,
             minor: components.next()?.parse().ok()?,
             patch: components.next()?.parse().ok()?,
-            fork,
         };
         components.next().is_none().then_some(version)
     }
 
-    fn is_fork_tag(value: &str) -> bool {
+    fn is_release_tag(value: &str) -> bool {
         let Some(version) = Self::parse(value) else {
             return false;
         };
-        value
-            == format!(
-                "v{}.{}.{}-fork.{}",
-                version.major,
-                version.minor,
-                version.patch,
-                version.fork.unwrap_or(0)
-            )
-            && version.fork.is_some_and(|fork| fork > 0)
+        value == format!("v{}.{}.{}-fork", version.major, version.minor, version.patch)
     }
 }
 
@@ -262,12 +248,6 @@ impl Ord for PanelVersion {
     fn cmp(&self, other: &Self) -> CmpOrdering {
         (self.major, self.minor, self.patch)
             .cmp(&(other.major, other.minor, other.patch))
-            .then_with(|| match (self.fork, other.fork) {
-                (None, None) => CmpOrdering::Equal,
-                (None, Some(_)) => CmpOrdering::Greater,
-                (Some(_), None) => CmpOrdering::Less,
-                (Some(left), Some(right)) => left.cmp(&right),
-            })
     }
 }
 
@@ -688,7 +668,7 @@ fn release_check_result(
         .into_iter()
         .filter(|release| {
             !release.draft
-                && PanelVersion::is_fork_tag(&release.tag_name)
+                && PanelVersion::is_release_tag(&release.tag_name)
                 && trusted_release_url(&release.html_url, &release.tag_name)
         })
         .filter_map(|release| {
@@ -723,7 +703,7 @@ fn cached_release_check(
         return None;
     }
     if let Ok(ReleaseCheckResult::Available { version, url }) = &cache.result {
-        if !PanelVersion::is_fork_tag(version) || !trusted_release_url(url, version) {
+        if !PanelVersion::is_release_tag(version) || !trusted_release_url(url, version) {
             return None;
         }
     }
@@ -2537,7 +2517,7 @@ fn open_available_release(state: State<'_, Arc<LauncherState>>) -> Result<(), St
 }
 
 fn updater_endpoint(tag: &str) -> Result<reqwest::Url, String> {
-    if !PanelVersion::is_fork_tag(tag) {
+    if !PanelVersion::is_release_tag(tag) {
         return Err("更新版本不是有效的 Fork 版本。".into());
     }
     format!("https://github.com/shay-wong/codex-panel/releases/download/{tag}/latest.json")
@@ -3291,14 +3271,25 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
+    fn independent_fork_versions_increase_without_upstream_versions() {
+        use super::PanelVersion;
+        assert!(PanelVersion::is_release_tag("v0.0.1-fork"));
+        for invalid in ["0.0.1-fork", "v0.0.1", "v00.0.1-fork", "v0.0.1-fork.1", "v0.0.1-beta.1"] {
+            assert!(!PanelVersion::is_release_tag(invalid));
+        }
+        assert!(PanelVersion::parse("0.0.2-fork") > PanelVersion::parse("0.0.1-fork"));
+        assert!(PanelVersion::parse("0.1.0") > PanelVersion::parse("0.0.1-fork"));
+    }
+
+    #[test]
     fn updater_only_uses_selected_fork_release_assets() {
-        let tag = "v1.1.23-fork.1";
+        let tag = "v0.0.1-fork";
         assert_eq!(super::updater_endpoint(tag).unwrap().as_str(),
-            "https://github.com/shay-wong/codex-panel/releases/download/v1.1.23-fork.1/latest.json");
-        assert!(super::updater_endpoint("v1.1.23").is_err());
-        let asset = "https://github.com/shay-wong/codex-panel/releases/download/v1.1.23-fork.1/Panel.app.tar.gz";
+            "https://github.com/shay-wong/codex-panel/releases/download/v0.0.1-fork/latest.json");
+        assert!(super::updater_endpoint("v0.0.1-fork.1").is_err());
+        let asset = "https://github.com/shay-wong/codex-panel/releases/download/v0.0.1-fork/Panel.app.tar.gz";
         assert!(super::trusted_update_asset(&asset.parse().unwrap(), tag));
-        for url in [asset.replace("shay-wong", "chuspeeism"), asset.replace("https:", "http:"), format!("{asset}?redirect=other"), asset.replace("fork.1", "fork.2")] {
+        for url in [asset.replace("shay-wong", "chuspeeism"), asset.replace("https:", "http:"), format!("{asset}?redirect=other"), asset.replace("v0.0.1-fork", "v0.0.2-fork")] {
             assert!(!super::trusted_update_asset(&url.parse().unwrap(), tag));
         }
     }
