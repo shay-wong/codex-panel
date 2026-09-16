@@ -6,7 +6,11 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.0.2-fork — 2026-09-16
+
 - Local tasks with an existing conversation can open a new unsent conversation with task and handoff context, without waiting for the old conversation to respond.
+
+- Fixed a missing callback during the first Codex injection that could interrupt startup and hide the original error.
 
 ## 0.0.1-fork — 2026-09-15
 
