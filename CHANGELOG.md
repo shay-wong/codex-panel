@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Identify exhausted-usage banners by their business type instead of localized titles, so wording and language changes no longer break hiding.
+
 - Fixed launcher error notices placing the close button below the message; long messages now wrap with the close button on the right.
 
 ## 0.0.2-fork — 2026-09-16

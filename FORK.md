@@ -87,6 +87,8 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 
 ### 额度耗尽横幅显示偏好
 
+- 额度提示按 React 当前生效组件的 `banner.banner_type` 识别，移除标题列表；限定已核实的账户与工作区额度耗尽类型，保留单模型限制、未知通知及无组件类型的通知。遍历止于下一个 DOM 祖先，避免匹配到外层其他横幅；通过 DOM 的 React props 选择当前 alternate。代码与验证：`inject/codex-panel.user.js`、`test/inject-usage-banner.test.mjs`；隔离浏览器验证实际 React 重渲染、标题与类型变化、开关恢复。沿用本节生命周期与用户文档。
+
 切换会话新增横幅或原地更新文案时，在 MutationObserver 回调中立即同步隐藏，不等待页面延迟刷新。验证：`node --test test/inject-usage-banner.test.mjs`。
 
 - 生命周期：`长期保留`。目的：允许用户收起 Codex 对话中的额度耗尽横幅。

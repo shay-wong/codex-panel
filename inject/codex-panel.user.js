@@ -89,20 +89,26 @@
   let destroyed = false;
   let hideUsageBanner = false;
 
+  function isExhaustedUsageBanner(banner) {
+    const fiberKey = Object.keys(banner).find((key) => key.startsWith("__reactFiber$"));
+    const propsKey = Object.keys(banner).find((key) => key.startsWith("__reactProps$"));
+    let owner = banner[fiberKey];
+    if (owner?.alternate && owner.alternate.memoizedProps === banner[propsKey]) owner = owner.alternate;
+    // Read the owning banner's business type, not localized text or minified component names.
+    for (let fiber = owner; fiber; fiber = fiber.return) {
+      if (fiber.stateNode instanceof Element && fiber.stateNode !== banner) break;
+      const type = fiber.memoizedProps?.banner?.banner_type;
+      if (typeof type === "string") {
+        return /^(?:pro|plus|prolite|free_trial|go_trial|free_or_go|business|cbp|legacy)_rate_limit_reached$/.test(type)
+          || /^(?:workspace_member|workspace_owner)_(?:usage_limit_reached|credits_depleted)$/.test(type);
+      }
+    }
+    return false;
+  }
+
   function syncUsageBannerVisibility() {
-    const titles = new Set([
-      "You’re out of Codex and Work usage",
-      "You're out of Codex and Work usage",
-      "你的 Codex 和工作使用额度已用完",
-      "Codex 及「工作」用量已用盡",
-      "你的 Codex 和工作使用量已用完",
-    ]);
     document.querySelectorAll("aside").forEach((banner) => {
-      const heading = banner.querySelector("h3");
-      const title = heading?.firstElementChild?.firstChild?.textContent?.trim()
-        || heading?.textContent?.trim();
-      const shouldHide = hideUsageBanner && titles.has(title) && !!banner.querySelector("button");
-      banner.toggleAttribute(USAGE_BANNER_HIDDEN_ATTRIBUTE, shouldHide);
+      banner.toggleAttribute(USAGE_BANNER_HIDDEN_ATTRIBUTE, hideUsageBanner && isExhaustedUsageBanner(banner));
     });
   }
 
