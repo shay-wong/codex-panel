@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod menu_diagnostics;
+
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSRunningApplication;
 use serde::{Deserialize, Serialize};
@@ -1167,7 +1169,13 @@ fn update_snapshot(
     let restart_service_menu = state.restart_service_menu.lock().unwrap().clone();
     let open_browser_menu = state.open_browser_menu.lock().unwrap().clone();
     let menu_snapshot = snapshot.clone();
+    let diagnostic = menu_diagnostics::tracking().then(|| {
+        menu_diagnostics::Span::new(&state.log_path, "status_refresh dispatch")
+    });
+    let diagnostic_path = diagnostic.as_ref().map(|_| state.log_path.clone());
     let _ = app.run_on_main_thread(move || {
+        let _dispatch = diagnostic;
+        let _diagnostic = diagnostic_path.as_ref().map(|path| menu_diagnostics::Span::new(path, "status_refresh apply"));
         if let Some(status_menu) = status_menu {
             let _ = status_menu.set_text(status_menu_label(&menu_snapshot.phase));
         }
@@ -1201,6 +1209,9 @@ fn append_log(state: &LauncherState, line: &str) {
 }
 
 fn show_error_dialog(app: &AppHandle, title: &str, message: &str) {
+    let _diagnostic = app.try_state::<Arc<LauncherState>>().map(|state| {
+        menu_diagnostics::Span::new(&state.log_path, "error_dialog blocking_show")
+    });
     app.dialog()
         .message(message)
         .title(title)
@@ -2905,6 +2916,9 @@ fn main() {
                 instance_lock,
             ));
             app.manage(state.clone());
+            menu_diagnostics::log(&state.log_path, &format!("startup version={version} os={} arch={}", std::env::consts::OS, std::env::consts::ARCH));
+            #[cfg(target_os = "macos")]
+            menu_diagnostics::install(&state.log_path);
 
             let app_info = MenuItem::with_id(
                 app,
@@ -2999,7 +3013,11 @@ fn main() {
                 .icon_as_template(true)
                 .tooltip("Codex Panel")
                 .menu(&tray_menu)
-                .on_menu_event(move |app, event| match event.id().as_ref() {
+                .on_menu_event(move |app, event| {
+                    let _diagnostic = app.try_state::<Arc<LauncherState>>().map(|state| {
+                        menu_diagnostics::Span::new(&state.log_path, format!("action id={}", event.id().as_ref()))
+                    });
+                    match event.id().as_ref() {
                     "show-window" => {
                         if let Err(error) = show_main_window(app) {
                             show_error_dialog(app, "Codex Panel 打开失败", &error);
@@ -3012,6 +3030,7 @@ fn main() {
                         let state = Arc::clone(state.inner());
                         let app = app.clone();
                         tauri::async_runtime::spawn(async move {
+                            let _diagnostic = menu_diagnostics::Span::new(&state.log_path, "worker id=check-update");
                             let _ = offer_update(&app, &state, true, false).await;
                         });
                     }
@@ -3022,6 +3041,7 @@ fn main() {
                         let state = Arc::clone(state.inner());
                         let app = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {
+                            let _diagnostic = menu_diagnostics::Span::new(&state.log_path, "worker id=open-panel");
                             let running = state.child.lock().unwrap().is_some();
                             let result = if running {
                                 open_panel(&app, &state)
@@ -3058,6 +3078,7 @@ fn main() {
                         let state = Arc::clone(state.inner());
                         let app = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {
+                            let _diagnostic = menu_diagnostics::Span::new(&state.log_path, "worker id=service-control");
                             if state.child.lock().unwrap().is_some() {
                                 stop_managed_child(&app, &state);
                             } else {
@@ -3075,6 +3096,7 @@ fn main() {
                         let state = Arc::clone(state.inner());
                         let app = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {
+                            let _diagnostic = menu_diagnostics::Span::new(&state.log_path, "worker id=restart-service");
                             if let Err(error) = restart_launcher(&app, &state) {
                                 append_log(
                                     &state,
@@ -3190,6 +3212,7 @@ fn main() {
                         app.exit(0);
                     }
                     _ => {}
+                    }
                 })
                 .build(app)?;
 
