@@ -6,6 +6,9 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.0.3-fork — 2026-09-17
+
+- Added menu diagnostics to help investigate macOS menus that fail to dismiss; this release does not yet fix that issue.
 - Identify exhausted-usage banners by their business type instead of localized titles, so wording and language changes no longer break hiding.
 
 - Fixed launcher error notices placing the close button below the message; long messages now wrap with the close button on the right.
