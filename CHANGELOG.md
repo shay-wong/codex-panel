@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed launcher error notices placing the close button below the message; long messages now wrap with the close button on the right.
+
 ## 0.0.2-fork — 2026-09-16
 
 - Local tasks with an existing conversation can open a new unsent conversation with task and handoff context, without waiting for the old conversation to respond.

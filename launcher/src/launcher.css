@@ -51,7 +51,8 @@ button, input { font: inherit; }
 .status-dot.error { background: var(--red-9); }
 .status-dot.available { border: 1.5px solid var(--green-9); background: transparent; }
 .status-card .status-dot { margin-top: 3px; }
-.launcher-error { flex: 1; overflow-wrap: anywhere; }
+#errorNotice { display: flex; }
+.launcher-error { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .preference-section + .preference-section { margin-top: 26px; }
 .workflow-entry.rt-Card { padding: 3px 16px; background: var(--gray-3); box-shadow: inset 3px 0 0 var(--blue-9); }
 .preference-rows { border-top: 1px solid var(--gray-4); }
