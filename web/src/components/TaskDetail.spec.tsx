@@ -85,6 +85,7 @@ it("identifies repositories from immediate start and continues after clarificati
   vi.mocked(startSimpleJiraTask).mockResolvedValueOnce({ context, question: "哪个客户端负责？" } as never).mockResolvedValueOnce({ context } as never);
   const props = { task, tasks: [task], project: { id: "jira", name: "Jira" }, projects: [{ id: "jira", name: "Jira", source: "jira" }], jiraRepositoryProjects: [], currentUser: actor, jiraAvailable: true, availableLabels: [], developmentScan: { workspacePath: null, contexts: [] }, commentsRevision: 0, attachmentsRevision: 0, aiChatThreads: [], onError: vi.fn(), onAiChatThreadsRefresh: vi.fn() } as unknown as ComponentProps<typeof TaskDetail>;
   await act(async () => { render(<TaskboardLanguageProvider language="zh"><TaskDetail {...props} /></TaskboardLanguageProvider>); });
+  expect(screen.queryByRole("button", { name: "新建子议题" })).toBeNull();
   const start = screen.getByRole("button", { name: "识别仓库并开始" });
   expect(start.hasAttribute("disabled")).toBe(false);
   await act(async () => { fireEvent.click(start); });

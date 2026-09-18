@@ -1998,7 +1998,7 @@ export function TaskDetail({
             <IssueSubIssues
               task={currentTask}
               tasks={tasks}
-              onCreateChild={() => onCreateChild(currentTask)}
+              onCreateChild={currentTask.source === "local" ? () => onCreateChild(currentTask) : undefined}
               onOpenTask={onOpenTask}
               onAddRelation={(anchor, type, relatedTaskId) => applyRelationMutation(
                 () => onAddRelation(anchor, type, relatedTaskId),

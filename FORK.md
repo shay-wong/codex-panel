@@ -48,6 +48,8 @@
 
 本轮合入 `1528a8e`：吸收父任务详情创建子任务、按顶层任务加权的项目完成度、名称/优先级排序、创建日期开关、正文与评论附件回显及本机文件操作、外部 Agent 会话归属与恢复命令、Jira Cloud 增强搜索分页及头像修复。上游新增字段移植到 Fork 现有本地/Cloud 校验与记录映射，不恢复已删除的共享重构文件；新 Cloud 迁移使用 `0013_agent_sessions.sql` 和 `0014_attachment_body_fallback.sql` 避免编号碰撞。Fork 保留 `panel:` 消息协议、独立版本与标签发布流程、工作流仅查询 Skills，以及基于 MemoryRouter 的导航历史，不恢复上游设置标题匹配关闭分支。
 
+子任务入口适配（本轮独立功能提交，长期保留）：详情页的直接创建子任务仅用于普通任务；Jira 需求继续通过已有规划与关联执行任务流程拆分。代码：`web/src/components/TaskDetail.tsx`；验证：`web/src/components/TaskDetail.spec.tsx` 同时覆盖普通任务创建入口与 Jira 原流程。用户文档：中英文 README 与 `docs/fork-capabilities.md#task-organization-and-external-sessions`。来源定位：`git log -S'currentTask.source === "local" ? () => onCreateChild' -- web/src/components/TaskDetail.tsx`。上游若支持 Fork 的 Jira 规划与跨仓库关联约束，再评估吸收此适配。
+
 ## Fork 发布版本策略
 
 - 权威上游版本来源：精确合并基线中的 `package.json`

@@ -237,7 +237,7 @@ A service restart records the interrupted attempt and returns the issue to waiti
 
 ## Task organization and external sessions
 
-Board filters offer default, name and priority sorting; display settings optionally show creation dates. Task details can create children with the parent preselected. Dashboard completion gives each non-canceled top-level issue equal weight and counts completed direct children proportionally for unfinished parents.
+Board filters offer default, name and priority sorting; display settings optionally show creation dates. Ordinary task details can create children with the parent preselected. Jira requirements retain their planning and linked execution issue flow. Dashboard completion gives each non-canceled top-level issue equal weight and counts completed direct children proportionally for unfinished parents.
 
 Tasks and comments can carry an external session via `panelctl ... --agent-platform claude|pi|agy|grok --session-id ID`. Pi accepts the original session file path. External session attribution is separate from native Codex bindings; the UI copies a POSIX-shell resume command rather than opening an external app. Existing native Codex conversation actions remain available.
 
