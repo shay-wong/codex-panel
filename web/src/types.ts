@@ -461,6 +461,13 @@ export interface TaskRelations {
   related: TaskRelationSummary[];
 }
 
+export type AgentPlatform = "claude" | "pi" | "agy" | "grok";
+
+export interface AgentSession {
+  platform: AgentPlatform;
+  sessionId: string;
+}
+
 interface TaskConversationRefBase {
   source: "task" | "comment";
   sourceId: string;
@@ -469,8 +476,9 @@ interface TaskConversationRefBase {
 }
 
 export type TaskConversationRef = TaskConversationRefBase & (
-  | (CodexThreadBinding & { legacyLocal?: false })
-  | { threadId: string; legacyLocal: true }
+  | (CodexThreadBinding & { legacyLocal?: false; agentSession?: undefined })
+  | { threadId: string; legacyLocal: true; agentSession?: undefined }
+  | { agentSession: AgentSession }
 );
 
 export interface Task {
@@ -486,6 +494,7 @@ export interface Task {
   threadId: string | null;
   threadBinding: CodexThreadBinding | null;
   legacyLocalThreadId: string | null;
+  agentSession?: AgentSession | null;
   conversationRefs: TaskConversationRef[];
   participants: ActorIdentity[];
   previewImage: Attachment | null;
@@ -647,6 +656,7 @@ export interface Comment {
   threadId: string | null;
   threadBinding: CodexThreadBinding | null;
   legacyLocalThreadId: string | null;
+  agentSession?: AgentSession | null;
   attachments: Attachment[];
   version: number;
   createdAt: string;
@@ -675,6 +685,7 @@ export interface Attachment {
   taskId: string;
   commentId: string | null;
   kind: "inline" | "attachment";
+  bodyFallback: boolean;
   filename: string;
   contentType: string;
   size: number;

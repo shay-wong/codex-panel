@@ -1011,21 +1011,37 @@ async function openExternalUrl(request) {
 }
 
 async function openAttachment(request) {
-  const response = await fetch(
-    `${panelBaseUrl}/api/attachments/${encodeURIComponent(request.attachmentId)}/content`,
-    { cache: "no-store" },
-  );
-  if (!response.ok) throw new Error(`Attachment content returned HTTP ${response.status}`);
   const directory = path.join(
     panelDataDirectory,
     "opened-attachments",
     request.attachmentId,
   );
-  await mkdir(directory, { recursive: true, mode: 0o700 });
   const attachmentPath = path.join(directory, request.filename);
+  if (request.operation) {
+    const localCopy = await stat(attachmentPath).catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (localCopy?.isFile()) {
+      if (request.operation === "reveal") await revealAttachment(attachmentPath, directory);
+      return { localPath: attachmentPath, opened: request.operation === "reveal" };
+    }
+    if (request.operation === "reveal") throw new Error("No device-local attachment copy is available");
+
+    // Loopback may proxy cloud storage. Only prepare an un-opened local file in local mode.
+    const session = await fetch(`${panelBaseUrl}/api/local/cloud-session`, { cache: "no-store" });
+    if (!session.ok || (await session.json()).mode !== "local") return { localPath: null };
+  }
+  const response = await fetch(
+    `${panelBaseUrl}/api/attachments/${encodeURIComponent(request.attachmentId)}/content`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) throw new Error(`Attachment content returned HTTP ${response.status}`);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
   await writeFile(attachmentPath, Buffer.from(await response.arrayBuffer()), { mode: 0o600 });
+  if (request.operation === "local-path") return { localPath: attachmentPath };
   await revealAttachment(attachmentPath, directory);
-  return { opened: true };
+  return { opened: true, localPath: attachmentPath };
 }
 
 async function requestCodexAutomationViaCdp(cdp, executionContextId, method, params) {

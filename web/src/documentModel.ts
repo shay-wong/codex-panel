@@ -1,4 +1,4 @@
-import { attachmentContentUrl, attachmentDownloadUrl } from "./api";
+import { attachmentContentUrl, attachmentDownloadUrl, resolvePersistedAttachmentUrl } from "./api";
 import { definitions } from "mdast-util-definitions";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
@@ -333,6 +333,28 @@ function composerReferenceFromNode(
     referenceKey,
     label,
   };
+}
+
+// Match rendered references, not URLs in code blocks, comments or unused definitions.
+export function referencedAttachmentIds(value: string): Set<string> {
+  const root = inlineMediaMarkdownParser.parse(value);
+  const getDefinition = definitions(root);
+  const nodes = [root as MarkdownAstNode];
+  const ids = new Set<string>();
+  while (nodes.length > 0) {
+    const node = nodes.pop()!;
+    const url = node.type === "link" || node.type === "image"
+      ? node.url
+      : node.type === "linkReference" || node.type === "imageReference"
+        ? getDefinition(node.identifier)?.url
+        : undefined;
+    if (url) {
+      const reference = parseInternalDocumentUrl(resolvePersistedAttachmentUrl(url), document.baseURI);
+      if (reference?.type === "attachment") ids.add(reference.attachmentId);
+    }
+    if (node.children) nodes.push(...node.children);
+  }
+  return ids;
 }
 
 export function createInlineMediaSegments(
@@ -903,4 +925,22 @@ export function createInlineMediaSegmentsFromHtml(
 
   for (const child of document.body.childNodes) visit(child);
   return structured ? createInlineMediaSegments(markdown, referenceTasks, [], baseUri) : null;
+}
+
+// Legacy uploads belong to the document, not a separate attachment list. Once
+// its owner saves a complete body, persistence consumes the fallback eligibility.
+export function appendUnreferencedAttachments(value: string, attachments: readonly Attachment[]): string {
+  const referenced = referencedAttachmentIds(value);
+  const missing: string[] = [];
+  for (const attachment of attachments) {
+    if (!attachment.bodyFallback || referenced.has(attachment.id)) continue;
+    referenced.add(attachment.id);
+    const label = attachment.filename.replace(/[\\[\]]/g, "\\$&");
+    const image = attachment.contentType.startsWith("image/");
+    const url = image ? attachmentContentUrl(attachment) : attachmentDownloadUrl(attachment);
+    missing.push(`${image ? "!" : ""}[${label}](${url})`);
+  }
+  return missing.length > 0
+    ? `${value}${value ? "\n\n" : ""}${missing.join("\n\n")}`
+    : value;
 }

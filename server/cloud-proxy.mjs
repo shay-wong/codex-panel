@@ -98,6 +98,7 @@ async function prepareRequest(request, {
     }
     if (
       isConversationMutation
+      && !payload.agentSession
       && typeof payload.threadId === "string"
       && !Object.hasOwn(payload, "threadBinding")
       && typeof resolveThreadBinding === "function"

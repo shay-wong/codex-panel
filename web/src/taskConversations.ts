@@ -1,4 +1,5 @@
 import type {
+  AgentSession,
   AiChatRun,
   AiChatThread,
   AiChatTodoProgress,
@@ -11,7 +12,8 @@ import type { InlineMediaSegment } from "./documentModel";
 export interface TaskConversationItem {
   key: string;
   projectId: string;
-  kind: "native" | "local-ai";
+  kind: "native" | "local-ai" | "agent-session";
+  agentSession?: AgentSession;
   title: string;
   source: "task" | "comment" | "local-ai";
   nativeThreadId: string | null;
@@ -98,6 +100,29 @@ export function taskConversations(task: Task, aiThreads: AiChatThread[]) {
   const items = new Map<string, TaskConversationItem>();
 
   for (const ref of task.conversationRefs ?? []) {
+    if (ref.agentSession) {
+      const { platform, sessionId } = ref.agentSession;
+      // External IDs are opaque: never apply Codex prefix normalization to them.
+      const key = `agent:${platform}:${sessionId}`;
+      const current = items.get(key);
+      const next: TaskConversationItem = {
+        key,
+        projectId: task.projectId,
+        kind: "agent-session",
+        agentSession: ref.agentSession,
+        title: ref.title || task.title,
+        source: ref.source,
+        nativeThreadId: null,
+        threadBinding: null,
+        legacyLocalThreadId: null,
+        aiThreadId: null,
+        updatedAt: ref.updatedAt,
+        currentRun: null,
+        latestTodo: null,
+      };
+      if (!current || next.updatedAt >= current.updatedAt) items.set(key, next);
+      continue;
+    }
     const normalizedId = normalizeCodexThreadId(ref.threadId);
     if (!normalizedId) continue;
     const key = `codex:${normalizedId}`;

@@ -168,6 +168,7 @@ export function JiraConnectionDialog({
             onChange={(event) => setPassword(event.target.value)}
           />
         </label>
+        <p>{text("Jira Cloud 请使用 Atlassian Email 和 API token。", "For Jira Cloud, use your Atlassian email and API token.")}</p>
         {connection?.configured && connection.displayName && (
           <p>{text("当前账号：", "Current account: ")}{connection.displayName}</p>
         )}

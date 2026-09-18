@@ -1,11 +1,13 @@
 ---
 name: manage-panel
-description: Manage panel projects, issues, issue relations, and comments through the panelctl CLI. Use when Codex needs to track a new requirement, inspect project work, create or update issues, relate dependent work, add progress notes, begin work on an issue, record completion, or coordinate concurrent updates.
+description: Manage Codex Panel issues and panelctl setup when the request names Codex Panel or panelctl, or the conversation already establishes Panel as the target. Not for unrelated external trackers or product documentation.
 ---
 
 # Manage Panel
 
-Use `panelctl` for every project, issue, relation, and comment operation. Consume its JSON output. Use the exact issue identifier returned by Panel or supplied in the prompt; never assume, derive, or rewrite an identifier prefix. Open only the relevant section of [references/cli.md](references/cli.md) when command syntax is needed.
+This skill serves Codex Panel, including its configured Jira integration, LAN, and cloud services. Apply this workflow only when the request explicitly targets Panel or the conversation already establishes that scope. A generic task request, issue identifier, or repository alone does not establish it. Use an external tracker's own tools unless the user requests a Panel operation; clarify an unclear target before running `panelctl`.
+
+Within that scope, use `panelctl` for every project, issue, relation, and comment operation. Consume its JSON output. Use the exact issue identifier returned by Panel or supplied in the prompt; never assume, derive, or rewrite an identifier prefix. Open only the relevant section of [references/cli.md](references/cli.md) when command syntax is needed.
 
 ## Select the CLI and active service
 
@@ -40,7 +42,7 @@ When another workflow needs the Jira reference linked to an execution Issue, run
 4. For complex work, run `project readme get [PROJECT_ID]` before planning or implementation to inspect repository architecture, constraints, and conventions. Keep the root project README concise; detailed multi-page documentation belongs in the repository's `docs/` directory.
 5. Create or update issues with the CLI; consume its JSON output.
    Issues created through `panelctl` are assigned to Codex Agent by default. Later CLI updates do not change the assignee.
-6. Let `panelctl` attribute every issue, relation, or comment mutation to the current Codex conversation through `CODEX_THREAD_ID`. Outside Codex, pass the exact conversation id with `--thread-id`. This attribution alone is not a complete task binding.
+6. For Codex attribution, let `panelctl` read `CODEX_THREAD_ID` or pass the exact Codex conversation ID with `--thread-id`. For Claude Code, Pi, AGY, or Grok traceability, pass `--agent-platform claude|pi|agy|grok --session-id ID` instead; see [CLI session traceability](references/cli.md#external-toolsession-traceability). External metadata is not a native Codex ownership binding and never substitutes for its five fields.
    When the user explicitly asks to bind the current conversation to an Issue or Jira key, run `conversation bind ISSUE_ID`. Do not infer binding from invoking this Skill, mentioning an Issue, reading it, commenting on it, or sharing its repository. Jira binding initializes a missing local planning record using the current conversation, including on a repeated binding. An existing plan, its Spec, and its planning conversation are preserved. Read `jira planning get` again for `plan.version`; binding does not change Jira fields or status.
    For Jira repository selection during authorized planning, follow **Automatic Jira repository association** below. Explicit repository-link requests use the same commands. Merely reading or mentioning a Jira issue does not authorize changing its links.
 7. Before starting authorized implementation, move the current execution issue to `in_progress` with `--if-version` from the latest read and confirm the returned status. This applies both to `todo` claims and to execution authorized directly in the same planning conversation; follow **Continue from planning into execution** below. The claim and every later owned `issue move` must pass the complete saved `threadBinding`: `threadId`, `codexProjectId`, `codexProjectKind`, `codexHostId`, and `workspacePath`, using all five explicit `--binding-*` options. If any identity field is unavailable, stop before claiming; never create a legacy binding containing only `threadId`. Preserve an existing complete binding exactly and never take over a binding owned by another conversation. If the claim reports a version conflict or a new read shows changed status or requirements, skip the issue and do not implement it.

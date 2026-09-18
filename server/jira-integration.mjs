@@ -302,6 +302,29 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
 
   async function fetchAssignedIssues(config) {
     const issues = [];
+    if (new URL(config.baseUrl).hostname.endsWith(".atlassian.net")) {
+      let nextPageToken = null;
+      while (true) {
+        const body = {
+          jql: buildJiraJql(config.projects),
+          maxResults: 100,
+          fields: JIRA_FIELDS,
+          ...(nextPageToken ? { nextPageToken } : {}),
+        };
+        const page = await request(config, "/rest/api/2/search/jql", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        const pageIssues = Array.isArray(page?.issues) ? page.issues : [];
+        issues.push(...pageIssues);
+        if (page?.isLast === true) break;
+        if (typeof page?.nextPageToken !== "string" || !page.nextPageToken.trim()) {
+          throw new ApiError(502, "INVALID_JIRA_RESPONSE", "Jira 搜索结果缺少下一页标记");
+        }
+        nextPageToken = page.nextPageToken;
+      }
+      return issues;
+    }
     let startAt = 0;
     while (true) {
       const page = await request(config, "/rest/api/2/search", {

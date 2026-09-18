@@ -36,6 +36,7 @@ interface BoardColumnProps {
   currentUser: ActorIdentity;
   showCover: boolean;
   showBody: boolean;
+  showCreatedAt: boolean;
   createEnabled?: boolean;
   onCreateLabel: (label: string, projectId?: string) => Promise<void>;
   onCreate: (status: TaskStatus) => void;
@@ -68,7 +69,8 @@ export function BoardColumn({
   currentUser,
   showCover,
   showBody,
-  createEnabled,
+  showCreatedAt,
+  createEnabled = true,
   onCreateLabel,
   onCreate,
   onEdit,
@@ -150,6 +152,7 @@ export function BoardColumn({
               currentUser={currentUser}
               showCover={showCover}
               showBody={showBody}
+              showCreatedAt={showCreatedAt}
               onCreateLabel={(label) => onCreateLabel(label, task.projectId)}
               onEdit={onEdit}
               onUpdate={onUpdate}

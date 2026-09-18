@@ -3,6 +3,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 import { getJiraTaskContext, startSimpleJiraTask } from "../api";
 import { TaskDetail } from "./TaskDetail";
+import { appendUnreferencedAttachments } from "../documentModel";
+import type { Attachment } from "../types";
 import { TaskboardLanguageProvider } from "../i18n";
 
 vi.mock("../api", async (original) => ({
@@ -34,6 +36,8 @@ it("shows manual conversation activity and opens its binding without preparing a
   const open = vi.fn();
   const openNew = vi.fn();
   const prepare = vi.fn();
+  const copy = vi.fn();
+  const createChild = vi.fn();
   const props = {
     task, tasks: [task], referenceTasks: [],
     projects: [{ id: "project", name: "Fixture", issueKey: "TEST", workspacePath: binding.workspacePath,
@@ -41,11 +45,13 @@ it("shows manual conversation activity and opens its binding without preparing a
     jiraRepositoryProjects: [], currentUser: actor,
     jiraAvailable: false, availableLabels: [], developmentScan: { workspacePath: null, contexts: [] },
     developmentScanLoading: false, commentsRevision: 0, attachmentsRevision: 0, aiChatThreads: [],
-    openingThread: false, onOpenThread: open, onOpenInThread: openNew, onPrepareExecution: prepare, onError: vi.fn(),
+    openingThread: false, onOpenThread: open, onOpenInThread: openNew, onPrepareExecution: prepare, onError: vi.fn(), onCopy: copy, onCreateChild: createChild,
   } as unknown as ComponentProps<typeof TaskDetail>;
   const view = (running: boolean, current = task) => <TaskboardLanguageProvider language="zh"><TaskDetail {...props} task={current} processingRunning={running} /></TaskboardLanguageProvider>;
   let result: ReturnType<typeof render>;
   await act(async () => { result = render(view(true)); });
+  fireEvent.click(screen.getByRole("button", { name: "新建子议题" }));
+  expect(createChild).toHaveBeenCalledWith(task);
   const running = screen.getByRole("button", { name: "正在处理 · 查看对话" });
   fireEvent.click(screen.getByRole("button", { name: "在新对话打开" }));
   expect(openNew).toHaveBeenCalledWith(task);
@@ -61,6 +67,13 @@ it("shows manual conversation activity and opens its binding without preparing a
   expect(prepare).toHaveBeenCalledOnce();
   await act(async () => { result.rerender(view(false, { ...task, status: "todo", threadBinding: null, threadId: null })); });
   expect(screen.getByRole("button", { name: "在新对话打开" })).toBeTruthy();
+  const agentSession = { platform: "claude" as const, sessionId: "opaque session" };
+  await act(async () => { result.rerender(view(false, {
+    ...task, agentSession,
+    conversationRefs: [{ source: "task", sourceId: task.id, title: task.title, updatedAt: task.updatedAt, agentSession }],
+  })); });
+  fireEvent.click(screen.getByRole("button", { name: "复制 Claude Code 恢复命令" }));
+  expect(copy).toHaveBeenCalledWith("claude --resume 'opaque session'", "Claude Code 恢复命令已复制。");
 });
 
 
@@ -80,4 +93,16 @@ it("identifies repositories from immediate start and continues after clarificati
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "继续识别并开始" })); });
   expect(vi.mocked(startSimpleJiraTask).mock.calls.at(-1)?.[1]).toContain("Android 客户端");
   expect(screen.queryByText("哪个客户端负责？")).toBeNull();
+});
+
+
+it("appends eligible legacy attachments only when not rendered in the document", () => {
+  const attachment = { id: "legacy", filename: "report.pdf", contentType: "application/pdf", bodyFallback: true } as Attachment;
+  const link = "[report.pdf](/api/attachments/legacy/download)";
+  expect(appendUnreferencedAttachments(link, [attachment])).toBe(link);
+  expect(appendUnreferencedAttachments("Report", [{ ...attachment, bodyFallback: false }])).toBe("Report");
+  const code = `\`\`\`text\n${link}\n\`\`\``;
+  const appended = appendUnreferencedAttachments(code, [attachment, attachment]);
+  expect(appended).toContain(`${code}\n\n[report.pdf](`);
+  expect(appendUnreferencedAttachments(appended, [attachment])).toBe(appended);
 });

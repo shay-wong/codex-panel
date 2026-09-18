@@ -56,10 +56,10 @@ test("text selection is reserved for editable fields", () => {
   assert.match(styles, /input,[\s\S]*?textarea,[\s\S]*?\[contenteditable="true"\][\s\S]*?user-select: text/);
 });
 
-test("main issue cards stay compact while sidebar cards show ownership and creation time", () => {
+test("issue cards show ownership and optionally display creation time", () => {
   assert.match(cardSource, /projectName[\s\S]*?className="project-chip"/);
   assert.match(cardSource, /variant === "sidebar" && \([\s\S]*?className="sidebar-card-creator"/);
-  assert.match(cardSource, /<AssigneeControl[\s\S]*?<span>\{createdDate\(task\.createdAt, locale, text\)\}<\/span>/);
+  assert.match(cardSource, /showCreatedAt && \([\s\S]*?<time className="task-card-created-at" dateTime=\{task\.createdAt\}>[\s\S]*?createdDate\(task\.createdAt, locale, text\)/);
   assert.doesNotMatch(styles, /\.card-footer|\.created-at/);
   assert.match(styles, /\.project-chip/);
   assert.match(styles, /\.task-card \{[\s\S]*?min-height: 80px;[\s\S]*?gap: 6px;[\s\S]*?padding: 7px 8px/);
@@ -155,7 +155,7 @@ test("issues expose processing conversations without manual binding", () => {
   assert.doesNotMatch(appSource, /detail-thread-button/);
   assert.doesNotMatch(detailSource, /输入对话 ID|解除 Codex 对话绑定|>绑定</);
   assert.doesNotMatch(editorSource, /对话 ID|linkedThreadId/);
-  assert.doesNotMatch(detailSource, /处理此议题的对话|Conversations for this issue/);
+  assert.match(detailSource, /currentTask\.agentSession && \([\s\S]*?Conversations for this issue/);
   assert.doesNotMatch(detailSource, /currentTask\.threadIds/);
   assert.match(detailSource, /<strong>\{text\("查看对话", "View conversation"\)\}<\/strong>/);
   assert.doesNotMatch(detailSource, /className="conversation-thread-id">\{threadId\}/);
@@ -229,7 +229,7 @@ test("comments upload and render their own attachments in the content flow", () 
   assert.match(detailSource, /commentInlineFiles/);
   assert.match(detailSource, /uploadCommentAttachment\(comment\.id, file\.file, "attachment"\)/);
   assert.match(detailSource, /resolveInlineAttachmentMarkdown/);
-  assert.match(detailSource, /createInlineMediaSegments\(comment\.body, referenceTasks, comment\.attachments\)/);
+  assert.match(detailSource, /createInlineMediaSegments\([\s\S]*?appendUnreferencedAttachments\(comment\.body, comment\.attachments\),[\s\S]*?referenceTasks,[\s\S]*?comment\.attachments/);
   assert.match(detailSource, /attachments=\{comment\.attachments\}/);
   assert.match(detailSource, /onOpenAttachment=\{handleAttachmentDownload\}/);
   assert.match(composerSource, /className="inline-media-attachment"/);

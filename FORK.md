@@ -26,9 +26,9 @@
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`c346e8e16c9cf6d61969d826d33fe7f6b5bcbc8f`
-- 精确已合并上游基线：`c346e8e16c9cf6d61969d826d33fe7f6b5bcbc8f`
-- 比较范围：`c346e8e16c9cf6d61969d826d33fe7f6b5bcbc8f..HEAD`
+- 本次合并的上游父提交：`1528a8eb31466829ca5a9fd436f4dfd285694a74`
+- 精确已合并上游基线：`1528a8eb31466829ca5a9fd436f4dfd285694a74`
+- 比较范围：`1528a8eb31466829ca5a9fd436f4dfd285694a74..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
@@ -46,11 +46,13 @@
 
 本轮合入 `c346e8e`：采用上游 Jira 配置与同步串行化、AI 权限映射与子进程收尾、CLI 请求处理复用、任务关系批量读取、评论附件重试与文档模型抽取、稳定实时订阅及看板计算优化。文档模型保留 Fork 的稳定 issue/image 剪贴板标识；Dashboard 模块提取保留总结梯度重试入口；实时订阅保留 Jira/claim 活动刷新。原生启动器采用结构化事件并保留 renderer 就绪与实际打开确认。合并保留 Fork 的 Bearer 认证、原生会话和结构化 Skill 引用、稳定附件引用、私有宿主鉴权与桌面启动所有权。更新包与元数据生成现按 Fork 仓库、标签、签名公钥适配，不能发布上游品牌或使用上游更新公钥。Fork 的已有本地输入验证覆盖 Jira 与原生绑定字段，因此不恢复缺失依赖的上游 task-input 模块；批量关系读取独立吸收。
 
+本轮合入 `1528a8e`：吸收父任务详情创建子任务、按顶层任务加权的项目完成度、名称/优先级排序、创建日期开关、正文与评论附件回显及本机文件操作、外部 Agent 会话归属与恢复命令、Jira Cloud 增强搜索分页及头像修复。上游新增字段移植到 Fork 现有本地/Cloud 校验与记录映射，不恢复已删除的共享重构文件；新 Cloud 迁移使用 `0013_agent_sessions.sql` 和 `0014_attachment_body_fallback.sql` 避免编号碰撞。Fork 保留 `panel:` 消息协议、独立版本与标签发布流程、工作流仅查询 Skills，以及基于 MemoryRouter 的导航历史，不恢复上游设置标题匹配关闭分支。
+
 ## Fork 发布版本策略
 
 - 权威上游版本来源：精确合并基线中的 `package.json`
 - 发布版本来源：规范 `vX.Y.Z-fork` 标签。Actions 在构建目录同步 `package.json`、`package-lock.json` 根包条目、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock` 的 launcher 条目；main 中的字段仅作本地开发构建版本，不代表最新 Release。
-- 精确基线的上游版本：`1.1.23`（上游发布标签为 `v1.1.23-beta.1`）
+- 精确基线的上游版本：`1.1.24`（本次同步代码基线，不改变 Fork 发布版本）
 - 最近已核实发布：`v0.0.3-fork`。后续发布以 GitHub 标签与 Release 为准，无需逐版修改此台账。
 
 Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标签为 `vX.Y.Z-fork`；后续按 Fork 自身变更递增。上游版本只记录合并基线，不决定、重置或覆盖 Fork 版本。此决定替代旧的 `<upstream-version>-fork.<N>` 策略，后续应用 fork-doc 时以本仓库约定为准。

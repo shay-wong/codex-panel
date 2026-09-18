@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Synced upstream task sorting, optional creation dates, parent-based project progress and child creation, external Agent session resume commands, attachment display and local file actions, Jira Cloud search pagination, and account avatar fixes.
+
 - Fixed workflow configuration reads and planning preparation failing with `INTERNAL_ERROR` when the model catalog is too large; workflow Skill resolution no longer queries models.
 
 ## 0.0.3-fork — 2026-09-17

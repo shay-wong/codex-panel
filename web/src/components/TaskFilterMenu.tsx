@@ -34,7 +34,9 @@ import { LinearIcon } from "./LinearIcon";
 import { LabelIcon, PriorityIcon, StatusIcon } from "./SemanticIcons";
 import { TaskboardIcon } from "./TaskboardIcon";
 
-type SubmenuName = "statuses" | "priorities" | "labels";
+export type TaskSort = "default" | "name" | "priority";
+
+type SubmenuName = "statuses" | "priorities" | "labels" | "sort";
 
 interface TaskFilterMenuProps {
   tasks: Task[];
@@ -42,6 +44,8 @@ interface TaskFilterMenuProps {
   labels: string[];
   filters: TaskFilters;
   onChange: (filters: TaskFilters) => void;
+  sort: TaskSort;
+  onSortChange: (sort: TaskSort) => void;
 }
 
 interface FilterOption {
@@ -68,7 +72,7 @@ function joinSummary(values: string[], noun: string, language: TaskboardLanguage
   return language === "zh" ? `${values.length} 个${noun}` : `${values.length} ${noun}`;
 }
 
-export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: TaskFilterMenuProps) {
+export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort, onSortChange }: TaskFilterMenuProps) {
   const { language, text } = useTaskboardI18n();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -103,7 +107,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
     setSubmenu(name);
     setSubmenuQuery("");
     if (focus) {
-      requestAnimationFrame(() => submenuRef.current?.querySelector<HTMLInputElement>("input")?.focus());
+      requestAnimationFrame(() => submenuRef.current?.querySelector<HTMLElement>("input, button")?.focus());
     }
   }
 
@@ -199,6 +203,12 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
     labels: labelOptions,
   };
 
+  const sortOptions: { value: TaskSort; label: string }[] = [
+    { value: "default", label: text("默认排序", "Default order") },
+    { value: "name", label: text("名称排序", "Name order") },
+    { value: "priority", label: text("优先级排序", "Priority order") },
+  ];
+
   const categories = [
     {
       id: "statuses" as const,
@@ -232,6 +242,13 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
         text("标签", "labels"),
         language,
       ),
+    },
+    {
+      id: "sort" as const,
+      label: text("排序", "Sort"),
+      keywords: "sort order name priority 默认 名称 优先级",
+      icon: <LinearIcon name="displayOptions" />,
+      summary: sortOptions.find((option) => option.value === sort)?.label ?? null,
     },
   ];
 
@@ -412,6 +429,26 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
   }
 
   function renderValueSubmenu(name: SubmenuName) {
+    if (name === "sort") {
+      return (
+        <div className="task-filter-scroll" role="menu">
+          {sortOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="menuitemradio"
+              aria-checked={sort === option.value}
+              className={`task-filter-item filter-value-item${sort === option.value ? " is-selected" : ""}`}
+              data-filter-level="submenu"
+              onClick={() => { onSortChange(option.value); closeMenu(); }}
+            >
+              <span className="task-filter-item-label">{option.label}</span>
+              <span className="task-filter-item-check">{sort === option.value && <LinearIcon name="check" />}</span>
+            </button>
+          ))}
+        </div>
+      );
+    }
     const options = optionsBySubmenu[name] ?? [];
     const needle = submenuQuery.trim().toLowerCase();
     const visible = options.filter((option) => `${option.label} ${option.keywords ?? ""}`.toLowerCase().includes(needle));

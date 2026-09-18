@@ -40,6 +40,8 @@ Jira tickets in the same repository reuse one native execution conversation, bra
 
 Native conversation activity uses the same live session progress as the board. Unavailable session data shows **Status unknown**, rather than idle.
 
+Board filters support name and priority sorting, and display settings can show creation dates. Task details can create child issues; dashboard progress weights top-level issues equally and includes their completed children. Tasks and comments can record external Agent sessions and copy terminal resume commands. See [task organization and external sessions](docs/fork-capabilities.md#task-organization-and-external-sessions).
+
 ## Requirements
 
 - Node.js 22.5 or newer
@@ -293,3 +295,14 @@ npm run check
 ```
 
 This runs TypeScript checking, a production frontend build, the component tests, and the server/CLI/injection test suite.
+
+## Task Markdown
+
+Task descriptions and comments support GFM, including tables and task lists. Fenced `mermaid` blocks are rendered as read-only diagrams after the viewer loads; the diagram source remains available when rendering fails. Markdown HTML comments, such as `<!-- trace-analysis:v1 ... -->`, are hidden from the rendered document. Raw HTML is not enabled.
+
+## Acknowledgements
+
+Thanks to [Lingshan21](https://github.com/Lingshan21) for:
+
+- The parent-based project completion proposal and initial implementation in [#371](https://github.com/chuspeeism/dashi-taskboard/pull/371), which weighted top-level parent issues equally regardless of how many children each had.
+- The priority organization proposal and initial implementation in [#372](https://github.com/chuspeeism/dashi-taskboard/pull/372). The final board sorting controls were adapted to the maintainer's requirements instead of adopting the proposed priority swimlanes.

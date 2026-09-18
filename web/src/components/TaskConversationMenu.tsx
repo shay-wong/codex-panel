@@ -1,3 +1,4 @@
+import { agentPlatformLabel, sessionResumeCommand } from "../agentSessions";
 import { useEffect, useLayoutEffect, useRef, useState, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import type { TaskConversationItem } from "../taskConversations";
@@ -10,25 +11,37 @@ interface TaskConversationMenuProps {
   onOpenConversation: (conversation: TaskConversationItem) => void;
 }
 
-function conversationSource(conversation: TaskConversationItem) {
-  if (conversation.kind === "local-ai") return "内置 AI";
-  return conversation.source === "comment" ? "评论对话" : "任务对话";
+function conversationSource(
+  conversation: TaskConversationItem,
+  text: (chinese: string, english: string) => string,
+) {
+  if (conversation.kind === "local-ai") return text("内置 AI", "Built-in AI");
+  if (conversation.kind === "agent-session") {
+    return conversation.source === "comment"
+      ? text("评论对话 · 复制恢复命令", "Comment conversation · Copy resume command")
+      : text("任务对话 · 复制恢复命令", "Task conversation · Copy resume command");
+  }
+  return conversation.source === "comment"
+    ? text("评论对话", "Comment conversation")
+    : text("任务对话", "Task conversation");
 }
 
-function conversationStatus(conversation: TaskConversationItem) {
+function conversationStatus(conversation: TaskConversationItem, text: (chinese: string, english: string) => string) {
   if (conversation.currentRun?.status === "running") {
     if (conversation.latestTodo?.total) {
       return `${conversation.latestTodo.completed}/${conversation.latestTodo.total}`;
     }
     return "正在处理";
   }
-  return conversation.kind === "local-ai" ? "已暂停" : "Codex";
+  if (conversation.agentSession) return agentPlatformLabel(conversation.agentSession.platform);
+  return conversation.kind === "local-ai" ? text("已暂停", "Paused") : "Codex";
 }
 
 export function TaskConversationMenu({
   conversations,
   onOpenConversation,
 }: TaskConversationMenuProps) {
+  const { text } = useTaskboardI18n();
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ left: 0, top: 0, ready: false });
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -83,17 +96,27 @@ export function TaskConversationMenu({
   }
 
   const multiple = conversations.length > 1;
+  const singleAgentSession = !multiple ? conversations[0].agentSession : undefined;
+  const singleAgentLabel = singleAgentSession ? agentPlatformLabel(singleAgentSession.platform) : "";
   return (
     <>
       <button
         ref={triggerRef}
-        className={`task-conversation-trigger${multiple ? " is-multiple" : ""}${open ? " is-open" : ""}`}
+        className={`task-conversation-trigger${multiple ? " is-multiple" : ""}${singleAgentSession ? " is-agent-session" : ""}${open ? " is-open" : ""}`}
         type="button"
         draggable={false}
-        aria-label={multiple ? `查看 ${conversations.length} 个对话` : `打开对话 ${conversations[0].title}`}
+        aria-label={multiple
+          ? text(`查看 ${conversations.length} 个对话`, `View ${conversations.length} conversations`)
+          : singleAgentSession
+            ? text(`复制 ${singleAgentLabel} 恢复命令`, `Copy ${singleAgentLabel} resume command`)
+            : text(`打开对话 ${conversations[0].title}`, `Open conversation ${conversations[0].title}`)}
         aria-haspopup={multiple ? "menu" : undefined}
         aria-expanded={multiple ? open : undefined}
-        title={multiple ? `${conversations.length} 个对话` : conversations[0].title}
+        title={multiple
+          ? text(`${conversations.length} 个对话`, `${conversations.length} conversations`)
+          : singleAgentSession
+            ? `${singleAgentLabel}: ${sessionResumeCommand(singleAgentSession.platform, singleAgentSession.sessionId)}`
+            : conversations[0].title}
         onPointerDown={stop}
         onDragStart={(event) => event.preventDefault()}
         onClick={(event) => {
@@ -104,6 +127,7 @@ export function TaskConversationMenu({
       >
         <ConversationIcon color="currentColor" size={16} />
         {multiple && <span>+{conversations.length}</span>}
+        {singleAgentSession && <span>{singleAgentLabel}</span>}
       </button>
       {open && multiple && createPortal(
         <div
@@ -124,6 +148,9 @@ export function TaskConversationMenu({
               key={conversation.key}
               type="button"
               role="menuitem"
+              title={conversation.agentSession
+                ? sessionResumeCommand(conversation.agentSession.platform, conversation.agentSession.sessionId)
+                : undefined}
               onClick={() => openConversation(conversation)}
             >
               <span className="task-conversation-menu-icon">
@@ -131,10 +158,10 @@ export function TaskConversationMenu({
               </span>
               <span className="task-conversation-menu-copy">
                 <strong>{conversation.title}</strong>
-                <small>{conversationSource(conversation)}</small>
+                <small>{conversationSource(conversation, text)}</small>
               </span>
               <span className={`task-conversation-menu-status${conversation.currentRun?.status === "running" ? " is-running" : ""}`}>
-                {conversationStatus(conversation)}
+                {conversationStatus(conversation, text)}
               </span>
             </button>
           ))}

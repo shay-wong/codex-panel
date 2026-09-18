@@ -92,6 +92,10 @@ function commentConversationTitle(body) {
   return compact.length > 80 ? `${compact.slice(0, 77)}…` : compact;
 }
 
+function agentSessionFromRow(row) {
+  return row.agent_session == null ? null : JSON.parse(row.agent_session);
+}
+
 function threadBindingFromRow(row) {
   if (
     !row.thread_id
@@ -183,6 +187,15 @@ function attachTaskActivity(task, comments, activities, previewImage = null) {
     });
   }
   const conversationRefs = [];
+  if (task.agentSession) {
+    conversationRefs.push({
+      agentSession: task.agentSession,
+      source: "task",
+      sourceId: task.id,
+      title: task.title,
+      updatedAt: task.updatedAt,
+    });
+  }
   if (task.threadBinding) {
     conversationRefs.push({
       ...task.threadBinding,
@@ -202,6 +215,16 @@ function attachTaskActivity(task, comments, activities, previewImage = null) {
     });
   }
   for (const comment of orderedComments) {
+    const agentSession = agentSessionFromRow(comment);
+    if (agentSession) {
+      conversationRefs.push({
+        agentSession,
+        source: "comment",
+        sourceId: comment.id,
+        title: commentConversationTitle(comment.body),
+        updatedAt: comment.updated_at,
+      });
+    }
     const threadBinding = threadBindingFromRow(comment);
     const legacyLocalThreadId = legacyLocalThreadIdFromRow(comment);
     if (threadBinding || legacyLocalThreadId) {
@@ -306,6 +329,7 @@ function taskFromRow(row) {
     threadId: row.thread_id,
     threadBinding: threadBindingFromRow(row),
     legacyLocalThreadId: legacyLocalThreadIdFromRow(row),
+    agentSession: agentSessionFromRow(row),
     creatorType: row.creator_type,
     creatorId: row.creator_id,
     creatorName: row.creator_name,
@@ -383,6 +407,7 @@ function commentFromRow(row) {
     threadId: row.thread_id,
     threadBinding: threadBindingFromRow(row),
     legacyLocalThreadId: legacyLocalThreadIdFromRow(row),
+    agentSession: agentSessionFromRow(row),
     authorType: row.author_type,
     authorId: row.author_id,
     authorName: row.author_name,
@@ -402,6 +427,7 @@ function attachmentFromRow(row) {
     taskId: row.task_id,
     commentId: row.comment_id,
     kind: row.kind,
+    bodyFallback: row.body_fallback === 1,
     filename: row.filename,
     contentType: row.content_type,
     size: row.size,
@@ -693,6 +719,7 @@ export class PanelDatabase {
         task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
         comment_id TEXT REFERENCES comments(id) ON DELETE CASCADE,
         kind TEXT NOT NULL CHECK (kind IN ('inline', 'attachment')),
+        body_fallback INTEGER NOT NULL DEFAULT 1 CHECK (body_fallback IN (0, 1)),
         filename TEXT NOT NULL,
         content_type TEXT NOT NULL,
         size INTEGER NOT NULL CHECK (size >= 0),
@@ -1044,6 +1071,9 @@ export class PanelDatabase {
     }
     this.#migrateTaskStatuses();
     const migratedTaskColumns = this.database.prepare("PRAGMA table_info(tasks)").all();
+    if (!migratedTaskColumns.some((column) => column.name === "agent_session")) {
+      this.database.exec("ALTER TABLE tasks ADD COLUMN agent_session TEXT");
+    }
     if (!migratedTaskColumns.some((column) => column.name === "creator_type")) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN creator_type TEXT NOT NULL DEFAULT 'user'");
     }
@@ -1363,6 +1393,9 @@ export class PanelDatabase {
     }
 
     const commentColumns = this.database.prepare("PRAGMA table_info(comments)").all();
+    if (!commentColumns.some((column) => column.name === "agent_session")) {
+      this.database.exec("ALTER TABLE comments ADD COLUMN agent_session TEXT");
+    }
     if (!commentColumns.some((column) => column.name === "thread_id")) {
       this.database.exec("ALTER TABLE comments ADD COLUMN thread_id TEXT");
     }
@@ -1450,6 +1483,9 @@ export class PanelDatabase {
             )
           )
       `);
+    }
+    if (!attachmentColumns.some((column) => column.name === "body_fallback")) {
+      this.database.exec("ALTER TABLE attachments ADD COLUMN body_fallback INTEGER NOT NULL DEFAULT 1 CHECK (body_fallback IN (0, 1))");
     }
     if (!attachmentColumns.some((column) => column.name === "change_revision")) {
       this.database.exec("ALTER TABLE attachments ADD COLUMN change_revision INTEGER NOT NULL DEFAULT 0");
@@ -5248,8 +5284,8 @@ export class PanelDatabase {
           assignee_type, assignee_id, assignee_name, assignee_avatar_url,
           git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
-          archived_at, version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?)
+          archived_at, version, created_at, updated_at, agent_session
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?, ?)
       `).run(
         id,
         identifier,
@@ -5278,6 +5314,7 @@ export class PanelDatabase {
         input.recurrence?.unit ?? null,
         timestamp,
         timestamp,
+        input.agentSession ? JSON.stringify(input.agentSession) : null,
       );
       this.database.exec("COMMIT");
       return this.getTask(id);
@@ -5287,7 +5324,7 @@ export class PanelDatabase {
     }
   }
 
-  updateTask(id, version, changes, threadId, threadBinding, actor) {
+  updateTask(id, version, changes, threadId, threadBinding, actor, agentSession) {
     const current = this.#requireTaskRecord(id);
     this.#requireVersion(current, version);
     this.#assertJiraMutationUnlocked(current.id);
@@ -5417,6 +5454,10 @@ export class PanelDatabase {
       );
       values.push(...storedBinding);
     }
+    if (agentSession !== undefined) {
+      assignments.push("agent_session = ?");
+      values.push(agentSession ? JSON.stringify(agentSession) : null);
+    }
     assignments.push("version = version + 1", "updated_at = ?");
     const timestamp = now();
     values.push(timestamp, current.id, version);
@@ -5431,6 +5472,9 @@ export class PanelDatabase {
       `).run(...values);
       if (result.changes !== 1) {
         this.#throwMissingOrConflict(id, version);
+      }
+      if (Object.hasOwn(changes, "description")) {
+        this.#consumeAttachmentBodyFallback(current.id, null);
       }
       if (projectChanged) {
         this.database.prepare(`
@@ -5466,7 +5510,7 @@ export class PanelDatabase {
     return this.getTask(current.id);
   }
 
-  moveTask(id, version, status, sortOrder, threadId, threadBinding, actor) {
+  moveTask(id, version, status, sortOrder, threadId, threadBinding, actor, agentSession) {
     const current = this.#requireTask(id);
     this.#requireVersion(current, version);
     this.#assertJiraMutationUnlocked(current.id);
@@ -5494,6 +5538,8 @@ export class PanelDatabase {
 
     const timestamp = now();
     const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
+    const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
+    const sessionValues = agentSession === undefined ? [] : [agentSession ? JSON.stringify(agentSession) : null];
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
         thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -5505,9 +5551,9 @@ export class PanelDatabase {
       }
       const result = this.database.prepare(`
         UPDATE tasks
-        SET status = ?, sort_order = ?, ${threadAssignment} version = version + 1, updated_at = ?
+        SET status = ?, sort_order = ?, ${threadAssignment}${sessionAssignment} version = version + 1, updated_at = ?
         WHERE id = ? AND version = ?
-      `).run(status, sortOrder, ...(storedBinding ?? []), timestamp, current.id, version);
+      `).run(status, sortOrder, ...(storedBinding ?? []), ...sessionValues, timestamp, current.id, version);
       if (result.changes !== 1) {
         this.#throwMissingOrConflict(id, version);
       }
@@ -5533,12 +5579,14 @@ export class PanelDatabase {
     return this.getTask(current.id);
   }
 
-  archiveTask(id, version, threadId, threadBinding, actor) {
+  archiveTask(id, version, threadId, threadBinding, actor, agentSession) {
     const current = this.#requireTask(id);
     this.#requireVersion(current, version);
     this.#assertJiraMutationUnlocked(current.id);
     const timestamp = now();
     const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
+    const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
+    const sessionValues = agentSession === undefined ? [] : [agentSession ? JSON.stringify(agentSession) : null];
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
         thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -5547,9 +5595,9 @@ export class PanelDatabase {
     try {
       const result = this.database.prepare(`
         UPDATE tasks
-        SET archived_at = ?, ${threadAssignment} version = version + 1, updated_at = ?
+        SET archived_at = ?, ${threadAssignment}${sessionAssignment} version = version + 1, updated_at = ?
         WHERE id = ? AND version = ?
-      `).run(timestamp, ...(storedBinding ?? []), timestamp, current.id, version);
+      `).run(timestamp, ...(storedBinding ?? []), ...sessionValues, timestamp, current.id, version);
       if (result.changes !== 1) {
         this.#throwMissingOrConflict(id, version);
       }
@@ -5567,7 +5615,7 @@ export class PanelDatabase {
     return this.getTask(current.id);
   }
 
-  restoreTask(id, version, threadId, threadBinding, actor) {
+  restoreTask(id, version, threadId, threadBinding, actor, agentSession) {
     const current = this.#requireTask(id);
     this.#requireVersion(current, version);
     this.#assertJiraMutationUnlocked(current.id);
@@ -5576,6 +5624,8 @@ export class PanelDatabase {
     }
     const timestamp = now();
     const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
+    const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
+    const sessionValues = agentSession === undefined ? [] : [agentSession ? JSON.stringify(agentSession) : null];
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
         thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -5584,9 +5634,9 @@ export class PanelDatabase {
     try {
       const result = this.database.prepare(`
         UPDATE tasks
-        SET archived_at = NULL, ${threadAssignment} version = version + 1, updated_at = ?
+        SET archived_at = NULL, ${threadAssignment}${sessionAssignment} version = version + 1, updated_at = ?
         WHERE id = ? AND version = ?
-      `).run(...(storedBinding ?? []), timestamp, current.id, version);
+      `).run(...(storedBinding ?? []), ...sessionValues, timestamp, current.id, version);
       if (result.changes !== 1) {
         this.#throwMissingOrConflict(id, version);
       }
@@ -5642,7 +5692,7 @@ export class PanelDatabase {
     }
   }
 
-  addTaskRelation(id, version, type, relatedId, threadId, threadBinding, actor, origin = "manual") {
+  addTaskRelation(id, version, type, relatedId, threadId, threadBinding, actor, origin = "manual", agentSession) {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const task = this.#requireTask(id);
@@ -5691,7 +5741,7 @@ export class PanelDatabase {
           relation_type, source_task_id, target_task_id, origin, created_at
         ) VALUES (?, ?, ?, ?, ?)
       `).run(relationType, sourceTaskId, targetTaskId, origin, timestamp);
-      this.#touchTask(task.id, version, threadId, threadBinding, timestamp);
+      this.#touchTask(task.id, version, threadId, threadBinding, timestamp, agentSession);
       this.#recordTaskActivity(task.id, actor, [{
         field: "relation",
         before: previousRelation,
@@ -5708,7 +5758,7 @@ export class PanelDatabase {
     }
   }
 
-  removeTaskRelation(id, version, type, relatedId, threadId, threadBinding, actor, origin) {
+  removeTaskRelation(id, version, type, relatedId, threadId, threadBinding, actor, origin, agentSession) {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const task = this.#requireTask(id);
@@ -5788,7 +5838,7 @@ export class PanelDatabase {
         };
       }
       const timestamp = now();
-      this.#touchTask(task.id, version, threadId, threadBinding, timestamp);
+      this.#touchTask(task.id, version, threadId, threadBinding, timestamp, agentSession);
       this.#recordTaskActivity(task.id, actor, [{
         field: "relation",
         before: relationActivityValue(type, relatedTask),
@@ -5847,8 +5897,8 @@ export class PanelDatabase {
           id, task_id, body, thread_id, thread_codex_project_id, thread_codex_project_kind,
           thread_codex_host_id, thread_workspace_path,
           author_type, author_id, author_name, author_avatar_url,
-          version, created_at, updated_at, change_revision
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+          version, created_at, updated_at, change_revision, agent_session
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
       `).run(
         id,
         task.id,
@@ -5861,6 +5911,7 @@ export class PanelDatabase {
         timestamp,
         timestamp,
         changeRevision,
+        input.agentSession ? JSON.stringify(input.agentSession) : null,
       );
       this.database.exec("COMMIT");
     } catch (error) {
@@ -5875,8 +5926,10 @@ export class PanelDatabase {
     return row ? this.#commentWithAttachments(row) : null;
   }
 
-  updateComment(id, version, body, threadId, threadBinding) {
+  updateComment(id, version, body, threadId, threadBinding, agentSession) {
     const storedBinding = storedThreadBinding(threadBinding, threadId);
+    const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
+    const sessionValues = agentSession === undefined ? [] : [agentSession ? JSON.stringify(agentSession) : null];
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
         thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -5888,13 +5941,14 @@ export class PanelDatabase {
       const changeRevision = this.#nextCommentAttachmentRevision();
       const result = this.database.prepare(`
         UPDATE comments
-        SET body = ?, ${threadAssignment} version = version + 1, updated_at = ?,
+        SET body = ?, ${threadAssignment}${sessionAssignment} version = version + 1, updated_at = ?,
           change_revision = ?
         WHERE id = ? AND version = ?
-      `).run(body, ...(storedBinding ?? []), now(), changeRevision, id, version);
+      `).run(body, ...(storedBinding ?? []), ...sessionValues, now(), changeRevision, id, version);
       if (result.changes !== 1) {
         this.#throwMissingCommentOrConflict(id, version);
       }
+      this.#consumeAttachmentBodyFallback(current.taskId, current.id);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -6064,9 +6118,9 @@ export class PanelDatabase {
       const rows = this.database.prepare(`
         SELECT
           id, task_id,
-          CASE WHEN thread_id IS NULL THEN NULL ELSE substr(body, 1, 512) END AS body,
+          CASE WHEN thread_id IS NULL AND agent_session IS NULL THEN NULL ELSE substr(body, 1, 512) END AS body,
           thread_id, thread_codex_project_id, thread_codex_project_kind,
-          thread_codex_host_id, thread_workspace_path,
+          thread_codex_host_id, thread_workspace_path, agent_session,
           author_type, author_id, author_name,
           author_avatar_url, version, updated_at
         FROM comments
@@ -6133,6 +6187,19 @@ export class PanelDatabase {
       WHERE comment_id = ?
       ORDER BY created_at, id
     `).all(commentId).map(attachmentFromRow);
+  }
+
+  #consumeAttachmentBodyFallback(taskId, commentId) {
+    const candidates = this.database.prepare(`
+      SELECT id FROM attachments
+      WHERE task_id = ? AND comment_id IS ? AND body_fallback = 1
+    `).all(taskId, commentId);
+    const update = this.database.prepare(`
+      UPDATE attachments SET body_fallback = 0, change_revision = ? WHERE id = ?
+    `);
+    for (const attachment of candidates) {
+      update.run(this.#nextCommentAttachmentRevision(), attachment.id);
+    }
   }
 
   #nextCommentAttachmentRevision() {
@@ -6236,18 +6303,20 @@ export class PanelDatabase {
     );
   }
 
-  #touchTask(id, version, threadId, threadBinding, timestamp) {
+  #touchTask(id, version, threadId, threadBinding, timestamp, agentSession) {
     const current = this.#requireTask(id);
     const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
+    const sessionAssignment = agentSession === undefined ? "" : "agent_session = ?,";
+    const sessionValues = agentSession === undefined ? [] : [agentSession ? JSON.stringify(agentSession) : null];
     const threadAssignment = storedBinding
       ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
         thread_codex_host_id = ?, thread_workspace_path = ?,`
       : "";
     const result = this.database.prepare(`
       UPDATE tasks
-      SET ${threadAssignment} version = version + 1, updated_at = ?
+      SET ${threadAssignment}${sessionAssignment} version = version + 1, updated_at = ?
       WHERE id = ? AND version = ?
-    `).run(...(storedBinding ?? []), timestamp, id, version);
+    `).run(...(storedBinding ?? []), ...sessionValues, timestamp, id, version);
     if (result.changes !== 1) {
       this.#throwMissingOrConflict(id, version);
     }
