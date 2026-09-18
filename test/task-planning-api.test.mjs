@@ -45,7 +45,7 @@ test("ordinary planning prepares manually, saves Spec and splits backlog sub-iss
   const app = createPanelServer(options);
   try {
     app.database.createProject({ id: "planning", name: "Planning", workspacePath: workspace });
-    app.aiChat.getCatalog = async () => { throw new Error("Default planning does not need Skill discovery"); };
+    app.aiChat.getSkillCatalog = async () => { throw new Error("Default planning does not need Skill discovery"); };
     const address = await app.listen({ host: "127.0.0.1", port: 0 });
     app.claimQueue.close();
     const baseUrl = `http://127.0.0.1:${address.port}`;
@@ -74,7 +74,7 @@ test("ordinary planning prepares manually, saves Spec and splits backlog sub-iss
 
     const customSkill = { id: "test:planning", label: "Planning", path: path.join(skillsDirectory, "planning.md") };
     await writeFile(customSkill.path, "# Isolated planning Skill\n");
-    app.aiChat.getCatalog = async () => ({ skills: [customSkill] });
+    app.aiChat.getSkillCatalog = async () => ({ skills: [customSkill] });
     await request("/api/local/workflow-settings", "PUT", { planning: [customSkill.id], execution: [], review: [], handoff: [] });
     const custom = await request(`/api/local/tasks/${parent.id}/prepare-planning`, "POST");
     assert.equal(custom.collaborationMode, "default");

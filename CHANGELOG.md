@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed workflow configuration reads and planning preparation failing with `INTERNAL_ERROR` when the model catalog is too large; workflow Skill resolution no longer queries models.
+
 ## 0.0.3-fork — 2026-09-17
 
 - Added menu diagnostics to help investigate macOS menus that fail to dismiss; this release does not yet fix that issue.

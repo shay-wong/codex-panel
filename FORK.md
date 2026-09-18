@@ -74,6 +74,8 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 
 四个阶段支持完整的多行流程模板（每阶段最多 4000 字符）与有序 Skill；自定义模板替换默认步骤，留空使用 `shared/workflow-prompts.json` 中的默认模板，可单独恢复而不改变 Skill。唯一占位符 `{{skill_instructions}}` 由统一解析器填入所选 Skill 顺序或默认方式；移除该占位符即可自定义执行方式，所选 Skill 仍在适用阶段遵循。模板进入规划草稿、按需读取的执行/审核配置及两种交接入口；任务上下文与固定规则单独附带，页面可展开查看，固定规则与实际发送共用该 JSON 来源。CLI 返回适用条件 `appliesWhen`、已解析的 `prompt`、独立的 `rules` 及有序 Skill 路径。默认审核命令属于模板默认方式，不再额外写死到自定义指令中。验证复用 `test/workflow-settings.test.mjs`，覆盖保存重读与四阶段生成结果。
 
+工作流读取仅通过 `getSkillCatalog` 解析目标工作区 Skills，不查询模型或 Slash 命令；保留本地符号链接 Skill 与远端主机解析，避免模型输出过大导致规划配置返回 `INTERNAL_ERROR`。已有聊天目录仍可直接复用。代码：`server/ai-chat-catalog.mjs`、`server/ai-chat.mjs`、`server/workflow-settings.mjs`；验证：`node --test test/workflow-settings.test.mjs test/task-planning-api.test.mjs test/ai-chat-runner.test.mjs`，覆盖超大模型输出下 CLI 读取及远端 Skill 路径。当前变更来源定位：`git log -S'getSkillCatalog' -- server/ai-chat.mjs`。
+
 技能搜索接受 ID 及带 `$` 前缀的引用，例如 `$shay-skills:review`。
 工作流选择器按真实文件路径去重，优先带命名空间的 ID；已选别名在编辑器中映射并去重，保存后生效。目录仍保留原 ID 和调用路径，已有调用可继续解析。
 

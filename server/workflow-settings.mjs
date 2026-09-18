@@ -12,7 +12,7 @@ export async function resolveWorkflow(database, aiChat, projectId, stage, catalo
   const ids = settings[stage];
   const definition = promptDefaults[stage];
   const template = settings.prompts?.[stage]?.trim() || definition.prompt;
-  const available = ids.length ? catalog ?? await aiChat.getCatalog(projectId) : { skills: [] };
+  const available = ids.length ? catalog ?? await aiChat.getSkillCatalog(projectId) : { skills: [] };
   const byId = new Map(available.skills.map((skill) => [skill.id, skill]));
   const missing = ids.filter((id) => !byId.has(id));
   // An ordered workflow is selected as a whole; don't execute an incomplete chain.

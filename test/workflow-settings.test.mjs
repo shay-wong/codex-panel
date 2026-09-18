@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { createPanelServer } from "../server/app.mjs";
+import { createPanelServer, resolveServerOptions } from "../server/app.mjs";
 import { ClaimQueueService } from "../server/claim-queue.mjs";
 import { PanelDatabase } from "../server/database.mjs";
 import { main as panelctl } from "../cli/panelctl.mjs";
@@ -64,7 +64,7 @@ test("global workflow settings drive default, custom and unavailable-Skill actio
       assert.equal(response.status, 200, JSON.stringify(result));
       return result;
     };
-    app.aiChat.getCatalog = async () => { throw new Error("Default workflow must not need a Skill catalog"); };
+    app.aiChat.getSkillCatalog = async () => { throw new Error("Default workflow must not need a Skill catalog"); };
     assert.equal((await planning()).collaborationMode, "plan");
     const makeTask = (title) => app.database.createTask({
       projectId: "demo", title, description: "", status: "todo", priority: "none", labels: [],
@@ -82,7 +82,7 @@ test("global workflow settings drive default, custom and unavailable-Skill actio
     const custom = { planning: ["my:clarify", "my:spec"], execution: ["my:implement"], review: ["my:review"], handoff: ["my:handoff"] };
     const skillIds = Object.values(custom).flat();
     custom.prompts = { planning: "Clarify requirements first.\n{{skill_instructions}}\nList acceptance criteria.", execution: "Implement the confirmed scope.", review: "Check transaction boundaries.", handoff: "List decisions and pending work." };
-    app.aiChat.getCatalog = async () => ({ skills: skillIds.map((id) => ({ id, label: id, path: path.join(directory, id, "SKILL.md") })) });
+    app.aiChat.getSkillCatalog = async () => ({ skills: skillIds.map((id) => ({ id, label: id, path: path.join(directory, id, "SKILL.md") })) });
     await request("/api/local/workflow-settings", custom);
     const planned = await planning();
     assert.equal(planned.collaborationMode, "default");
@@ -98,14 +98,14 @@ test("global workflow settings drive default, custom and unavailable-Skill actio
     assert.ok(!customClaim.instruction.includes(custom.prompts.execution));
     assert.ok(!customClaim.instruction.includes(custom.prompts.review));
     const researchTask = makeTask("Compare projects without changing code");
-    const catalog = app.aiChat.getCatalog;
-    app.aiChat.getCatalog = async () => { throw new Error("Preparation must not resolve unused stage Skills"); };
+    const catalog = app.aiChat.getSkillCatalog;
+    app.aiChat.getSkillCatalog = async () => { throw new Error("Preparation must not resolve unused stage Skills"); };
     const research = await queue.prepareManualExecution(researchTask.id);
     assert.deepEqual(research.skillReferences.map((skill) => skill.name), ["manage-panel"]);
     assert.match(research.instruction, /纯调研、解释或结论报告不启用实现与代码审核 Skill/);
     assert.equal(app.database.getTask(researchTask.id).status, "todo");
     assert.equal(app.database.getClaimQueueItem(researchTask.id), null);
-    app.aiChat.getCatalog = catalog;
+    app.aiChat.getSkillCatalog = catalog;
     // Settings changed after preparation are read when the agent enters a stage.
     custom.prompts.execution = "Implement the newly confirmed scope.";
     await request("/api/local/workflow-settings", custom);
@@ -129,7 +129,7 @@ test("global workflow settings drive default, custom and unavailable-Skill actio
     }), 0);
     assert.equal(JSON.parse(output).skills[0].id, "my:handoff");
     assert.equal(JSON.parse(output).prompt, custom.prompts.handoff);
-    app.aiChat.getCatalog = async () => ({ skills: [] });
+    app.aiChat.getSkillCatalog = async () => ({ skills: [] });
     assert.equal((await planning()).collaborationMode, "plan");
     assert.match((await planning()).composerText, /本次使用默认流程/);
     assert.match((await planning()).composerText, /Clarify requirements first\./);
@@ -187,6 +187,89 @@ test("global workflow settings drive default, custom and unavailable-Skill actio
     assert.deepEqual(calls.at(-1).params.collaborationMode, { mode: "default", settings: { model: "gpt-test", reasoning_effort: "high", developer_instructions: null } });
   } finally {
     queue?.close();
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+
+test("workflow CLI resolves Skills without querying an oversized model catalog", async () => {
+  const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-workflow-models-")));
+  const workspace = path.join(directory, "workspace");
+  await mkdir(workspace);
+  const executable = path.join(directory, "fake-codex.mjs");
+  const callsPath = path.join(directory, "calls.jsonl");
+  await writeFile(executable, `
+import { appendFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(process.argv.slice(2)) + "\\n");
+if (process.argv[2] === "debug") {
+  process.stdout.write(JSON.stringify({ models: [], instructions: "x".repeat(3 * 1024 * 1024) }));
+} else {
+  createInterface({ input: process.stdin }).on("line", (line) => {
+    const message = JSON.parse(line);
+    if (message.id === 1) process.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\\n");
+    if (message.id === 2) process.stdout.write(JSON.stringify({ id: 2, result: { data: [{ skills: [
+      { name: "my:plan", enabled: true, path: ${JSON.stringify(path.join(workspace, "SKILL.md"))} }
+    ] }] } }) + "\\n");
+  });
+}
+`);
+  const options = {
+    dataDirectory: path.join(directory, "data"), codexExecutable: executable,
+    codexStatePath: path.join(directory, "state.json"),
+    codexProcessesPath: path.join(directory, "processes.json"),
+    skillsDirectory: path.join(directory, "skills"),
+    skillPath: path.join(directory, "skills/manage-panel/SKILL.md"),
+    nativeSkillPath: path.join(directory, "skills/manage-panel/SKILL.md"), processEnv: {},
+  };
+  await writeFile(options.codexStatePath, JSON.stringify({ "local-projects": { demo: { rootPaths: [workspace] } } }));
+  const production = resolveServerOptions({ codexExecutable: executable });
+  const effective = resolveServerOptions(options);
+  const canonical = async (filename) => {
+    try { return await realpath(filename); } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      return path.join(await canonical(path.dirname(filename)), path.basename(filename));
+    }
+  };
+  for (const key of ["dataDirectory", "databasePath", "attachmentsDirectory", "cloudConfigPath", "jiraConfigPath", "clientStoragePath", "codexStatePath", "codexProcessesPath", "skillsDirectory", "nativeSkillPath"]) {
+    const testPath = await canonical(effective[key]);
+    const productionPath = await canonical(production[key]);
+    assert.ok(testPath.startsWith(directory + path.sep), key);
+    assert.ok(testPath !== productionPath && !testPath.startsWith(productionPath + path.sep) && !productionPath.startsWith(testPath + path.sep), key);
+  }
+  const app = createPanelServer(options);
+  try {
+    for (const key of ["dataDirectory", "databasePath", "cloudConfigPath", "jiraConfigPath", "clientStoragePath", "codexStatePath", "codexProcessesPath", "skillsDirectory", "nativeSkillPath"]) {
+      assert.ok(app.options[key].startsWith(directory + path.sep), key);
+    }
+    app.database.createProject({ id: "demo", name: "Demo", workspacePath: workspace });
+    app.database.saveWorkflowSettings({ planning: ["my:plan"], execution: [], review: [], handoff: [] });
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    app.claimQueue.close();
+    let output = "";
+    let error = "";
+    const code = await panelctl(["workflow", "get", "planning", "--project", "demo", "--json"], {
+      env: { CODEX_PANEL_COMPANION_URL: `http://127.0.0.1:${address.port}` }, cwd: workspace,
+      stdout: { write: (chunk) => { output += chunk; } }, stderr: { write: (chunk) => { error += chunk; } },
+    });
+    assert.equal(code, 0, error);
+    assert.deepEqual(JSON.parse(output).skills, [{ id: "my:plan", label: "my:plan", path: path.join(workspace, "SKILL.md") }]);
+    const calls = (await readFile(callsPath, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.deepEqual(calls, [["app-server", "--stdio"]]);
+    // A remote workspace must resolve Skills on its host without reading local paths or models.
+    app.aiChat.resolveContext = async () => ({ workspacePath: "/remote/project", codexProjectKind: "remote", codexHostId: "fake-host" });
+    app.aiChat.remoteAppServerFactory = () => ({
+      subscribe() { return () => {}; },
+      async listSkills(cwd) {
+        assert.equal(cwd, "/remote/project");
+        return [{ skills: [{ name: "my:plan", enabled: true, path: "/remote/SKILL.md" }] }];
+      },
+      async request() { assert.fail("Workflow must not query remote models"); },
+      async close() {},
+    });
+    assert.equal((await app.aiChat.getSkillCatalog("demo")).skills[0].path, "/remote/SKILL.md");
+  } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });
   }

@@ -1079,6 +1079,26 @@ export async function loadSlashCommands(platform = process.platform) {
   });
 }
 
+export async function discoverSkillCatalog({
+  codexExecutable,
+  workspacePath,
+  processEnv,
+  skillsDirectory = DEFAULT_USER_SKILLS_DIRECTORY,
+  appServer,
+}) {
+  if (appServer) {
+    return { skills: sanitizeSkills(await appServer.listSkills(workspacePath, { forceReload: false })) };
+  }
+  const entries = await listSkills(codexExecutable, workspacePath, withoutPanelLauncherEnvironment(processEnv));
+  const skillEntries = await includeLinkedUserSkills(entries, skillsDirectory);
+  return {
+    skills: await Promise.all(sanitizeSkills(skillEntries).map(async (skill) => ({
+      ...skill,
+      canonicalPath: skill.path ? await realpath(skill.path).catch(() => skill.path) : "",
+    }))),
+  };
+}
+
 export async function discoverAiCatalog({
   codexExecutable,
   workspacePath,
@@ -1087,7 +1107,7 @@ export async function discoverAiCatalog({
 }) {
   const environment = withoutPanelLauncherEnvironment(processEnv);
   const modelCommand = executableCommand(codexExecutable, ["debug", "models"]);
-  const [modelResult, codexSkillEntries, commands] = await Promise.all([
+  const [modelResult, skillCatalog, commands] = await Promise.all([
     execFileAsync(modelCommand.executable, modelCommand.args, {
       cwd: workspacePath,
       env: environment,
@@ -1096,17 +1116,13 @@ export async function discoverAiCatalog({
       maxBuffer: CATALOG_MAX_BUFFER,
       windowsHide: true,
     }),
-    listSkills(codexExecutable, workspacePath, environment),
+    discoverSkillCatalog({ codexExecutable, workspacePath, processEnv: environment, skillsDirectory }),
     loadSlashCommands(),
   ]);
-  const skillEntries = await includeLinkedUserSkills(codexSkillEntries, skillsDirectory);
   const modelCatalog = JSON.parse(modelResult.stdout);
   return {
     models: sanitizeModels(modelCatalog?.models),
-    skills: await Promise.all(sanitizeSkills(skillEntries).map(async (skill) => ({
-      ...skill,
-      canonicalPath: skill.path ? await realpath(skill.path).catch(() => skill.path) : "",
-    }))),
+    skills: skillCatalog.skills,
     commands,
     sandboxes: ["read-only", "workspace-write", "danger-full-access"],
   };

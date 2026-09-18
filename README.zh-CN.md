@@ -91,7 +91,7 @@ npm run panelctl -- issue create \
 
 ## 配置 AI 工作流
 
-任务入口只附加 Manage Panel。它先读取需求，再通过 `panelctl workflow get <阶段> --project PROJECT_ID --json` 获取适用阶段的当前配置。纯调研核实来源、结论和未确定事项，不加载实现或代码审核 Skill；保存调研报告也不自动转成代码任务。获授权的代码改动再使用配置的实现和审核流程；明确要求代码审核时可以直接进入审核。`in_review` 也可表示调研报告等你确认。CLI 返回 `appliesWhen`、`prompt`、`rules`、有序 `skills` 及其路径、`mode` 和 `missing`；Agent 进入阶段时读取对应 `SKILL.md`。配置读取失败会报告问题，不当成空配置。
+任务入口只附加 Manage Panel。它先读取需求，再通过 `panelctl workflow get <阶段> --project PROJECT_ID --json` 获取适用阶段的当前配置。纯调研核实来源、结论和未确定事项，不加载实现或代码审核 Skill；保存调研报告也不自动转成代码任务。获授权的代码改动再使用配置的实现和审核流程；明确要求代码审核时可以直接进入审核。`in_review` 也可表示调研报告等你确认。CLI 返回 `appliesWhen`、`prompt`、`rules`、有序 `skills` 及其路径、`mode` 和 `missing`；Agent 进入阶段时读取对应 `SKILL.md`。工作流解析只读取 Skills，不查询模型列表，因此模型列表读取失败不会阻断此操作。Skill 配置读取失败会报告问题，不当成空配置。
 
 每个阶段都可在 Skill 选择旁编辑完整流程模板，修改步骤与输出格式，也可恢复默认。`{{skill_instructions}}` 自动填入所选 Skill 顺序或该阶段的默认方式。自定义模板替换默认步骤；任务上下文与 Panel 固定规则单独附带，可在编辑器中展开查看。
 

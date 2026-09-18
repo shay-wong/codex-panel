@@ -10,6 +10,7 @@ import {
   ComposerCatalog,
   discoverAppServerAiCatalog,
   discoverAiCatalog,
+  discoverSkillCatalog,
   loadSlashCommands,
   resolveAiWorkspace,
 } from "./ai-chat-catalog.mjs";
@@ -331,6 +332,19 @@ export class AiChatService {
       workspacePath,
       processEnv: this.processEnv,
       skillsDirectory: this.skillsDirectory,
+    });
+  }
+
+  async getSkillCatalog(projectId) {
+    const resolved = await this.resolveContext(projectId);
+    return discoverSkillCatalog({
+      codexExecutable: this.codexExecutable,
+      workspacePath: resolved.workspacePath,
+      processEnv: this.processEnv,
+      skillsDirectory: this.skillsDirectory,
+      ...(resolved.codexProjectKind === "remote"
+        ? { appServer: this.#runtimeForTarget(resolved).appServer }
+        : {}),
     });
   }
 
