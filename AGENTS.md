@@ -181,7 +181,7 @@ Use this local review classification:
 ## 10. Release
 
 - Release only when the user requests it or explicitly includes release in the task.
-- Merge all included product PRs first. Use a minimal version PR for the required version fields; do not alter release infrastructure without a separate requirement.
+- Merge all included product PRs first. The release tag is the version source: Actions synchronizes version fields only in its build checkout. Do not create a version-bump PR or commit for each release; do not alter release infrastructure without a separate requirement.
 - Use an independent Fork version starting at `0.0.1-fork` and a tag in the form `vX.Y.Z-fork`. Release notes contain product changes only.
 - Verify the release asset set and signatures; asset display order must not block publication.
 - Record live build, signing, notarization, upload, and publication progress in the Panel.

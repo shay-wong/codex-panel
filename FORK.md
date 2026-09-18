@@ -49,10 +49,9 @@
 ## Fork 发布版本策略
 
 - 权威上游版本来源：精确合并基线中的 `package.json`
-- 当前 Fork 版本来源：`package.json`、`package-lock.json` 根包条目、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock` 的 launcher 条目
+- 发布版本来源：规范 `vX.Y.Z-fork` 标签。Actions 在构建目录同步 `package.json`、`package-lock.json` 根包条目、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock` 的 launcher 条目；main 中的字段仅作本地开发构建版本，不代表最新 Release。
 - 精确基线的上游版本：`1.1.23`（上游发布标签为 `v1.1.23-beta.1`）
-- 当前 Fork 版本：`0.0.3-fork`（发布标签 `v0.0.3-fork`）
-- 匹配的 Fork 标签或 GitHub Release：`v0.0.3-fork` 为本次发布候选；最近已发布版本为 `v0.0.2-fork`
+- 最近已核实发布：`v0.0.3-fork`。后续发布以 GitHub 标签与 Release 为准，无需逐版修改此台账。
 
 Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标签为 `vX.Y.Z-fork`；后续按 Fork 自身变更递增。上游版本只记录合并基线，不决定、重置或覆盖 Fork 版本。此决定替代旧的 `<upstream-version>-fork.<N>` 策略，后续应用 fork-doc 时以本仓库约定为准。
 
@@ -195,8 +194,8 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 - 发布校验只核对资产集合、上传状态及签名，不限制显示或上传顺序；DMG 使用正常文件名，不添加排序前缀。
 - 首次生成并安全备份 Tauri 更新密钥（`npm run tauri -- signer generate --help`）；后续版本沿用同一密钥，私钥不得入库。
 - GitHub Actions 仓库 Variable `CODEX_PANEL_UPDATER_PUBLIC_KEY` 填公钥文件内容；Secret `TAURI_SIGNING_PRIVATE_KEY` 填私钥文件内容；可选 Secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 填私钥密码。公钥编译进 App，私钥仅用于更新包签名；缺少密钥时发布构建失败。
-- 发布前同步 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json` 的版本及中英文更新日志，完成适用检查。
-- 按 Git 授权规则推送发布提交到 `origin/main`，再推送指向该提交的 `vX.Y.Z-fork` 标签，触发 Release macOS。此工作流只发布 macOS 通用版。
+- 日常改动维护中英文更新日志的 `Unreleased` / `未发布`。发版无需改版本或创建版本提交：`scripts/prepare-fork-release.mjs` 从 tag 提取版本，使用 JSON/TOML 解析器同步 5 个构建文件；读取最近可达的其他规范 Fork 标签，发布说明只收录未发布区中此前标签没有的条目（包括续行）。main 可保留已发布条目，下次不会重复发布；历史版本区不参与提取。验证：`node --test test/prepare-fork-release.test.mjs` 和 `actionlint .github/workflows/release-macos.yml`。
+- 按 Git 授权规则确保产品提交已在 `origin/main`，再推送指向该提交的 `vX.Y.Z-fork` 标签，触发 Release macOS。构建目录的版本变更不回推；保留 main 祖先检查、签名验证与资产完整性检查。此工作流只发布 macOS 通用版。
 - 完成后核实标签目标、工作流结果、DMG，以及 `.app.tar.gz`、`.sig` 和 `latest.json`；在隔离环境验证安装，不覆盖用户已安装 App。上传失败可能留下 Draft Release，先核实失败原因和已有资产，不强制移动已发布标签。
 
 
