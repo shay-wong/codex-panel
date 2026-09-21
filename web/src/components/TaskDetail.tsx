@@ -1554,9 +1554,12 @@ export function TaskDetail({
     .filter((actor, index, actors) => (
       actors.findIndex((candidate) => actorKey(candidate) === actorKey(actor)) === index
     ));
+  const conversationIssueIds = new Set([
+    currentTask.id,
+    ...(currentTask.source === "jira" ? (jiraContext?.issues ?? []).map((issue) => issue.id) : []),
+  ]);
   const linkedAiChatThreads = aiChatThreads.filter((thread) => (
-    thread.origin.projectId === currentTask.projectId
-    && thread.origin.issueId === currentTask.id
+    conversationIssueIds.has(thread.origin.issueId ?? "")
   ));
   const jiraPlanningThread = jiraContext?.plan?.threadId
     ? aiChatThreads.find((thread) => thread.id === jiraContext.plan?.threadId) ?? null
@@ -1668,12 +1671,12 @@ export function TaskDetail({
             );
   const jiraPlanningLabel = jiraPlanningSaving || openingThread
     ? text("正在打开…", "Opening…")
-    : jiraContext?.simpleStart
-      ? text("已选择一键执行", "Simple execution selected")
     : jiraContext?.plan?.needsReview
       ? text("重新复核", "Review again")
       : jiraContext?.plan
         ? text("继续规划", "Continue planning")
+        : jiraContext?.simpleStart
+          ? text("继续规划", "Continue planning")
         : text("AI 规划", "Plan with AI");
   const jiraArchiveTitle = jiraContext?.conversationArchive?.reason === "jira_not_done"
     ? text("Jira 完成后才能归档对话", "Complete Jira before archiving conversations")
@@ -2420,6 +2423,41 @@ export function TaskDetail({
 
           <aside className="issue-properties" aria-label={text("议题属性", "Issue properties")}>
             <div className="detail-primary-actions">
+              {currentTask.source === "jira" && (
+                <>
+                  <button
+                    className={`detail-open-thread-action${jiraContext?.plan?.needsReview ? " needs-review" : ""}`}
+                    type="button"
+                    disabled={
+                      jiraContextLoading
+                      || jiraPlanningSaving
+                      || openingThread
+                      || jiraSimpleStartSaving
+                      || Boolean(jiraContext?.lifecycle?.duplicateOf)
+                      || Boolean(jiraLifecyclePending)
+                    }
+                    aria-busy={jiraPlanningSaving || openingThread}
+                    onClick={requestJiraPlanning}
+                  >
+                    {jiraPlanningSaving || openingThread
+                      ? <span className="ai-chat-spinner" aria-hidden="true" />
+                      : <ConversationIcon />}
+                    <span>{jiraPlanningLabel}</span>
+                  </button>
+                  <button
+                    className="detail-open-thread-action"
+                    type="button"
+                    disabled={jiraContextLoading || savingProperty === "jiraProjects"}
+                    onClick={() => {
+                      setJiraProjectSearch("");
+                      setJiraManagerOpen(true);
+                    }}
+                  >
+                    <LinearIcon name="link" />
+                    <span>{text("关联仓库", "Link repositories")}</span>
+                  </button>
+                </>
+              )}
               {currentTask.source === "local" && (
                 <>
                   <button
@@ -2738,10 +2776,7 @@ export function TaskDetail({
             {jiraAvailable && (currentTask.source === "jira" ? (
               <section className="jira-context-section jira-context-overview" aria-label={text("Jira 关联", "Jira links")}>
                 <h2>Jira</h2>
-                <button className="jira-context-manage" type="button" onClick={() => {
-                  setJiraProjectSearch("");
-                  setJiraManagerOpen(true);
-                }}>
+                <div className="jira-context-manage" role="status">
                   <LinearIcon name="link" />
                   <span>
                     <strong>{currentTask.externalStatus ?? text("未知状态", "Unknown status")}</strong>
@@ -2758,9 +2793,7 @@ export function TaskDetail({
                       `${jiraContext?.issues.length ?? 0} issues · ${jiraPlanStatusLabel}`,
                     )}</small>
                   </span>
-                  <b>{text("管理关联", "Manage")}</b>
-                  <LinearIcon name="chevronRight" />
-                </button>
+                </div>
                 {jiraLifecyclePending && (
                   <div className="jira-lifecycle-alert" role="alert">
                     <p>{jiraLifecyclePending.kind === "waiting"
@@ -2892,26 +2925,6 @@ export function TaskDetail({
                   </div>
                 )}
                 <div className="jira-context-actions">
-                  <button
-                    className={`jira-planning-button${jiraContext?.plan?.needsReview ? " needs-review" : ""}`}
-                    type="button"
-                    disabled={
-                      jiraContextLoading
-                      || jiraPlanningSaving
-                      || openingThread
-                      || Boolean(jiraContext?.simpleStart)
-                      || jiraSimpleStartSaving
-                      || Boolean(jiraContext?.lifecycle?.duplicateOf)
-                      || Boolean(jiraLifecyclePending)
-                    }
-                    aria-busy={jiraPlanningSaving || openingThread}
-                    onClick={requestJiraPlanning}
-                  >
-                    {jiraPlanningSaving || openingThread
-                      ? <span className="ai-chat-spinner" aria-hidden="true" />
-                      : <ConversationIcon />}
-                    <span>{jiraPlanningLabel}</span>
-                  </button>
                   <button
                     className={`jira-simple-start-button${jiraSimpleStartComplete ? " is-complete" : ""}`}
                     type="button"

@@ -2524,13 +2524,6 @@ export function createPanelServer(options = {}) {
     if (context.lifecycle?.duplicateOf) {
       throw new ApiError(409, "JIRA_DUPLICATE", "Use the canonical Jira issue instead of planning a duplicate");
     }
-    if (context.simpleStart) {
-      throw new ApiError(
-        409,
-        "JIRA_PLANNING_SIMPLE_START_CONFLICT",
-        "This Jira issue already uses the simple execution flow",
-      );
-    }
     if (!threadId) {
       const projectId = resolveJiraPlanningProjectId(context, selectedProjectId);
       const workflow = await resolveWorkflow(database, aiChat, projectId, "planning");

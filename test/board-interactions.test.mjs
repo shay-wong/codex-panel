@@ -176,6 +176,7 @@ test("issues expose processing conversations without manual binding", () => {
 test("issue activity opens formal execution in Codex and keeps it out of temporary chat", () => {
   assert.match(appSource, /<TaskDetail[\s\S]*?aiChatThreads=\{aiThreads\}/);
   assert.match(detailSource, /aiChatThreads: AiChatThread\[\]/);
+  assert.match(detailSource, /const conversationIssueIds = new Set\(\[[\s\S]*currentTask\.source === "jira"[\s\S]*jiraContext\?\.issues/);
   assert.match(detailSource, /const linkedAiChatThreads = aiChatThreads\.filter/);
   assert.match(detailSource, /const jiraPlanningThread = jiraContext\?\.plan\?\.threadId/);
   assert.match(detailSource, /for \(const ref of currentTask\.conversationRefs\)/);
@@ -199,6 +200,13 @@ test("issue activity opens formal execution in Codex and keeps it out of tempora
   assert.match(appSource, /event\.type === "claim\.updated"[\s\S]*?setAiThreadsRevision\(\(current\) => current \+ 1\)/);
   assert.match(appSource, /candidate\.origin\.issueId === pendingExecutionOpen\.taskId[\s\S]*?candidate\.purpose === "formal"[\s\S]*?candidate\.currentRun\?\.status === "running"/);
   assert.match(styles, /\.activity-conversation-link \{[\s\S]*?background: var\(--surface\)/);
+});
+
+test("Jira and local planning share the primary action position", () => {
+  assert.match(detailSource, /currentTask\.source === "jira" && \([\s\S]*?className=\{`detail-open-thread-action/);
+  assert.match(detailSource, /currentTask\.source === "local" && \([\s\S]*?className="detail-open-thread-action"/);
+  assert.match(detailSource, /text\("关联仓库", "Link repositories"\)/);
+  assert.doesNotMatch(detailSource, /jira-planning-button/);
 });
 
 test("Jira link activity opens the linked Panel issue", () => {

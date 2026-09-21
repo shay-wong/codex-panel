@@ -1928,8 +1928,8 @@
     text.textContent = message;
     const retry = document.createElement("button");
     retry.type = "button";
-    retry.textContent = "重新启动";
-    retry.addEventListener("click", openPanel, { once: true });
+    retry.textContent = "重新加载";
+    retry.addEventListener("click", showPanel);
     content.append(text, retry);
     status.replaceChildren(content);
     status.hidden = false;
@@ -2229,7 +2229,7 @@
       const bindingAvailable = hasLiveHostBinding();
       showLoadError(bindingAvailable
         ? error.message
-        : "任务面板服务未就绪。请保持 Panel 启动器运行后重试。");
+        : "未连接到 Panel 启动器。请在 Codex Panel 中启动或重启服务，然后点击“重新加载”。");
     }
   }
 

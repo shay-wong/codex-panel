@@ -6,6 +6,11 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed the unresponsive retry button on the Panel loading error page. **Reload** now retries within the open Panel; a disconnected launcher prompts you to start or restart its service.
+- Jira **Create and start** no longer blocks later **Plan with AI**; the follow-up planning conversation can save a Spec while preserving existing execution work.
+- Jira details now show formal Codex conversations created for their linked execution issues after **Create and start**.
+- Moved Jira **Plan with AI** into the same top detail action area used by ordinary tasks.
+- Moved Jira repository linking into the same top action area, while keeping the Jira summary below.
 - Synced upstream task sorting, optional creation dates, parent-based project progress and ordinary-task child creation (Jira keeps its planning flow), external Agent session resume commands, attachment display and local file actions, Jira Cloud search pagination, and account avatar fixes.
 
 - Fixed workflow configuration reads and planning preparation failing with `INTERNAL_ERROR` when the model catalog is too large; workflow Skill resolution no longer queries models.

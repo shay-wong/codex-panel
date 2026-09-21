@@ -1710,6 +1710,62 @@ test("host integration stays thin", () => {
   assert.doesNotMatch(source, /window\.fetch\s*=/);
 });
 
+test("an open Panel retries failed loading and recovers without navigating", async () => {
+  const { JSDOM } = await import("jsdom");
+  const dom = new JSDOM('<div id="status"></div><iframe hidden></iframe>');
+  const { document } = dom.window;
+  const status = document.getElementById("status");
+  const frame = document.querySelector("iframe");
+  const functions = [
+    source.slice(source.indexOf("  function showLoading()"), source.indexOf("  function cancelFrameReadyWaiters")),
+    source.slice(source.indexOf("  async function preparePanel("), source.indexOf("  function restoreNativeContent()")),
+    source.slice(source.indexOf("  function showPanel()"), source.indexOf("  function connectNativeNavigation()")),
+    source.slice(source.indexOf("  function openPanel()"), source.indexOf("  function leavePanel()")),
+  ].join("\n");
+  let connected = false, attempts = 0, loads = 0;
+  const api = vm.runInNewContext(`(() => {
+    let active = true, destroyed = false, openGeneration = 1, frameReady = false;
+    let hostContextSnapshot = {};
+    ${functions}
+    return { fail: () => preparePanel(openGeneration) };
+  })()`, {
+    document, status, frame,
+    resolvePanelUrl: () => new URL("http://127.0.0.1:1"),
+    frameMatchesPanelUrl: () => true,
+    hasLiveHostBinding: () => connected,
+    requestHostEnsure: async () => { attempts++; return { restarted: false }; },
+    isTrustedPanelOrigin: () => true,
+    captureHostContext: async () => ({}),
+    loadPanelFrame: () => { loads++; return {}; },
+    usesPrivateFrame: () => true,
+    requestHostLoadFrame: async () => { if (!connected) throw Error("bridge unavailable"); },
+    waitForFrameReady: async () => {},
+    closeNativeBrowserPanel() {}, ensureEntry() {}, mountActivePage() {}, syncEntryState() {}, postHostContext() {},
+    connectNativeNavigation() { throw Error("retry must not navigate"); },
+  });
+  try {
+    await api.fail();
+    assert.match(status.textContent, /启动或重启服务/);
+    for (const expectedAttempts of [2, 3]) {
+      status.querySelector("button").click();
+      assert.equal(status.textContent, "正在启动任务面板…");
+      await new Promise(setImmediate);
+      assert.equal(attempts, expectedAttempts);
+      assert.equal(frame.hidden, true);
+      assert.equal(status.querySelector("button").textContent, "重新加载");
+    }
+    connected = true;
+    status.querySelector("button").click();
+    await new Promise(setImmediate);
+    assert.equal(attempts, 4);
+    assert.equal(loads, 4);
+    assert.equal(status.hidden, true);
+    assert.equal(frame.hidden, false);
+  } finally {
+    dom.window.close();
+  }
+});
+
 test("Panel participates in the native memory router and restores its original methods", async () => {
   const { JSDOM } = await import("jsdom");
   const { act, createElement, createContext } = await import("react");

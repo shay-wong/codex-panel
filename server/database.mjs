@@ -3249,13 +3249,6 @@ export class PanelDatabase {
     if (lifecycle.duplicateOf) {
       throw new ApiError(409, "JIRA_DUPLICATE", "Use the canonical Jira issue instead of planning a duplicate");
     }
-    if (this.getJiraSimpleStartOperation(jiraTask.id)) {
-      throw new ApiError(
-        409,
-        "JIRA_PLANNING_SIMPLE_START_CONFLICT",
-        "This Jira issue already uses the simple execution flow",
-      );
-    }
     const existing = this.database.prepare(`
       SELECT * FROM jira_plans WHERE jira_task_id = ?
     `).get(jiraTask.id);

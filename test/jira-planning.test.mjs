@@ -674,6 +674,27 @@ if (args[0] === "debug") {
       )),
       false,
     );
+
+    const simpleJira = jiraIssue("todo");
+    simpleJira.id = "jira-simple-planning";
+    simpleJira.identifier = "JIRA:TEST:3";
+    simpleJira.externalId = "3";
+    simpleJira.externalKey = "TEST-3";
+    app.database.syncJiraTasks([simpleJira], {
+      originId: "test",
+      projectName: "Jira",
+      syncedAt: timestamp,
+    });
+    let simpleTask = app.database.getTask(simpleJira.id);
+    app.database.setJiraProjects(simpleTask.id, simpleTask.version, ["api"], AGENT, new Set(["api"]));
+    simpleTask = app.database.getTask(simpleTask.id);
+    app.database.beginJiraSimpleStart(simpleTask.id, simpleTask.version, { api: "API execution scope" });
+    simpleTask = app.database.getTask(simpleTask.id);
+    result = await api(baseUrl, `/api/tasks/${simpleTask.id}/jira-planning`, "POST", {
+      version: simpleTask.version,
+    });
+    assert.equal(result.context.simpleStart.status, "creating");
+    assert.match(result.composerText, /请规划下面这个 Jira 需求/);
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });

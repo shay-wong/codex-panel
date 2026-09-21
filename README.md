@@ -2,7 +2,7 @@
 
 macOS releases provide a universal DMG for Apple Silicon and Intel, ad-hoc signed without Apple notarization. First launch may require allowing the app in System Settings → Privacy & Security.
 
-**Create and start** also works without linked repositories: a read-only Codex check selects repositories and their individual scopes, then starts the existing execution queue. Ambiguities are answered inline before any execution; no Spec is required. A single linked repository goes straight to execution, while multiple linked repositories retain their selection and receive separate scopes.
+**Create and start** also works without linked repositories: a read-only Codex check selects repositories and their individual scopes, then starts the existing execution queue. Ambiguities are answered inline before any execution; no Spec is required for this execution path. A single linked repository goes straight to execution, while multiple linked repositories retain their selection and receive separate scopes. The analysis itself does not create a planning conversation, but **Plan with AI** remains available afterward so you can create a formal planning conversation and save a Spec while keeping the existing execution work.
 
 Jira AI planning can identify and associate one or several repositories from the requirement and repository documentation. Clear selections are saved with reasons; ambiguous choices are clarified, existing manual links are retained, and native Plan mode remains read-only until exited. No fixed Jira-project mapping is required. See [Jira repository association](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues).
 
@@ -21,6 +21,8 @@ Explicit Jira conversation binding initializes a missing planning record so the 
 A local-first issue board that runs in a browser and can be embedded in Codex through the standalone CDP launcher or its injection script. The same HTTP API powers the React UI and the `panelctl` CLI used by the bundled Codex Skill.
 
 Panel participates in Codex’s native navigation history: Back returns to the page before Panel, Forward reopens Panel, and navigating from Panel to a native destination adds that destination to the same history. Route changes control visibility without matching button or command labels; utility actions that do not navigate leave Panel open.
+
+If Panel fails to load, choose **Reload** to retry within the current page. If the launcher is disconnected, start or restart the service in Codex Panel first. See [Panel navigation and recovery](docs/fork-capabilities.md#switch-between-panel-and-native-codex-destinations).
 
 Each project dashboard generates a daily Codex summary. If generation fails, Panel retries after 5, 15, and 60 minutes, then stops automatic attempts; the dashboard keeps a manual retry action available, and any successful generation resets the retry sequence.
 

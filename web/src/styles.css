@@ -5158,6 +5158,11 @@ button.activity-change-value:hover {
   opacity: 0.55;
 }
 
+.detail-open-thread-action.needs-review {
+  border-color: color-mix(in srgb, var(--status-review) 52%, var(--border));
+  color: var(--status-review);
+}
+
 .detail-open-thread-action svg,
 .detail-run-action svg {
   width: 16px;
@@ -5436,7 +5441,6 @@ button.activity-change-value:hover {
 }
 
 .jira-simple-start-button,
-.jira-planning-button,
 .jira-archive-button {
   display: inline-flex;
   align-items: center;
@@ -5459,22 +5463,15 @@ button.activity-change-value:hover {
 }
 
 .jira-simple-start-button:hover:not(:disabled),
-.jira-planning-button:hover:not(:disabled),
 .jira-archive-button:hover:not(:disabled) {
   filter: brightness(0.97);
 }
 
 .jira-simple-start-button:disabled,
-.jira-planning-button:disabled,
 .jira-archive-button:disabled {
   border-color: var(--border);
   background: var(--surface-muted);
   color: var(--text-tertiary);
-}
-
-.jira-planning-button.needs-review {
-  border-color: color-mix(in srgb, var(--status-review) 52%, var(--border));
-  color: var(--status-review);
 }
 
 .jira-simple-start-button.is-complete {
@@ -5490,8 +5487,6 @@ button.activity-change-value:hover {
 
 .jira-simple-start-button > svg,
 .jira-simple-start-button .ai-chat-spinner,
-.jira-planning-button > svg,
-.jira-planning-button .ai-chat-spinner,
 .jira-archive-button > svg,
 .jira-archive-button .ai-chat-spinner {
   width: 12px;
