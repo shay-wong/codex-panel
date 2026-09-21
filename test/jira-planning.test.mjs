@@ -46,14 +46,15 @@ test("Jira planning publishes repository tickets and preserves started work duri
   await writeFile(codexExecutable, `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "debug") {
-  process.stdout.write('{"models":[{"slug":"gpt-test","display_name":"GPT Test","description":"","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"}],"service_tiers":[]}]}');
+  process.stdout.write(JSON.stringify({ models: [{ slug: "gpt-test", model_messages: { instructions_template: "x".repeat(3 * 1024 * 1024) } }] }));
 } else if (args[0] === "app-server") {
   process.stdin.setEncoding("utf8"); let buffer = "";
   process.stdin.on("data", chunk => { buffer += chunk; let index;
     while ((index = buffer.indexOf("\\n")) >= 0) { const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
       if (!line.trim()) continue; const message = JSON.parse(line);
       if (message.id === 1) process.stdout.write('{"id":1,"result":{}}\\n');
-      if (message.id === 2) process.stdout.write('{"id":2,"result":{"data":[{"skills":[{"name":"grill-with-docs","enabled":true,"scope":"user","path":"/skills/grill-with-docs/SKILL.md"},{"name":"to-spec","enabled":true,"scope":"user","path":"/skills/to-spec/SKILL.md"},{"name":"to-tickets","enabled":true,"scope":"user","path":"/skills/to-tickets/SKILL.md"}]}]}}\\n');
+      if (message.method === "model/list") process.stdout.write(JSON.stringify({ id: message.id, result: { data: [{ model: "gpt-test", defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium" }] }], nextCursor: null } }) + "\\n");
+      if (message.method === "skills/list") process.stdout.write('{"id":2,"result":{"data":[{"skills":[{"name":"grill-with-docs","enabled":true,"scope":"user","path":"/skills/grill-with-docs/SKILL.md"},{"name":"to-spec","enabled":true,"scope":"user","path":"/skills/to-spec/SKILL.md"},{"name":"to-tickets","enabled":true,"scope":"user","path":"/skills/to-tickets/SKILL.md"}]}]}}\\n');
     }
   });
 } else {

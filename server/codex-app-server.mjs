@@ -17,8 +17,9 @@ export class CodexAppServerError extends Error {
 }
 
 export class CodexAppServer {
-  constructor({ executable, processEnv = process.env, requestTimeoutMs } = {}) {
+  constructor({ executable, processEnv = process.env, requestTimeoutMs, cwd } = {}) {
     this.executable = executable;
+    this.cwd = cwd;
     this.processEnv = withoutPanelLauncherEnvironment(processEnv);
     this.requestTimeoutMs = requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.child = null;
@@ -96,6 +97,7 @@ export class CodexAppServer {
     const starting = new Promise((resolve, reject) => {
       const command = executableCommand(this.executable, ["app-server", "--stdio"]);
       const child = spawn(command.executable, command.args, {
+        cwd: this.cwd,
         env: this.processEnv,
         stdio: ["pipe", "pipe", "pipe"],
       });

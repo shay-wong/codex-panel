@@ -8,6 +8,7 @@ import { PanelDatabase } from "../server/database.mjs";
 import { AiChatService } from "../server/ai-chat.mjs";
 import {
   ComposerCatalog,
+  discoverAppServerAiCatalog,
   composerCandidatesForSurface,
   loadSlashCommands,
 } from "../server/ai-chat-catalog.mjs";
@@ -773,21 +774,13 @@ const args = process.argv.slice(2);
 if (process.env.FAKE_ENVIRONMENT_CAPTURE_PATH) {
   appendFileSync(process.env.FAKE_ENVIRONMENT_CAPTURE_PATH, JSON.stringify({
     args,
+    cwd: process.cwd(),
     launcherKeys: Object.keys(process.env).filter((name) => (
       name.startsWith("CODEX_PANEL_") || name.startsWith("CODEX_TASKBOARD_")
     )),
   }) + "\\n");
 }
-if (args[0] === "debug" && args[1] === "models") {
-  if (args.length !== 2) process.exit(2);
-  process.stdout.write(JSON.stringify({models:[{
-    slug:"gpt-real", display_name:"GPT Real", description:"Real fixture",
-    default_reasoning_level:"medium",
-    supported_reasoning_levels:[{effort:"low"},{effort:"medium"},{effort:"high"}],
-    service_tiers:[{id:"priority",name:"Fast",description:"fixture"}]
-  }]}));
-  process.exit(0);
-}
+if (args[0] === "debug") throw Error("Model discovery must not use debug models");
 if (args[0] === "app-server") {
   process.stdin.setEncoding("utf8");
   let buffer = "";
@@ -798,8 +791,14 @@ if (args[0] === "app-server") {
       const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
       if (!line.trim()) continue;
       const message = JSON.parse(line);
+      if (message.method === "model/list") process.stdout.write(JSON.stringify({ id: message.id, result: { data: [{
+        model: "gpt-real", displayName: "GPT Real", description: "Real fixture",
+        defaultReasoningEffort: "medium",
+        supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "medium" }, { reasoningEffort: "high" }],
+        serviceTiers: [{ id: "priority", name: "Fast", description: "fixture" }],
+      }], nextCursor: null } }) + "\\n");
       if (message.id === 1) process.stdout.write('{"id":1,"result":{"platformFamily":"unix"}}\\n');
-      if (message.id === 2) process.stdout.write('{"id":2,"result":{"data":[{"skills":[{"name":"handoff","enabled":true,"scope":"user","path":"/fixture/handoff/SKILL.md","description":"Write a temporary handoff","interface":{"displayName":"Handoff"}},{"name":"real-skill","enabled":true,"scope":"repo","description":"Real fixture skill","path":"/fixture/real-skill/SKILL.md","interface":{"displayName":"Real Skill"}},{"name":"disabled","enabled":false,"scope":"user"}]}]}}\\n');
+      if (message.method === "skills/list") process.stdout.write('{"id":2,"result":{"data":[{"skills":[{"name":"handoff","enabled":true,"scope":"user","path":"/fixture/handoff/SKILL.md","description":"Write a temporary handoff","interface":{"displayName":"Handoff"}},{"name":"real-skill","enabled":true,"scope":"repo","description":"Real fixture skill","path":"/fixture/real-skill/SKILL.md","interface":{"displayName":"Real Skill"}},{"name":"disabled","enabled":false,"scope":"user"}]}]}}\\n');
     }
   });
 } else if (args[0] === "exec") {
@@ -929,6 +928,49 @@ if (args[0] === "app-server") {
     },
   };
 }
+
+test("model discovery reads every metadata page and preserves selection fields", async () => {
+  const cursors = [];
+  const catalog = await discoverAppServerAiCatalog({
+    workspacePath: "/fixture/workspace",
+    appServer: {
+      async request(method, params) {
+        assert.equal(method, "model/list");
+        assert.equal(params.limit, 100);
+        assert.equal(params.includeHidden, false);
+        cursors.push(params.cursor);
+        return {
+          data: [{
+            model: params.cursor === null ? "first-model" : "later-model",
+            defaultReasoningEffort: "high",
+            supportedReasoningEfforts: [{ reasoningEffort: "high" }],
+            serviceTiers: [{ id: "priority", name: "Fast" }],
+          }],
+          nextCursor: params.cursor === null ? "page-2" : null,
+        };
+      },
+      async listSkills() { return []; },
+    },
+  });
+  assert.deepEqual(cursors, [null, "page-2"]);
+  assert.deepEqual(catalog.models.map((model) => model.slug), ["first-model", "later-model"]);
+  assert.equal(catalog.models[1].defaultReasoningEffort, "high");
+  assert.deepEqual(catalog.models[1].supportedReasoningEfforts, ["high"]);
+  assert.deepEqual(catalog.models[1].serviceTiers, [{ id: "priority", name: "Fast" }]);
+});
+
+test("local model discovery keeps each repository's working directory", async () => {
+  const fixture = await createFixture();
+  try {
+    await fixture.service.getCatalog("project");
+    await fixture.service.getCatalog("other");
+    const captures = (await readFile(fixture.environmentCapturePath, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.ok(captures.every((entry) => entry.args[0] === "app-server"));
+    assert.deepEqual(new Set(captures.map((entry) => entry.cwd)), new Set([fixture.workspace, fixture.otherWorkspace]));
+  } finally {
+    await fixture.close();
+  }
+});
 
 test("AI turns serialize linked user Skills omitted by the Codex catalog", async () => {
   const fixture = await createFixture();

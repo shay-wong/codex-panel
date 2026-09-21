@@ -6,6 +6,8 @@ macOS releases provide a universal DMG for Apple Silicon and Intel, ad-hoc signe
 
 Jira AI planning can identify and associate one or several repositories from the requirement and repository documentation. Clear selections are saved with reasons; ambiguous choices are clarified, existing manual links are retained, and native Plan mode remains read-only until exited. No fixed Jira-project mapping is required. See [Jira repository association](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues).
 
+Jira conversation binding, planning initialization, and chat model selection use paginated model metadata, avoiding failures caused by exporting large model prompts. See [Jira planning and binding](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues).
+
 
 Continue planning recognizes the active native conversation even when the window URL remains unchanged. During manual execution, the detail action follows the board's conversation activity and opens the existing conversation. Tasks with an existing conversation hide the new-conversation shortcut.
 Planning and manual execution recognize the visible Codex run-location label, so hidden responsive text no longer blocks composer prefill.

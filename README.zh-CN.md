@@ -6,6 +6,8 @@ macOS Release 提供 Apple Silicon 与 Intel 通用 DMG，使用临时签名（a
 
 Jira AI 规划可根据需求与仓库文档识别并关联一个或多个仓库：明确时自动保存并记录理由，有歧义才询问，保留已有手动关联；原生 Plan 模式退出后才写入。无需配置固定 Jira 项目映射。参见 [Jira 仓库关联](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues)。
 
+Jira 会话绑定、规划初始化和聊天模型选择统一使用分页模型元数据，避免导出完整模型提示词过大导致失败。详见 [Jira 规划与绑定](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues)。
+
 
 继续规划以实际激活的原生会话确认导航，窗口 URL 未变化时也能继续预填。手动执行进入处理中后，详情按钮与卡片共用运行状态：显示“正在处理 · 查看对话”或“处理中 · 查看对话”，点击打开原会话；回到待认领才显示“准备执行”。已有绑定或 Jira 规划对话时，隐藏“在新对话打开”，避免重复创建。
 规划与手动执行会读取 Codex 运行位置按钮的可见文字，避免隐藏的长短标签导致预填前误判并停在空白输入框。

@@ -1,9 +1,8 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { load as parseYaml } from "js-yaml";
 import { parse as parseToml } from "smol-toml";
 
@@ -11,8 +10,8 @@ import { withoutPanelLauncherEnvironment } from "../shared/codex-environment.mjs
 import { executableCommand } from "../shared/executable-command.mjs";
 import { composerReferencePersistence } from "./composer-reference.mjs";
 import { ApiError } from "./database.mjs";
+import { CodexAppServer } from "./codex-app-server.mjs";
 
-const execFileAsync = promisify(execFile);
 const CATALOG_TIMEOUT_MS = 10_000;
 const CATALOG_MAX_BUFFER = 2 * 1024 * 1024;
 const COMPOSER_CONTRACT_VERSION = "composer.v1";
@@ -366,49 +365,6 @@ export async function resolveAiWorkspace(projectId, codexStatePath, database) {
 export async function resolveMappedAiWorkspace(projectId, project, projectMappings = {}) {
   const workspaces = await loadMappedWorkspaces(projectMappings);
   return resolvedWorkspace(projectId, project, workspaces);
-}
-
-function sanitizeModels(value) {
-  if (!Array.isArray(value)) throw new Error("Codex returned an invalid model catalog");
-  return value.flatMap((model) => {
-    if (
-      !model
-      || typeof model !== "object"
-      || (model.visibility !== undefined && model.visibility !== "list")
-      || typeof model.slug !== "string"
-      || !model.slug.trim()
-    ) {
-      return [];
-    }
-    const slug = model.slug.trim();
-    const efforts = Array.isArray(model.supported_reasoning_levels)
-      ? [...new Set(model.supported_reasoning_levels.flatMap((level) => (
-          typeof level?.effort === "string" && level.effort.trim() ? [level.effort.trim()] : []
-        )))]
-      : [];
-    const serviceTiers = Array.isArray(model.service_tiers)
-      ? model.service_tiers.flatMap((tier) => (
-          typeof tier?.id === "string"
-          && tier.id.trim()
-          && typeof tier.name === "string"
-          && tier.name.trim()
-            ? [{ id: tier.id.trim(), name: tier.name.trim() }]
-            : []
-        ))
-      : [];
-    return [{
-      slug,
-      displayName: typeof model.display_name === "string" && model.display_name.trim()
-        ? model.display_name.trim()
-        : slug,
-      description: typeof model.description === "string" ? model.description : "",
-      defaultReasoningEffort: typeof model.default_reasoning_level === "string"
-        ? model.default_reasoning_level.trim()
-        : "",
-      supportedReasoningEfforts: efforts,
-      serviceTiers,
-    }];
-  });
 }
 
 function sanitizeAppServerModels(value) {
@@ -1099,43 +1055,54 @@ export async function discoverSkillCatalog({
   };
 }
 
+async function listModels(appServer) {
+  const models = [];
+  let cursor = null;
+  do {
+    const page = await appServer.request("model/list", { cursor, limit: 100, includeHidden: false });
+    models.push(...sanitizeAppServerModels(page?.data));
+    cursor = page.nextCursor ?? null;
+  } while (cursor !== null);
+  return models;
+}
+
 export async function discoverAiCatalog({
   codexExecutable,
   workspacePath,
   processEnv,
   skillsDirectory = DEFAULT_USER_SKILLS_DIRECTORY,
 }) {
-  const environment = withoutPanelLauncherEnvironment(processEnv);
-  const modelCommand = executableCommand(codexExecutable, ["debug", "models"]);
-  const [modelResult, skillCatalog, commands] = await Promise.all([
-    execFileAsync(modelCommand.executable, modelCommand.args, {
-      cwd: workspacePath,
-      env: environment,
-      encoding: "utf8",
-      timeout: CATALOG_TIMEOUT_MS,
-      maxBuffer: CATALOG_MAX_BUFFER,
-      windowsHide: true,
-    }),
-    discoverSkillCatalog({ codexExecutable, workspacePath, processEnv: environment, skillsDirectory }),
-    loadSlashCommands(),
-  ]);
-  const modelCatalog = JSON.parse(modelResult.stdout);
-  return {
-    models: sanitizeModels(modelCatalog?.models),
-    skills: skillCatalog.skills,
-    commands,
-    sandboxes: ["read-only", "workspace-write", "danger-full-access"],
-  };
+  const appServer = new CodexAppServer({
+    executable: codexExecutable,
+    processEnv,
+    cwd: workspacePath,
+    requestTimeoutMs: CATALOG_TIMEOUT_MS,
+  });
+  try {
+    const [models, skillCatalog, commands] = await Promise.all([
+      listModels(appServer),
+      discoverSkillCatalog({ codexExecutable, workspacePath, processEnv, skillsDirectory }),
+      loadSlashCommands(),
+    ]);
+    return {
+      models,
+      skills: skillCatalog.skills,
+      commands,
+      sandboxes: ["read-only", "workspace-write", "danger-full-access"],
+    };
+  } finally {
+    await appServer.close();
+  }
 }
 
 export async function discoverAppServerAiCatalog({ appServer, workspacePath }) {
-  const [modelResult, skillEntries, commands] = await Promise.all([
-    appServer.request("model/list", { cursor: null, limit: 100, includeHidden: false }),
+  const [models, skillEntries, commands] = await Promise.all([
+    listModels(appServer),
     appServer.listSkills(workspacePath, { forceReload: false }),
     loadSlashCommands(),
   ]);
   return {
-    models: sanitizeAppServerModels(modelResult?.data),
+    models,
     skills: sanitizeSkills(skillEntries),
     commands,
     sandboxes: ["read-only", "workspace-write", "danger-full-access"],

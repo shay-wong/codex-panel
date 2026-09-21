@@ -17,15 +17,14 @@ async function createServerFixture(host = "127.0.0.1") {
   const codexExecutable = path.join(directory, "fake-codex.mjs");
   await writeFile(codexExecutable, `#!/usr/bin/env node
 const args = process.argv.slice(2);
-if (args[0] === "debug") {
-  process.stdout.write('{"models":[{"slug":"gpt-real","display_name":"GPT Real","description":"","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}],"service_tiers":[]}]}');
-} else if (args[0] === "app-server") {
+if (args[0] === "debug") { throw Error("Model discovery must not use debug models"); } else if (args[0] === "app-server") {
   process.stdin.setEncoding("utf8"); let buffer="";
   process.stdin.on("data", chunk => { buffer += chunk; let i;
     while ((i=buffer.indexOf("\\n"))>=0) { const line=buffer.slice(0,i); buffer=buffer.slice(i+1);
       if (!line.trim()) continue; const message=JSON.parse(line);
+      if (message.method === "model/list") process.stdout.write(JSON.stringify({ id: message.id, result: { data: [{"model": "gpt-real", "displayName": "GPT Real", "description": "", "defaultReasoningEffort": "low", "supportedReasoningEfforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "high"}], "serviceTiers": []}], nextCursor: null } }) + "\\n");
       if (message.id===1) process.stdout.write('{"id":1,"result":{}}\\n');
-      if (message.id===2) process.stdout.write('{"id":2,"result":{"data":[{"skills":[{"name":"real-skill","enabled":true,"scope":"repo","interface":null}]}]}}\\n');
+      if (message.method === "skills/list") process.stdout.write('{"id":2,"result":{"data":[{"skills":[{"name":"real-skill","enabled":true,"scope":"repo","interface":null}]}]}}\\n');
     }
   });
 } else {

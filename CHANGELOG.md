@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed Jira conversation binding and planning initialization failing with `INTERNAL_ERROR` for large model catalogs; chat model discovery now reads paginated metadata without exporting model prompts.
+
 - Fixed the unresponsive retry button on the Panel loading error page. **Reload** now retries within the open Panel; a disconnected launcher prompts you to start or restart its service.
 - Jira **Create and start** no longer blocks later **Plan with AI**; the follow-up planning conversation can save a Spec while preserving existing execution work.
 - Jira details now show formal Codex conversations created for their linked execution issues after **Create and start**.

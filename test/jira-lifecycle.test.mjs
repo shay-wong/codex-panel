@@ -31,15 +31,14 @@ test("Jira lifecycle authorizes, pauses, and resumes dependency-frontier issues"
   const codexExecutable = path.join(directory, "fake-codex.mjs");
   await writeFile(codexExecutable, `#!/usr/bin/env node
 const args = process.argv.slice(2);
-if (args[0] === "debug") {
-  process.stdout.write('{"models":[{"slug":"gpt-test","display_name":"GPT Test","description":"","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"}],"service_tiers":[]}]}');
-} else if (args[0] === "app-server") {
+if (args[0] === "debug") { throw Error("Model discovery must not use debug models"); } else if (args[0] === "app-server") {
   process.stdin.setEncoding("utf8"); let buffer = "";
   process.stdin.on("data", chunk => { buffer += chunk; let index;
     while ((index = buffer.indexOf("\\n")) >= 0) { const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
       if (!line.trim()) continue; const message = JSON.parse(line);
+      if (message.method === "model/list") process.stdout.write(JSON.stringify({ id: message.id, result: { data: [{"model": "gpt-test", "displayName": "GPT Test", "description": "", "defaultReasoningEffort": "medium", "supportedReasoningEfforts": [{"reasoningEffort": "medium"}], "serviceTiers": []}], nextCursor: null } }) + "\\n");
       if (message.id === 1) process.stdout.write('{"id":1,"result":{}}\\n');
-      if (message.id === 2) process.stdout.write('{"id":2,"result":{"data":[{"skills":[]}]}}\\n');
+      if (message.method === "skills/list") process.stdout.write('{"id":2,"result":{"data":[{"skills":[]}]}}\\n');
     }
   });
 }

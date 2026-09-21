@@ -22,6 +22,8 @@
 
 加载失败重试（本次修复，等待上游吸收）：错误页“重新加载”直接复用 `showPanel → preparePanel`，不能走对已打开面板提前返回的 `openPanel`；失败后可再次重试，不增加导航记录。启动器断开时明确提示先启动或重启服务。代码 `inject/codex-panel.user.js`；验证 `node --test test/inject.test.mjs`，覆盖重复失败、连接恢复及既有原生历史行为；用户入口为中英文 README，详细说明 `docs/fork-capabilities.md#switch-between-panel-and-native-codex-destinations`。来源定位 `git log -S'retry.addEventListener("click", showPanel)' -- inject/codex-panel.user.js`；合并时保留本契约，上游具备等价恢复行为与覆盖后移除。
 
+模型目录读取（本次修复，等待上游吸收）：Jira 显式绑定、规划/重新规划登记、聊天创建/设置/发送的共享模型目录必须使用 Codex `model/list` 分页元数据并耗尽 `nextCursor`，不得恢复 `debug models` 的完整提示词导出或仅调大缓冲区。工作流仍只查询 Skills，本地 Skill 符号链接补齐保持不变。代码 `server/ai-chat-catalog.mjs`、`server/codex-app-server.mjs`；本地查询在目标仓库目录运行并在读取后关闭子进程。验证 `node --test test/jira-planning.test.mjs test/ai-chat-runner.test.mjs test/ai-chat-server.test.mjs test/claim-queue.test.mjs test/jira-lifecycle.test.mjs test/workflow-settings.test.mjs`，包括 3 MiB debug 导出场景下 CLI 绑定、Spec 保存、重新规划和分页元数据字段保留。用户入口：中英文 README，详细说明 `docs/fork-capabilities.md#link-jira-requirements-to-repository-issues`；来源定位 `git log -S'async function listModels(appServer)' -- server/ai-chat-catalog.mjs`。合并时保留统一目录路径，上游具备等价实现与验证后移除。
+
 ## 精确上游基线
 
 - Fork 分支：`main`
