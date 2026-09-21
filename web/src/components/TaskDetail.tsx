@@ -1037,7 +1037,8 @@ export function TaskDetail({
       onOpenLegacyLocalThread(aiThread.codexThreadId);
       return true;
     }
-    return false;
+    onOpenLegacyLocalThread(threadId);
+    return true;
   }
 
   function requestJiraPlanning() {
@@ -1562,7 +1563,28 @@ export function TaskDetail({
     conversationIssueIds.has(thread.origin.issueId ?? "")
   ));
   const jiraPlanningThread = jiraContext?.plan?.threadId
-    ? aiChatThreads.find((thread) => thread.id === jiraContext.plan?.threadId) ?? null
+    ? aiChatThreads.find((thread) => thread.id === jiraContext.plan?.threadId) ?? {
+        id: jiraContext.plan.threadId,
+        title: `${currentTask.externalKey ?? currentTask.identifier} · Jira 规划`,
+        status: "idle" as const,
+        purpose: "formal" as const,
+        origin: {
+          projectId: currentTask.projectId,
+          projectName: "",
+          workspacePath: currentTask.developmentContext && "path" in currentTask.developmentContext
+            ? currentTask.developmentContext.path
+            : "",
+          issueId: currentTask.id,
+          issueIdentifier: currentTask.identifier,
+        },
+        codexThreadId: jiraContext.plan.threadId,
+        model: "",
+        reasoningEffort: "",
+        sandbox: "workspace-write" as const,
+        archivedAt: null,
+        createdAt: jiraContext.plan.createdAt,
+        updatedAt: jiraContext.plan.updatedAt,
+      }
     : null;
   const conversationActivities = new Map<string, {
     thread: AiChatThread;

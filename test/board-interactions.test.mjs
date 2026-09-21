@@ -209,6 +209,12 @@ test("Jira and local planning share the primary action position", () => {
   assert.doesNotMatch(detailSource, /jira-planning-button/);
 });
 
+test("Jira planning displays the saved plan conversation when chat list data is unavailable", () => {
+  assert.match(detailSource, /onOpenLegacyLocalThread\(threadId\);[\s\S]*return true;/);
+  assert.match(detailSource, /title: `\$\{currentTask\.externalKey \?\? currentTask\.identifier\} · Jira 规划`/);
+  assert.match(detailSource, /codexThreadId: jiraContext\.plan\.threadId/);
+});
+
 test("Jira link activity opens the linked Panel issue", () => {
   assert.match(detailSource, /change\.field !== "jiraIssue"/);
   assert.match(detailSource, /onOpenTask\(await getTask\(identifier\)\)/);
