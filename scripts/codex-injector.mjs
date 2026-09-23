@@ -32,7 +32,7 @@ import {
   stopResidentInjectors,
 } from "./codex-injector-runtime.mjs";
 import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
-import { installCodexProviderQuotaFix } from "./codex-provider-quota.mjs";
+import { prepareCodexProviderQuotaFix } from "./codex-provider-quota.mjs";
 import { createPanelSupervisor } from "./panel-supervisor.mjs";
 import {
   CdpPipeBrowser,
@@ -660,7 +660,7 @@ export async function waitForRendererReady(cdp, timeoutMs) {
 export async function reloadRenderer(cdp, timeoutMs) {
   await Promise.all([
     cdp.waitFor("Page.loadEventFired", timeoutMs),
-    // Electron otherwise reuses cached modules without reaching Fetch interception.
+    // Reload the native module graph when applying or removing the composer replacement.
     cdp.send("Page.reload", { ignoreCache: true }),
   ]);
 }
@@ -2447,9 +2447,9 @@ async function injectTarget(
   try {
     await cdp.send("Page.enable");
     await cdp.send("Runtime.enable");
-    if (keepAlive) await installCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"));
     if (keepAlive) await hostBridge.install();
     await waitForRendererReady(cdp, 15_000);
+    if (keepAlive) source = `${await prepareCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"))}\n${source}`;
     await cdp.send("Page.setBypassCSP", { enabled: true });
     if (keepAlive && attachExisting) {
       const currentStatus = await readInjectionStatus(cdp);

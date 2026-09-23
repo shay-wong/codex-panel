@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CODEX_PROVIDER_QUOTA_ASSET,
-  installCodexProviderQuotaFix,
+  prepareCodexProviderQuotaFix,
   rewriteCodexProviderQuota,
 } from "../scripts/codex-provider-quota.mjs";
 
@@ -41,48 +41,59 @@ test("custom local provider can submit despite account quotas; native blockers a
   ]) assert.equal(patched(options).submit(), false, JSON.stringify(options));
 });
 
-test("the saved switch controls interception of the supported native asset", async (t) => {
+test("the saved switch prepares a module replacement only for supported source", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "panel-quota-switch-"));
   t.after(() => rm(directory, {recursive: true, force: true}));
   const preferencesFile = join(directory, "preferences.json");
-  const untouchedCdp = {on() {assert.fail("disabled preference installed an interceptor");}, send() {assert.fail("disabled preference enabled interception");}};
-  await installCodexProviderQuotaFix(untouchedCdp, undefined, () => {});
+  const untouchedCdp = {on() {assert.fail("disabled preference registered a listener");}, send() {assert.fail("disabled preference read the composer");}};
+  assert.equal(await prepareCodexProviderQuotaFix(untouchedCdp), "");
   for (const preferences of [{}, {customProviderQuotaFix: false}]) {
     await writeFile(preferencesFile, JSON.stringify(preferences));
-    await installCodexProviderQuotaFix(untouchedCdp, preferencesFile, () => {});
+    assert.equal(await prepareCodexProviderQuotaFix(untouchedCdp, preferencesFile), "");
   }
   await writeFile(preferencesFile, JSON.stringify({customProviderQuotaFix: true}));
-  for (const scenario of ["supported", "unknown", "read-error", "http-error"]) {
-    const handlers = new Map();
-    const calls = [];
+  for (const scenario of ["supported", "unknown", "read-error"]) {
+    const reports = [];
     const cdp = {
-      on(event, callback) { handlers.set(event, callback); },
+      on(event) { assert.equal(event, "Runtime.consoleAPICalled"); },
       async send(method, params) {
-        calls.push({method, params});
-        if (method === "Fetch.getResponseBody") {
-          if (scenario === "read-error") throw new Error("body unavailable");
-          return {base64Encoded: true, body: Buffer.from(scenario === "unknown" ? "other source" : source).toString("base64")};
-        }
-        return {};
+        assert.equal(method, "Runtime.evaluate");
+        assert.equal(params.awaitPromise, true);
+        if (scenario === "read-error") return {exceptionDetails: {text: "failed"}};
+        return {result: {value: {url: `app://-/assets/${CODEX_PROVIDER_QUOTA_ASSET}`, source: scenario === "unknown" ? "other source" : source}}};
       },
     };
-    const reports = [];
-    await installCodexProviderQuotaFix(cdp, preferencesFile, message => reports.push(message));
-    assert.deepEqual(calls.find(call => call.method === "Fetch.enable").params.patterns, [{urlPattern: `*/assets/${CODEX_PROVIDER_QUOTA_ASSET}`, resourceType: "Script", requestStage: "Response"}]);
-    handlers.get("Network.responseReceived")({response: {url: `app://-/assets/${CODEX_PROVIDER_QUOTA_ASSET}?private-value`, status: 200, fromDiskCache: true}, type: "Script"});
-    assert.match(reports.at(-1), /type=Script status=200 diskCache=true/);
-    assert.doesNotMatch(reports.at(-1), /private-value/);
-    await handlers.get("Fetch.requestPaused")({requestId: "native-script", resourceType: "Script", responseStatusCode: scenario === "http-error" ? 404 : 200, responseHeaders: [{name: "Content-Type", value: "text/javascript"}, {name: "Content-Length", value: "1"}]});
-    const final = calls.at(-1);
-    if (scenario === "supported") {
-      assert.equal(final.method, "Fetch.fulfillRequest");
-      const received = vm.runInNewContext(`${Buffer.from(final.params.body, "base64")};composer`);
-      assert.equal(received({threadProvider: "custom"}).submit(), "hello");
-      assert.deepEqual(final.params.responseHeaders, [{name: "Content-Type", value: "text/javascript"}]);
-    } else {
-      assert.equal(final.method, "Fetch.continueRequest");
+    const bootstrap = await prepareCodexProviderQuotaFix(cdp, preferencesFile, message => reports.push(message));
+    if (scenario !== "supported") {
+      assert.equal(bootstrap, "");
+      assert.match(reports.at(-1), /unavailable/);
+      continue;
     }
+    let callback, replacementSource, insertedMap;
+    const document = {documentElement: null, createElement() { return {}; }};
+    const window = {};
+    window.top = window;
+    vm.runInNewContext(bootstrap, {
+      document, window,
+      MutationObserver: class {constructor(handler) {callback = handler;} observe() {} disconnect() {}},
+      Blob: class {constructor(parts) {replacementSource = parts.join("");}},
+      URL: {createObjectURL() {return "blob:fixture";}},
+    });
+    assert.equal(insertedMap, undefined);
+    document.documentElement = {prepend(map) {insertedMap = map;}};
+    callback();
+    assert.equal(insertedMap.type, "importmap");
+    assert.deepEqual(JSON.parse(insertedMap.textContent), {imports: {[`app://-/assets/${CODEX_PROVIDER_QUOTA_ASSET}`]: "blob:fixture"}});
+    assert.equal(vm.runInNewContext(`${replacementSource};composer`)({threadProvider: "custom"}).submit(), "hello");
   }
   await writeFile(preferencesFile, JSON.stringify({customProviderQuotaFix: false}));
-  await installCodexProviderQuotaFix(untouchedCdp, preferencesFile, () => {});
+  assert.equal(await prepareCodexProviderQuotaFix(untouchedCdp, preferencesFile), "");
+});
+
+test("the replacement retains relative imports and import.meta.url from the original module", () => {
+  const module = `import { value } from"./shared.js"; ${source}; const lazy = import(\`./lazy.js\`); export const url = import.meta.url;`;
+  const patched = rewriteCodexProviderQuota(module, `app://-/assets/${CODEX_PROVIDER_QUOTA_ASSET}`);
+  assert.match(patched, /from"app:\/\/-\/assets\/shared\.js"/);
+  assert.match(patched, /import\("app:\/\/-\/assets\/lazy\.js"\)/);
+  assert.match(patched, /export const url = "app:\/\/-\/assets\/app-primary-aaee46b7f0ce\.js"/);
 });

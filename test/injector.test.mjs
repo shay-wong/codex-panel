@@ -379,7 +379,7 @@ test("managed private-CDP spawn failures wait for another open request", async (
   assert.match(source, /idleAfterNormalExit = true;\s*console\.error\(`Waiting for Codex launch:/);
 });
 
-test("CSP bypass and quota script interception use one cache-bypassing renderer reload", async () => {
+test("CSP bypass and quota module replacement use one cache-bypassing renderer reload", async () => {
   assert.match(
     source,
     /export async function waitForRendererReady\([\s\S]*?document\.readyState[\s\S]*?state\?\.href\?\.startsWith\("app:\/\/"\)/,
@@ -414,7 +414,7 @@ test("CSP bypass and quota script interception use one cache-bypassing renderer 
     async send(method, options) {
       assert.equal(listening, true);
       assert.equal(method, "Page.reload");
-      assert.equal(options?.ignoreCache, true, "cached Electron modules skip the quota interceptor");
+      assert.equal(options?.ignoreCache, true, "reconnecting must reload the native module graph");
       finishLoad();
     },
   }, 15_000);
