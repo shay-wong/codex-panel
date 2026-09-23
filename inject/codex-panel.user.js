@@ -2183,6 +2183,7 @@
     if (message.type === HOST_HEARTBEAT_MESSAGE) {
       hostHeartbeatAt = Number(message.at) || 0;
       hideUsageBanner = message.hideUsageBanner === true;
+      window.__codexPanelProviderQuotaV1__?.setEnabled(message.customProviderQuotaFix === true);
       syncUsageBannerVisibility();
       window[HOST_STARTUP_TOKEN_NAME] = message.startupToken ?? null;
       return;

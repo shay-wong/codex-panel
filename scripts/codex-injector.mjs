@@ -32,7 +32,7 @@ import {
   stopResidentInjectors,
 } from "./codex-injector-runtime.mjs";
 import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
-import { prepareCodexProviderQuotaFix } from "./codex-provider-quota.mjs";
+import { prepareCodexProviderQuotaFix, watchCodexProviderQuotaPreferences } from "./codex-provider-quota.mjs";
 import { createPanelSupervisor } from "./panel-supervisor.mjs";
 import {
   CdpPipeBrowser,
@@ -2250,11 +2250,13 @@ function installPanelHostBinding(
         (async () => {
           const executionContextId = await install();
           let hideUsageBanner = false;
+          let customProviderQuotaFix = false;
           const preferencesFile = panelEnvironment("PREFERENCES_FILE");
           if (preferencesFile) {
             try {
               const preferences = JSON.parse(await readFile(preferencesFile, "utf8"));
               hideUsageBanner = preferences.hideUsageBanner === true;
+              customProviderQuotaFix = preferences.customProviderQuotaFix === true;
             } catch {}
           }
           await cdp.send("Runtime.evaluate", {
@@ -2264,6 +2266,7 @@ function installPanelHostBinding(
               capability: ${JSON.stringify(hostCapability)},
               at: Date.now(),
               hideUsageBanner: ${JSON.stringify(hideUsageBanner)},
+              customProviderQuotaFix: ${JSON.stringify(customProviderQuotaFix)},
               startupToken: ${JSON.stringify(startupToken)}
             }, window.location.origin)`,
             returnByValue: true,
@@ -2769,6 +2772,7 @@ async function main() {
   let controlServer = null;
   let openControl = null;
   let openSignalHandler = null;
+  let preferencesWatcher = null;
   const injectedTargets = new Map();
   const remoteCodexConnections = new Map();
   const routableCodexConnections = new Set();
@@ -2881,6 +2885,7 @@ async function main() {
   const cleanup = () => {
     if (cleanupPromise) return cleanupPromise;
     cleanupPromise = (async () => {
+      preferencesWatcher?.close();
       injectedTargets.forEach((connection) => {
         unregisterRoutableCodexConnection(connection);
         unregisterQuotaPolicyCdp(connection);
@@ -3142,6 +3147,15 @@ async function main() {
       codexProcess?.unref?.();
       return;
     }
+
+    preferencesWatcher = watchCodexProviderQuotaPreferences(panelEnvironment("PREFERENCES_FILE"), () => {
+      for (const connection of injectedTargets.values()) {
+        void connection.hostBridge?.publishHeartbeat().catch(error => {
+          console.error(`Panel preference update failed: ${error.message}`);
+        });
+      }
+    });
+    preferencesWatcher?.on("error", error => console.error(`Panel preference watch failed: ${error.message}`));
 
     while (!stopping) {
       await Promise.race([

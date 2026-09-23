@@ -1,14 +1,48 @@
 // ChatGPT 26.917.51856: adapt only this build's local custom-provider composer.
 import { readFile } from "node:fs/promises";
+import { watch } from "node:fs";
+import path from "node:path";
 
 export const CODEX_PROVIDER_QUOTA_ASSET = "app-primary-aaee46b7f0ce.js";
 const accountQuotaGate = "cn=ye||$e||ot||nt||Rt";
-const providerQuotaGate = "cn=ye||$e||ot||((nt||Rt)&&!(()=>{const target=Me.get(tv,Qe);const provider=Me.get(zl,Qe)??Me.get(Hf,target).data?.model_provider;return et===`local`&&typeof provider===`string`&&provider!==`openai`})())";
+const providerQuotaGate = "cn=ye||$e||ot||((nt||Rt)&&!(panelQuotaEnabled&&(()=>{const target=Me.get(tv,Qe);const provider=Me.get(zl,Qe)??Me.get(Hf,target).data?.model_provider;return et===`local`&&typeof provider===`string`&&provider!==`openai`})()))";
+const composerEntry = "function m7(e){";
+const liveComposerEntry = `${composerEntry}const panelQuotaEnabled=(0,h7.useSyncExternalStore)(globalThis.__codexPanelProviderQuotaV1__.subscribe,globalThis.__codexPanelProviderQuotaV1__.getSnapshot);`;
 const appliedMessage = "Panel custom-provider quota fix: native module executed.";
 
+export function createCodexProviderQuotaRuntime(initialEnabled) {
+  let enabled = initialEnabled === true;
+  const listeners = new Set();
+  return {
+    installed: false,
+    getSnapshot: () => enabled,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    setEnabled(value) {
+      const next = value === true;
+      if (enabled === next) return;
+      enabled = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+export function watchCodexProviderQuotaPreferences(preferencesFile, onChange) {
+  if (!preferencesFile) return null;
+  return watch(path.dirname(preferencesFile), (_, filename) => {
+    if (filename === path.basename(preferencesFile)) onChange();
+  });
+}
+
 export function rewriteCodexProviderQuota(source, sourceUrl) {
-  if (!source.includes(providerQuotaGate) && source.split(accountQuotaGate).length !== 2) return null;
-  const patched = source.replace(accountQuotaGate, providerQuotaGate);
+  if (!source.includes(providerQuotaGate) && (
+    source.split(accountQuotaGate).length !== 2 || source.split(composerEntry).length !== 2
+  )) return null;
+  const patched = source.includes(liveComposerEntry) ? source : source
+    .replace(composerEntry, liveComposerEntry)
+    .replace(accountQuotaGate, providerQuotaGate);
   if (!sourceUrl) return patched;
   // This pinned generated chunk has only literal relative imports. Keep their
   // targets and import.meta.url unchanged when the module itself moves to a blob.
@@ -21,8 +55,12 @@ export function rewriteCodexProviderQuota(source, sourceUrl) {
 export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report = console.error) {
   if (!preferencesFile) return "";
   try {
-    const preferences = JSON.parse(await readFile(preferencesFile, "utf8"));
-    if (preferences.customProviderQuotaFix !== true) return "";
+    let preferences = {};
+    try {
+      preferences = JSON.parse(await readFile(preferencesFile, "utf8"));
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
     const result = await cdp.send("Runtime.evaluate", {
       expression: `(async () => {
         const url = new URL(${JSON.stringify(`/assets/${CODEX_PROVIDER_QUOTA_ASSET}`)}, location.href).href;
@@ -45,10 +83,13 @@ export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report 
     report("Panel custom-provider quota module prepared for the next renderer load.");
     return `(() => {
       if (window !== window.top) return;
+      const runtime = globalThis.__codexPanelProviderQuotaV1__ ??= (${createCodexProviderQuotaRuntime.toString()})(${preferences.customProviderQuotaFix === true});
+      runtime.setEnabled(${preferences.customProviderQuotaFix === true});
+      if (runtime.installed) return;
       const install = () => {
         if (!document.documentElement) return;
         observer.disconnect();
-        const replacement = URL.createObjectURL(new Blob([${JSON.stringify(`${patched}\nconsole.info(${JSON.stringify(appliedMessage)});`)}], { type: "text/javascript" }));
+        const replacement = URL.createObjectURL(new Blob([${JSON.stringify(`${patched}\nglobalThis.__codexPanelProviderQuotaV1__.installed=true;console.info(${JSON.stringify(appliedMessage)});`)}], { type: "text/javascript" }));
         const map = document.createElement("script");
         map.type = "importmap";
         map.textContent = JSON.stringify({ imports: { [${JSON.stringify(url)}]: replacement } });

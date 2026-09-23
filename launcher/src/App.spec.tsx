@@ -128,12 +128,15 @@ it("keeps launcher feedback, live status and global preferences working through 
   await click(screen.getByRole("switch", { name: "隐藏额度耗尽提示" }));
   expect(current.preferences).toEqual({ autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, customProviderQuotaFix: false });
   const quotaFix = screen.getByRole("switch", { name: "移除账号额度不足时 API 发送限制" });
+  const restartCount = invoke.mock.calls.filter(([command]) => command === "reconnect_codex").length;
   await click(quotaFix);
   expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "customProviderQuotaFix", enabled: true });
   expect(quotaFix.getAttribute("aria-checked")).toBe("true");
   await click(quotaFix);
   expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "customProviderQuotaFix", enabled: false });
   expect(quotaFix.getAttribute("aria-checked")).toBe("false");
+  expect(invoke.mock.calls.filter(([command]) => command === "reconnect_codex")).toHaveLength(restartCount);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(current.preferences.hideUsageBanner).toBe(true);
   await click(screen.getByRole("switch", { name: "登录时启动" }));
   expect(invoke).toHaveBeenCalledWith("set_autostart", { enabled: false });
