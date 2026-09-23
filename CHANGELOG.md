@@ -6,7 +6,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
-- Added an independent, default-off **修复自定义 API 发送限制** launcher switch (restart the service after changes; reconnection replaces the native module before execution) for ChatGPT desktop 26.917.51856 so local Codex conversations using a custom model provider can submit despite exhausted ChatGPT account usage, while keeping the existing login and native submission checks.
+- Added an independent, default-off **移除账号额度不足时 API 发送限制** launcher switch (restart the service after changes; reconnection replaces the native module before execution) for ChatGPT desktop 26.917.51856 so local Codex conversations using a custom model provider can submit despite exhausted ChatGPT account usage, while keeping the existing login and native submission checks.
 
 - Fixed Jira conversation binding and planning initialization failing with `INTERNAL_ERROR` for large model catalogs; chat model discovery now reads paginated metadata without exporting model prompts.
 

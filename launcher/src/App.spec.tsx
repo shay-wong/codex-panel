@@ -127,7 +127,7 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(autoOpen.disabled).toBe(false);
   await click(screen.getByRole("switch", { name: "隐藏额度耗尽提示" }));
   expect(current.preferences).toEqual({ autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, customProviderQuotaFix: false });
-  const quotaFix = screen.getByRole("switch", { name: "修复自定义 API 发送限制" });
+  const quotaFix = screen.getByRole("switch", { name: "移除账号额度不足时 API 发送限制" });
   await click(quotaFix);
   expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "customProviderQuotaFix", enabled: true });
   expect(quotaFix.getAttribute("aria-checked")).toBe("true");
