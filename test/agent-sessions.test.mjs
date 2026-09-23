@@ -26,8 +26,8 @@ async function localHarness(t) {
   const production = resolveServerOptions();
   const resolved = resolveServerOptions(options);
   for (const key of ["dataDirectory", "databasePath", "attachmentsDirectory", "cloudConfigPath", "jiraConfigPath", "clientStoragePath", "codexStatePath", "codexProcessesPath", "skillsDirectory", "staticDirectory", "skillPath", "nativeSkillPath"]) {
-    assert.ok(resolved[key].startsWith(`${root}/`), key);
-    assert.ok(!resolved[key].startsWith(`${production[key]}/`) && !production[key].startsWith(`${resolved[key]}/`) && resolved[key] !== production[key], key);
+    assert.ok(resolved[key].startsWith(root + path.sep), key);
+    assert.ok(!resolved[key].startsWith(production[key] + path.sep) && !production[key].startsWith(resolved[key] + path.sep) && resolved[key] !== production[key], key);
   }
   const app = createPanelServer(options);
   t.after(async () => { await app.close(); await rm(root, { recursive: true, force: true }); });
