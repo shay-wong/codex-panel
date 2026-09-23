@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Adopted the upstream native macOS update confirmation dialog, keeping Fork release and signature validation while bringing the confirmation window to the front; other platforms retain the existing Tauri dialog.
+
 - Moved the main Open Panel action from the sidebar into Runtime overview beside the service status and maintenance controls; its state-based labels remain available without sidebar wrapping.
 
 - Added an independent, default-off **移除账号额度不足时 API 发送限制** launcher switch (the first adapter installation reloads the interface once; later changes apply immediately without restarting Panel or refreshing Codex) for ChatGPT desktop 26.917.51856 so local Codex conversations using a custom model provider can submit despite exhausted ChatGPT account usage, while keeping the existing login and native submission checks.

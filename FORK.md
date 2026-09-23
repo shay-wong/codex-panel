@@ -215,8 +215,8 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 
 - 生命周期：`长期保留`。
 - 原始目的：采用上游下载、验签、用户确认安装与重启流程，同时只更新 Fork 自身。
-- 行为不变量：版本发现继续使用 Fork Release 和规范 `vX.Y.Z-fork`；每个候选从精确 tag 下读取 `latest.json`，包地址属于相同 Fork Release。Tauri 插件验签成功前不得安装；构建公钥来自 `CODEX_PANEL_UPDATER_PUBLIC_KEY`，禁止使用上游公钥，未配置时明确不可安装。自动检查可下载准备，但安装必须确认。仅停止自有服务，失败尝试恢复，成功重启；Windows 按上游仍不支持自动安装。更新不迁移/覆盖用户数据目录。
-- 代码及验证：`src-tauri/src/main.rs`、`src-tauri/build.rs`、`src-tauri/Cargo.toml`、`launcher/src/App.tsx`、`launcher/src/launcher.css`、`scripts/create-macos-updater.mjs`、`scripts/release-metadata.mjs`、`scripts/verify-updater-signature.mjs`；`test/launcher-ui.test.mjs`、`test/release-metadata.test.mjs`、`test/updater-signature.test.mjs` 及 Rust updater 定向测试。
+- 行为不变量：版本发现继续使用 Fork Release 和规范 `vX.Y.Z-fork`；每个候选从精确 tag 下读取 `latest.json`，包地址属于相同 Fork Release。Tauri 插件验签成功前不得安装；构建公钥来自 `CODEX_PANEL_UPDATER_PUBLIC_KEY`，禁止使用上游公钥，未配置时明确不可安装。自动检查可下载准备，但安装必须确认；macOS 使用原生确认弹窗并置于前台，其他平台保留 Tauri 对话框。仅停止自有服务，失败尝试恢复，成功重启；Windows 按上游仍不支持自动安装。更新不迁移/覆盖用户数据目录。
+- 代码及验证：`src-tauri/src/main.rs`、`src-tauri/src/update_dialog.rs`、`src-tauri/build.rs`、`src-tauri/Cargo.toml`、`launcher/src/App.tsx`、`launcher/src/launcher.css`、`scripts/create-macos-updater.mjs`、`scripts/release-metadata.mjs`、`scripts/verify-updater-signature.mjs`；`test/launcher-ui.test.mjs`、`test/release-metadata.test.mjs`、`test/updater-signature.test.mjs` 及 `cargo check --manifest-path src-tauri/Cargo.toml`。
 - 用户文档：`README.md`、`README.zh-CN.md`、`docs/fork-capabilities.md#signed-in-app-updates`；来源为当前行为调整，可用 `git log -S'prepare_update' -- src-tauri/src/main.rs` 定位。
 - 合并指引：沿用上游 updater 下载/验签/install API，保留 Fork 身份、公钥和下载链限定；不重写验证器到产品运行路径。发布脚本检测实际 macOS 架构，先验证 App 再签名归档、验证 updater 签名后生成元数据。资产顺序不作为发布条件；私钥只在发布环境中使用。
 - 移除条件：停止 Fork 独立发布。验证需隔离签名样本和假宿主；真实更新验收必须使用 Fork 公钥构建的安装包和对应签名 Release，不能用生产安装自测。

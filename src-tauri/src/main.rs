@@ -2,6 +2,10 @@
 
 mod menu_diagnostics;
 
+mod update_dialog;
+
+use update_dialog::UpdateDialog;
+
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSRunningApplication;
 use serde::{Deserialize, Serialize};
@@ -2691,15 +2695,10 @@ fn install_prepared_update(app: &AppHandle, state: &Arc<LauncherState>) -> Resul
     let Some((update, bytes)) = prepared else {
         return Err("更新尚未完成下载和签名验证，请先检查更新。".into());
     };
-    if !app.dialog()
-        .message(format!("{} 已下载并通过签名验证。是否安装并重启 Codex Panel？", update.version))
-        .title("Codex Panel 更新")
-        .buttons(MessageDialogButtons::OkCancelCustom("安装并重启".into(), "稍后".into()))
-        .blocking_show()
-    {
+    let Some(dialog) = UpdateDialog::prompt(app, &update.version) else {
         *state.prepared_update.lock().unwrap() = Some((update, bytes));
         return Ok(());
-    }
+    };
     let lifecycle = state.lifecycle.lock().unwrap();
     state.update_installing.store(true, Ordering::SeqCst);
     let was_running = state.child.lock().unwrap().is_some();
@@ -2707,9 +2706,11 @@ fn install_prepared_update(app: &AppHandle, state: &Arc<LauncherState>) -> Resul
         snapshot.update_ready = false;
         snapshot.update_message = "正在安装更新…".into();
     });
+    dialog.show_installing("正在安装更新…");
     stop_managed_child_locked(app, state);
     drop(lifecycle);
     if let Err(error) = update.install(&bytes) {
+        dialog.close();
         let _lifecycle = state.lifecycle.lock().unwrap();
         state.update_installing.store(false, Ordering::SeqCst);
         let recovery = if was_running {

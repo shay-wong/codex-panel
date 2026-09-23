@@ -144,7 +144,7 @@ The loading error page offers **Reload**, which retries service readiness and pa
 
 macOS releases use ad-hoc App signing without Apple notarization, while update archives retain Tauri signature verification. First launch may require allowing the app in System Settings → Privacy & Security.
 
-Panel uses Tauri's updater to download and verify an available fork release before installation. Click **Install update** and confirm to replace the App and restart Panel. Download or signature failure leaves the installed App and data intact; installation failure attempts to restore the owned Panel service. Windows continues to use the Release page, matching upstream's current limitation. Linux requires a supported signed package in that release's metadata.
+Panel uses Tauri's updater to download and verify an available fork release before installation. Click **Install update** and confirm to replace the App and restart Panel. macOS uses the native confirmation dialog and brings it to the foreground; other platforms keep the Tauri dialog. Download or signature failure leaves the installed App and data intact; installation failure attempts to restore the owned Panel service. Windows continues to use the Release page, matching upstream's current limitation. Linux requires a supported signed package in that release's metadata.
 
 Fork releases use independent versions starting at `0.0.1-fork`, tagged `v0.0.1-fork`; upstream merges only update the recorded baseline. Existing local `0.1.0` builds need a one-time manual installation because `0.0.1-fork` is lower; subsequent updates follow normal increasing version order.
 

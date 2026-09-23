@@ -147,7 +147,7 @@ open "$HOME/Applications/Codex Panel.app"
 
 Fork 从 `0.0.1-fork`（标签 `v0.0.1-fork`）开始独立版本，不再随上游版本变化。已有本地 `0.1.0` 开发版需手动安装一次以切换到新版本线。
 
-应用最多每 24 小时自动检查一次 Fork 的 GitHub Releases，成功结果缓存 24 小时；临时失败 5 分钟后重试，匿名 API 限流则缓存到 GitHub 返回的重置时间。手动检查始终绕过缓存。检查会优先使用本机已登录的 `gh` CLI，无法使用时才回退到匿名 GitHub API，并分别提示额度耗尽、网络失败、暂无 Release、已是最新版本或发现新版本。只有规范化的 `vX.Y.Z-fork` 标签会成为更新候选，发现新版本后会在应用内下载并验证签名，只有用户确认后才安装并重启 Panel。仅接受 Fork 签名的更新；构建时未配置更新公钥会明确提示不可安装。详见[更新包配置](docs/fork-capabilities.md#signed-in-app-updates)。
+应用最多每 24 小时自动检查一次 Fork 的 GitHub Releases，成功结果缓存 24 小时；临时失败 5 分钟后重试，匿名 API 限流则缓存到 GitHub 返回的重置时间。手动检查始终绕过缓存。检查会优先使用本机已登录的 `gh` CLI，无法使用时才回退到匿名 GitHub API，并分别提示额度耗尽、网络失败、暂无 Release、已是最新版本或发现新版本。只有规范化的 `vX.Y.Z-fork` 标签会成为更新候选，发现新版本后会在应用内下载并验证签名，只有用户确认后才安装并重启 Panel。macOS 使用原生前台确认弹窗，其他平台继续使用 Tauri 对话框。仅接受 Fork 签名的更新；构建时未配置更新公钥会明确提示不可安装。详见[更新包配置](docs/fork-capabilities.md#signed-in-app-updates)。
 
 App bundle 内包含 Panel runtime、`panelctl`、两个 Panel Skills，以及用于运行它们的官方签名 Node.js runtime。macOS 安装器优先使用 `CODEX_PANEL_CODESIGN_IDENTITY`，其次使用可复用的本机 Apple Development 身份；两者都不可用时回退到 ad-hoc 签名。Windows 正式发行要求配置 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT`，并生成带 Authenticode 签名的 NSIS 安装包。
 
