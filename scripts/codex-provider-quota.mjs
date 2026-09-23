@@ -1,5 +1,7 @@
 // ChatGPT 26.917.51856: keep the native composer and submission checks, but
 // exclude ChatGPT account quotas when local Codex uses a custom provider.
+import { readFile } from "node:fs/promises";
+
 export const CODEX_PROVIDER_QUOTA_ASSET = "app-primary-aaee46b7f0ce.js";
 const accountQuotaGate = "cn=ye||$e||ot||nt||Rt";
 const providerQuotaGate = "cn=ye||$e||ot||((nt||Rt)&&!(()=>{const target=Me.get(tv,Qe);const provider=Me.get(zl,Qe)??Me.get(Hf,target).data?.model_provider;return et===`local`&&typeof provider===`string`&&provider!==`openai`})())";
@@ -10,7 +12,15 @@ export function rewriteCodexProviderQuota(source) {
   return source.replace(accountQuotaGate, providerQuotaGate);
 }
 
-export async function installCodexProviderQuotaFix(cdp, report = console.error) {
+export async function installCodexProviderQuotaFix(cdp, preferencesFile, report = console.error) {
+  if (!preferencesFile) return;
+  try {
+    const preferences = JSON.parse(await readFile(preferencesFile, "utf8"));
+    if (preferences.customProviderQuotaFix !== true) return;
+  } catch (error) {
+    report(`Panel custom-provider quota preference unavailable: ${error.message}`);
+    return;
+  }
   cdp.on("Fetch.requestPaused", async (event) => {
     const { requestId, responseStatusCode } = event;
     let fulfilled = false;

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import vm from "node:vm";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   CODEX_PROVIDER_QUOTA_ASSET,
   installCodexProviderQuotaFix,
@@ -38,7 +41,17 @@ test("custom local provider can submit despite account quotas; native blockers a
   ]) assert.equal(patched(options).submit(), false, JSON.stringify(options));
 });
 
-test("only the supported native asset is intercepted, and failed or unknown responses are released", async () => {
+test("the saved switch controls interception of the supported native asset", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "panel-quota-switch-"));
+  t.after(() => rm(directory, {recursive: true, force: true}));
+  const preferencesFile = join(directory, "preferences.json");
+  const untouchedCdp = {on() {assert.fail("disabled preference installed an interceptor");}, send() {assert.fail("disabled preference enabled interception");}};
+  await installCodexProviderQuotaFix(untouchedCdp);
+  for (const preferences of [{}, {customProviderQuotaFix: false}]) {
+    await writeFile(preferencesFile, JSON.stringify(preferences));
+    await installCodexProviderQuotaFix(untouchedCdp, preferencesFile);
+  }
+  await writeFile(preferencesFile, JSON.stringify({customProviderQuotaFix: true}));
   for (const scenario of ["supported", "unknown", "read-error", "http-error"]) {
     let handler;
     const calls = [];
@@ -53,7 +66,7 @@ test("only the supported native asset is intercepted, and failed or unknown resp
         return {};
       },
     };
-    await installCodexProviderQuotaFix(cdp, () => {});
+    await installCodexProviderQuotaFix(cdp, preferencesFile, () => {});
     assert.deepEqual(calls[0].params.patterns, [{urlPattern: `*/assets/${CODEX_PROVIDER_QUOTA_ASSET}`, resourceType: "Script", requestStage: "Response"}]);
     await handler({requestId: "native-script", responseStatusCode: scenario === "http-error" ? 404 : 200, responseHeaders: [{name: "Content-Type", value: "text/javascript"}, {name: "Content-Length", value: "1"}]});
     const final = calls.at(-1);
@@ -66,4 +79,6 @@ test("only the supported native asset is intercepted, and failed or unknown resp
       assert.equal(final.method, "Fetch.continueRequest");
     }
   }
+  await writeFile(preferencesFile, JSON.stringify({customProviderQuotaFix: false}));
+  await installCodexProviderQuotaFix(untouchedCdp, preferencesFile);
 });

@@ -14,7 +14,7 @@ export type LauncherSnapshot = {
   updateReady: boolean;
   appPath: string | null;
 };
-export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean };
+export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; customProviderQuotaFix: boolean };
 export type LauncherState = {
   snapshot: LauncherSnapshot;
   preferences: LauncherPreferences;
@@ -257,6 +257,8 @@ export function App() {
               <Heading as="h2" size="2" id="displayTitle" mb="2">显示与系统</Heading>
               <div className="preference-rows">
                 <Setting id="hideUsageBanner" title="隐藏额度耗尽提示" detail="收起对话中的额度横幅，不改变实际额度" checked={preferences?.hideUsageBanner ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("hideUsageBanner", enabled)} />
+                <Separator size="4" />
+                <Setting id="customProviderQuotaFix" title="修复自定义 API 发送限制" detail="避免账号额度误禁用自定义 API 发送；修改后请在“运行概览”重启服务" checked={preferences?.customProviderQuotaFix ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("customProviderQuotaFix", enabled)} />
                 <Separator size="4" />
                 <Setting id="followSystemAppearance" title="跟随系统外观" detail="自动适配 macOS 的浅色或深色模式" checked={followSystemAppearance} onChange={enabled => { setFollowSystemAppearance(enabled); window.localStorage.setItem("codex-panel.follow-system-appearance", String(enabled)); window.dispatchEvent(new CustomEvent("codex-panel-appearance-preference", { detail: enabled })); }} />
                 <Separator size="4" />

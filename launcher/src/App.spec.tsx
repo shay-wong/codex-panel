@@ -19,7 +19,7 @@ it("keeps launcher feedback, live status and global preferences working through 
       updateMessage: "尚未检查更新。", updateAvailable: false, updateReady: false,
       appPath: "/disposable/Codex.app",
     },
-    preferences: { autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false },
+    preferences: { autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, customProviderQuotaFix: false },
     autostart: true, dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
   };
   let statusListener!: (event: { payload: LauncherSnapshot }) => void;
@@ -125,7 +125,15 @@ it("keeps launcher feedback, live status and global preferences working through 
   await click(autoConnect);
   expect(autoOpen.disabled).toBe(false);
   await click(screen.getByRole("switch", { name: "隐藏额度耗尽提示" }));
-  expect(current.preferences).toEqual({ autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true });
+  expect(current.preferences).toEqual({ autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, customProviderQuotaFix: false });
+  const quotaFix = screen.getByRole("switch", { name: "修复自定义 API 发送限制" });
+  await click(quotaFix);
+  expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "customProviderQuotaFix", enabled: true });
+  expect(quotaFix.getAttribute("aria-checked")).toBe("true");
+  await click(quotaFix);
+  expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "customProviderQuotaFix", enabled: false });
+  expect(quotaFix.getAttribute("aria-checked")).toBe("false");
+  expect(current.preferences.hideUsageBanner).toBe(true);
   await click(screen.getByRole("switch", { name: "登录时启动" }));
   expect(invoke).toHaveBeenCalledWith("set_autostart", { enabled: false });
   expect(screen.getByRole("switch", { name: "登录时启动" }).getAttribute("aria-checked")).toBe("false");

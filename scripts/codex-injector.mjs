@@ -2446,7 +2446,7 @@ async function injectTarget(
   try {
     await cdp.send("Page.enable");
     await cdp.send("Runtime.enable");
-    if (keepAlive) await installCodexProviderQuotaFix(cdp);
+    if (keepAlive) await installCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"));
     if (keepAlive) await hostBridge.install();
     await waitForRendererReady(cdp, 15_000);
     await cdp.send("Page.setBypassCSP", { enabled: true });
