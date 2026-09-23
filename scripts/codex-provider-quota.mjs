@@ -13,16 +13,29 @@ export function rewriteCodexProviderQuota(source) {
 }
 
 export async function installCodexProviderQuotaFix(cdp, preferencesFile, report = console.error) {
-  if (!preferencesFile) return;
+  if (!preferencesFile) {
+    report("Panel custom-provider quota fix disabled: no preferences file configured.");
+    return;
+  }
   try {
     const preferences = JSON.parse(await readFile(preferencesFile, "utf8"));
-    if (preferences.customProviderQuotaFix !== true) return;
+    if (preferences.customProviderQuotaFix !== true) {
+      report("Panel custom-provider quota fix disabled by preference.");
+      return;
+    }
   } catch (error) {
     report(`Panel custom-provider quota preference unavailable: ${error.message}`);
     return;
   }
+  cdp.on("Network.responseReceived", ({ response, type }) => {
+    const asset = response.url.split("/").at(-1)?.split(/[?#]/)[0];
+    if (!/^app-primary-[\da-f]+\.js$/.test(asset ?? "")) return;
+    report(`Panel custom-provider quota script loaded: asset=${asset} type=${type} status=${response.status} diskCache=${response.fromDiskCache === true} serviceWorker=${response.fromServiceWorker === true}`);
+  });
+  await cdp.send("Network.enable");
   cdp.on("Fetch.requestPaused", async (event) => {
     const { requestId, responseStatusCode } = event;
+    report(`Panel custom-provider quota script intercepted: type=${event.resourceType} status=${responseStatusCode ?? "none"}`);
     let fulfilled = false;
     try {
       if (responseStatusCode >= 200 && responseStatusCode < 300) {
@@ -59,4 +72,5 @@ export async function installCodexProviderQuotaFix(cdp, preferencesFile, report 
       requestStage: "Response",
     }],
   });
+  report("Panel custom-provider quota fix enabled; waiting for the native composer script.");
 }

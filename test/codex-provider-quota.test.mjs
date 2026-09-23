@@ -46,17 +46,17 @@ test("the saved switch controls interception of the supported native asset", asy
   t.after(() => rm(directory, {recursive: true, force: true}));
   const preferencesFile = join(directory, "preferences.json");
   const untouchedCdp = {on() {assert.fail("disabled preference installed an interceptor");}, send() {assert.fail("disabled preference enabled interception");}};
-  await installCodexProviderQuotaFix(untouchedCdp);
+  await installCodexProviderQuotaFix(untouchedCdp, undefined, () => {});
   for (const preferences of [{}, {customProviderQuotaFix: false}]) {
     await writeFile(preferencesFile, JSON.stringify(preferences));
-    await installCodexProviderQuotaFix(untouchedCdp, preferencesFile);
+    await installCodexProviderQuotaFix(untouchedCdp, preferencesFile, () => {});
   }
   await writeFile(preferencesFile, JSON.stringify({customProviderQuotaFix: true}));
   for (const scenario of ["supported", "unknown", "read-error", "http-error"]) {
-    let handler;
+    const handlers = new Map();
     const calls = [];
     const cdp = {
-      on(event, callback) { assert.equal(event, "Fetch.requestPaused"); handler = callback; },
+      on(event, callback) { handlers.set(event, callback); },
       async send(method, params) {
         calls.push({method, params});
         if (method === "Fetch.getResponseBody") {
@@ -66,9 +66,13 @@ test("the saved switch controls interception of the supported native asset", asy
         return {};
       },
     };
-    await installCodexProviderQuotaFix(cdp, preferencesFile, () => {});
-    assert.deepEqual(calls[0].params.patterns, [{urlPattern: `*/assets/${CODEX_PROVIDER_QUOTA_ASSET}`, resourceType: "Script", requestStage: "Response"}]);
-    await handler({requestId: "native-script", responseStatusCode: scenario === "http-error" ? 404 : 200, responseHeaders: [{name: "Content-Type", value: "text/javascript"}, {name: "Content-Length", value: "1"}]});
+    const reports = [];
+    await installCodexProviderQuotaFix(cdp, preferencesFile, message => reports.push(message));
+    assert.deepEqual(calls.find(call => call.method === "Fetch.enable").params.patterns, [{urlPattern: `*/assets/${CODEX_PROVIDER_QUOTA_ASSET}`, resourceType: "Script", requestStage: "Response"}]);
+    handlers.get("Network.responseReceived")({response: {url: `app://-/assets/${CODEX_PROVIDER_QUOTA_ASSET}?private-value`, status: 200, fromDiskCache: true}, type: "Script"});
+    assert.match(reports.at(-1), /type=Script status=200 diskCache=true/);
+    assert.doesNotMatch(reports.at(-1), /private-value/);
+    await handlers.get("Fetch.requestPaused")({requestId: "native-script", resourceType: "Script", responseStatusCode: scenario === "http-error" ? 404 : 200, responseHeaders: [{name: "Content-Type", value: "text/javascript"}, {name: "Content-Length", value: "1"}]});
     const final = calls.at(-1);
     if (scenario === "supported") {
       assert.equal(final.method, "Fetch.fulfillRequest");
@@ -80,5 +84,5 @@ test("the saved switch controls interception of the supported native asset", asy
     }
   }
   await writeFile(preferencesFile, JSON.stringify({customProviderQuotaFix: false}));
-  await installCodexProviderQuotaFix(untouchedCdp, preferencesFile);
+  await installCodexProviderQuotaFix(untouchedCdp, preferencesFile, () => {});
 });
