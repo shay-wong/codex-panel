@@ -379,7 +379,7 @@ test("managed private-CDP spawn failures wait for another open request", async (
   assert.match(source, /idleAfterNormalExit = true;\s*console\.error\(`Waiting for Codex launch:/);
 });
 
-test("CSP bypass is activated by one controlled renderer reload", () => {
+test("CSP bypass and quota script interception use one cache-bypassing renderer reload", async () => {
   assert.match(
     source,
     /export async function waitForRendererReady\([\s\S]*?document\.readyState[\s\S]*?state\?\.href\?\.startsWith\("app:\/\/"\)/,
@@ -400,6 +400,24 @@ test("CSP bypass is activated by one controlled renderer reload", () => {
     injectionSource,
     /reconcileInjectionRuntime\([\s\S]*?reloadRenderer: \(\) => reloadRenderer\(cdp, 15_000\)/,
   );
+  const reloadSource = source.slice(source.indexOf("export async function reloadRenderer("), source.indexOf("function tcpCdpRuntime("));
+  const reload = vm.runInNewContext(`${reloadSource.replace("export ", "")}; reloadRenderer`);
+  let listening = false;
+  let finishLoad;
+  await reload({
+    waitFor(event, timeout) {
+      assert.equal(event, "Page.loadEventFired");
+      assert.equal(timeout, 15_000);
+      listening = true;
+      return new Promise(resolve => { finishLoad = resolve; });
+    },
+    async send(method, options) {
+      assert.equal(listening, true);
+      assert.equal(method, "Page.reload");
+      assert.equal(options?.ignoreCache, true, "cached Electron modules skip the quota interceptor");
+      finishLoad();
+    },
+  }, 15_000);
 });
 
 test("injector cleanup never terminates the launched ChatGPT process", () => {

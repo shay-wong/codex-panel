@@ -660,7 +660,8 @@ export async function waitForRendererReady(cdp, timeoutMs) {
 export async function reloadRenderer(cdp, timeoutMs) {
   await Promise.all([
     cdp.waitFor("Page.loadEventFired", timeoutMs),
-    cdp.send("Page.reload"),
+    // Electron otherwise reuses cached modules without reaching Fetch interception.
+    cdp.send("Page.reload", { ignoreCache: true }),
   ]);
 }
 
