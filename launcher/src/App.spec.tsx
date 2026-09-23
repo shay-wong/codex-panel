@@ -113,6 +113,7 @@ it("keeps launcher feedback, live status and global preferences working through 
   await publish({ phase: "waiting" });
   expect(document.getElementById("codexStatus")?.textContent).toBe("正在等待连接");
   expect(document.getElementById("embeddedStatus")?.textContent).toBe("尚未就绪");
+  expect(button("primaryAction").textContent).toContain("启动 Codex 并打开");
 
   fireEvent.mouseDown(screen.getByRole("tab", { name: /偏好设置/ }), { button: 0, ctrlKey: false });
   const autoConnect = screen.getByRole("switch", { name: "启动时连接 Codex" });

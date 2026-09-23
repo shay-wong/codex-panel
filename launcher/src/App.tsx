@@ -65,6 +65,17 @@ export function App() {
   const needsStart = snapshot.phase === "stopped" || snapshot.phase === "error";
   const opening = !needsStart && snapshot.openRequestPending && ready;
   const queued = !needsStart && snapshot.openRequestPending && !ready;
+  const primaryLabel = needsStart
+    ? "启动服务并打开"
+    : opening
+      ? "正在打开…"
+      : queued
+        ? "等待连接"
+        : ready
+          ? "打开面板"
+          : snapshot.phase === "waiting"
+            ? "启动 Codex 并打开"
+            : "等待连接";
 
   const [followSystemAppearance, setFollowSystemAppearance] = useState(() => window.localStorage.getItem("codex-panel.follow-system-appearance") !== "false");
 
@@ -193,7 +204,7 @@ export function App() {
         </Tabs.List>
         <div className="sidebar-footer">
           <Button id="primaryAction" ref={primaryButton} highContrast {...actionProps("open_embedded_panel", opening || queued)}>
-            <LinearIcon name="panel" />{needsStart ? "启动并打开" : opening ? "正在打开…" : queued ? "等待连接" : "打开面板"}
+            <LinearIcon name="panel" />{primaryLabel}
           </Button>
         </div>
       </aside>

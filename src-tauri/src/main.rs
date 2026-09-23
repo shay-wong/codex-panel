@@ -1527,7 +1527,7 @@ fn process_group_is_running(pid: u32) -> bool {
 #[cfg(target_os = "macos")]
 fn signal_pending_panel_open(app: &AppHandle, state: &Arc<LauncherState>) -> Result<(), String> {
     let snapshot = state.snapshot.lock().unwrap();
-    if !snapshot.open_request_pending || snapshot.open_signal_pid.is_none() {
+    if !snapshot.open_request_pending {
         return Ok(());
     }
     drop(snapshot);
