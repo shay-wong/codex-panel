@@ -32,6 +32,7 @@ import {
   stopResidentInjectors,
 } from "./codex-injector-runtime.mjs";
 import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
+import { installCodexProviderQuotaFix } from "./codex-provider-quota.mjs";
 import { createPanelSupervisor } from "./panel-supervisor.mjs";
 import {
   CdpPipeBrowser,
@@ -2445,6 +2446,7 @@ async function injectTarget(
   try {
     await cdp.send("Page.enable");
     await cdp.send("Runtime.enable");
+    if (keepAlive) await installCodexProviderQuotaFix(cdp);
     if (keepAlive) await hostBridge.install();
     await waitForRendererReady(cdp, 15_000);
     await cdp.send("Page.setBypassCSP", { enabled: true });
@@ -2606,8 +2608,10 @@ async function injectAll(
 
 async function currentInjectionSource() {
   const userScript = await readFile(injectionPath, "utf8");
+  const providerQuotaFix = await readFile(new URL("./codex-provider-quota.mjs", import.meta.url), "utf8");
   const sourceHash = createHash("sha256").update(JSON.stringify({
     userScript,
+    providerQuotaFix,
     managedOrigin: panelOrigin,
     pageUrl: panelPageUrl,
     privatePanelMode,

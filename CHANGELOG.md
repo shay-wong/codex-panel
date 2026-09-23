@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Added compatibility for ChatGPT desktop 26.917.51856 so local Codex conversations using a custom model provider can submit despite exhausted ChatGPT account usage, while keeping the existing login and native submission checks.
+
 - Fixed Jira conversation binding and planning initialization failing with `INTERNAL_ERROR` for large model catalogs; chat model discovery now reads paginated metadata without exporting model prompts.
 
 - Fixed the unresponsive retry button on the Panel loading error page. **Reload** now retries within the open Panel; a disconnected launcher prompts you to start or restart its service.
