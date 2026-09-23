@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { Badge, Box, Button, Callout, Card, Flex, Heading, IconButton, Separator, Switch, Tabs, Text, Tooltip } from "@radix-ui/themes";
 import { LinearIcon } from "../../web/src/components/LinearIcon";
 
@@ -55,7 +55,7 @@ export function App() {
   const [workflowUrl, setWorkflowUrl] = useState("");
   const [view, setView] = useState("overview");
   const workflowFrame = useRef<HTMLIFrameElement>(null);
-  const primaryButton = useRef<HTMLButtonElement>(null);
+  const panelButton = useRef<HTMLButtonElement>(null);
   const busyRef = useRef(false);
   const feedbackTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const busy = Boolean(busyAction);
@@ -65,7 +65,7 @@ export function App() {
   const needsStart = snapshot.phase === "stopped" || snapshot.phase === "error";
   const opening = !needsStart && snapshot.openRequestPending && ready;
   const queued = !needsStart && snapshot.openRequestPending && !ready;
-  const primaryLabel = needsStart
+  const panelLabel = needsStart
     ? "启动服务并打开"
     : opening
       ? "正在打开…"
@@ -74,8 +74,8 @@ export function App() {
         : ready
           ? "打开面板"
           : snapshot.phase === "waiting"
-            ? "启动 Codex 并打开"
-            : "等待连接";
+            ? "等待连接"
+            : "打开面板";
 
   const [followSystemAppearance, setFollowSystemAppearance] = useState(() => window.localStorage.getItem("codex-panel.follow-system-appearance") !== "false");
 
@@ -101,7 +101,7 @@ export function App() {
     function onKey(event: KeyboardEvent) {
       if (event.metaKey && event.shiftKey && event.key.toLowerCase() === "p") {
         event.preventDefault();
-        primaryButton.current?.click();
+        panelButton.current?.click();
       }
     }
     document.addEventListener("keydown", onKey);
@@ -183,6 +183,9 @@ export function App() {
   function iconAction(id: string, action: string, title: string, icon: ReactNode, disabled = false) {
     return <Tooltip content={title}><IconButton id={id} aria-label={title} variant="ghost" size="2" {...actionProps(action, disabled)}>{icon}</IconButton></Tooltip>;
   }
+  function cardAction(id: string, action: string, title: string, icon: ReactNode, disabled = false, highContrast = false, buttonRef?: Ref<HTMLButtonElement>) {
+    return <Tooltip content={title}><IconButton ref={buttonRef} id={id} aria-label={title} variant={highContrast ? "solid" : "soft"} highContrast={highContrast} size="2" {...actionProps(action, disabled)}>{icon}</IconButton></Tooltip>;
+  }
 
   const componentStates = [
     { id: "panel", label: "Panel 服务", text: snapshot.phase === "error" ? "启动异常" : hasProcess ? `运行中 · PID ${snapshot.childPid}` : "未启动", tone: snapshot.phase === "error" ? "error" : hasProcess ? "running" : "stopped" },
@@ -202,16 +205,14 @@ export function App() {
           <Tabs.Trigger value="preferences"><LinearIcon name="settings" />偏好设置</Tabs.Trigger>
           <Tabs.Trigger value="about"><LinearIcon name="file" />关于</Tabs.Trigger>
         </Tabs.List>
-        <div className="sidebar-footer">
-          <Button id="primaryAction" ref={primaryButton} highContrast {...actionProps("open_embedded_panel", opening || queued)}>
-            <LinearIcon name="panel" />{primaryLabel}
-          </Button>
-        </div>
       </aside>
     <main key={workflowUrl ? "workflow" : view} className={`launcher-main${workflowUrl ? " workflow-page" : ""}`}>
       {!workflowUrl && <header className="page-heading">
         <Box><Heading as="h2" size="5">{view === "overview" ? "运行概览" : view === "preferences" ? "偏好设置" : "关于"}</Heading><Text as="p" size="1" color="gray" mt="1">{view === "overview" ? "管理本机服务与 Codex 连接" : view === "preferences" ? "所有项目共用的工作流与使用偏好" : "应用信息与版本更新"}</Text></Box>
-        {iconAction("refresh", "launcher_ui_state", "刷新状态", <span className="refresh-icon" aria-hidden="true">↻</span>)}
+        <Flex className="page-heading-actions" align="center" gap="2">
+          {iconAction("refresh", "launcher_ui_state", "刷新状态", <span className="refresh-icon" aria-hidden="true">↻</span>)}
+          {iconAction("browserPanel", "open_browser_panel", "在浏览器中打开", <LinearIcon name="openExternal" />, !hasProcess)}
+        </Flex>
       </header>}
       {error && <Callout.Root id="errorNotice" color="red" size="1" role="alert" mb="4">
         <Callout.Icon><LinearIcon name="alert" /></Callout.Icon>
@@ -228,15 +229,16 @@ export function App() {
                 </Box>
               </Flex>
                   <Text as="p" id="message" size="2" color="gray" mt="2" aria-live="polite">{snapshot.message}</Text>
-              <Flex className="lifecycle-actions" align="center" gap="2" wrap="wrap" mt="4" aria-label="服务控制">
-                <Button id="serviceToggle" variant="soft" {...actionProps(hasProcess ? "stop_service" : "start_service")}><LinearIcon name={hasProcess ? "pause" : "play"} />{hasProcess ? "停止服务" : "启动服务"}</Button>
-                <Button id="restartService" variant="soft" {...actionProps("reconnect_codex", !hasProcess)}><span className="action-icon" aria-hidden="true">↻</span>重启服务</Button>
-                <Button id="browserPanel" variant="soft" {...actionProps("open_browser_panel", !hasProcess)}><LinearIcon name="openExternal" />在浏览器中打开</Button>
-              </Flex>
             </section>
             <div className="status-card-grid" aria-label="组件状态">{componentStates.map(component => <div className={`status-card ${component.tone}`} key={component.id} id={`${component.id}Component`}>
               <Flex align="center" justify="between" gap="3"><Text size="1" color="gray">{component.label}</Text><span className={`status-dot ${component.tone}`} /></Flex>
               <Text id={`${component.id}Status`} as="div" size="2" weight="medium" mt="3">{component.text}</Text>
+              {component.id === "panel" && <Flex className="card-actions" gap="2" wrap="wrap" aria-label="服务控制">
+                {cardAction("serviceToggle", hasProcess ? "stop_service" : "start_service", hasProcess ? "停止服务" : "启动服务", <LinearIcon name={hasProcess ? "pause" : "play"} />)}
+                {cardAction("restartService", "reconnect_codex", "重启服务", <span className="action-icon" aria-hidden="true">↻</span>, !hasProcess)}
+              </Flex>}
+              {component.id === "codex" && <Flex className="card-actions">{cardAction("openCodex", "open_codex", "打开 Codex", <LinearIcon name="openExternal" />)}</Flex>}
+              {component.id === "embedded" && <Flex className="card-actions">{cardAction("panelAction", "open_embedded_panel", panelLabel, <LinearIcon name="panel" />, opening || queued, false, panelButton)}</Flex>}
             </div>)}</div>
             <Box mt="4">
               <Flex gap="2" wrap="wrap">

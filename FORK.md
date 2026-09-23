@@ -176,7 +176,7 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 
 - 错误提示布局修复：`launcher/src/launcher.css` 的 `#errorNotice` 使用单行 Flex，正文可收缩换行，关闭按钮保持右侧。沿用本节生命周期和用户文档；合并时避免恢复 Radix Callout 将正文与按钮排在同列的默认网格。验证：隔离的模拟启动器浏览器检查短提示、窄窗口长提示及关闭操作；来源定位：`git log -S'#errorNotice' -- launcher/src/launcher.css`。
 
-界面采用固定左侧导航：运行概览使用状态摘要、文字操作和三行状态列表；偏好设置使用分组表单并突出全局工作流入口；关于页集中展示应用版本、检查更新、安装与发布说明。打开面板的主操作固定在侧栏底部，内容区单独滚动；原有服务与保存契约保持不变。
+界面采用固定左侧导航：运行概览使用状态摘要、文字操作和三行状态列表；偏好设置使用分组表单并突出全局工作流入口；关于页集中展示应用版本、检查更新、安装与发布说明。打开面板的主操作位于运行概览的状态摘要下方，与服务维护操作保持同一内容区；内容区单独滚动，原有服务与保存契约保持不变。
 
 管理界面源码位于 `launcher/`，使用 React 与 `@radix-ui/themes` 3.3，工作流编辑器使用相同控件库；不再维护手写 `src-tauri/ui/index.html`。`npm run build:launcher` 通过 `launcher/vite.config.ts` 生成 `dist/launcher`，Tauri 的 `frontendDist` 指向 `../dist/launcher`；`app:prepare` 先构建 Web 和 launcher 再打包 runtime。保留既有 Tauri command/event 契约及 Rust 进程管理，`src-tauri/ui/` 的 PNG 图标仍供 Rust `include_bytes!` 和 Vite public 资源使用。当前 UI 迁移可用 `git log -S'@radix-ui/themes' -- launcher/src/App.tsx` 定位；验证使用 launcher TypeScript 检查与 `npm run build:launcher`，实际 App 安装仍需单独授权。
 

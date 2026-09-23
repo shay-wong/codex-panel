@@ -59,6 +59,12 @@ it("keeps launcher feedback, live status and global preferences working through 
   };
   const view = render(<Theme><App /></Theme>);
   await act(async () => {});
+  expect(document.getElementById("embeddedComponent")?.contains(button("panelAction"))).toBe(true);
+  expect(document.getElementById("panelComponent")?.contains(button("serviceToggle"))).toBe(true);
+  expect(document.getElementById("panelComponent")?.contains(button("restartService"))).toBe(true);
+  expect(document.getElementById("codexComponent")?.contains(button("openCodex"))).toBe(true);
+  expect(document.querySelector(".page-heading")?.contains(button("browserPanel"))).toBe(true);
+  expect(document.querySelector(".sidebar-footer")).toBeNull();
   expect(screen.queryByRole("button", { name: "检查更新" })).toBeNull();
   fireEvent.mouseDown(screen.getByRole("tab", { name: /关于/ }), { button: 0, ctrlKey: false });
   expect(screen.getByRole("button", { name: "检查更新" })).toBeTruthy();
@@ -69,17 +75,21 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(invoke).toHaveBeenCalledWith("install_available_update");
   fireEvent.mouseDown(screen.getByRole("tab", { name: /运行概览/ }), { button: 0, ctrlKey: false });
 
-  await click(button("primaryAction"));
-  expect(button("primaryAction").textContent).toContain("等待连接");
-  expect(button("primaryAction").disabled).toBe(true);
+  await click(button("panelAction"));
+  expect(button("panelAction").getAttribute("aria-label")).toBe("等待连接");
+  expect(button("panelAction").disabled).toBe(true);
   await advance(300);
-  expect(button("primaryAction").disabled).toBe(true);
+  expect(button("panelAction").disabled).toBe(true);
   await publish({ phase: "running", openRequestPending: false });
-  expect(button("primaryAction").textContent).toBe("打开面板");
-  expect(button("primaryAction").disabled).toBe(false);
+  expect(button("panelAction").getAttribute("aria-label")).toBe("打开面板");
+  expect(button("panelAction").disabled).toBe(false);
   expect(document.getElementById("panelStatus")?.textContent).toBe("运行中 · PID 123");
   expect(document.getElementById("codexStatus")?.textContent).toBe("连接已就绪");
   expect(document.getElementById("embeddedStatus")?.textContent).toBe("可以打开");
+
+  await click(button("openCodex"));
+  await advance(300);
+  expect(invoke).toHaveBeenCalledWith("open_codex");
 
   await click(button("restartService"));
   expect(button("restartService").getAttribute("aria-busy")).toBe("true");
@@ -113,7 +123,7 @@ it("keeps launcher feedback, live status and global preferences working through 
   await publish({ phase: "waiting" });
   expect(document.getElementById("codexStatus")?.textContent).toBe("正在等待连接");
   expect(document.getElementById("embeddedStatus")?.textContent).toBe("尚未就绪");
-  expect(button("primaryAction").textContent).toContain("启动 Codex 并打开");
+  expect(button("panelAction").getAttribute("aria-label")).toContain("等待连接");
 
   fireEvent.mouseDown(screen.getByRole("tab", { name: /偏好设置/ }), { button: 0, ctrlKey: false });
   const autoConnect = screen.getByRole("switch", { name: "启动时连接 Codex" });

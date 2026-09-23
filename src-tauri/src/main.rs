@@ -2458,6 +2458,28 @@ fn open_browser_panel(state: State<'_, Arc<LauncherState>>) -> Result<(), String
 }
 
 #[tauri::command]
+fn open_codex(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+) -> Result<(), String> {
+    let app_path = state
+        .snapshot
+        .lock()
+        .unwrap()
+        .app_path
+        .clone()
+        .map(PathBuf::from)
+        .or_else(|| {
+            app.path()
+                .home_dir()
+                .ok()
+                .and_then(|home| find_codex_app(&home))
+        })
+        .ok_or_else(missing_codex_app_message)?;
+    open_with_system(&app_path.to_string_lossy())
+}
+
+#[tauri::command]
 fn workflow_settings_url(state: State<'_, Arc<LauncherState>>) -> Result<String, String> {
     if state.child.lock().unwrap().is_none() {
         return Err("请先启动 Panel 服务，再配置工作流".into());
@@ -2840,6 +2862,7 @@ fn main() {
             reconnect_codex,
             open_embedded_panel,
             open_browser_panel,
+            open_codex,
             workflow_settings_url,
             open_log,
             reveal_data,
