@@ -133,7 +133,7 @@ npm run codex:install
 
 启动器将“运行概览”和“偏好设置”分开。进入“偏好设置 → 显示”可开启“隐藏额度耗尽提示”，默认关闭。开启后会在连接期间隐藏 Codex 和工作额度耗尽横幅，关闭后恢复；选择会记住并在重启后生效，不改变账户额度。详见[横幅显示设置](docs/fork-capabilities.md#exhausted-usage-banner-visibility)。
 
-针对 ChatGPT 桌面版 26.917.51856，可在启动器 **偏好设置 → 显示与系统** 开启 **移除账号额度不足时 API 发送限制**，首次安装适配时自动重载一次 Codex 界面。之后开关即时生效，无需重启 Panel 服务或刷新 Codex；未发送的输入保持不变。此开关默认关闭，独立于隐藏额度提示；关闭后立即恢复原有额度判断。开启时，Panel 适配本地 Codex 输入框，避免登录账号额度耗尽时错误禁用自定义模型服务的发送入口，保留现有登录和服务凭据。兼容范围与验证限制见[自定义服务发送](docs/fork-capabilities.md#custom-provider-send-availability)。
+针对 ChatGPT 桌面版（已核对 26.917.51856 和 26.917.71314 的源码结构），可在启动器 **偏好设置 → 显示与系统** 开启 **移除账号额度不足时 API 发送限制**，首次安装适配时自动重载一次 Codex 界面。之后开关即时生效，无需重启 Panel 服务或刷新 Codex；未发送的输入保持不变。此开关默认关闭，独立于隐藏额度提示；关闭后立即恢复原有额度判断。开启时，Panel 适配本地 Codex 输入框，避免登录账号额度耗尽时错误禁用自定义模型服务的发送入口，保留现有登录和服务凭据。Panel 自动发现当前输入框模块并识别额度与 provider 代码结构，文件哈希或压缩变量名变化不再需要逐版本登记；无法识别的结构保持原行为。兼容范围与验证限制见[自定义服务发送](docs/fork-capabilities.md#custom-provider-send-availability)。
 
 `npm run codex:install` 会创建或刷新 `~/Applications/Codex Panel.app`，删除之前由本项目管理的 `~/Applications/Codex.app` 引导器，并迁移旧 Swift 启动器。桌面端基于 Tauri/Rust，固定使用 `~/Library/Application Support/Codex Panel/data` 数据目录，因此移动或删除源仓库也不会使它失效。可以从 Finder 或明确路径打开：
 

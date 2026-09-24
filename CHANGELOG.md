@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fixed custom-provider sending after updating to ChatGPT desktop 26.917.71314. The adapter now discovers and matches the composer by code structure, tolerates asset hash and minified symbol changes, and retains 26.917.51856 compatibility.
+
 - Adopted the upstream native macOS update confirmation dialog, keeping Fork release and signature validation while bringing the confirmation window to the front; other platforms retain the existing Tauri dialog.
 
 - Moved the main Open Panel action from the sidebar into Runtime overview beside the service status and maintenance controls; its state-based labels remain available without sidebar wrapping.
