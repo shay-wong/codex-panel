@@ -233,6 +233,32 @@
       #${ENTRY_ID}:not([aria-current="page"]) {
         color: var(--button-text-color, var(--color-token-foreground, inherit));
       }
+      #${ENTRY_ID}[data-codex-panel-rail="true"] {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        align-self: center;
+        flex: none;
+        width: var(--height-token-nav-row, 36px);
+        height: var(--height-token-nav-row, 36px);
+        padding: 0;
+        margin-top: 8px;
+        color: var(--color-text-tertiary, var(--color-token-text-secondary, #888));
+        background: transparent;
+        border-radius: var(--radius-token-row, 10px);
+        -webkit-app-region: no-drag;
+      }
+      #${ENTRY_ID}[data-codex-panel-rail="true"][aria-current="page"] {
+        color: var(--color-text-primary, var(--color-token-foreground, #222));
+        background: var(--color-token-list-hover-background, color-mix(in srgb, currentColor 8%, transparent));
+      }
+      #${ENTRY_ID}[data-codex-panel-rail="true"]:hover {
+        background: var(--color-token-list-hover-background, color-mix(in srgb, currentColor 8%, transparent));
+      }
+      #${ENTRY_ID}[data-codex-panel-rail="true"] svg {
+        width: 20px;
+        height: 20px;
+      }
       #${ENTRY_ID}[aria-current="page"] {
         background: var(--color-token-list-hover-background, color-mix(in srgb, currentColor 8%, transparent));
         color: var(--color-token-foreground, inherit);
@@ -367,22 +393,25 @@
   }
 
   function findReferenceButton() {
-    const rail = document.querySelector("nav[data-app-navigation-rail]");
-    const explore = Array.from(rail?.querySelectorAll("button") ?? []).find((button) => (
-      button.getAttribute(OWNED_ATTRIBUTE) !== "true"
-      && buttonMatches(button.querySelector(".sr-only"), EXPLORE_LABELS)
-    ));
+    // 新版可能保留多个侧边栏；跳过隐藏或 inert 的旧节点，不能只检查第一个。
+    const available = (node) => !node.closest("[inert], [hidden]")
+      && node.getBoundingClientRect().height > 0;
+    const rail = Array.from(document.querySelectorAll("nav[data-app-navigation-rail]")).find(available);
+    const explore = Array.from(rail?.querySelectorAll("button") || []).find((button) =>
+      button.getAttribute(OWNED_ATTRIBUTE) !== "true" && buttonMatches(button.querySelector(".sr-only"), EXPLORE_LABELS));
     if (explore) return explore;
-    const sidebar = document.querySelector("[data-slate-sidebar-content]");
+    const sidebar = Array.from(document.querySelectorAll("[data-slate-sidebar-content]"))
+      .find(available);
     const destinations = Array.from(sidebar?.querySelectorAll("[data-sidebar-destination]") || [])
       .filter((node) => node.getAttribute(OWNED_ATTRIBUTE) !== "true"
-        && !node.closest("[inert]") && node.getBoundingClientRect().height > 0);
+        && available(node));
     if (destinations.length > 0) {
       return destinations.find((node) => buttonMatches(node, PLUGIN_LABELS)) || destinations.at(-1);
     }
-    const scroll = document.querySelector("[data-app-action-sidebar-scroll]");
+    const scroll = Array.from((sidebar || document).querySelectorAll("[data-app-action-sidebar-scroll]"))
+      .find(available);
     const buttons = Array.from(scroll?.querySelectorAll('button, a.sidebar-item, [role="button"].sidebar-item') || [])
-      .filter((button) => button.getAttribute(OWNED_ATTRIBUTE) !== "true");
+      .filter((button) => button.getAttribute(OWNED_ATTRIBUTE) !== "true" && available(button));
     const plugin = buttons.find((button) => buttonMatches(button, PLUGIN_LABELS));
     if (plugin) return plugin;
 
@@ -396,10 +425,10 @@
     if (reference) return reference;
 
     // Free 账号可能没有插件、宠物或 destination 行；仅在主侧边栏内借用新聊天入口。
-    const root = sidebar || document.querySelector("aside");
+    const root = sidebar || Array.from(document.querySelectorAll("aside")).find(available);
     return Array.from(root?.querySelectorAll('button, a, [role="button"]') || [])
       .find((node) => node.getAttribute(OWNED_ATTRIBUTE) !== "true"
-        && !node.closest("[inert]") && node.getBoundingClientRect().height > 0
+        && available(node)
         && buttonMatches(node, ["新聊天", "新对话", "新增聊天", "新對話", "new chat", "new thread"])) || null;
   }
 
@@ -437,8 +466,10 @@
     `;
   }
 
-  function createEntry(reference) {
-    const button = reference.cloneNode(true);
+  function createEntry(reference, rail = false) {
+    // 图标栏使用独立按钮，不继承原生拖拽及导航状态。
+    const button = rail ? document.createElement("button") : reference.cloneNode(true);
+    if (rail) button.className = reference.className;
     button.id = ENTRY_ID;
     button.type = "button";
     button.removeAttribute("disabled");
@@ -471,6 +502,10 @@
       }
     } else button.textContent = "任务面板";
     replaceEntryIcon(button);
+    if (rail) {
+      button.setAttribute("data-codex-panel-rail", "true");
+      button.replaceChildren(button.querySelector("svg"));
+    }
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -502,8 +537,28 @@
   function ensureEntry() {
     if (destroyed || !document.body) return;
     installStyles();
+    // 左侧图标栏独立于展开的内容侧边栏；挂在可滚动导航区末尾、头像区之前。
+    const rail = Array.from(document.querySelectorAll("[data-app-navigation-rail]"))
+      .find((node) => !node.closest("[inert], [hidden]") && node.getBoundingClientRect().height > 0);
+    const railReference = Array.from(rail?.querySelectorAll("[data-sidebar-destination]") || [])
+      .find((node) => node.getBoundingClientRect().height > 0);
+    const railList = railReference?.closest(".overflow-y-auto");
+    if (railList && rail.contains(railList)) {
+      if (entry?.getAttribute("data-codex-panel-rail") !== "true") {
+        entry?.remove();
+        entry = createEntry(railReference, true);
+      }
+      if (entry.parentElement !== railList) railList.appendChild(entry);
+      syncEntryState();
+      return;
+    }
     const reference = findReferenceButton();
     if (!reference?.parentElement) return;
+    // 没有图标栏的旧布局继续沿用原入口，不将图标样式带入文字导航。
+    if (entry?.getAttribute("data-codex-panel-rail") === "true") {
+      entry.remove();
+      entry = null;
+    }
     // 新聊天按钮可能只是横向行的一部分；在整行之后挂载，不能挤入快速聊天所在的行内。
     const row = reference.parentElement.closest(".sidebar-item") || reference;
     if (!entry) entry = createEntry(reference);
@@ -511,9 +566,7 @@
     entry.style.flex = row !== reference ? "none" : "";
     entry.style.width = row !== reference ? "100%" : "";
     if (reference.closest("nav[data-app-navigation-rail]")) {
-      if (entry.parentElement !== reference.parentElement || entry.nextElementSibling !== reference) {
-        reference.before(entry);
-      }
+      if (entry.parentElement !== reference.parentElement || entry.nextElementSibling !== reference) reference.before(entry);
     } else if (entry.parentElement !== row.parentElement || entry.previousElementSibling !== row) {
       row.after(entry);
     }
@@ -2685,6 +2738,8 @@
       subtree: true,
       attributes: true,
       attributeFilter: [
+        "inert",
+        "hidden",
         "class",
         "data-theme",
         "data-color-theme",

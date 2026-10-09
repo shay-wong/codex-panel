@@ -310,3 +310,25 @@ test("host replacement preserves Panel Back/Forward history without adding a dup
     dom.window.close();
   }
 });
+
+// 用户的完整复现路径，合并后由原生历史 key 归属区分面板与恢复的首页。
+test("Panel -> Spaces -> Home restores native content and permits reopening Panel", async () => {
+  for (const deferred of [false, true]) {
+    await withReactDom(async (dom) => {
+      const {api,router,cachedDestinations,flush} = await navigationHarness(dom,{deferred});
+      const opening = api.openPanel();
+      await flush(); await opening;
+      assert.equal(api.active(),true);
+      const home = cachedDestinations.get('/home');
+      const spaces = router.navigate({pathname:'/spaces/test',search:'',hash:''});
+      await flush(); await spaces;
+      assert.equal(api.active(),false);
+      const returning = router.navigate({pathname:home.pathname,search:home.search,hash:home.hash},{state:home.state});
+      await flush(); await returning;
+      assert.equal(api.active(),false);
+      const reopening = api.openPanel();
+      await flush(); await reopening;
+      assert.equal(api.active(),true);
+    });
+  }
+});

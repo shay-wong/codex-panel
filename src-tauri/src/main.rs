@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod menu_diagnostics;
+#[cfg(target_os = "macos")]
+mod macos_exit;
 
 mod update_dialog;
 
@@ -313,7 +315,33 @@ struct ReleaseCheckCache {
     result: Result<ReleaseCheckResult, ReleaseCheckFailure>,
 }
 
+#[derive(Default)]
+struct ExitState {
+    requested: AtomicBool,
+    complete: AtomicBool,
+}
+
+impl ExitState {
+    fn begin(
+        self: &Arc<Self>,
+        cleanup: impl FnOnce() + Send + 'static,
+        finish: impl FnOnce() + Send + 'static,
+    ) {
+        // 菜单退出、Cmd+Q 和重复点击共用一次清理；主线程不能等待生命周期锁或子进程。
+        if self.requested.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let state = Arc::clone(self);
+        thread::spawn(move || {
+            cleanup();
+            state.complete.store(true, Ordering::SeqCst);
+            finish();
+        });
+    }
+}
+
 struct LauncherState {
+    exit: Arc<ExitState>,
     child: Mutex<Option<u32>>,
     snapshot: Mutex<LauncherSnapshot>,
     status_menu: Mutex<Option<MenuItem<tauri::Wry>>>,
@@ -353,6 +381,7 @@ impl LauncherState {
         instance_lock: File,
     ) -> Self {
         Self {
+            exit: Arc::new(ExitState::default()),
             child: Mutex::new(None),
             snapshot: Mutex::new(LauncherSnapshot {
                 phase: "starting".into(),
@@ -1935,7 +1964,9 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
     if let Some(mut control) = state.child_control.lock().unwrap().take() {
         let _ = control.write_all(b"stop\n").and_then(|_| control.flush());
     }
-    if let Some(pid) = state.child.lock().unwrap().take() {
+    // 等待进程结束前释放 child 锁，菜单查询状态也会读它，不能间接卡住主线程。
+    let child_pid = state.child.lock().unwrap().take();
+    if let Some(pid) = child_pid {
         append_log(state, &format!("Stopping launcher child {pid}"));
         #[cfg(target_os = "windows")]
         if !wait_for_process_group_exit(pid, STOP_TIMEOUT) {
@@ -2068,6 +2099,9 @@ fn start_launcher_locked(
     state: &Arc<LauncherState>,
     should_open: bool,
 ) -> Result<LauncherSnapshot, String> {
+    if state.exit.requested.load(Ordering::SeqCst) {
+        return Err("Codex Panel 正在退出。".into());
+    }
     if state.update_installing.load(Ordering::SeqCst) {
         return Err("正在安装更新，请稍候。".into());
     }
@@ -2386,6 +2420,9 @@ fn restart_launcher(
 ) -> Result<LauncherSnapshot, String> {
     let (result, result_generation) = {
         let _lifecycle = state.lifecycle.lock().unwrap();
+        if state.exit.requested.load(Ordering::SeqCst) {
+            return Err("Codex Panel 正在退出。".into());
+        }
         if state.update_installing.load(Ordering::SeqCst) {
             return Err("正在安装更新，请稍候。".into());
         }
@@ -2769,6 +2806,11 @@ fn install_prepared_update(app: &AppHandle, state: &Arc<LauncherState>) -> Resul
         return Ok(());
     };
     let lifecycle = state.lifecycle.lock().unwrap();
+    if state.exit.requested.load(Ordering::SeqCst) {
+        dialog.close();
+        *state.prepared_update.lock().unwrap() = Some((update, bytes));
+        return Err("Codex Panel 正在退出。".into());
+    }
     state.update_installing.store(true, Ordering::SeqCst);
     let was_running = state.child.lock().unwrap().is_some();
     update_snapshot(app, state, |snapshot| {
@@ -2960,6 +3002,8 @@ fn main() {
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
+                let exit_app = app.handle().clone();
+                macos_exit::install(move || exit_app.exit(0)).map_err(std::io::Error::other)?;
                 app.set_activation_policy(ActivationPolicy::Regular);
                 if let Some(window) = app.get_webview_window("main") {
                     if let Ok(theme) = window.theme() {
@@ -3303,9 +3347,7 @@ fn main() {
                         if state.update_installing.load(Ordering::SeqCst) {
                             return;
                         }
-                        let lifecycle = state.lifecycle.lock().unwrap();
-                        stop_managed_child_locked(app, &state);
-                        drop(lifecycle);
+                        // 统一交给 ExitRequested，菜单回调不执行阻塞清理。
                         app.exit(0);
                     }
                     _ => {}
@@ -3359,13 +3401,28 @@ fn main() {
                     api.prevent_exit();
                     return;
                 }
-                let _lifecycle = state.lifecycle.lock().unwrap();
-                stop_managed_child_locked(app_handle, &state);
+                // 更新安装已在工作线程停止服务；其重启不能再被普通退出流程拦截。
+                if code == Some(tauri::RESTART_EXIT_CODE) && state.update_installing.load(Ordering::SeqCst) {
+                    return;
+                }
+                if !state.exit.complete.load(Ordering::SeqCst) {
+                    api.prevent_exit();
+                    let state = Arc::clone(state.inner());
+                    let exit = Arc::clone(&state.exit);
+                    let cleanup_app = app_handle.clone();
+                    let exit_app = app_handle.clone();
+                    exit.begin(move || {
+                        append_log(&state, "Exit cleanup started");
+                        let started = Instant::now();
+                        stop_managed_child(&cleanup_app, &state);
+                        append_log(&state, &format!("Exit cleanup completed in {} ms", started.elapsed().as_millis()));
+                    }, move || exit_app.exit(code.unwrap_or(0)));
+                }
             }
         }
         tauri::RunEvent::Exit => {
             if let Some(state) = app_handle.try_state::<Arc<LauncherState>>() {
-                stop_managed_child(app_handle, &state);
+                // 事件循环结束后不再停服务或更新 UI，避免重复清理及等待已停止的主线程。
                 #[cfg(any(target_os = "macos", target_os = "linux"))]
                 unsafe {
                     libc::flock(state._instance_lock.as_raw_fd(), libc::LOCK_UN);
@@ -3389,6 +3446,34 @@ mod tests {
     use std::os::unix::fs::symlink;
     use std::{env, fs};
     use uuid::Uuid;
+
+    #[test]
+    fn exit_does_not_block_ui_on_lifecycle_lock_and_cleans_up_once() {
+        use std::sync::{mpsc, Arc, Mutex};
+        use std::sync::atomic::Ordering;
+        use std::time::Duration;
+        let exit = Arc::new(super::ExitState::default());
+        let lifecycle = Arc::new(Mutex::new(()));
+        // 模拟启动/重连占用生命周期锁，同时 UI 收到退出请求。
+        let held = lifecycle.lock().unwrap();
+        let (returned_tx, returned_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let ui_exit = Arc::clone(&exit);
+        let worker_lock = Arc::clone(&lifecycle);
+        let ui = std::thread::spawn(move || {
+            ui_exit.begin(move || { drop(worker_lock.lock().unwrap()); }, move || {
+                finished_tx.send(()).unwrap();
+            });
+            returned_tx.send(()).unwrap();
+        });
+        returned_rx.recv_timeout(Duration::from_secs(1)).expect("退出不能阻塞 UI");
+        exit.begin(|| panic!("不能重复清理"), || panic!("不能重复退出"));
+        assert!(!exit.complete.load(Ordering::SeqCst));
+        drop(held);
+        finished_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(exit.complete.load(Ordering::SeqCst));
+        ui.join().unwrap();
+    }
 
     #[test]
     fn independent_fork_versions_increase_without_upstream_versions() {

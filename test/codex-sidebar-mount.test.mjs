@@ -149,3 +149,45 @@ test("rail entry preserves the native icon wrapper and position before Explore",
     assert.equal(document.getElementById("explore").outerHTML, original);
   } finally { f.dom.window.close(); }
 });
+
+// 新版保留不可交互的侧边栏时，入口必须落在当前可用侧边栏而非第一个节点。
+test("mount skips retained inert sidebars and follows the active sidebar", () => {
+  const f = fixture(`<div data-slate-sidebar-content inert><button data-sidebar-destination="plugins">Plugins</button></div>
+    <div data-slate-sidebar-content><button data-sidebar-destination="plugins">Plugins</button></div>`);
+  try {
+    const roots = f.dom.window.document.querySelectorAll('[data-slate-sidebar-content]');
+    f.api.ensureEntry();
+    const entry = f.dom.window.document.getElementById('codex-panel-entry');
+    assert.ok(entry);
+    assert.equal(entry.parentElement, roots[1]);
+    roots[1].setAttribute('inert', '');
+    roots[0].removeAttribute('inert');
+    f.api.ensureEntry();
+    assert.equal(entry.parentElement, roots[0]);
+    assert.equal(f.dom.window.document.querySelectorAll('#codex-panel-entry').length, 1);
+    entry.click();
+    assert.equal(f.opened, 1);
+  } finally { f.dom.window.close(); }
+});
+
+// 直接验证用户指定的位置：图标栏导航末尾、头像之前，内容侧边栏不再保留入口。
+test("Panel lives in the navigation rail and opens when the content sidebar is collapsed", () => {
+  const f = fixture(`<nav data-app-navigation-rail><div class="overflow-y-auto"><div><button class="native-icon" data-sidebar-destination="home"><svg></svg>Home</button></div></div><button id="avatar">Account</button></nav>
+    <aside data-slate-sidebar-content><button data-sidebar-destination="plugins">Plugins</button></aside>`);
+  try {
+    const document = f.dom.window.document;
+    f.api.ensureEntry();
+    const entry = document.getElementById('codex-panel-entry');
+    assert.equal(entry.parentElement, document.querySelector('.overflow-y-auto'));
+    assert.equal(entry.textContent.trim(), '');
+    assert.equal(entry.title, '任务面板');
+    assert.equal(entry.getAttribute('aria-label'), '打开任务面板');
+    assert.ok(entry.querySelector('svg rect'));
+    document.querySelector('aside').setAttribute('inert', '');
+    f.api.ensureEntry();
+    assert.equal(document.querySelectorAll('#codex-panel-entry').length, 1);
+    assert.equal(document.querySelector('aside #codex-panel-entry'), null);
+    entry.click();
+    assert.equal(f.opened, 1);
+  } finally { f.dom.window.close(); }
+});

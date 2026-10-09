@@ -151,6 +151,11 @@ for (const build of builds) {
         callback();
         assert.equal(insertedMap.type, "importmap");
         assert.deepEqual(JSON.parse(insertedMap.textContent), {imports: {[sourceUrl]: "blob:fixture"}});
+        // 原生模块尚未被首页加载时，重复注入只更新开关，不重建 importmap。
+        assert.equal(context.__codexPanelProviderQuotaV1__.prepared, true);
+        assert.equal(context.__codexPanelProviderQuotaV1__.installed, false);
+        vm.runInContext(bootstrap, context);
+        assert.equal(mapCount, 1);
         const composer = vm.runInContext(`${replacementSource};${build.composer}`, context);
         const runtime = context.__codexPanelProviderQuotaV1__;
         assert.equal(runtime.installed, true);

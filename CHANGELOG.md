@@ -6,6 +6,21 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Prevent Panel → Spaces → Home from reopening Panel through cached native route state; explicit native navigation dismisses Panel until its icon is clicked again.
+
+- Close the Panel overlay when a native rail destination is clicked, including Home without a route change; use muted inactive and darker active Panel icon colors, and suppress the native rail highlight while Panel is open.
+
+- Move the Panel entry to the left navigation rail as an icon with a tooltip; keep it available when the content sidebar is collapsed.
+
+- Mount the Panel entry in the available sidebar instead of stopping at a retained inactive sidebar, and move the existing entry when sidebar interactivity changes.
+
+- Avoid repeated renderer reloads when the composer adapter mapping is ready but its lazy module has not executed yet, preventing retries from repeatedly restoring another page.
+
+- Keep the UI responsive during exit by cleaning up managed processes once in a worker, releasing the child-state lock before waiting, and logging cleanup duration.
+- Avoid repeated Codex page reloads on connection retries when the injection source is unchanged and the required adapter is installed; retain necessary initial and changed-source reloads.
+
+- Remove inherited native sidebar notification dots from the Panel entry so they do not remain permanently visible.
+
 - Fix Panel immediately closing, flickering, or opening the native profile menu. Keep automatic name and avatar capture, restore icon alignment and inactive color, and preserve Back/Forward navigation.
 
 - Preserve the current Codex conversation and draft across Panel service restarts and mount retries when the patch code is unchanged. Installing or updating the patch still reloads once.
