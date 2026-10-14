@@ -9,12 +9,13 @@ import { labelDisplayName } from "./labels";
 import type { TaskboardLanguage } from "./i18n";
 
 export type TaskLinkFilter = "all" | "linked" | "unlinked";
-export type TaskFilterKey = "statuses" | "priorities" | "labels" | "link" | "content";
+export type TaskFilterKey = "statuses" | "priorities" | "labels" | "jiraProjects" | "link" | "content";
 
 export interface TaskFilters {
   statuses: TaskStatus[];
   priorities: TaskPriority[];
   labels: string[];
+  jiraProjects: string[];
   link: TaskLinkFilter;
   content: string;
 }
@@ -23,6 +24,7 @@ export const EMPTY_TASK_FILTERS: TaskFilters = {
   statuses: [],
   priorities: [],
   labels: [],
+  jiraProjects: [],
   link: "all",
   content: "",
 };
@@ -45,6 +47,7 @@ export function readTaskFilters(): TaskFilters {
     statuses,
     priorities,
     labels: params.getAll("label").filter(Boolean),
+    jiraProjects: params.getAll("jiraProject").filter(Boolean),
     link: linkValue === "yes" ? "linked" : linkValue === "no" ? "unlinked" : "all",
     content: params.get("content") ?? "",
   };
@@ -62,6 +65,9 @@ export function writeTaskFilters(filters: TaskFilters) {
   url.searchParams.delete("label");
   filters.labels.forEach((label) => url.searchParams.append("label", label));
 
+  url.searchParams.delete("jiraProject");
+  filters.jiraProjects.forEach((key) => url.searchParams.append("jiraProject", key));
+
   if (filters.link === "linked") url.searchParams.set("linked", "yes");
   else if (filters.link === "unlinked") url.searchParams.set("linked", "no");
   else url.searchParams.delete("linked");
@@ -76,6 +82,7 @@ export function taskFilterCount(filters: TaskFilters): number {
   return Number(filters.statuses.length > 0)
     + Number(filters.priorities.length > 0)
     + Number(filters.labels.length > 0)
+    + Number(filters.jiraProjects.length > 0)
     + Number(filters.link !== "all")
     + Number(Boolean(filters.content.trim()));
 }
@@ -96,6 +103,11 @@ export function matchesTaskSearch(task: Task, search: string, language: Taskboar
     .includes(needle);
 }
 
+export function jiraProjectKey(task: Pick<Task, "source" | "externalKey">): string {
+  // Jira 汇总项目里所有议题共用 Panel projectId；原始 issue key 才标识 Jira 项目。
+  return task.source === "jira" ? task.externalKey?.match(/^(.+)-\d+$/)?.[1] ?? "" : "";
+}
+
 export function matchesTaskFilters(
   task: Task,
   filters: TaskFilters,
@@ -112,6 +124,9 @@ export function matchesTaskFilters(
     && filters.labels.length
     && !filters.labels.some((label) => task.labels.includes(label))
   ) {
+    return false;
+  }
+  if (omit !== "jiraProjects" && filters.jiraProjects.length && !filters.jiraProjects.includes(jiraProjectKey(task))) {
     return false;
   }
   const hasConversation = task.conversationRefs.length > 0;

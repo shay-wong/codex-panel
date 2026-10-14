@@ -12711,6 +12711,8 @@ button.activity-change-value:hover {
 }
 
 .issue-list-view.layout-horizontal .issue-list-row {
+  /* 卡片按内容保留高度；议题较多时由列滚动，不能压缩到属性行溢出。 */
+  flex: 0 0 auto;
   grid-template-areas:
     "title"
     "metadata";

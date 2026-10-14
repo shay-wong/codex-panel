@@ -458,3 +458,9 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 - 尚未合并的上游独有工作属于待合并输入，不属于 Fork 能力。
 - 截至上游 `1.1.6`，Tauri/Rust 桌面基础、新版 AI Composer、Agent/Skill/命令补全、可搜索 Issue 关系选择器、富文本剪贴板、项目 README、全项目视图、Linux 桌面打包、WSL CLI 访问 Windows launcher 和 Issue 跨项目移动已经进入 Fork；上游品牌与更新签名公钥、上游发布工作流、`taskctl` 主命名和与 Fork 发布策略冲突的打包入口仍明确排除。
 - 上游 `1.1.6` 的单连接 Jira REST 基础同步、直接回写、主题化 Issue 属性菜单和 Issue 跨项目移动已经等价吸收；Fork 仅继续维护本文记录的可靠同步、Bearer 认证和跨仓库关联扩展。
+
+### 横向列表与 Jira 项目筛选
+
+- 横向列表保持每张议题卡片的内容高度，由列容器滚动，避免大量议题压缩卡片并使属性控件溢出。代码：`web/src/styles.css` 的横向列表卡片规则。
+- 复用 `TaskFilterMenu` 与 `taskFilters`，从已同步 Jira 议题 `externalKey` 的项目部分生成选项。Panel 的 `projectId` 是 Jira 汇总项目，不能用于区分 JR / JD。默认不限制项目，多选取并集并与其他筛选取交集；全部项目仅清空该项，项目选择随其他筛选保存到 URL。该项不改变 Jira 同步范围，不请求真实 Jira，也不写入任务数据。
+- 代码：`web/src/taskFilters.ts`、`web/src/components/TaskFilterMenu.tsx`；直接验证：`TaskFilterMenu.spec.tsx` 覆盖 JR/JD 选择、URL 回读及全部项目恢复时保留其他筛选。布局使用隔离浏览器的真实横向列表结构验证。生命周期：Fork 界面修复与筛选能力，实际安装效果待交付后确认。

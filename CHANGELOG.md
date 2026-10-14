@@ -6,6 +6,9 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Keep horizontal issue-list cards at their content height when many issues share a column, preventing priority and assignee controls from overflowing.
+- Add a Jira project filter based on synchronized issue keys, with multi-selection and an All projects reset.
+
 - Add a separate Restart Codex action to the Codex connection card to reload core configuration after confirmation.
 
 - Fix custom-provider Ultrafast selections losing their tier before API submission. First enable `api_key_model_discovery = true` under `[features]` in your Codex `config.toml`; Panel leaves this setting unchanged. Restart Codex after changing the Ultrafast switch and keep Panel running.

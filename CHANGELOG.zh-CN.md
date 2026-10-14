@@ -6,6 +6,9 @@
 
 ## 未发布
 
+- 修复横向列表议题较多时卡片被压缩、优先级和负责人溢出边框的问题。
+- 筛选菜单新增 Jira 项目选项，支持按已同步议题的项目编号多选，并可恢复全部项目。
+
 - 在 Codex 连接卡片增加独立的“重启 Codex”操作，确认后完整重启并重新加载核心配置。
 
 - 修复自定义 API 选择 Ultrafast 后，核心在发送前丢弃速度参数的问题；需先在 Codex 的 `config.toml` 中开启 `[features]` 下的 `api_key_model_discovery = true`，Panel 不修改此设置；更改 Ultrafast 开关后需重启 Codex，并保持 Panel 运行。

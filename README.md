@@ -62,7 +62,7 @@ Jira tickets in the same repository reuse one native execution conversation, bra
 
 Native conversation activity uses the same live session progress as the board. Unavailable session data shows **Status unknown**, rather than idle.
 
-Board filters support name and priority sorting, and display settings can show creation dates. Ordinary task details can create child issues; dashboard progress weights top-level issues equally and includes their completed children. Tasks and comments can record external Agent sessions and copy terminal resume commands. See [task organization and external sessions](docs/fork-capabilities.md#task-organization-and-external-sessions).
+Board filters support name and priority sorting, and display settings can show creation dates. When synchronized Jira issues are present, the Jira projects filter accepts multiple project keys (such as JR and JD), with All projects to reset it. Ordinary task details can create child issues; dashboard progress weights top-level issues equally and includes their completed children. Tasks and comments can record external Agent sessions and copy terminal resume commands. See [task organization and external sessions](docs/fork-capabilities.md#task-organization-and-external-sessions).
 
 ## Requirements
 
