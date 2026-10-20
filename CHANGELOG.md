@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Allow explicitly authorized implementation to continue in the current Jira planning conversation after resolving, binding, and claiming the published execution Issue.
+
 - Local task planning and new conversations navigate by the saved Codex project ID without depending on rendered or expanded sidebar rows. Panel confirms the target project and workspace before prefilling the draft.
 
 - Keep the model catalog URL available when Ultrafast is switched off and back on without restarting Codex. Show a restart reminder after saving, with restart-now and later actions.

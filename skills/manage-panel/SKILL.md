@@ -82,7 +82,7 @@ Planning preparation only fills a draft. The user sends it manually; binding tha
 
 ### Continue from planning into execution
 
-When the user explicitly asks to implement in an ordinary task's planning conversation, that request includes recording the task's execution state; do not require a second click on Panel's **Prepare execution** button. After leaving Plan mode, reread the issue, its saved Spec, comments, and execution workflow configuration. Preserve its complete binding and verify that its `threadId` is the current conversation. For an authorized `backlog` or `todo` task, use the existing `issue move` command before editing:
+When the user explicitly asks to implement in the current planning conversation, including a Jira planning conversation, that request includes binding the authorized execution Issue to this conversation and recording its execution state; do not require another conversation or a second click on Panel's **Prepare execution** button. For Jira, use `jira planning get` to resolve the published repository-owned Issue matching the authorized scope; do not implement the Jira requirement record itself or arbitrarily choose among multiple execution Issues. Resolve an ambiguous target before proceeding. After leaving Plan mode, reread the execution Issue, its saved Spec, comments, and execution workflow configuration. If it has no binding, use `conversation bind ISSUE_ID` under this explicit execution authorization, then reread it. Preserve an existing complete binding and verify that its `threadId` is the current conversation; never take over another conversation's Issue. Follow the target repository's branch and worktree rules and verify the bound development context before claiming. For an authorized `backlog` or `todo` task, use the existing `issue move` command before editing:
 
 ```bash
 panelctl issue move ISSUE_ID --status in_progress --if-version VERSION \
@@ -97,7 +97,7 @@ Substitute all five binding values from the latest `task.threadBinding`, includi
 
 When the conversation was opened from a Jira issue and the initial instruction provides its exact Jira task ID:
 
-1. Treat Jira as the requirement and the generated Panel Issues as repository-owned execution work. Do not edit repository code in the planning conversation.
+1. Treat Jira as the requirement and the generated Panel Issues as repository-owned execution work. Default to planning only. If the user explicitly asks to implement in this conversation, follow **Continue from planning into execution** for the published execution Issue before editing. Spec approval and ticket publication alone do not authorize implementation.
 2. After the Spec is approved, save it as the Jira planning artifact with `jira planning save`; do not create a Panel Issue for the Spec. Follow the planning Skills selected in Panel global workflow settings, or Codex Plan when none are selected. Native Plan mode is read-only: wait until the user approves the plan and exits Plan mode before saving or publishing.
 3. After explicit user approval of the ticket breakdown, publish one manifest with `jira planning publish`; do not create the tickets one by one. Personal `to-spec` or `to-tickets` Skills are optional.
 4. Read `jira planning get` immediately before each planning save or publish and pass the returned `plan.version` with `--if-version`.
