@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { Theme } from "@radix-ui/themes";
 import { afterEach, expect, it, vi } from "vitest";
 import App, { type LauncherPreferences, type LauncherSnapshot, type LauncherState, type TauriBridge } from "./App";
@@ -27,6 +27,8 @@ it("keeps launcher feedback, live status and global preferences working through 
   let finishRefresh!: () => void;
   let holdRefresh = false;
   let browserShouldFail = false;
+  let discovery: boolean | null = null;
+  let discoveryShouldFail = false;
   const unlisten = vi.fn();
   const workflowUrl = "http://127.0.0.1:1/?view=workflow-settings";
   const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
@@ -34,7 +36,12 @@ it("keeps launcher feedback, live status and global preferences working through 
     if (command === "open_browser_panel" && browserShouldFail) throw new Error("open failed");
     if (command === "reconnect_codex") await new Promise<void>(resolve => { finishRestart = resolve; });
     if (command === "launcher_ui_state" && holdRefresh) await new Promise<void>(resolve => { finishRefresh = resolve; });
+    if (command === "read_model_discovery") {
+      if (discoveryShouldFail) throw new Error("配置读取失败");
+      return discovery;
+    }
     if (command === "set_launcher_preference") {
+      if (args?.updateModelDiscovery) discovery = args.enabled ? true : null;
       current.preferences = { ...current.preferences, [args?.key as keyof LauncherPreferences]: args?.enabled };
       return { ...current.preferences };
     }
@@ -165,10 +172,55 @@ it("keeps launcher feedback, live status and global preferences working through 
   const ultrafast = screen.getByRole("switch", { name: "显示自定义 API 的 Ultrafast 选项" });
   expect(ultrafast.getAttribute("aria-checked")).toBe("false");
   await click(ultrafast);
+  expect(invoke).toHaveBeenCalledWith("read_model_discovery");
+  expect(within(screen.getByRole("alertdialog")).getAllByRole("button")).toHaveLength(2);
+  expect(ultrafast.getAttribute("aria-checked")).toBe("false");
+  await act(async () => { fireEvent.keyDown(document.activeElement!, { key: "Escape" }); });
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(ultrafast.getAttribute("aria-checked")).toBe("false");
+  await click(ultrafast);
+  await click(screen.getByRole("button", { name: "仅开启，不改配置" }));
   expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "customProviderUltrafast", enabled: true });
   expect(ultrafast.getAttribute("aria-checked")).toBe("true");
-  await click(ultrafast);
+  expect(screen.getByText(/Ultrafast 设置已保存/)).toBeTruthy();
+  const codexRestarts = invoke.mock.calls.filter(([command]) => command === "restart_codex").length;
+  await click(screen.getByRole("button", { name: "稍后" }));
+  expect(screen.queryByText(/Ultrafast 设置已保存/)).toBeNull();
+  expect(invoke.mock.calls.filter(([command]) => command === "restart_codex")).toHaveLength(codexRestarts);
+  await click(ultrafast); // No persisted setting: disable without a prompt.
+  expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "customProviderUltrafast", enabled: false });
+  discovery = true;
+  await click(ultrafast); // Already enabled: enable without a prompt.
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(ultrafast.getAttribute("aria-checked")).toBe("true");
+  await click(ultrafast);
+  await click(screen.getByRole("button", { name: "仅关闭，保留配置" }));
+  expect(discovery).toBe(true);
+  discovery = false;
+  await click(ultrafast);
+  await click(screen.getByRole("button", { name: "仅开启，不改配置" }));
+  await click(ultrafast); // An explicit false is still a persisted setting.
+  expect(within(screen.getByRole("alertdialog")).getAllByRole("button")).toHaveLength(2);
+  await click(screen.getByRole("button", { name: "仅关闭，保留配置" }));
+  expect(discovery).toBe(false);
+  await click(ultrafast);
+  await click(screen.getByRole("button", { name: "添加配置并开启" }));
+  expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "customProviderUltrafast", enabled: true, updateModelDiscovery: true });
+  await click(ultrafast);
+  await click(screen.getByRole("button", { name: "删除配置并关闭" }));
+  expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "customProviderUltrafast", enabled: false, updateModelDiscovery: true });
+  await click(screen.getByRole("button", { name: "立即重启 Codex" }));
+  await advance(300);
+  expect(invoke.mock.calls.filter(([command]) => command === "restart_codex")).toHaveLength(codexRestarts + 1);
+  await click(screen.getByRole("button", { name: "稍后" }));
+  discoveryShouldFail = true;
+  const saveCount = invoke.mock.calls.filter(([command]) => command === "set_launcher_preference").length;
+  await click(ultrafast);
+  expect(screen.getByText("Error: 配置读取失败")).toBeTruthy();
+  expect(ultrafast.getAttribute("aria-checked")).toBe("false");
+  expect(screen.queryByText(/Ultrafast 设置已保存/)).toBeNull();
+  expect(invoke.mock.calls.filter(([command]) => command === "set_launcher_preference")).toHaveLength(saveCount);
   expect(invoke.mock.calls.filter(([command]) => command === "reconnect_codex")).toHaveLength(restartCount);
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(current.preferences.hideUsageBanner).toBe(true);

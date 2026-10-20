@@ -7,7 +7,23 @@ import path from "node:path";
 import { test } from "node:test";
 import { parse } from "smol-toml";
 import { CodexAppServer } from "../server/codex-app-server.mjs";
-import { createUltrafastCatalogAdapter, readBundledModelCatalog, withUltrafastCatalog } from "../scripts/codex-provider-ultrafast-catalog.mjs";
+import { createUltrafastCatalogAdapter, readBundledModelCatalog, readModelDiscovery, setModelDiscovery, withUltrafastCatalog } from "../scripts/codex-provider-ultrafast-catalog.mjs";
+
+test("model discovery reads only the persisted user setting and propagates read failures", async () => {
+  for (const value of [undefined, false, true]) {
+    const client = { async request(method, params) {
+      assert.equal(method, "config/read");
+      assert.deepEqual(params, { includeLayers: true });
+      return { config: { features: { api_key_model_discovery: true } }, layers: [
+        { name: { type: "user", file: "/fixture/config.toml", profile: "other" }, version: "v1", config: { features: { api_key_model_discovery: true } } },
+        { name: { type: "user", file: "/fixture/config.toml" }, version: "v1", config: { features: { api_key_model_discovery: value } } },
+      ] };
+    } };
+    assert.equal(await readModelDiscovery(client), value ?? null);
+  }
+  await assert.rejects(readModelDiscovery({ async request() { throw new Error("read failed"); } }), /read failed/);
+  await assert.rejects(readModelDiscovery({ async request() { return { layers: [] }; } }), /无法定位/);
+});
 
 test("catalog preserves native metadata and only adds the two official Ultrafast models", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "panel-catalog-"));
@@ -163,8 +179,6 @@ test("real Codex core sends Ultrafast after adapter setup and restart, then rest
   await writeFile(configFile, `model = "gpt-6-astra"
 model_provider = "probe"
 check_for_update_on_startup = false
-[features]
-api_key_model_discovery = true
 [analytics]
 enabled = false
 [model_providers.probe]
@@ -191,6 +205,8 @@ stream_max_retries = 0
     } finally { clearTimeout(timer); unsubscribe(); }
   };
   let client = createClient(); t.after(() => client.close());
+  await setModelDiscovery(client, true);
+  assert.equal(parse(await readFile(configFile, "utf8")).features.api_key_model_discovery, true);
   const threadId = await send(client);
   assert.equal(bodies.at(-1).service_tier, undefined, "unadapted core reproduces the dropped parameter");
   await client.close();
@@ -219,4 +235,9 @@ stream_max_retries = 0
   client = createClient();
   await send(client, threadId);
   assert.equal(bodies.at(-1).service_tier, undefined);
+  await setModelDiscovery(client, false);
+  const removed = parse(await readFile(configFile, "utf8"));
+  assert.equal(removed.features?.api_key_model_discovery, undefined);
+  assert.equal(removed.model_provider, "probe");
+  assert.equal(removed.model_providers.probe.name, "Local test only");
 });

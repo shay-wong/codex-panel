@@ -6,9 +6,11 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
-- Keep the model catalog URL available when Ultrafast is switched off and back on without restarting Codex.
-
 - Local task planning and new conversations navigate by the saved Codex project ID without depending on rendered or expanded sidebar rows. Panel confirms the target project and workspace before prefilling the draft.
+
+- Keep the model catalog URL available when Ultrafast is switched off and back on without restarting Codex. Show a restart reminder after saving, with restart-now and later actions.
+
+- Read the existing model-discovery configuration before toggling Ultrafast. Prompt only when enabling needs the setting or disabling can remove it, with two choices: update configuration or only toggle. Configuration read/write failures show an error and leave the switch unchanged.
 
 - Add a separate Restart Codex action to the Codex connection card to reload core configuration after confirmation.
 

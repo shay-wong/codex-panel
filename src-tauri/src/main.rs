@@ -2662,14 +2662,54 @@ fn reveal_data(state: State<'_, Arc<LauncherState>>) -> Result<(), String> {
     open_with_system(&state.data_directory.to_string_lossy())
 }
 
+async fn run_model_discovery(app: AppHandle, operation: &'static str) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = app.path().home_dir().map_err(|error| error.to_string())?;
+        let codex_app = find_codex_app(&home).ok_or_else(missing_codex_app_message)?;
+        verify_codex_app(&codex_app)?;
+        let resources = app.path().resource_dir().map_err(|error| error.to_string())?;
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let node = executable.parent().ok_or("无法定位 App 可执行文件目录")?
+            .join(if cfg!(target_os = "windows") { "node.exe" }
+                else if cfg!(target_os = "linux") { "codex-panel-node" } else { "node" });
+        verify_launcher_runtime(&resources, &node)?;
+        let mut command = StdCommand::new(node);
+        #[cfg(target_os = "windows")]
+        command.creation_flags(CREATE_NO_WINDOW.0);
+        let output = command.arg(resources.join("app/scripts/codex-provider-ultrafast-catalog.mjs"))
+            .arg(operation)
+            .arg(codex_app)
+            .current_dir(home)
+            .output().map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(format!("读取或修改 Codex 模型发现配置失败：{}", String::from_utf8_lossy(&output.stderr).trim()));
+        }
+        String::from_utf8(output.stdout).map_err(|error| error.to_string())
+    }).await.map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
-fn set_launcher_preference(
+async fn read_model_discovery(app: AppHandle) -> Result<Option<bool>, String> {
+    let output = run_model_discovery(app, "read-discovery").await?;
+    serde_json::from_str(output.trim()).map_err(|error| format!("读取 Codex 模型发现配置失败：{error}"))
+}
+
+#[tauri::command]
+async fn set_launcher_preference(
+    app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
     key: String,
     enabled: bool,
+    update_model_discovery: Option<bool>,
 ) -> Result<LauncherPreferences, String> {
     if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel" | "hideUsageBanner" | "customProviderQuotaFix" | "customProviderUltrafast") {
         return Err("未知的偏好设置".to_string());
+    }
+    if update_model_discovery == Some(true) {
+        if key != "customProviderUltrafast" {
+            return Err("仅 Ultrafast 开关可修改模型发现配置".into());
+        }
+        run_model_discovery(app, if enabled { "enable-discovery" } else { "remove-discovery" }).await?;
     }
     update_preferences(&state, |preferences| match key.as_str() {
         "autoConnectCodex" => preferences.auto_connect_codex = enabled,
@@ -3029,6 +3069,7 @@ fn main() {
             workflow_settings_url,
             open_log,
             reveal_data,
+            read_model_discovery,
             set_launcher_preference,
             set_autostart,
             check_for_updates,

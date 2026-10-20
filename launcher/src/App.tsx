@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
-import { Badge, Box, Button, Callout, Card, Flex, Heading, IconButton, Separator, Switch, Tabs, Text, Tooltip } from "@radix-ui/themes";
+import { AlertDialog, Badge, Box, Button, Callout, Card, Flex, Heading, IconButton, Separator, Switch, Tabs, Text, Tooltip } from "@radix-ui/themes";
 import { LinearIcon } from "../../web/src/components/LinearIcon";
 
 export type LauncherSnapshot = {
@@ -52,10 +52,13 @@ export function App() {
   const [busyAction, setBusyAction] = useState("");
   const [feedback, setFeedback] = useState<Record<string, "success" | "failed">>({});
   const [savingPreference, setSavingPreference] = useState(false);
+  const [ultrafastChoice, setUltrafastChoice] = useState<boolean | null>(null);
+  const [restartReminder, setRestartReminder] = useState(false);
   const [workflowUrl, setWorkflowUrl] = useState("");
   const [view, setView] = useState("overview");
   const workflowFrame = useRef<HTMLIFrameElement>(null);
   const panelButton = useRef<HTMLButtonElement>(null);
+  const keepDiscoveryButton = useRef<HTMLButtonElement>(null);
   const busyRef = useRef(false);
   const feedbackTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const busy = Boolean(busyAction);
@@ -161,7 +164,7 @@ export function App() {
     }
   }
 
-  async function savePreference(key: keyof LauncherPreferences | "autostart", enabled: boolean) {
+  async function savePreference(key: keyof LauncherPreferences | "autostart", enabled: boolean, updateModelDiscovery = false) {
     setError("");
     setSavingPreference(true);
     try {
@@ -169,9 +172,22 @@ export function App() {
         const autostart = await window.__TAURI__.core.invoke<boolean>("set_autostart", { enabled });
         setState(current => current && ({ ...current, autostart }));
       } else {
-        const next = await window.__TAURI__.core.invoke<LauncherPreferences>("set_launcher_preference", { key, enabled });
+        const next = await window.__TAURI__.core.invoke<LauncherPreferences>("set_launcher_preference", { key, enabled, ...(updateModelDiscovery ? { updateModelDiscovery: true } : {}) });
         setState(current => current && ({ ...current, preferences: next }));
       }
+      setUltrafastChoice(null);
+      if (key === "customProviderUltrafast") setRestartReminder(true);
+    } catch (cause) { setError(String(cause)); }
+    finally { setSavingPreference(false); }
+  }
+
+  async function changeUltrafast(enabled: boolean) {
+    setError("");
+    setSavingPreference(true);
+    try {
+      const discovery = await window.__TAURI__.core.invoke<boolean | null>("read_model_discovery");
+      if (enabled ? discovery !== true : discovery !== null) setUltrafastChoice(enabled);
+      else await savePreference("customProviderUltrafast", enabled);
     } catch (cause) { setError(String(cause)); }
     finally { setSavingPreference(false); }
   }
@@ -224,6 +240,16 @@ export function App() {
         <Callout.Icon><LinearIcon name="alert" /></Callout.Icon>
         <Callout.Text id="errorText" className="launcher-error">{error}</Callout.Text>
         <IconButton id="dismissError" variant="ghost" color="red" size="1" aria-label="关闭提示" onClick={() => setError("")}><LinearIcon name="close" /></IconButton>
+      </Callout.Root>}
+      {restartReminder && <Callout.Root size="1" role="status" mb="4">
+        <Callout.Icon><LinearIcon name="alert" /></Callout.Icon>
+        <Box>
+          <Callout.Text>Ultrafast 设置已保存。请重启 Codex，使核心模型能力和配置完整生效；重启会中断正在运行的任务。</Callout.Text>
+          <Flex gap="3" mt="3">
+            <Button size="1" variant="soft" {...actionProps("restart_codex", savingPreference)}>立即重启 Codex</Button>
+            <Button size="1" variant="ghost" onClick={() => setRestartReminder(false)}>稍后</Button>
+          </Flex>
+        </Box>
       </Callout.Root>}
           <Tabs.Content value="overview" id="overviewView">
             <section className="status-panel">
@@ -282,7 +308,7 @@ export function App() {
                 <Separator size="4" />
                 <Setting id="customProviderQuotaFix" title="移除账号额度不足时 API 发送限制" detail="仅限自定义 API；首次安装适配时重载一次，之后开关即时生效" checked={preferences?.customProviderQuotaFix ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("customProviderQuotaFix", enabled)} />
                 <Separator size="4" />
-                <Setting id="customProviderUltrafast" title="显示自定义 API 的 Ultrafast 选项" detail="仅限本地自定义 API 的 GPT-6 Astra、GPT-6.1 Sol；默认关闭，更改后请重启 Codex，使用时保持 Panel 运行" checked={preferences?.customProviderUltrafast ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("customProviderUltrafast", enabled)} />
+                <Setting id="customProviderUltrafast" title="显示自定义 API 的 Ultrafast 选项" detail="仅限本地自定义 API 的 GPT-6 Astra、GPT-6.1 Sol；开启时若模型发现未开启，会询问是否添加配置；关闭时若配置存在，会询问是否删除。更改后请重启 Codex，使用时保持 Panel 运行。" checked={preferences?.customProviderUltrafast ?? false} disabled={!state || savingPreference} onChange={enabled => void changeUltrafast(enabled)} />
                 <Separator size="4" />
                 <Setting id="followSystemAppearance" title="跟随系统外观" detail="自动适配 macOS 的浅色或深色模式" checked={followSystemAppearance} onChange={enabled => { setFollowSystemAppearance(enabled); window.localStorage.setItem("codex-panel.follow-system-appearance", String(enabled)); window.dispatchEvent(new CustomEvent("codex-panel-appearance-preference", { detail: enabled })); }} />
                 <Separator size="4" />
@@ -308,6 +334,26 @@ export function App() {
           </Tabs.Content>
     </main>
     </Tabs.Root>
+    <AlertDialog.Root open={ultrafastChoice !== null} onOpenChange={open => { if (!open && !savingPreference) setUltrafastChoice(null); }}>
+      <AlertDialog.Content maxWidth="520px" onOpenAutoFocus={event => { event.preventDefault(); keepDiscoveryButton.current?.focus(); }}>
+        <AlertDialog.Title>{ultrafastChoice ? "开启 Ultrafast" : "关闭 Ultrafast"}</AlertDialog.Title>
+        <AlertDialog.Description size="2">
+          {ultrafastChoice
+            ? "是否同时在 Codex 用户 config.toml 的 [features] 下设置 api_key_model_discovery = true？模型发现未开启时，模型列表可能为空。已有值将被设为 true。"
+            : "是否同时删除 Codex 用户 config.toml 中的 [features].api_key_model_discovery？删除后恢复默认或其他配置层的行为，可能影响其他自定义模型服务；也可以保留此设置。"}
+          {" 更改后需重启 Codex。"}
+        </AlertDialog.Description>
+        {error && <Text as="p" color="red" size="2" role="alert" mt="3">{error}</Text>}
+        <Flex gap="3" mt="4" justify="end" wrap="wrap">
+          <Button ref={keepDiscoveryButton} variant="soft" disabled={savingPreference} onClick={() => void savePreference("customProviderUltrafast", ultrafastChoice === true)}>
+            {ultrafastChoice ? "仅开启，不改配置" : "仅关闭，保留配置"}
+          </Button>
+          <Button disabled={savingPreference} onClick={() => void savePreference("customProviderUltrafast", ultrafastChoice === true, true)}>
+            {savingPreference ? "正在保存…" : ultrafastChoice ? "添加配置并开启" : "删除配置并关闭"}
+          </Button>
+        </Flex>
+      </AlertDialog.Content>
+    </AlertDialog.Root>
   </div>;
 }
 

@@ -1,8 +1,36 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { CodexAppServer } from "../server/codex-app-server.mjs";
+import { codexExecutableInApp } from "../shared/codex-executable.mjs";
+
+async function readUserConfigLayer(client) {
+  const { layers } = await client.request("config/read", { includeLayers: true });
+  const userLayer = layers?.find(layer => layer.name?.type === "user" && !layer.name.profile);
+  if (!userLayer?.name.file || !userLayer.version) throw new Error("无法定位 Codex 用户配置");
+  return userLayer;
+}
+
+export async function readModelDiscovery(client) {
+  const userLayer = await readUserConfigLayer(client);
+  const value = userLayer.config?.features?.api_key_model_discovery;
+  if (value !== undefined && typeof value !== "boolean") throw new Error("Codex 模型发现配置不是布尔值");
+  return value ?? null;
+}
+
+export async function setModelDiscovery(client, enabled) {
+  const userLayer = await readUserConfigLayer(client);
+  const current = userLayer.config?.features?.api_key_model_discovery;
+  if (enabled ? current === true : current === undefined) return;
+  const result = await client.request("config/batchWrite", {
+    edits: [{ keyPath: "features.api_key_model_discovery", value: enabled ? true : null, mergeStrategy: "replace" }],
+    filePath: userLayer.name.file, expectedVersion: userLayer.version, reloadUserConfig: true,
+  });
+  if (result.status !== "ok") throw new Error("配置受更高优先级设置覆盖，请检查 Codex 配置");
+}
 
 export function withUltrafastCatalog(catalog) {
   if (!Array.isArray(catalog?.models)) throw new Error("Invalid Codex model catalog");
@@ -177,4 +205,18 @@ export function createUltrafastCatalogAdapter({
       }
     },
   };
+}
+
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const [operation, appPath] = process.argv.slice(2);
+  if (!["read-discovery", "enable-discovery", "remove-discovery"].includes(operation) || !appPath) {
+    throw new Error("Expected read-discovery, enable-discovery or remove-discovery and a Codex application path");
+  }
+  const client = new CodexAppServer({ executable: codexExecutableInApp(appPath) });
+  try {
+    if (operation === "read-discovery") console.log(JSON.stringify(await readModelDiscovery(client)));
+    else await setModelDiscovery(client, operation === "enable-discovery");
+  }
+  catch (error) { console.error(error.message); process.exitCode = 1; }
+  finally { await client.close(); }
 }
