@@ -12,7 +12,7 @@ function functionsBetween(start, end) {
   return source.slice(from, to);
 }
 
-function composerHarness(t, { hiddenFirst = false, bound = false, onPrefill = async () => {} } = {}) {
+function composerHarness(t, { hiddenFirst = false, bound = false, localProject = false, projectSwitchFails = false, newConversation = false, onPrefill = async () => {} } = {}) {
   const dom = new JSDOM(`<section data-codex-composer-root data-composer-placement="home">
     ${hiddenFirst ? '<div id="hidden" data-codex-composer="true" contenteditable="true"></div>' : ""}
     <div id="visible" data-codex-composer="true" contenteditable="true"></div>
@@ -22,7 +22,8 @@ function composerHarness(t, { hiddenFirst = false, bound = false, onPrefill = as
   const { document } = dom.window;
   const editor = document.getElementById("visible");
   editor.getClientRects = () => [{ width: 300, height: 80 }];
-  const messages = [], requests = [], modes = [];
+  const messages = [], requests = [], modes = [], navigation = [];
+  let selectedProjectId = "";
   const created = Promise.withResolvers();
   let threadId = bound ? "existing-thread" : "";
   let now = Date.now();
@@ -56,7 +57,20 @@ function composerHarness(t, { hiddenFirst = false, bound = false, onPrefill = as
     normalizeThreadId: (value) => value || "",
     nativeThreadIds: () => new Set(bound ? ["existing-thread"] : []),
     threadIdFromLocation: () => threadId,
-    closePanel() {}, dispatchHostMessage() {}, openThread: async () => {},
+    closePanel() {},
+    dispatchHostMessage(message) {
+      navigation.push(message);
+      if (message.state?.project) selectedProjectId = message.state.project.projectId;
+    },
+    resolveNativeProject: async () => ({ projectId: "fixture-project", targetRoot: "/disposable/fixture" }),
+    waitForNativeProject: async (root, id) => {
+      assert.equal(root, "/disposable/fixture");
+      assert.equal(id, selectedProjectId, "navigate to the requested project before confirming selection");
+      if (projectSwitchFails) throw new Error("Fixture project selection not confirmed");
+      return id;
+    },
+    selectedNativeProjectId: async () => selectedProjectId,
+    openThread: async () => {},
     isTrustedPanelOrigin: () => true,
     findThreadRow: () => ({}), findThreadRowInProject: () => ({}),
     selectNativeCollaborationMode: async (mode, selected) => {
@@ -92,12 +106,13 @@ function composerHarness(t, { hiddenFirst = false, bound = false, onPrefill = as
   });
   document.addEventListener("keydown", api.submitted, true);
   return {
-    ...api, editor, messages, requests, created: created.promise,
+    ...api, editor, messages, requests, navigation, created: created.promise,
     stored: () => JSON.parse(dom.window.localStorage.getItem("fixture-pending")),
     run: () => api.prepare({
       taskId: "fixture-task", identifier: "LOCAL-42", title: "Plan fixture task",
       instruction: "Read LOCAL-42 and prepare its plan", collaborationMode: "plan",
-      projectless: !bound,
+      projectless: !bound && !localProject,
+      ...(localProject ? { codexProjectId: "fixture-project", workspacePath: "/disposable/fixture", newConversation } : {}),
       ...(bound ? {
         executionPreparation: true, planningPreparation: true,
         threadBinding: {
@@ -109,6 +124,29 @@ function composerHarness(t, { hiddenFirst = false, bound = false, onPrefill = as
     }),
   };
 }
+
+test("local planning and new drafts select the project without any sidebar rows", async t => {
+  for (const newConversation of [false, true]) {
+    const harness = composerHarness(t, { localProject: true, newConversation });
+    await harness.run();
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.navigation[0])), {
+      type: "navigate-to-route", path: "/",
+      state: { project: { type: "local", projectId: "fixture-project" } },
+    });
+    assert.equal(harness.pending().projectId, "fixture-project");
+    assert.match(harness.editor.textContent, /Read LOCAL-42/);
+    assert.deepEqual(harness.messages.map(({ type }) => type), ["panel:thread-prepared"]);
+  }
+});
+
+test("failed project confirmation prevents filling a draft in the wrong project", async t => {
+  const harness = composerHarness(t, { localProject: true, projectSwitchFails: true });
+  await harness.run();
+  assert.equal(harness.editor.textContent, "");
+  assert.equal(harness.pending(), null);
+  assert.equal(harness.messages[0].type, "panel:thread-create-error");
+  assert.equal(harness.messages[0].payload.error, "Fixture project selection not confirmed");
+});
 
 test("local prefill prepares the visible composer when a hidden editor comes first", async (t) => {
   const harness = composerHarness(t, { hiddenFirst: true });

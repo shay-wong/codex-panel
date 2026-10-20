@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Local task planning and new conversations navigate by the saved Codex project ID without depending on rendered or expanded sidebar rows. Panel confirms the target project and workspace before prefilling the draft.
+
 - Add a separate Restart Codex action to the Codex connection card to reload core configuration after confirmation.
 
 - Fix custom-provider Ultrafast selections losing their tier before API submission. First enable `api_key_model_discovery = true` under `[features]` in your Codex `config.toml`; Panel leaves this setting unchanged. Restart Codex after changing the Ultrafast switch and keep Panel running.

@@ -1703,16 +1703,12 @@
             "The target project or worktree is not mapped in Codex",
           ));
         }
-        await ensureProjectRows();
-        const row = projectRowById(target.projectId);
-        if (!row) throw new Error("Codex 中找不到对应的本地项目");
-        if (row.getAttribute("data-app-action-sidebar-project-collapsed") === "true") {
-          row.click?.();
-          await new Promise((resolve) => window.setTimeout(resolve, 120));
-        }
-        const selectProject = row.querySelector("[data-app-action-sidebar-select-project]");
-        if (!selectProject) throw new Error("Codex 中找不到对应的本地项目");
-        selectProject.click?.();
+        // Use the native project button's route without depending on sidebar rendering.
+        await dispatchHostMessage({
+          type: "navigate-to-route",
+          path: "/",
+          state: { project: { type: "local", projectId: target.projectId } },
+        });
         lastNativeProjectId = await waitForNativeProject(target.targetRoot, target.projectId);
       }
 

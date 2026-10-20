@@ -716,8 +716,6 @@ test("execution prepares location before prefill and submits only automatic clai
       threadIdFromLocation: () => "",
       setPendingThreadAssociation: (value) => { pending = value; },
       resolveNativeProject: async () => ({ projectId: "project", targetRoot: "/disposable/repo" }),
-      ensureProjectRows: async () => {},
-      projectRowById: () => ({ getAttribute: () => "false", querySelector: () => ({ click() {} }) }),
       waitForNativeProject: async () => "project",
       closePanel() {}, dispatchHostMessage() {}, nativeThreadIds: () => new Set(),
       selectNativeWorktree: async (value) => {
@@ -890,7 +888,7 @@ test("automatic dispatch leaves a pending manual draft alone", async () => {
 test("local Jira planning resolves the saved Codex project before applying its workspace", () => {
   assert.match(
     createThreadSource,
-    /if \(!projectless\) \{[\s\S]*?resolveNativeProject\(requestedProjectId, workspacePath\)[\s\S]*?ensureProjectRows\(\)[\s\S]*?projectRowById\(target\.projectId\)[\s\S]*?selectProject\.click\?\.\(\)[\s\S]*?waitForNativeProject\(target\.targetRoot, target\.projectId\)/,
+    /if \(!projectless\) \{[\s\S]*?resolveNativeProject\(requestedProjectId, workspacePath\)[\s\S]*?state: \{ project: \{ type: "local", projectId: target\.projectId \} \}[\s\S]*?waitForNativeProject\(target\.targetRoot, target\.projectId\)/,
   );
   assert.doesNotMatch(createThreadSource, /electron-add-new-workspace-root-option/);
 });

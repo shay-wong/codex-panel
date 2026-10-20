@@ -6,6 +6,8 @@
 
 ## 未发布
 
+- 本地任务继续规划和新建对话直接按已保存的 Codex 项目 ID 导航，不再依赖侧栏项目是否展开或渲染；确认目标项目与工作目录后才预填内容。
+
 - 在 Codex 连接卡片增加独立的“重启 Codex”操作，确认后完整重启并重新加载核心配置。
 
 - 修复自定义 API 选择 Ultrafast 后，核心在发送前丢弃速度参数的问题；需先在 Codex 的 `config.toml` 中开启 `[features]` 下的 `api_key_model_discovery = true`，Panel 不修改此设置；更改 Ultrafast 开关后需重启 Codex，并保持 Panel 运行。

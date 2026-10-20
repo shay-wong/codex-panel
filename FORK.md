@@ -1,5 +1,7 @@
 # Fork 维护说明
 
+本地任务项目导航（本次修复，等待上游吸收）：继续规划/新建对话不再通过侧栏 DOM 查找并点击项目。当前原生按钮走 navigate-to-route `/` 加 state.project={type:"local",projectId}，注入复用相同协议；仍先 resolveNativeProject，再 waitForNativeProject 核验项目与目录，失败不预填，不改变远程选择和已有会话恢复路径。代码 `inject/codex-panel.user.js`；验证 `test/inject-composer-preparation.test.mjs` 在无侧栏行时覆盖规划、新建及切换确认失败，`test/inject.test.mjs` 保留项目解析与目录检查。现场 TAPON-9090/TP-13 的项目 ID 存在但侧栏选择失败；当前 Codex 自动化访问受工具限制，真实安装后的按钮操作尚未验证。用户说明：中英文 README/CHANGELOG、`docs/fork-capabilities.md#local-task-project-navigation`。来源 `git log -S"native project button" -- inject/codex-panel.user.js`；上游消除同等侧栏依赖后移除。
+
 发布 Telegram 通知（本次新增，长期保留）：沿用 sub2api `.github/workflows/release.yml` 的通知流程，在 `.github/workflows/release-macos.yml` 成功发布后使用 `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` 两个仓库 Secret 发送版本、标签更新内容、Release 与 macOS 下载链接；保留 Markdown 转义、3500 字符内容截断、缺凭据跳过及通知失败不影响发布。普通 Check 不通知。内部发布运维能力，不新增产品界面或产品更新日志；验证 YAML、Bash 语法及本地模拟发送载荷，真实 Telegram 投递未验证。来源定位 `git log -S'Send Telegram Notification' -- .github/workflows/release-macos.yml`；移除通知需求后删除。
 
 显式重启 Codex（本次新增，长期保留）：运行概览的 Codex 连接卡片新增重启按钮，`launcher/src/App.tsx` → `restart_codex` → `restart_launcher(..., true)`，`src-tauri/src/main.rs` 精确查找官方 App 主进程（包含已连接的 managed 进程），通过 `update_dialog.rs` 确认中断运行任务，取消无副作用；确认后先停止 injector 自动重连，再正常退出 Codex 并重启服务/官方 App，使核心重新加载 Ultrafast 等配置。原重启服务保留只重连已连接 Codex 的语义。验证包括 launcher 点击路径、类型检查与 macOS Rust 编译；真实当前 Codex 的中断重启需单独实测，Windows/Linux 此次仅静态审核。用户文档为中英文 README 与 `docs/fork-capabilities.md`，发布说明为中英文 CHANGELOG 未发布段。来源定位 `git log -S'async fn restart_codex' -- src-tauri/src/main.rs`；上游具备等价独立操作后重新评估。

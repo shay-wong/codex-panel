@@ -1,5 +1,7 @@
 # Codex Panel
 
+Local task planning and new conversations navigate by the saved Codex project ID without depending on rendered or expanded sidebar rows. Panel confirms the target project and workspace before prefilling the draft.
+
 On macOS, quitting cleans up managed processes once in the background so the interface can remain responsive. Panel selects an available sidebar when hidden or inactive copies coexist, keeping its existing entry position. Injection retries reuse prepared custom-provider module mappings before the composer loads. See [desktop manager](docs/fork-capabilities.md#taurirust-desktop-manager) and [sidebar navigation](docs/fork-capabilities.md#switch-between-panel-and-native-codex-destinations).
 
 Opening Panel automatically reads the available account name and avatar without opening the native profile menu.
