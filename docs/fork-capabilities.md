@@ -14,6 +14,8 @@ The project model picker supports **6 Astra** (`gpt-6-astra`) with `low`, `mediu
 
 This page indexes the user-visible differences maintained by `shay-wong/codex-panel` relative to `chuspeeism/dashi-taskboard`.
 
+New Jira planning conversations are named `Jira ID · Jira 规划 · task title`; replanning uses `Jira ID · Jira 重新规划 · task title`. Ordinary task conversations use `task ID · task title`. After the prepared draft is sent, Panel validates the actual conversation and sets its native title, then reads the title back before reporting completion. A missing sidebar row does not block this confirmation. Existing conversations are not bulk-renamed.
+
 ## Configurable AI workflows
 
 When you explicitly authorize implementation in the current planning conversation, including Jira planning, Manage Panel instructs the agent to reread the task and execution configuration, then use `issue move --status in_progress` with the latest version and the complete saved conversation binding before editing. An authorized backlog or waiting task can enter execution directly; an already in-progress task reuses its state. Verification ends with `in_review`, preserving the Spec and conversation. For Jira, resolve the published repository-owned execution Issue for the authorized scope and complete its current-conversation binding first; an Issue owned by another conversation cannot be taken over. Spec approval or publication alone does not authorize execution. No new conversation or additional Panel execution click is required. These are agent-reported transitions, not inference from arbitrary chat messages. Existing conversations must read the updated Manage Panel Skill or execution configuration to adopt this rule; planning discussion alone leaves task status unchanged.

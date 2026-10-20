@@ -1565,7 +1565,7 @@ export function TaskDetail({
   const jiraPlanningThread = jiraContext?.plan?.threadId
     ? aiChatThreads.find((thread) => thread.id === jiraContext.plan?.threadId) ?? {
         id: jiraContext.plan.threadId,
-        title: `${currentTask.externalKey ?? currentTask.identifier} · Jira 规划`,
+        title: `${currentTask.externalKey ?? currentTask.identifier} · Jira 规划 · ${currentTask.title}`,
         status: "idle" as const,
         purpose: "formal" as const,
         origin: {

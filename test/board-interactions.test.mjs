@@ -211,7 +211,7 @@ test("Jira and local planning share the primary action position", () => {
 
 test("Jira planning displays the saved plan conversation when chat list data is unavailable", () => {
   assert.match(detailSource, /onOpenLegacyLocalThread\(threadId\);[\s\S]*return true;/);
-  assert.match(detailSource, /title: `\$\{currentTask\.externalKey \?\? currentTask\.identifier\} · Jira 规划`/);
+  assert.match(detailSource, /title: `\$\{currentTask\.externalKey \?\? currentTask\.identifier\} · Jira 规划 · \$\{currentTask\.title\}`/);
   assert.match(detailSource, /codexThreadId: jiraContext\.plan\.threadId/);
 });
 

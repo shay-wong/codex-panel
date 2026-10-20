@@ -72,7 +72,7 @@ function composerHarness(t, { hiddenFirst = false, bound = false, localProject =
     selectedNativeProjectId: async () => selectedProjectId,
     openThread: async () => {},
     isTrustedPanelOrigin: () => true,
-    findThreadRow: () => ({}), findThreadRowInProject: () => ({}),
+    findThreadRow: () => null, findThreadRowInProject: () => null,
     selectNativeCollaborationMode: async (mode, selected) => {
       assert.equal(selected, editor, "mode changes must target the visible composer");
       modes.push(mode);
@@ -156,7 +156,7 @@ test("local prefill prepares the visible composer when a hidden editor comes fir
   assert.match(harness.editor.textContent, /LOCAL-42/);
 });
 
-test("a draft sent before host prefill returns remains submitted and is confirmed afterward", { timeout: 1_000 }, async (t) => {
+test("a draft sent before host prefill returns is named and confirmed even without sidebar rows", { timeout: 1_000 }, async (t) => {
   for (const bound of [false, true]) {
     let submitted;
     const harness = composerHarness(t, { bound, onPrefill: async ({ api, submit }) => {
@@ -172,6 +172,7 @@ test("a draft sent before host prefill returns remains submitted and is confirme
     if (bound) assert.equal(submitted.previousTurnId, "previous-turn");
     assert.equal(harness.requests.length, 1);
     assert.equal(harness.requests[0].action, "confirm-task-conversation");
+    assert.equal(harness.requests[0].payload.title, "Plan fixture task");
     if (bound) assert.equal(harness.requests[0].payload.previousTurnId, "previous-turn");
     await harness.created;
     assert.deepEqual(harness.messages.map(({ type }) => type), ["panel:thread-prepared", "panel:thread-created"]);

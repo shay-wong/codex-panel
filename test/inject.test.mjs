@@ -994,7 +994,7 @@ test("manual execution confirms a new user turn before returning its actual bind
       calls.push([method, payload]);
       if (method === "thread/read") {
         reads += 1;
-        return { thread: { id: "existing", cwd: "/disposable/repo", turns: [{
+        return { thread: { id: "existing", name: reads >= 3 ? "Execution" : "Skill fallback", cwd: "/disposable/repo", turns: [{
           id: reads === 1 ? "previous" : "submitted",
           items: [{ type: "userMessage", content: [{ type: "text", text: "Execute TEST-1" }] }],
         }] } };
@@ -1007,7 +1007,7 @@ test("manual execution confirms a new user turn before returning its actual bind
     targetRoot: "/disposable/repo", codexProjectId: "project", codexHostId: "local",
     executionPreparation: true, useWorktree: false,
   });
-  assert.equal(reads, 2);
+  assert.equal(reads, 3);
   assert.equal(result.threadBinding.workspacePath, "/disposable/repo");
   assert.equal(result.threadBinding.threadId, "existing");
   assert.equal(result.developmentContext.branch, "feature");

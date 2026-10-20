@@ -3122,7 +3122,7 @@ export function App() {
         payload: {
           taskId: latestTask.id,
           identifier: latestTask.identifier,
-          title: latestTask.title,
+          title: `${latestTask.externalKey ?? latestTask.identifier} · ${latestTask.title}`,
           instruction: remoteTaskInstruction(latestTask, comments, textRef.current),
           codexProjectId: identity.codexProjectId,
           codexProjectKind: identity.codexProjectKind,
@@ -3216,7 +3216,7 @@ export function App() {
         identifier: task.externalKey ?? task.identifier,
         title: `${task.externalKey ?? task.identifier} · ${composer.replanLifecycleVersion === undefined
           ? "Jira 规划"
-          : "Jira 重新规划"}`,
+          : "Jira 重新规划"} · ${task.title}`,
         instruction: composer.text,
         collaborationMode: composer.collaborationMode,
         skillName: skillReferences[0].name,
@@ -3342,7 +3342,7 @@ export function App() {
       payload: {
         taskId: task.id,
         identifier: task.identifier,
-        title: task.title,
+        title: `${task.externalKey ?? task.identifier} · ${task.title}`,
         instruction,
         skillName: "manage-panel",
         skillDisplayName: "Manage Panel",

@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Include the task title after the Jira planning or replanning label in new conversation names. Confirm submitted conversation titles without depending on rendered sidebar rows.
+
 - Allow explicitly authorized implementation to continue in the current Jira planning conversation after resolving, binding, and claiming the published execution Issue.
 
 - Local task planning and new conversations navigate by the saved Codex project ID without depending on rendered or expanded sidebar rows. Panel confirms the target project and workspace before prefilling the draft.

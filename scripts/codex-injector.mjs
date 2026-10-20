@@ -1637,6 +1637,14 @@ async function confirmTaskConversationViaCdp(cdp, request) {
             10_000,
           );
         }
+        // 回读实际标题，避免仅凭命名请求成功就报告整个创建流程完成。
+        const named = await requestCodexAppServerViaCdp(
+          cdp, request.codexHostId, "thread/read",
+          { threadId: request.threadId, includeTurns: false }, 3_000,
+        );
+        if (named?.thread?.id !== request.threadId || named.thread.name !== title) {
+          throw new Error("Codex did not confirm the task conversation title");
+        }
         return { confirmed: true, ...(context ? {
           threadBinding: {
             threadId: request.threadId,

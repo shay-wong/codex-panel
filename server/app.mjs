@@ -2551,7 +2551,7 @@ export function createPanelServer(options = {}) {
       await aiChat.createThread({
         id: threadId,
         projectId: targetProjectId,
-        title: `${context.jira.externalKey ?? context.jira.identifier} · Jira 规划`,
+        title: `${context.jira.externalKey ?? context.jira.identifier} · Jira 规划 · ${context.jira.title}`,
         purpose: "formal",
         codexThreadId: threadId,
       });
@@ -2607,7 +2607,7 @@ export function createPanelServer(options = {}) {
       await aiChat.createThread({
         id: threadId,
         projectId: targetProjectId,
-        title: `${context.jira.externalKey ?? context.jira.identifier} · Jira 重新规划`,
+        title: `${context.jira.externalKey ?? context.jira.identifier} · Jira 重新规划 · ${context.jira.title}`,
         purpose: "formal",
         codexThreadId: threadId,
       });

@@ -1133,11 +1133,7 @@
     if (!pending.submitted || pending.confirming) return;
     const threadId = normalizeThreadId(threadIdFromLocation());
     if (!threadId || (pending.threadId ? threadId !== pending.threadId : pending.existingThreadIds.has(threadId))) return;
-    if (
-      pending.projectId
-        ? !findThreadRowInProject(threadId, pending.projectId)
-        : !findThreadRow(threadId)
-    ) return;
+    // 会话身份、工作目录和首条消息由 host 核验；侧栏未渲染不能阻止命名和绑定。
     pending.confirming = true;
     try {
       const confirmed = await requestHost("confirm-task-conversation", {

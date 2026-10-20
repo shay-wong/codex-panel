@@ -36,6 +36,8 @@ The project model picker includes **6 Astra** (`gpt-6-astra`), with reasoning le
 
 Ordinary tasks also support **Plan with AI**, persistent inline Specs, and approved breakdowns into backlog sub-issues with dependencies. Planning can continue into authorized execution in the same conversation: the agent records **In progress** before implementation and **In review** after verification, without another Panel execution click. Jira planning can also continue in the same conversation when explicitly requested, after resolving and binding the published repository-owned execution Issue. Spec approval or ticket publication alone does not start implementation. See [task planning](docs/fork-capabilities.md#plan-ordinary-tasks-and-split-sub-issues).
 
+New Jira planning conversations use `Jira ID · Jira 规划 · task title`; replanning uses `Jira ID · Jira 重新规划 · task title`. Panel confirms the saved native title after submission without requiring a rendered sidebar row.
+
 Explicit Jira conversation binding initializes a missing planning record so the same conversation can save its Spec and publish tickets. Existing plans are preserved. See [Jira planning](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues).
 
 [简体中文](README.zh-CN.md) | [Fork capabilities](docs/fork-capabilities.md) | [Changelog](CHANGELOG.md)
