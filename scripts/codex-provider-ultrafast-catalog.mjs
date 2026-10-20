@@ -57,6 +57,8 @@ export function createUltrafastCatalogAdapter({
 }) {
   const stateFile = path.join(dataDirectory, "ultrafast-catalog.json");
   let server, state, catalog, queue = Promise.resolve();
+  // Running Codex processes retain their catalog URL until they restart.
+  const sessionProviders = new Map();
   const save = async () => {
     await mkdir(dataDirectory, { recursive: true });
     await writeFile(stateFile + ".tmp", JSON.stringify(state), { mode: 0o600 });
@@ -66,7 +68,7 @@ export function createUltrafastCatalogAdapter({
     if (server) return;
     server = createServer(async (request, response) => {
       const url = new URL(request.url, "http://127.0.0.1");
-      const entry = Object.values(state.providers).find(entry => url.pathname === entry.route);
+      const entry = [...sessionProviders.values()].find(entry => url.pathname === entry.route);
       if (request.method !== "GET" || !entry) { response.writeHead(404).end(); return; }
       try {
         let source = catalog;
@@ -81,7 +83,7 @@ export function createUltrafastCatalogAdapter({
           source = await result.json();
         }
         response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-        response.end(JSON.stringify(withUltrafastCatalog(source)));
+        response.end(JSON.stringify(Object.values(state.providers).includes(entry) ? withUltrafastCatalog(source) : source));
       } catch {
         // Never log request headers: the core includes the provider's bearer token.
         response.writeHead(502).end("Model catalog unavailable");
@@ -100,6 +102,7 @@ export function createUltrafastCatalogAdapter({
     if (!preferencesFile) return;
     const preferences = await readJson(preferencesFile, {});
     state ??= await readJson(stateFile, { providers: {} });
+    for (const [name, entry] of Object.entries(state.providers)) sessionProviders.set(name, entry);
     const enabled = preferences.customProviderUltrafast === true;
     if (!enabled && Object.keys(state.providers).length === 0) return;
     const client = createClient();
@@ -131,11 +134,13 @@ export function createUltrafastCatalogAdapter({
         const current = config.model_providers[provider].model_catalog_url ?? null;
         let entry = state.providers[provider];
         if (!entry || current !== entry.url) {
+          const previous = sessionProviders.get(provider);
           entry = { originalUrl: current,
             restoreValue: userLayer?.config?.model_providers?.[provider]?.model_catalog_url ?? null,
-            route: `/models/${randomUUID()}` };
+            route: previous?.originalUrl === current ? previous.route : `/models/${randomUUID()}` };
           entry.url = `http://127.0.0.1:${state.port}${entry.route}`;
           state.providers[provider] = entry;
+          sessionProviders.set(provider, entry);
           // Retain restoration information before changing the user's config.
           await save();
         }

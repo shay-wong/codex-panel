@@ -75,6 +75,13 @@ test("provider catalog preserves an existing endpoint and restores only its own 
   assert.equal(config.model_providers["probe.dot"].model_catalog_url, originalUrl);
   assert.equal(config.model_catalog_json, undefined);
   assert.deepEqual(config.model_providers.openai, { name: "OpenAI" });
+  const disabledResponse = await fetch(url);
+  assert.equal(disabledResponse.status, 200, "the URL retained by running Codex remains available");
+  assert.deepEqual((await disabledResponse.json()).models[0].service_tiers, []);
+  await writeFile(preferencesFile, JSON.stringify({ customProviderUltrafast: true }));
+  await adapter.sync();
+  assert.equal(config.model_providers["probe.dot"].model_catalog_url, url, "re-enabling reuses the running catalog URL");
+  assert.equal((await (await fetch(url)).json()).models[0].service_tiers[0].id, "ultrafast");
 });
 
 test("restoring a catalog preserves inherited values and rejects higher-priority overrides", async t => {
