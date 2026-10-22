@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Integrate upstream v1.1.27: localize the injected Panel entry and activate the managed Windows Codex window on Panel open without unmaximizing it. Preserve Fork sidebar compatibility and process ownership; add the upstream read-only Windows diagnostic tool.
+
 - Include the task title after the Jira planning or replanning label in new conversation names. Confirm submitted conversation titles without depending on rendered sidebar rows.
 
 - Allow explicitly authorized implementation to continue in the current Jira planning conversation after resolving, binding, and claiming the published execution Issue.

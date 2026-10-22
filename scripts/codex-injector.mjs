@@ -52,6 +52,7 @@ import {
 } from "./codex-injector-control.mjs";
 import {
   activateWindowsCodex,
+  activateWindowsCodexWindow,
   windowsCodexProcesses,
   windowsCodexProfileArgument,
 } from "./windows-codex.mjs";
@@ -3022,6 +3023,15 @@ async function main() {
       emitLauncherEvent("managedStatus", { panelManagedStatus: status });
       return status;
     };
+    const foregroundManagedCodex = () => {
+      // 只唤醒本次启动记录的窗口，不猜测其他 Codex 实例的进程。
+      if (process.platform !== "win32" || !codexProcess?.pid) return;
+      try {
+        activateWindowsCodexWindow(codexProcess.pid, withoutPanelLauncherEnvironment(process.env));
+      } catch (error) {
+        console.error(`Unable to foreground managed Codex: ${error.message}`);
+      }
+    };
     const requestPanelOpen = () => {
       if (openRequestInFlight) return openRequestInFlight;
       const generation = openRequestGeneration;
@@ -3036,6 +3046,7 @@ async function main() {
           unregisterRoutableCodexConnection,
         );
         if (!opened) return false;
+        foregroundManagedCodex();
         openedRequestGeneration = Math.max(openedRequestGeneration, generation);
         emitLauncherEvent("panelOpened", { openPanelSignalOpened: true });
         await publishManagedStatus();
@@ -3221,6 +3232,7 @@ async function main() {
     }
     if (firstResults.length > 0) {
       if (shouldOpenFirstTarget) {
+        foregroundManagedCodex();
         openedRequestGeneration = Math.max(openedRequestGeneration, firstOpenGeneration);
         emitLauncherEvent("panelOpened", { openPanelSignalOpened: true });
       }

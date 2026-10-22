@@ -515,3 +515,53 @@ test("retired isolated host listeners do not duplicate notifications or accept o
   send({ type: 'request', capability: 'new-host', payload: { id: 'current' } });
   assert.equal(requests.length, 1);
 });
+
+
+test("Windows initial and repeated Panel opens foreground only the managed PID without failing on focus refusal", async () => {
+  const start = source.indexOf("    const foregroundManagedCodex = () => {");
+  const end = source.indexOf('    if (options.watch && process.platform === "win32")', start);
+  const firstStart = source.indexOf("    if (firstResults.length > 0) {");
+  const firstEnd = source.indexOf("    if (!options.watch) {", firstStart);
+  const calls = [], errors = [];
+  let denyFocus = false, opens = true;
+  const context = {
+    process: { platform: "win32", env: { SAFE: "1" } },
+    activateWindowsCodexWindow(pid, env) {
+      calls.push({ pid, env });
+      if (denyFocus) throw new Error("foreground denied");
+    },
+    withoutPanelLauncherEnvironment: (env) => env,
+    openRuntimePanel: async () => opens,
+    publishManagedStatus: async () => {}, emitLauncherEvent() {},
+    forwardCodexAppServerNotification() {}, registerRoutableCodexConnection() {}, unregisterRoutableCodexConnection() {},
+    console: { error: (message) => errors.push(message), log() {} },
+  };
+  const api = vm.runInNewContext(`(() => {
+    let codexProcess = { pid: 456 }, openRequestGeneration = 1, openedRequestGeneration = 0, openRequestInFlight = null;
+    const cdpRuntime = {}, sourceHash = "test", options = { startupToken: "isolated" };
+    ${source.slice(start, end)}
+    return {
+      async initial() {
+        const firstResults = [{}], shouldOpenFirstTarget = true, firstOpenGeneration = openRequestGeneration;
+        ${source.slice(firstStart, firstEnd)}
+      },
+      reopen() { openRequestGeneration++; return requestPanelOpen(); },
+      detach() { codexProcess = null; },
+    };
+  })()`, context);
+  await api.initial();
+  assert.equal(calls.length, 1);
+  assert.equal(await api.reopen(), true);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0], { pid: 456, env: { SAFE: "1" } });
+  denyFocus = true;
+  assert.equal(await api.reopen(), true);
+  assert.match(errors[0], /foreground denied/);
+  opens = false;
+  assert.equal(await api.reopen(), false);
+  assert.equal(calls.length, 3);
+  opens = true;
+  api.detach();
+  assert.equal(await api.reopen(), true);
+  assert.equal(calls.length, 3);
+});

@@ -1,10 +1,10 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Read-only diagnostic probe for the Codex Panel panel on Windows.
+    Read-only diagnostic probe for the Codex Panel on Windows.
 
 .DESCRIPTION
-    Inspects the Taskboard injector, the Codex CDP endpoint, the Codex main window,
+    Inspects the Panel injector, the Codex CDP endpoint, the Codex main window,
     and the mounted panel state. It never calls open() or any other mutating action.
 
     Output is one JSON object. Exit codes:

@@ -8,16 +8,18 @@ const source = await readFile(new URL("../inject/codex-panel.user.js", import.me
 const functions = source.slice(source.indexOf("  function buttonMatches("), source.indexOf("  function findPageHost("));
 function fixture(markup) {
   const dom = new JSDOM(markup);
+  dom.window.document.documentElement.lang = "zh-CN";
   let opened = 0;
   dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
     return {top:100,bottom:130,height:this.hidden?0:30};
   };
-  const api = vm.runInNewContext(`let entry=null; const destroyed=false, active=false;
+  const api = vm.runInNewContext(`let entry=null, entryLabel=null; const destroyed=false, active=false;
     const OWNED_ATTRIBUTE="data-codex-panel-owned",ENTRY_ID="codex-panel-entry",EXPLORE_LABELS=["探索","explore"],PLUGIN_LABELS=["plugins","插件"];
     const normalizedLabel=value=>value.trim().toLowerCase();
+    ${source.slice(source.indexOf("  function hostText("), source.indexOf("  function normalizedLabel("))}
     ${functions}
     ({ensureEntry,findReferenceButton})`, {
-    document:dom.window.document,installStyles(){},openPanel(){opened++;},
+    document:dom.window.document,navigator:dom.window.navigator,installStyles(){},openPanel(){opened++;},
   });
   return {dom,api,get opened(){return opened;}};
 }
@@ -168,4 +170,39 @@ test("mount skips retained inert sidebars and follows the active sidebar", () =>
     entry.click();
     assert.equal(f.opened, 1);
   } finally { f.dom.window.close(); }
+});
+
+
+test("entry language changes preserve the icon, accessibility and native navigation", () => {
+  for (const markup of [
+    '<aside><nav data-app-navigation-rail><button><svg></svg><span class="sr-only">Explore</span></button></nav></aside>',
+    '<aside><a href="/">New chat</a></aside>',
+  ]) {
+    const f = fixture(markup);
+    try {
+      const { document } = f.dom.window;
+      f.api.ensureEntry();
+      const entry = document.getElementById("codex-panel-entry");
+      const icon = entry.querySelector("svg");
+      for (const [language, label, aria] of [["en-US", "Panel", "Open Panel"], ["zh_TW", "任务面板", "打开任务面板"]]) {
+        document.documentElement.lang = language;
+        f.api.ensureEntry();
+        assert.equal(entry.textContent.trim(), label);
+        assert.equal(entry.title, label);
+        assert.equal(entry.getAttribute("aria-label"), aria);
+        assert.equal(entry.querySelector("svg"), icon);
+      }
+      const observer = new f.dom.window.MutationObserver(() => {});
+      observer.observe(entry, { attributes: true, childList: true, characterData: true, subtree: true });
+      const syncStart = source.indexOf("  function syncEntryText(");
+      const syncEnd = source.indexOf("  function syncEntryState(");
+      vm.runInNewContext(`${source.slice(syncStart, syncEnd)}; syncEntryText()`, {
+        entry, entryLabel: entry.querySelector("span"), hostText: (chinese) => chinese,
+      });
+      assert.equal(observer.takeRecords().length, 0);
+      observer.disconnect();
+      entry.click();
+      assert.equal(f.opened, 1);
+    } finally { f.dom.window.close(); }
+  }
 });

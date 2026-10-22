@@ -16,6 +16,12 @@ This page indexes the user-visible differences maintained by `shay-wong/codex-pa
 
 New Jira planning conversations are named `Jira ID · Jira 规划 · task title`; replanning uses `Jira ID · Jira 重新规划 · task title`. Ordinary task conversations use `task ID · task title`. After the prepared draft is sent, Panel validates the actual conversation and sets its native title, then reads the title back before reporting completion. A missing sidebar row does not block this confirmation. Existing conversations are not bulk-renamed.
 
+## Sidebar language and Windows window activation
+
+The injected entry follows the Codex document language: Chinese locales show **任务面板**, other locales show **Panel**. Its tooltip and accessible name update with the language. Existing entry placement, hidden-sidebar filtering and the Free-account New chat fallback are preserved.
+
+On Windows, an explicit Panel open restores a minimized Codex window and requests foreground focus after the panel opens, using the PID returned when this injector launched Codex. Maximized windows stay maximized. Windows may refuse foreground focus; that failure is logged without undoing the panel open. Attaching to an existing CDP instance without a recorded PID does not activate another window. See the [read-only Windows diagnostic tool](../tools/windows/README.md) for inspection and validation limits.
+
 ## Configurable AI workflows
 
 When you explicitly authorize implementation in the current planning conversation, including Jira planning, Manage Panel instructs the agent to reread the task and execution configuration, then use `issue move --status in_progress` with the latest version and the complete saved conversation binding before editing. An authorized backlog or waiting task can enter execution directly; an already in-progress task reuses its state. Verification ends with `in_review`, preserving the Spec and conversation. For Jira, resolve the published repository-owned execution Issue for the authorized scope and complete its current-conversation binding first; an Issue owned by another conversation cannot be taken over. Spec approval or publication alone does not authorize execution. No new conversation or additional Panel execution click is required. These are agent-reported transitions, not inference from arbitrary chat messages. Existing conversations must read the updated Manage Panel Skill or execution configuration to adopt this rule; planning discussion alone leaves task status unchanged.

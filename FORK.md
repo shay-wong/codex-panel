@@ -120,7 +120,7 @@ Free 侧边栏兼容（等待上游吸收）：没有插件、宠物及 destinat
 
 本轮同步 `6a79ef5`（上游 `1.1.26`）：吸收新版 Codex 导航栏独立入口与原生标题栏拖动区域保留、紧凑账号菜单身份读取及受限 WebP 头像、叠放通知与撤销、待认领评论的重复状态操作隐藏，以及 Windows Store Codex 配套可执行文件缓存。保留 Fork 的 MemoryRouter 导航历史、私有桥、额度适配、产品名和独立版本；不引入绑定上游组织与产品的 SignPath Windows 测试签名流水线。
 
-本轮同步 `9aa1f4e`（正式版 `v1.1.27`）：保留 Fork 已覆盖的经典侧栏、Free 布局、隐藏节点过滤和导航历史；吸收 Windows 按 PID 唤醒窗口的底层能力及只读诊断工具。现有启动器接入和入口多语言适配由紧随其后的独立功能提交完成，避免恢复上游旧进程管理流程。Fork 品牌、独立版本和签名更新源保持不变。
+本轮同步 `9aa1f4e`（正式版 `v1.1.27`）：保留 Fork 已覆盖的经典侧栏、Free 布局、隐藏节点过滤和导航历史；吸收 Windows 按 PID 唤醒窗口的底层能力及只读诊断工具。紧随合并的独立功能提交将窗口唤醒接入现有首次及后续打开请求，只使用本次启动返回的 PID，聚焦失败仅记日志；无托管 PID 时不猜测其他窗口。入口按宿主语言同步文案且只在变化时写 DOM，保留图标与无障碍属性；标题栏只读取一次挂载点，避免恢复上游旧进程管理流程。代码：`scripts/codex-injector.mjs`、`inject/codex-panel.user.js`；验证：`test/windows-codex.test.mjs`、`test/injector.test.mjs`、`test/codex-sidebar-mount.test.mjs`；用户说明：中英文 README/CHANGELOG、`docs/fork-capabilities.md#sidebar-language-and-windows-window-activation`。来源定位：`git log -S'foregroundManagedCodex' -- scripts/codex-injector.mjs`。Windows 真机前台聚焦仍待验证。Fork 品牌、独立版本和签名更新源保持不变。
 
 ## Fork 发布版本策略
 

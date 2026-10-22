@@ -61,6 +61,7 @@
   } catch (_) {}
 
   let entry = null;
+  let entryLabel = null;
   let page = null;
   let frame = null;
   let dragRegion = null;
@@ -182,6 +183,11 @@
   }
 
   restorePendingThreadAssociation();
+
+  function hostText(chinese, english) {
+    const language = (document.documentElement.lang || navigator.language).trim().replaceAll("_", "-").toLowerCase();
+    return language === "zh" || language.startsWith("zh-") ? chinese : english;
+  }
 
   function normalizedLabel(value) {
     return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -458,21 +464,22 @@
     }
     button.setAttribute("role", "button");
     button.setAttribute("tabindex", "0");
-    button.setAttribute("aria-label", "打开任务面板");
-    button.setAttribute("title", "任务面板");
     button.setAttribute(OWNED_ATTRIBUTE, "true");
     button.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
     button.querySelectorAll("span.absolute.end-0.top-0").forEach((node) => node.remove());
     const label = button.querySelector(".sr-only") || button.querySelector(".text-fade-truncate")
       || Array.from(button.querySelectorAll("span")).find((node) => buttonMatches(node, PLUGIN_LABELS));
     if (label) {
-      label.textContent = "任务面板";
       // 导航栏沿用本地图标容器；展开侧栏只保留图标和文字，去掉原生提示点。
       if (!reference.closest("nav[data-app-navigation-rail]")) {
         const icon = button.querySelector(".icon-leading-slot") || button.querySelector("svg");
         button.replaceChildren(...(icon ? [icon, label] : [label]));
       }
-    } else button.textContent = "任务面板";
+    } else {
+      button.replaceChildren(document.createElement("span"));
+    }
+    entryLabel = label || button.firstElementChild;
+    syncEntryText(button);
     replaceEntryIcon(button);
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -488,6 +495,16 @@
       });
     }
     return button;
+  }
+
+  function syncEntryText(button = entry) {
+    if (!button) return;
+    const label = hostText("任务面板", "Panel");
+    const ariaLabel = hostText("打开任务面板", "Open Panel");
+    // 观察器也监听入口属性；仅在语言变化时写入，避免持续触发刷新。
+    if (button.getAttribute("aria-label") !== ariaLabel) button.setAttribute("aria-label", ariaLabel);
+    if (button.getAttribute("title") !== label) button.setAttribute("title", label);
+    if (entryLabel && entryLabel.textContent !== label) entryLabel.textContent = label;
   }
 
   function syncEntryState() {
@@ -510,6 +527,7 @@
     // 新聊天按钮可能只是横向行的一部分；在整行之后挂载，不能挤入快速聊天所在的行内。
     const row = reference.parentElement.closest(".sidebar-item") || reference;
     if (!entry) entry = createEntry(reference);
+    syncEntryText();
     entry.style.height = row !== reference ? "var(--nav-item-height, var(--height-token-row, 36px))" : "";
     entry.style.flex = row !== reference ? "none" : "";
     entry.style.width = row !== reference ? "100%" : "";
@@ -838,7 +856,8 @@
   function titlebarLeftInset() {
     if (!/Macintosh|Mac OS X/.test(navigator.userAgent)) return 0;
     if (nativeSidebarCollapsed()) return MACOS_TITLEBAR_SAFE_LEFT;
-    const surfaceLeft = (findPageMount()?.rail?.getBoundingClientRect().right ?? findPageMount()?.surface.getBoundingClientRect().left);
+    const mount = findPageMount();
+    const surfaceLeft = mount?.rail?.getBoundingClientRect().right ?? mount?.surface.getBoundingClientRect().left;
     if (!Number.isFinite(surfaceLeft)) return 0;
     return Math.max(0, Math.ceil(MACOS_TITLEBAR_SAFE_LEFT - surfaceLeft));
   }
@@ -2682,6 +2701,7 @@
       subtree: true,
       attributes: true,
       attributeFilter: [
+        "lang",
         "inert",
         "hidden",
         "class",
@@ -2732,6 +2752,7 @@
     closePanel(false);
     document.querySelectorAll(`[${OWNED_ATTRIBUTE}="true"]`).forEach((node) => node.remove());
     entry = null;
+    entryLabel = null;
     page = null;
     frame = null;
     dragRegion = null;
