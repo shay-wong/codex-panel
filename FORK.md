@@ -92,9 +92,9 @@ Free 侧边栏兼容（等待上游吸收）：没有插件、宠物及 destinat
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`6a79ef522238ff11681cb85a9d803d19442a3d00`
-- 精确已合并上游基线：`6a79ef522238ff11681cb85a9d803d19442a3d00`
-- 比较范围：`6a79ef522238ff11681cb85a9d803d19442a3d00..HEAD`
+- 本次合并的上游父提交：`9aa1f4e7936d841748ed4e0fc7781b57ae6ae6cc`
+- 精确已合并上游基线：`9aa1f4e7936d841748ed4e0fc7781b57ae6ae6cc`
+- 比较范围：`9aa1f4e7936d841748ed4e0fc7781b57ae6ae6cc..HEAD`
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
@@ -120,11 +120,13 @@ Free 侧边栏兼容（等待上游吸收）：没有插件、宠物及 destinat
 
 本轮同步 `6a79ef5`（上游 `1.1.26`）：吸收新版 Codex 导航栏独立入口与原生标题栏拖动区域保留、紧凑账号菜单身份读取及受限 WebP 头像、叠放通知与撤销、待认领评论的重复状态操作隐藏，以及 Windows Store Codex 配套可执行文件缓存。保留 Fork 的 MemoryRouter 导航历史、私有桥、额度适配、产品名和独立版本；不引入绑定上游组织与产品的 SignPath Windows 测试签名流水线。
 
+本轮同步 `9aa1f4e`（正式版 `v1.1.27`）：保留 Fork 已覆盖的经典侧栏、Free 布局、隐藏节点过滤和导航历史；吸收 Windows 按 PID 唤醒窗口的底层能力及只读诊断工具。现有启动器接入和入口多语言适配由紧随其后的独立功能提交完成，避免恢复上游旧进程管理流程。Fork 品牌、独立版本和签名更新源保持不变。
+
 ## Fork 发布版本策略
 
 - 权威上游版本来源：精确合并基线中的 `package.json`
 - 发布版本来源：规范 `vX.Y.Z-fork` 标签。Actions 在构建目录同步 `package.json`、`package-lock.json` 根包条目、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock` 的 launcher 条目；main 中的字段仅作本地开发构建版本，不代表最新 Release。
-- 精确基线的上游版本：`1.1.26`（本次同步代码基线，不改变 Fork 发布版本）
+- 精确基线的上游版本：`1.1.27-beta.1`（正式标签 `v1.1.27` 指向相同提交）（本次同步代码基线，不改变 Fork 发布版本）
 - 最近已核实发布：`v0.0.3-fork`。后续发布以 GitHub 标签与 Release 为准，无需逐版修改此台账。
 
 Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标签为 `vX.Y.Z-fork`；后续按 Fork 自身变更递增。上游版本只记录合并基线，不决定、重置或覆盖 Fork 版本。此决定替代旧的 `<upstream-version>-fork.<N>` 策略，后续应用 fork-doc 时以本仓库约定为准。
