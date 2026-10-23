@@ -6,6 +6,8 @@
 
 macOS 退出在后台单次清理托管进程，避免界面等待清理而卡住。多个隐藏或不可交互侧栏并存时，面板选择可用侧栏并保留原有入口位置；输入框尚未加载时，注入重试复用已准备的自定义 API 模块映射。参见[桌面管理器](docs/fork-capabilities.md#taurirust-desktop-manager)和[侧栏导航](docs/fork-capabilities.md#switch-between-panel-and-native-codex-destinations)。
 
+在 **偏好设置 → 显示与系统 → 恢复 Dot 入口** 开启独立开关，可跳过 Dot 的客户端账号权限与 Provider 限制；默认关闭，连接 Panel 时生效，服务端仍可能拒绝实际操作。适配加载后切换即时生效；首次安装或更新适配沿用原有一次界面重载。已核对 ChatGPT 26.1016.62342 源码能力路径，尚未验证真实账号的 Dot 可用性。详见 [Dot 入口说明](docs/fork-capabilities.md#custom-provider-dot-entry)。
+
 在 **偏好设置 → 显示与系统 → 显示自定义 API 的 Ultrafast 选项** 开启独立开关，仅为本地自定义 provider 的 `gpt-6-astra` 和 `gpt-6.1-sol` 显示 Ultrafast，与 2026-10-13 核实的[官方支持名单](https://learn.chatgpt.com/docs/agent-configuration/speed#ultrafast-mode)一致；其他模型及自定义别名不放行。默认关闭；切换前先读取 Codex 用户 `config.toml`：开启时仅在 `[features].api_key_model_discovery` 缺失或为 false 时询问是否设为 true；关闭时仅在字段存在时询问是否删除。弹窗只有“同时修改配置”和“仅切换，保留配置”两个选项，可按 Escape 取消；无需处理配置时直接切换，读取失败则显示错误并保留开关状态。未开启模型发现可能导致模型列表为空，删除配置后恢复默认或其他配置层的行为；同时适配菜单与自定义 provider 的核心模型目录，保存成功后显示重启提醒，可选择立即重启 Codex 或稍后；同一轮 Panel 运行中切换开关会复用清单地址，关闭后旧地址仍提供普通清单，避免未重启时地址失效。核心能力完整生效仍需重启 Codex，使用时保持 Panel 运行。选择仍走原生保存与请求路径，确保出站请求携带 `service_tier`；官方 OpenAI 和远程主机保留原生规则。首次安装或更新适配需要重载一次界面。关闭会恢复原 provider 模型目录配置与原生权限判断，不删除已保存的速度偏好；实际速度与计费由 provider 决定。客户端结构不兼容时保留原生行为并记录不可用日志。范围为原生输入框菜单与普通发送；工具创建对话、通知回复仍保留各自原生检查。
 
 打开任务面板时自动读取已有的账号姓名和头像，不再主动展开原生头像菜单。

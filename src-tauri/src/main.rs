@@ -172,6 +172,8 @@ struct LauncherPreferences {
     custom_provider_quota_fix: bool,
     #[serde(default)]
     custom_provider_ultrafast: bool,
+    #[serde(default)]
+    show_custom_provider_dot: bool,
 }
 
 #[derive(Serialize)]
@@ -192,6 +194,7 @@ impl Default for LauncherPreferences {
             hide_usage_banner: false,
             custom_provider_quota_fix: false,
             custom_provider_ultrafast: false,
+            show_custom_provider_dot: false,
         }
     }
 }
@@ -2702,7 +2705,7 @@ async fn set_launcher_preference(
     enabled: bool,
     update_model_discovery: Option<bool>,
 ) -> Result<LauncherPreferences, String> {
-    if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel" | "hideUsageBanner" | "customProviderQuotaFix" | "customProviderUltrafast") {
+    if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel" | "hideUsageBanner" | "customProviderQuotaFix" | "customProviderUltrafast" | "showCustomProviderDot") {
         return Err("未知的偏好设置".to_string());
     }
     if update_model_discovery == Some(true) {
@@ -2717,6 +2720,7 @@ async fn set_launcher_preference(
         "hideUsageBanner" => preferences.hide_usage_banner = enabled,
         "customProviderQuotaFix" => preferences.custom_provider_quota_fix = enabled,
         "customProviderUltrafast" => preferences.custom_provider_ultrafast = enabled,
+        "showCustomProviderDot" => preferences.show_custom_provider_dot = enabled,
         _ => unreachable!(),
     })
 }

@@ -85,7 +85,7 @@ export function rewriteCodexProviderQuota(source, sourceUrl) {
     .replaceAll("import.meta.url", JSON.stringify(sourceUrl));
 }
 
-export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report = console.error, modules = []) {
+export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report = console.error, modules = [], dotEntryPrepared = false, ultrafastPrepared = modules.length === 2) {
   if (!preferencesFile) return "";
   try {
     let preferences = {};
@@ -94,54 +94,66 @@ export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report 
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
-    const result = await cdp.send("Runtime.evaluate", {
-      expression: `(async () => {
-        const candidates = [...new Set([
-          ...performance.getEntriesByType("resource").map(entry => entry.name),
-          // 适配后的模块通过 blob 加载，资源列表可能不再包含原 URL；从已安装的映射找回当前模块。
-          ...[...document.querySelectorAll('script[type="importmap"]')].flatMap(node => {
-            try { return Object.keys(JSON.parse(node.textContent).imports ?? {}); }
-            catch { return []; }
-          }),
-          ...[...document.querySelectorAll("script[src],link[rel=modulepreload][href]")].map(node => node.src || node.href),
-        ].filter(url => /\\/app-primary-[\\w-]+\\.js$/.test(new URL(url, location.href).pathname)))];
-        if (candidates.length === 0) candidates.push(new URL(${JSON.stringify(`/assets/${CODEX_PROVIDER_QUOTA_ASSET}`)}, location.href).href);
-        for (const url of candidates) {
-          try {
-            const response = await fetch(url, { cache: "no-store" });
-            if (response.ok) return { url, source: await response.text() };
-          } catch {}
-        }
-        throw new Error("No supported composer asset could be read");
-      })()`,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (result.exceptionDetails || typeof result.result?.value?.source !== "string") {
-      throw new Error("native composer source could not be read");
+    let replacements = modules;
+    let quotaPrepared = false;
+    try {
+      const result = await cdp.send("Runtime.evaluate", {
+        expression: `(async () => {
+          const candidates = [...new Set([
+            ...performance.getEntriesByType("resource").map(entry => entry.name),
+            // 适配后的模块通过 blob 加载，资源列表可能不再包含原 URL；从已安装的映射找回当前模块。
+            ...[...document.querySelectorAll('script[type="importmap"]')].flatMap(node => {
+              try { return Object.keys(JSON.parse(node.textContent).imports ?? {}); }
+              catch { return []; }
+            }),
+            ...[...document.querySelectorAll("script[src],link[rel=modulepreload][href]")].map(node => node.src || node.href),
+          ].filter(url => /\\/app-primary-[\\w-]+\\.js$/.test(new URL(url, location.href).pathname)))];
+          if (candidates.length === 0) candidates.push(new URL(${JSON.stringify(`/assets/${CODEX_PROVIDER_QUOTA_ASSET}`)}, location.href).href);
+          for (const url of candidates) {
+            try {
+              const response = await fetch(url, { cache: "no-store" });
+              if (response.ok) return { url, source: await response.text() };
+            } catch {}
+          }
+          throw new Error("No supported composer asset could be read");
+        })()`,
+        awaitPromise: true,
+        returnByValue: true,
+      });
+      if (result.exceptionDetails || typeof result.result?.value?.source !== "string") {
+        throw new Error("native composer source could not be read");
+      }
+      const { url, source } = result.result.value;
+      const patched = rewriteCodexProviderQuota(modules.find(module => module.url === url)?.source ?? source, url);
+      if (patched === null) throw new Error("unsupported composer source");
+      cdp.on("Runtime.consoleAPICalled", ({ args }) => {
+        if (args?.[0]?.value === appliedMessage) report(appliedMessage);
+      });
+      report(`Panel custom-provider quota module prepared for the next renderer load: ${url}`);
+      replacements = [...modules.filter(module => module.url !== url), {url, source: patched}];
+      quotaPrepared = true;
+    } catch (error) {
+      // 新版输入框不匹配时，Dot 等独立模块仍可安装，不能被额度适配连带禁用。
+      if (modules.length === 0) throw error;
+      report(`Panel custom-provider quota fix unavailable: ${error.message}`);
     }
-    const { url, source } = result.result.value;
-    const patched = rewriteCodexProviderQuota(modules.find(module => module.url === url)?.source ?? source, url);
-    if (patched === null) throw new Error("unsupported composer source");
-    cdp.on("Runtime.consoleAPICalled", ({ args }) => {
-      if (args?.[0]?.value === appliedMessage) report(appliedMessage);
-    });
-    report(`Panel custom-provider quota module prepared for the next renderer load: ${url}`);
-    const replacements = [...modules.filter(module => module.url !== url), {url, source: patched}];
     return `(() => {
       if (window !== window.top) return;
-      window.__codexPanelUltrafastBootstrapPrepared__ = ${modules.length === 2};
+      window.__codexPanelUltrafastBootstrapPrepared__ = ${ultrafastPrepared};
+      window.__codexPanelDotBootstrapPrepared__ = ${dotEntryPrepared};
       const runtime = globalThis.__codexPanelProviderQuotaV1__ ??= (${createCodexProviderQuotaRuntime.toString()})(${preferences.customProviderQuotaFix === true});
       runtime.setEnabled(${preferences.customProviderQuotaFix === true});
       const ultrafast = globalThis.__codexPanelProviderUltrafastV1__ ??= (${createCodexProviderQuotaRuntime.toString()})(${preferences.customProviderUltrafast === true});
       ultrafast.setEnabled(${preferences.customProviderUltrafast === true});
+      const dot = globalThis.__codexPanelDotEntryV1__ ??= (${createCodexProviderQuotaRuntime.toString()})(${preferences.showCustomProviderDot === true});
+      dot.setEnabled(${preferences.showCustomProviderDot === true});
       // 首页可能延迟加载输入框模块；映射准备成功后无需重复安装。
       if (runtime.installed || runtime.prepared) return;
       const install = () => {
         if (!document.documentElement) return;
         observer.disconnect();
         const imports = Object.fromEntries(${JSON.stringify(replacements)}.map(({url, source}) => [url,
-          URL.createObjectURL(new Blob([source + ${JSON.stringify(`\nglobalThis.__codexPanelProviderQuotaV1__.installed=true;console.info(${JSON.stringify(appliedMessage)});`)}], { type: "text/javascript" }))]));
+          URL.createObjectURL(new Blob([source + ${JSON.stringify(`\nglobalThis.__codexPanelProviderQuotaV1__.installed=true;${quotaPrepared ? `console.info(${JSON.stringify(appliedMessage)});` : ""}`)}], { type: "text/javascript" }))]));
         const map = document.createElement("script");
         map.type = "importmap";
         map.textContent = JSON.stringify({ imports });

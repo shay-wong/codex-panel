@@ -33,6 +33,7 @@ import {
   startPanelHostHeartbeats,
 } from "./codex-injector-runtime.mjs";
 import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
+import { prepareCodexDotEntry } from "./codex-dot-entry.mjs";
 import { prepareCodexProviderUltrafast } from "./codex-provider-ultrafast.mjs";
 import { createUltrafastCatalogAdapter } from "./codex-provider-ultrafast-catalog.mjs";
 import { prepareCodexProviderQuotaFix, watchCodexProviderQuotaPreferences } from "./codex-provider-quota.mjs";
@@ -2282,6 +2283,7 @@ function installPanelHostBinding(
           let hideUsageBanner = false;
           let customProviderQuotaFix = false;
           let customProviderUltrafast = false;
+          let showCustomProviderDot = false;
           const preferencesFile = panelEnvironment("PREFERENCES_FILE");
           if (preferencesFile) {
             try {
@@ -2289,6 +2291,7 @@ function installPanelHostBinding(
               hideUsageBanner = preferences.hideUsageBanner === true;
               customProviderQuotaFix = preferences.customProviderQuotaFix === true;
               customProviderUltrafast = preferences.customProviderUltrafast === true;
+              showCustomProviderDot = preferences.showCustomProviderDot === true;
             } catch {}
           }
           await cdp.send("Runtime.evaluate", {
@@ -2300,6 +2303,7 @@ function installPanelHostBinding(
               hideUsageBanner: ${JSON.stringify(hideUsageBanner)},
               customProviderQuotaFix: ${JSON.stringify(customProviderQuotaFix)},
               customProviderUltrafast: ${JSON.stringify(customProviderUltrafast)},
+              showCustomProviderDot: ${JSON.stringify(showCustomProviderDot)},
               startupToken: ${JSON.stringify(startupToken)}
             }, window.location.origin)`,
             returnByValue: true,
@@ -2326,6 +2330,7 @@ async function readInjectionStatus(cdp) {
       version: window.__codexPanelInjection__?.version || null,
       sourceHash: window.__codexPanelInjection__?.sourceHash || null,
       ultrafastBootstrapPrepared: window.__codexPanelUltrafastBootstrapPrepared__ === true,
+      dotBootstrapPrepared: window.__codexPanelDotBootstrapPrepared__ === true,
       quotaBootstrapPrepared: window.__codexPanelQuotaBootstrapPrepared__ === true,
       scriptIdentifier: window[${JSON.stringify(injectionScriptIdentifierName)}] || null,
       entryMounted: Boolean(document.getElementById("codex-panel-entry")),
@@ -2488,8 +2493,9 @@ async function injectTarget(
     if (keepAlive) await hostBridge.install();
     await waitForRendererReady(cdp, 15_000);
     const ultrafastModules = keepAlive ? await prepareCodexProviderUltrafast(cdp) : [];
+    const dot = keepAlive ? await prepareCodexDotEntry(cdp, ultrafastModules) : { modules: [], prepared: false };
     const quotaSource = keepAlive
-      ? await prepareCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"), console.error, ultrafastModules)
+      ? await prepareCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"), console.error, dot.modules, dot.prepared, ultrafastModules.length === 2)
       : "";
     if (quotaSource) source = `window.__codexPanelQuotaBootstrapPrepared__ = true;\n${quotaSource}\n${source}`;
     await cdp.send("Page.setBypassCSP", { enabled: true });
@@ -2500,7 +2506,8 @@ async function injectTarget(
         source,
         sourceHash,
         reloadRequired: Boolean(quotaSource) && (currentStatus.quotaBootstrapPrepared !== true
-          || ultrafastModules.length === 2 && currentStatus.ultrafastBootstrapPrepared !== true),
+          || ultrafastModules.length === 2 && currentStatus.ultrafastBootstrapPrepared !== true
+          || dot.prepared && currentStatus.dotBootstrapPrepared !== true),
         shouldOpen,
         removeRegisteredSource: (identifier) => cdp.send(
           "Page.removeScriptToEvaluateOnNewDocument",
@@ -2671,10 +2678,12 @@ async function currentInjectionSource() {
   const userScript = await readFile(injectionPath, "utf8");
   const providerQuotaFix = await readFile(new URL("./codex-provider-quota.mjs", import.meta.url), "utf8");
   const providerUltrafast = await readFile(new URL("./codex-provider-ultrafast.mjs", import.meta.url), "utf8");
+  const dotEntry = await readFile(new URL("./codex-dot-entry.mjs", import.meta.url), "utf8");
   const sourceHash = createHash("sha256").update(JSON.stringify({
     userScript,
     providerQuotaFix,
     providerUltrafast,
+    dotEntry,
   })).digest("hex");
   const runtimeSource = `window.__CODEX_PANEL_MANAGED_ORIGIN__ = ${JSON.stringify(panelOrigin)};
 window.__CODEX_PANEL_HOST_CAPABILITY__ = ${JSON.stringify(hostCapability)};

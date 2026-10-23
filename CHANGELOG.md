@@ -6,6 +6,9 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Add an off-by-default preference to restore the Dot entry by skipping client-side account and provider checks while connected to Panel. Server authorization is unchanged.
+- Fix the Dot adapter causing ChatGPT's startup error screen even with the toggle off. Reconnecting after an adapter update reloads the corrected code.
+
 - Integrate upstream v1.1.27: localize the injected Panel entry and activate the managed Windows Codex window on Panel open without unmaximizing it. Preserve Fork sidebar compatibility and process ownership; add the upstream read-only Windows diagnostic tool.
 
 - Include the task title after the Jira planning or replanning label in new conversation names. Confirm submitted conversation titles without depending on rendered sidebar rows.

@@ -19,7 +19,7 @@ it("keeps launcher feedback, live status and global preferences working through 
       updateMessage: "尚未检查更新。", updateAvailable: false, updateReady: false,
       appPath: "/disposable/Codex.app",
     },
-    preferences: { autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, customProviderQuotaFix: false, customProviderUltrafast: false },
+    preferences: { autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false },
     autostart: true, dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
   };
   let statusListener!: (event: { payload: LauncherSnapshot }) => void;
@@ -160,7 +160,7 @@ it("keeps launcher feedback, live status and global preferences working through 
   await click(autoConnect);
   expect(autoOpen.disabled).toBe(false);
   await click(screen.getByRole("switch", { name: "隐藏额度耗尽提示" }));
-  expect(current.preferences).toEqual({ autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, customProviderQuotaFix: false, customProviderUltrafast: false });
+  expect(current.preferences).toEqual({ autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false });
   const quotaFix = screen.getByRole("switch", { name: "移除账号额度不足时 API 发送限制" });
   const restartCount = invoke.mock.calls.filter(([command]) => command === "reconnect_codex").length;
   await click(quotaFix);
@@ -169,6 +169,13 @@ it("keeps launcher feedback, live status and global preferences working through 
   await click(quotaFix);
   expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "customProviderQuotaFix", enabled: false });
   expect(quotaFix.getAttribute("aria-checked")).toBe("false");
+  const dot = screen.getByRole("switch", { name: "恢复 Dot 入口" });
+  expect(dot.getAttribute("aria-checked")).toBe("false");
+  await click(dot);
+  expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "showCustomProviderDot", enabled: true });
+  expect(dot.getAttribute("aria-checked")).toBe("true");
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.queryByText(/Ultrafast 设置已保存/)).toBeNull();
   const ultrafast = screen.getByRole("switch", { name: "显示自定义 API 的 Ultrafast 选项" });
   expect(ultrafast.getAttribute("aria-checked")).toBe("false");
   await click(ultrafast);

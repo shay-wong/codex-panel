@@ -297,3 +297,9 @@ The adapter replaces recognized native modules in memory without modifying the i
 ## Local task project navigation
 
 Local task planning and new conversations navigate by the saved Codex project ID without depending on rendered or expanded sidebar rows. Panel confirms the target project and workspace before prefilling the draft. This also covers Jira-linked planning. A missing project or an unconfirmed switch still stops preparation; no task message is sent automatically by planning.
+
+## Custom-provider Dot entry
+
+Open **Preferences → Display & system → 恢复 Dot 入口** (Restore Dot entry). The `showCustomProviderDot` preference defaults to false and bypasses client-side account eligibility and provider checks for the native Dot (`orbit`) capability while connected to Panel. Other capabilities retain their original checks. Server authorization is unchanged and may still reject Dot operations.
+
+The existing preference save and heartbeat path updates the native reactive capability state, so toggling an already loaded adapter does not require a Codex restart. First installation or an adapter update follows the existing one-time interface reload. Switching off restores both native account and provider conditions. No Codex model-discovery configuration is changed. The capability structure was verified in ChatGPT 26.1016.62342 source; real-account Dot access has not been verified.
