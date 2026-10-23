@@ -6,6 +6,8 @@
 
 ## 未发布
 
+- 修复点击执行任务的关联 Jira 卡片后，内嵌面板重新加载并卡在“正在启动任务面板”的问题。
+
 - 修复横向列表议题较多时卡片被压缩、优先级和负责人溢出边框的问题。
 - 筛选菜单新增 Jira 项目选项，支持按已同步议题的项目编号多选，并可恢复全部项目。 感谢 [@InTheManXG](https://github.com/InTheManXG) 在 [#29](https://github.com/shay-wong/codex-panel/pull/29) 中的贡献。
 

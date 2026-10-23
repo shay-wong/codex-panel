@@ -99,6 +99,21 @@ it("identifies repositories from immediate start and continues after clarificati
 });
 
 
+it("opens linked Jira through Panel navigation without reloading the embedded document", async () => {
+  const actor = { type: "user", id: "fixture", name: "Fixture", avatarUrl: null };
+  const task = { assignee: actor, creatorType: "user", creatorId: "fixture", creatorName: "Fixture", creatorAvatarUrl: null, id: "local", identifier: "TP-1", projectId: "project", title: "Execution", description: "", status: "todo", priority: "none", labels: [], version: 1, source: "local", claim: null, threadBinding: null, conversationRefs: [], participants: [], relations: { parent: null, subIssues: [], blockedBy: [], blocks: [], related: [] }, createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z" };
+  const jira = { ...task, id: "jira", identifier: "JIRA:TAPON:9090", externalKey: "TAPON-9090", projectId: "jira-my-tasks", source: "jira", title: "Linked requirement" };
+  vi.mocked(getJiraTaskContext).mockResolvedValue({ jira, projects: [], issues: [task], plan: null, availableJira: [], lifecycle: { pending: null, duplicateOf: null, pausedIssueIds: [] } } as never);
+  const open = vi.fn();
+  const props = { currentUser: actor, task, tasks: [task], referenceTasks: [], projects: [{ id: "project", name: "Fixture", issueKey: "TP", source: "local", labels: [] }], jiraRepositoryProjects: [], jiraAvailable: true, availableLabels: [], developmentScan: { workspacePath: null, contexts: [] }, commentsRevision: 0, attachmentsRevision: 0, aiChatThreads: [], onOpenTask: open, onError: vi.fn() } as unknown as ComponentProps<typeof TaskDetail>;
+  await act(async () => { render(<TaskboardLanguageProvider language="zh"><TaskDetail {...props} /></TaskboardLanguageProvider>); });
+  const link = screen.getByRole("link", { name: /TAPON-9090/ });
+  const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+  await act(async () => { link.dispatchEvent(event); });
+  expect(event.defaultPrevented).toBe(true);
+  expect(open).toHaveBeenCalledWith(jira);
+});
+
 it("appends eligible legacy attachments only when not rendered in the document", () => {
   const attachment = { id: "legacy", filename: "report.pdf", contentType: "application/pdf", bodyFallback: true } as Attachment;
   const link = "[report.pdf](/api/attachments/legacy/download)";

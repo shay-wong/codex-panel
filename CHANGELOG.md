@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Open linked Jira requirements within the current Panel instead of reloading the embedded document and leaving its startup overlay visible.
+
 - Keep horizontal issue-list cards at their content height when many issues share a column, preventing priority and assignee controls from overflowing.
 - Add a Jira project filter based on synchronized issue keys, with multi-selection and an All projects reset. Contributions by [@InTheManXG](https://github.com/InTheManXG) in [#29](https://github.com/shay-wong/codex-panel/pull/29).
 

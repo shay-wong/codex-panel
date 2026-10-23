@@ -478,3 +478,5 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 - 横向列表保持每张议题卡片的内容高度，由列容器滚动，避免大量议题压缩卡片并使属性控件溢出。代码：`web/src/styles.css` 的横向列表卡片规则。
 - 复用 `TaskFilterMenu` 与 `taskFilters`，从已同步 Jira 议题 `externalKey` 的项目部分生成选项。Panel 的 `projectId` 是 Jira 汇总项目，不能用于区分 JR / JD。默认不限制项目，多选取并集并与其他筛选取交集；全部项目仅清空该项，项目选择随其他筛选保存到 URL。该项不改变 Jira 同步范围，不请求真实 Jira，也不写入任务数据。
 - 代码：`web/src/taskFilters.ts`、`web/src/components/TaskFilterMenu.tsx`；直接验证：`TaskFilterMenu.spec.tsx` 覆盖 JR/JD 选择、URL 回读及全部项目恢复时保留其他筛选。布局使用隔离浏览器的真实横向列表结构验证。生命周期：Fork 界面修复与筛选能力，实际安装效果待交付后确认。
+
+关联 Jira 面板内导航（本次修复，等待上游吸收）：`web/src/components/TaskDetail.tsx` 的关联 Jira 卡片阻止普通链接整页导航，复用 `onOpenTask` → `App.openTaskDetail` 切换项目与详情，避免私有 iframe 重载后失去宿主初始化。保留 href 与现有卡片样式，不改关联数据或外部 Jira 打开入口。`web/src/components/TaskDetail.spec.tsx` 覆盖默认导航取消及目标回调；隔离组件测试和 Web 类型检查通过，安装后的现场验证待确认。用户说明沿用中英文 README、`docs/fork-capabilities.md` 的关联需求入口，新增中英文未发布日志。来源：`git log -S'关联任务沿用面板内切换' -- web/src/components/TaskDetail.tsx`；上游等价采用内部导航后移除。

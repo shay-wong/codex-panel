@@ -3001,7 +3001,11 @@ export function TaskDetail({
                   window.location.href,
                   jiraContext.jira.projectId,
                   jiraContext.jira.identifier,
-                ).toString()}>
+                ).toString()} onClick={(event) => {
+                  // 私有 iframe 重新导航会丢失宿主初始化，关联任务沿用面板内切换。
+                  event.preventDefault();
+                  onOpenTask(jiraContext.jira!);
+                }}>
                   <LinearIcon name="link" />
                   <span>
                     <strong>{jiraContext.jira.externalKey ?? jiraContext.jira.identifier}</strong>
