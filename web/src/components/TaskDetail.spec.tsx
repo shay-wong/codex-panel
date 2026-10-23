@@ -99,6 +99,22 @@ it("identifies repositories from immediate start and continues after clarificati
 });
 
 
+it("opens Jira link management from the overview card and navigates to a linked issue", async () => {
+  const actor = { type: "user", id: "fixture", name: "Fixture", avatarUrl: null };
+  const task = { id: "jira", identifier: "JIRA:TEST:1", externalKey: "TEST-1", projectId: "jira", title: "Client feature", description: "", creatorType: "user", creatorId: "fixture", creatorName: "Fixture", creatorAvatarUrl: null, status: "todo", priority: "none", labels: [], version: 1, source: "jira", claim: null, threadBinding: null, legacyLocalThreadId: null, conversationRefs: [], assignee: actor, relations: { parent: null, subIssues: [], blockedBy: [], blocks: [], related: [] }, createdAt: "2026-09-15T00:00:00Z", updatedAt: "2026-09-15T00:00:00Z", archivedAt: null, developmentContext: null };
+  const issue = { ...task, id: "execution", identifier: "TP-1", projectId: "repo", source: "local", title: "Linked execution" };
+  const open = vi.fn();
+  const context = { jira: task, projects: [], issues: [issue], availableIssues: [], plan: null, simpleStart: null, lifecycle: { pending: null, duplicateOf: null, pausedIssueIds: [] } };
+  vi.mocked(getJiraTaskContext).mockResolvedValue(context as never);
+  const props = { task, tasks: [task], project: { id: "jira", name: "Jira" }, projects: [{ id: "jira", name: "Jira", source: "jira" }], jiraRepositoryProjects: [], currentUser: actor, jiraAvailable: true, availableLabels: [], developmentScan: { workspacePath: null, contexts: [] }, commentsRevision: 0, attachmentsRevision: 0, aiChatThreads: [], onOpenTask: open, onError: vi.fn(), onAiChatThreadsRefresh: vi.fn() } as unknown as ComponentProps<typeof TaskDetail>;
+  await act(async () => { render(<TaskboardLanguageProvider language="zh"><TaskDetail {...props} /></TaskboardLanguageProvider>); });
+  fireEvent.click(screen.getByRole("button", { name: "管理 Jira 关联" }));
+  expect(screen.getByRole("dialog", { name: "管理 Jira 关联" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /TP-1.*Linked execution/ }));
+  expect(open).toHaveBeenCalledWith(issue);
+});
+
+
 it("opens linked Jira through Panel navigation without reloading the embedded document", async () => {
   const actor = { type: "user", id: "fixture", name: "Fixture", avatarUrl: null };
   const task = { assignee: actor, creatorType: "user", creatorId: "fixture", creatorName: "Fixture", creatorAvatarUrl: null, id: "local", identifier: "TP-1", projectId: "project", title: "Execution", description: "", status: "todo", priority: "none", labels: [], version: 1, source: "local", claim: null, threadBinding: null, conversationRefs: [], participants: [], relations: { parent: null, subIssues: [], blockedBy: [], blocks: [], related: [] }, createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z" };

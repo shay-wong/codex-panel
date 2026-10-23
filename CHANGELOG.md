@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Make the Jira overview card clickable to open link management and access linked execution Issues.
+
 - Expand Project Keys to 32 characters and allow multiple internal hyphens or dots, such as `TP-A-B`, `TP.ADMIN`, and `TP-A.B`; the latter produces Issue identifiers such as `TP-A.B-1`.
 
 - Open linked Jira requirements within the current Panel instead of reloading the embedded document and leaving its startup overlay visible.

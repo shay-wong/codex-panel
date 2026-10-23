@@ -2798,7 +2798,16 @@ export function TaskDetail({
             {jiraAvailable && (currentTask.source === "jira" ? (
               <section className="jira-context-section jira-context-overview" aria-label={text("Jira 关联", "Jira links")}>
                 <h2>Jira</h2>
-                <div className="jira-context-manage" role="status">
+                <button
+                  className="jira-context-manage"
+                  type="button"
+                  aria-label={text("管理 Jira 关联", "Manage Jira links")}
+                  disabled={jiraContextLoading || savingProperty === "jiraProjects"}
+                  onClick={() => {
+                    setJiraProjectSearch("");
+                    setJiraManagerOpen(true);
+                  }}
+                >
                   <LinearIcon name="link" />
                   <span>
                     <strong>{currentTask.externalStatus ?? text("未知状态", "Unknown status")}</strong>
@@ -2815,7 +2824,7 @@ export function TaskDetail({
                       `${jiraContext?.issues.length ?? 0} issues · ${jiraPlanStatusLabel}`,
                     )}</small>
                   </span>
-                </div>
+                </button>
                 {jiraLifecyclePending && (
                   <div className="jira-lifecycle-alert" role="alert">
                     <p>{jiraLifecyclePending.kind === "waiting"

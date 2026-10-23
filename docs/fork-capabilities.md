@@ -200,6 +200,12 @@ The launcher-managed Panel origin receives Codex project, user, thread, and work
 
 After `npm ci`, run `npm run codex:install` to copy the repository's `manage-panel` and `handoff-panel` Skills into `~/.agents/skills`, install a real `~/.local/bin/panelctl` wrapper, build the standalone runtime, and generate the macOS launcher. The installed files carry ownership markers and never point back to repository files. Existing user-managed paths are preserved. On first install, the repository's current `.data` is copied through a live SQLite snapshot into the fixed user data directory without deleting the source. Plain dependency installation does not write any of these user-level integrations.
 
+## Jira overview links
+
+Click the overview card in a Jira requirement to open **Manage Jira links**, where you can view linked repositories and open execution Issues. The **Link repositories** button opens the same window.
+
+点击 Jira 需求详情中的概览卡片，可打开“管理 Jira 关联”，查看关联仓库并进入执行 Issue；上方“关联仓库”按钮打开同一窗口。
+
 ## Jira Bearer token authentication
 
 Jira connection settings provide two explicit authentication modes. Account / API token uses Basic Auth for an account password or a Jira Cloud email and API token. Bearer token uses a Jira Data Center or Server personal access token without sending a username. Basic Auth requires a username or email, and switching modes requires entering the credential again.
