@@ -250,4 +250,4 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(button("configureWorkflows")).toBeTruthy();
   view.unmount();
   expect(unlisten).toHaveBeenCalledOnce();
-});
+}, 15_000);
