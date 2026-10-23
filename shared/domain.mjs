@@ -11,7 +11,7 @@ export const TASK_PRIORITIES = ["none", "urgent", "high", "medium", "low"];
 
 export const DEFAULT_PROJECT_ID = "local";
 export const JIRA_PROJECT_ID = "jira-my-tasks";
-export const PROJECT_ISSUE_KEY_PATTERN = /^[A-Z0-9]{1,12}$/;
+export const PROJECT_ISSUE_KEY_PATTERN = /^(?=.{1,32}$)[A-Z0-9]+(?:[.-][A-Z0-9]+)*$/;
 export const DEFAULT_LABEL_NAMES = [
   "缺陷",
   "特性",
@@ -39,9 +39,9 @@ export function normalizeProjectIssueKey(value) {
 }
 
 export function defaultProjectIssueKey({ id, name, firstIdentifier = null }) {
-  const existing = /^([A-Z0-9]{1,12})-\d+$/i.exec(String(firstIdentifier ?? ""))?.[1];
-  if (existing) return existing.toUpperCase();
-  const idKey = normalizeProjectIssueKey(id).replace(/[^A-Z0-9]+/g, "").slice(0, 12) || "TASK";
+  const existing = /^([A-Z0-9.-]{1,32})-\d+$/i.exec(String(firstIdentifier ?? ""))?.[1];
+  if (existing && PROJECT_ISSUE_KEY_PATTERN.test(existing.toUpperCase())) return existing.toUpperCase();
+  const idKey = normalizeProjectIssueKey(id).replace(/[^A-Z0-9]+/g, "").slice(0, 32) || "TASK";
   if (idKey.length <= 5) return idKey;
   return normalizeProjectIssueKey(name).replace(/[^A-Z0-9]+/g, "").slice(0, 3)
     || idKey.slice(0, 3);
@@ -52,7 +52,7 @@ export function nextProjectIssueKey(project, unavailableKeys) {
   if (!unavailableKeys.has(base)) return base;
   for (let number = 2; ; number += 1) {
     const suffix = String(number);
-    const candidate = `${base.slice(0, 12 - suffix.length)}${suffix}`;
+    const candidate = `${base.slice(0, 32 - suffix.length)}${suffix}`;
     if (!unavailableKeys.has(candidate)) return candidate;
   }
 }

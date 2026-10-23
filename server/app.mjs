@@ -547,9 +547,9 @@ function parseProjectCreate(body) {
   }
   const issueKey = body.issueKey === undefined
     ? undefined
-    : normalizeProjectIssueKey(stringField(body.issueKey, "issueKey", { required: true, maxLength: 12 }));
+    : normalizeProjectIssueKey(stringField(body.issueKey, "issueKey", { required: true, maxLength: 32 }));
   if (issueKey !== undefined && !PROJECT_ISSUE_KEY_PATTERN.test(issueKey)) {
-    throw new ApiError(400, "INVALID_FIELD", "'issueKey' must contain 1-12 letters or numbers");
+    throw new ApiError(400, "INVALID_FIELD", "'issueKey' must contain 1-32 letters, numbers or single internal hyphens or dots");
   }
   return { id, name, issueKey, workspacePath };
 }
@@ -558,10 +558,10 @@ function parseProjectIssueKeyMigration(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set(["issueKey"]));
   const issueKey = normalizeProjectIssueKey(
-    stringField(body.issueKey, "issueKey", { required: true, maxLength: 12 }),
+    stringField(body.issueKey, "issueKey", { required: true, maxLength: 32 }),
   );
   if (!PROJECT_ISSUE_KEY_PATTERN.test(issueKey)) {
-    throw new ApiError(400, "INVALID_FIELD", "'issueKey' must contain 1-12 letters or numbers");
+    throw new ApiError(400, "INVALID_FIELD", "'issueKey' must contain 1-32 letters, numbers or single internal hyphens or dots");
   }
   return issueKey;
 }

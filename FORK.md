@@ -190,7 +190,7 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 
 - 生命周期：`等待上游吸收`
 - 原始目的：让 Issue 编号来自项目级持久字段，而不是每次按项目名称临时推导，避免同名前缀项目共享编号序列。
-- 行为不变量：每个项目保存一个由 1-12 位大写字母或数字组成、全局唯一的 Project Key；新 Issue 使用 `KEY-N`。Project Key 只能通过“项目文档”后的“项目设置”或既有右键快捷入口显式原子迁移；迁移同步修复该项目中仍使用历史前缀的本地 `PREFIX-N` Issue，保持任务 UUID、关系与会话关联不变，跨项目迁入的 Issue 保留原编号。同一 Key 的重复迁移也必须修复残留历史前缀。只读 Issue、Jira 规划、活动、评论、附件与树查询接受内部 UUID、Panel Issue ID 或唯一的 Jira Key；Jira Key 有歧义时必须返回冲突，不得猜测。旧项目升级优先保留首个合法历史前缀；冲突项目按项目创建顺序获得确定性的数字后缀。本地 SQLite、Cloud D1 和一次性 Cloud 数据迁移保持一致。
+- 行为不变量：每个项目保存一个由 1-32 位大写字母、数字或中间的单个连字符或点号组成、全局唯一的 Project Key；新 Issue 使用 `KEY-N`。Project Key 只能通过“项目文档”后的“项目设置”或既有右键快捷入口显式原子迁移；迁移同步修复该项目中仍使用历史前缀的本地 `PREFIX-N` Issue，保持任务 UUID、关系与会话关联不变，跨项目迁入的 Issue 保留原编号。同一 Key 的重复迁移也必须修复残留历史前缀。只读 Issue、Jira 规划、活动、评论、附件与树查询接受内部 UUID、Panel Issue ID 或唯一的 Jira Key；Jira Key 有歧义时必须返回冲突，不得猜测。旧项目升级优先保留首个合法历史前缀；冲突项目按项目创建顺序获得确定性的数字后缀。本地 SQLite、Cloud D1 和一次性 Cloud 数据迁移保持一致。
 - 代码和测试路径：`shared/domain.mjs`、`server/database.mjs`、`server/app.mjs`、`cloud/src/index.mjs`、`cloud/migrations/0012_project_issue_key.sql`、`scripts/migrate-to-cloud.mjs`、`cli/panelctl.mjs`、`web/src/App.tsx`、`web/src/components/ProjectSettingsView.tsx`、`test/jira-planning.test.mjs`、`test/server.test.mjs`、`test/cloud-shared-worker.test.mjs` 和 `test/project-home.test.mjs`。
 - 用户文档：`README.md`、`README.zh-CN.md` 和 `docs/fork-capabilities.md`。
 - 来源：本次 Fork 改造；提交后可用 `git log -S'issue_key' -- server/database.mjs cloud/src/index.mjs` 定位。
@@ -480,3 +480,5 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 - 代码：`web/src/taskFilters.ts`、`web/src/components/TaskFilterMenu.tsx`；直接验证：`TaskFilterMenu.spec.tsx` 覆盖 JR/JD 选择、URL 回读及全部项目恢复时保留其他筛选。布局使用隔离浏览器的真实横向列表结构验证。生命周期：Fork 界面修复与筛选能力，实际安装效果待交付后确认。
 
 关联 Jira 面板内导航（本次修复，等待上游吸收）：`web/src/components/TaskDetail.tsx` 的关联 Jira 卡片阻止普通链接整页导航，复用 `onOpenTask` → `App.openTaskDetail` 切换项目与详情，避免私有 iframe 重载后失去宿主初始化。保留 href 与现有卡片样式，不改关联数据或外部 Jira 打开入口。`web/src/components/TaskDetail.spec.tsx` 覆盖默认导航取消及目标回调；隔离组件测试和 Web 类型检查通过，安装后的现场验证待确认。用户说明沿用中英文 README、`docs/fork-capabilities.md` 的关联需求入口，新增中英文未发布日志。来源：`git log -S'关联任务沿用面板内切换' -- web/src/components/TaskDetail.tsx`；上游等价采用内部导航后移除。
+
+项目 Key 分隔符支持（本次变更）：创建和迁移输入保留内部连字符与点号，可使用多个分段，如 `TP-A-B`、`TP-A.B`；共享 `PROJECT_ISSUE_KEY_PATTERN` 与本地/云端 API 保持一致，不接受首尾符号或相邻符号。历史编号按末尾序号恢复完整前缀，例如 `TP-A.B-1` 恢复为 `TP-A.B`；已有项目不会自动改名。验证 `test/project-issue-key.test.mjs`、本地与云端 `Project Key migration` 用例，覆盖创建、迁移、关联保留和后续编号。用户文档为中英文 README、`docs/fork-capabilities.md` 与中英文未发布日志；来源定位 `git log -S'single internal hyphens' -- server/app.mjs`。

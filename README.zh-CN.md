@@ -114,7 +114,7 @@ npm run panelctl -- issue create \
   --labels product,mvp
 ```
 
-每个项目都有一个全局唯一的项目 Key，由 1-12 位字母或数字组成；新 Issue 使用稳定的 `KEY-N` 编号。创建项目界面要求填写 Key；CLI 和自动仓库注册可省略 `--issue-key`，由服务分配下一个可用 Key。可在“项目文档”后的“项目设置”中原子迁移本地项目 Key 和历史本地 Issue 编号，任务与会话关联保持不变。CLI 只读查询既接受 Panel Issue ID，也接受其关联的 Jira Key。
+每个项目都有一个全局唯一的项目 Key，长度为 1-32 位，支持字母、数字和中间的单个连字符或点号（例如 `TP-A-B`、`TP.ADMIN`、`TP-A.B`，后者生成 `TP-A.B-1`），不允许首尾符号或相邻符号；新 Issue 使用稳定的 `KEY-N` 编号。创建项目界面要求填写 Key；CLI 和自动仓库注册可省略 `--issue-key`，由服务分配下一个可用 Key。可在“项目文档”后的“项目设置”中原子迁移本地项目 Key 和历史本地 Issue 编号，任务与会话关联保持不变。CLI 只读查询既接受 Panel Issue ID，也接受其关联的 Jira Key。
 
 不安装用户级命令也可以使用 `npm run panelctl -- ...`。运行 `npm run codex:install` 后，安装器会把受管的 `panelctl` 启动文件安装到 `~/.local/bin/panelctl`；该命令还会安装下文所述的 Codex Skills、独立 runtime 和生成式应用。通过 `CODEX_PANEL_URL` 可让 CLI 连接到其他本地或局域网服务。云端部署通过回环地址上的本地伴随服务配置，使用 `panelctl cloud login` 登录。
 

@@ -4434,13 +4434,13 @@ export function App() {
             <label>
               <span>{text("项目 Key", "Project Key")}</span>
               <input
-                maxLength={12}
-                pattern="[A-Z0-9]{1,12}"
+                maxLength={32}
+                pattern={"[A-Z0-9]+(?:[.\\x2D][A-Z0-9]+)*"}
                 required
                 value={projectIssueKey}
                 onChange={(event) => {
                   setProjectIssueKeyEdited(true);
-                  setProjectIssueKey(event.target.value.toUpperCase().replace(/[^A-Z0-9]+/g, ""));
+                  setProjectIssueKey(event.target.value.toUpperCase().replace(/[^A-Z0-9.-]+/g, ""));
                 }}
               />
             </label>
@@ -4500,12 +4500,12 @@ export function App() {
               <span>{text("新项目 Key", "New Project Key")}</span>
               <input
                 autoFocus
-                maxLength={12}
-                pattern="[A-Z0-9]{1,12}"
+                maxLength={32}
+                pattern={"[A-Z0-9]+(?:[.\\x2D][A-Z0-9]+)*"}
                 required
                 value={migratedProjectIssueKey}
                 onChange={(event) => {
-                  setMigratedProjectIssueKey(event.target.value.toUpperCase().replace(/[^A-Z0-9]+/g, ""));
+                  setMigratedProjectIssueKey(event.target.value.toUpperCase().replace(/[^A-Z0-9.-]+/g, ""));
                   setActionError(null);
                 }}
               />

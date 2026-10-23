@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Expand Project Keys to 32 characters and allow multiple internal hyphens or dots, such as `TP-A-B`, `TP.ADMIN`, and `TP-A.B`; the latter produces Issue identifiers such as `TP-A.B-1`.
+
 - Open linked Jira requirements within the current Panel instead of reloading the embedded document and leaving its startup overlay visible.
 
 - Keep horizontal issue-list cards at their content height when many issues share a column, preventing priority and assignee controls from overflowing.

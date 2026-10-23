@@ -1661,7 +1661,7 @@ export class PanelDatabase {
   migrateProjectIssueKey(id, value) {
     const issueKey = normalizeProjectIssueKey(value);
     if (!PROJECT_ISSUE_KEY_PATTERN.test(issueKey)) {
-      throw new ApiError(400, "INVALID_FIELD", "'issueKey' must contain 1-12 letters or numbers");
+      throw new ApiError(400, "INVALID_FIELD", "'issueKey' must contain 1-32 letters, numbers or single internal hyphens or dots");
     }
     if (id === JIRA_PROJECT_ID) {
       throw new ApiError(403, "PROJECT_ISSUE_KEY_MIGRATION_FORBIDDEN", "The Jira project Key cannot be migrated");

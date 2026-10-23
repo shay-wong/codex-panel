@@ -134,10 +134,11 @@ test("projects, tasks, comments, and relations preserve the current API contract
 });
 
 test("Project Key migration keeps Cloud task ids and numbering stable", async () => {
+  const targetKey = "TP-A.B" + "X".repeat(26);
   const createdProject = await cloud.request("/api/projects", {
     method: "POST",
     actorName: alice,
-    json: { id: "key-migration", name: "Key migration", issueKey: "TAP" },
+    json: { id: "key-migration", name: "Key migration", issueKey: "W".repeat(32) },
   });
   assert.equal(createdProject.response.status, 201);
   const first = (await createTask("key-migration", "First")).body.task;
@@ -146,10 +147,10 @@ test("Project Key migration keeps Cloud task ids and numbering stable", async ()
   const migrated = await cloud.request("/api/projects/key-migration/issue-key", {
     method: "PUT",
     actorName: alice,
-    json: { issueKey: "tp" },
+    json: { issueKey: targetKey.toLowerCase() },
   });
   assert.equal(migrated.response.status, 200);
-  assert.equal(migrated.body.project.issueKey, "TP");
+  assert.equal(migrated.body.project.issueKey, targetKey);
   assert.equal(migrated.body.migratedIssueCount, 2);
 
   const tasks = await cloud.request("/api/tasks?projectId=key-migration&archived=false", {
@@ -157,9 +158,9 @@ test("Project Key migration keeps Cloud task ids and numbering stable", async ()
   });
   assert.deepEqual(
     tasks.body.tasks.map((task) => [task.id, task.identifier]).sort(),
-    [[first.id, "TP-1"], [second.id, "TP-2"]].sort(),
+    [[first.id, targetKey + "-1"], [second.id, targetKey + "-2"]].sort(),
   );
-  assert.equal((await createTask("key-migration", "Next")).body.task.identifier, "TP-3");
+  assert.equal((await createTask("key-migration", "Next")).body.task.identifier, targetKey + "-3");
 });
 
 test("concurrent issue creation has unique identifiers and stale writes return 409", async () => {
