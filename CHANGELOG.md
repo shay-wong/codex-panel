@@ -6,6 +6,9 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Keep horizontal issue-list cards at their content height when many issues share a column, preventing priority and assignee controls from overflowing.
+- Add a Jira project filter based on synchronized issue keys, with multi-selection and an All projects reset.
+
 - Add an off-by-default preference to restore the Dot entry by skipping client-side account and provider checks while connected to Panel. Server authorization is unchanged.
 - Fix the Dot adapter causing ChatGPT's startup error screen even with the toggle off. Reconnecting after an adapter update reloads the corrected code.
 
@@ -20,6 +23,7 @@ This file records user-visible changes introduced by the fork.
 - Keep the model catalog URL available when Ultrafast is switched off and back on without restarting Codex. Show a restart reminder after saving, with restart-now and later actions.
 
 - Read the existing model-discovery configuration before toggling Ultrafast. Prompt only when enabling needs the setting or disabling can remove it, with two choices: update configuration or only toggle. Configuration read/write failures show an error and leave the switch unchanged.
+
 
 - Add a separate Restart Codex action to the Codex connection card to reload core configuration after confirmation.
 

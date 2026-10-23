@@ -18,6 +18,7 @@ import {
 } from "../i18n";
 import {
   EMPTY_TASK_FILTERS,
+  jiraProjectKey,
   matchesTaskFilters,
   matchesTaskSearch,
   taskFilterCount,
@@ -36,7 +37,7 @@ import { TaskboardIcon } from "./TaskboardIcon";
 
 export type TaskSort = "default" | "name" | "priority";
 
-type SubmenuName = "statuses" | "priorities" | "labels" | "sort";
+type SubmenuName = "statuses" | "priorities" | "labels" | "jiraProjects" | "sort";
 
 interface TaskFilterMenuProps {
   tasks: Task[];
@@ -127,8 +128,13 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
     const statuses = new Map<TaskStatus, number>();
     const priorities = new Map<TaskPriority, number>();
     const labelCounts = new Map<string, number>();
+    const jiraProjects = new Map<string, number>();
     const filtersWithoutContent = { ...filters, content: "" };
     for (const task of searchMatches) {
+      const project = jiraProjectKey(task);
+      if (project && matchesTaskFilters(task, filtersWithoutContent, "jiraProjects")) {
+        jiraProjects.set(project, (jiraProjects.get(project) ?? 0) + 1);
+      }
       if (matchesTaskFilters(task, filtersWithoutContent, "statuses")) {
         statuses.set(task.status, (statuses.get(task.status) ?? 0) + 1);
       }
@@ -141,7 +147,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
         }
       }
     }
-    return { statuses, priorities, labels: labelCounts };
+    return { statuses, priorities, labels: labelCounts, jiraProjects };
   }, [filters, searchMatches]);
 
   function toggleStatus(status: TaskStatus) {
@@ -197,10 +203,25 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
     toggle: () => toggleLabel(label),
   })), [counts, filters, labels, language, text]);
 
+  const jiraProjectOptions = useMemo<FilterOption[]>(() => {
+    const keys = [...new Set([...tasks.map(jiraProjectKey).filter(Boolean), ...filters.jiraProjects])].sort();
+    return keys.map((key) => ({
+      id: `jira-project-${key}`,
+      label: key,
+      category: text("Jira 项目", "Jira project"),
+      count: counts.jiraProjects.get(key) ?? 0,
+      selected: filters.jiraProjects.includes(key),
+      icon: <LinearIcon name="folder" />,
+      toggle: () => onChange({ ...filters, jiraProjects: filters.jiraProjects.includes(key)
+        ? filters.jiraProjects.filter((value) => value !== key) : [...filters.jiraProjects, key] }),
+    }));
+  }, [tasks, filters, counts, onChange, text]);
+
   const optionsBySubmenu: Partial<Record<SubmenuName, FilterOption[]>> = {
     statuses: statusOptions,
     priorities: priorityOptions,
     labels: labelOptions,
+    jiraProjects: jiraProjectOptions,
   };
 
   const sortOptions: { value: TaskSort; label: string }[] = [
@@ -210,6 +231,13 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
   ];
 
   const categories = [
+    ...(jiraProjectOptions.length ? [{
+      id: "jiraProjects" as const,
+      label: text("Jira 项目", "Jira projects"),
+      keywords: "jira project 项目",
+      icon: <LinearIcon name="folder" />,
+      summary: joinSummary(filters.jiraProjects, text("项目", "projects"), language),
+    }] : []),
     {
       id: "statuses" as const,
       label: text("状态", "Status"),
@@ -258,7 +286,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
     return `${category.label} ${category.keywords}`.toLowerCase().includes(normalizedRootQuery);
   });
   const quickOptions = normalizedRootQuery
-    ? [...statusOptions, ...priorityOptions, ...labelOptions].filter((option) =>
+    ? [...statusOptions, ...priorityOptions, ...labelOptions, ...jiraProjectOptions].filter((option) =>
       `${option.label} ${option.keywords ?? ""}`.toLowerCase().includes(normalizedRootQuery),
     )
     : [];
@@ -467,6 +495,15 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange, sort,
           />
         </label>
         <div className="task-filter-scroll" role="menu">
+          {name === "jiraProjects" && (
+            <button type="button" role="menuitemcheckbox" aria-checked={!filters.jiraProjects.length}
+              className="task-filter-item filter-value-item" data-filter-level="submenu"
+              onClick={() => onChange({ ...filters, jiraProjects: [] })}>
+              <span className="task-filter-item-icon"><LinearIcon name="folder" /></span>
+              <span className="task-filter-item-label">{text("全部项目", "All projects")}</span>
+              <span className="task-filter-item-check">{!filters.jiraProjects.length && <LinearIcon name="check" />}</span>
+            </button>
+          )}
           {matching.map((option) => renderOption(option, "submenu"))}
           {unmatched.length > 0 && (
             <>
