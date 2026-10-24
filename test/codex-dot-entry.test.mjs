@@ -21,7 +21,26 @@ return {isCapable:results.every(result=>result.isCapable)};
 `;
 const url = "app://-/assets/app-initial-fixture.js";
 
-test("Dot toggle bypasses local account and provider gates and restores them when disabled", () => {
+const layouts = [
+  { name: "single capability", navigation: false, source: initial },
+  {
+    name: "nested navigation",
+    navigation: true,
+    source: initial
+      .replace('orbit:{accessPolicy:`orbit`,requiresFirstPartyInference:!0}', '"orbit.navigation":{accessPolicy:`orbit-navigation`,requiresFirstPartyInference:!0,children:{orbit:{accessPolicy:`orbit`}}}')
+      .replace('let capability;', 'definitions.orbit={accessPolicy:`orbit`,requiresFirstPartyInference:!0};let capability;'),
+  },
+  {
+    name: "reordered fields and different quotes",
+    navigation: true,
+    source: initial.replace('orbit:{accessPolicy:`orbit`,requiresFirstPartyInference:!0}',
+      `'orbit': { requiresFirstPartyInference: true, description: "Dot", accessPolicy: "orbit" },
+      'orbit.navigation': { requiresFirstPartyInference: true, accessPolicy: 'orbit-navigation' }`),
+  },
+  { name: "Dot absent", navigation: false, source: initial.replace('orbit:{accessPolicy:`orbit`,requiresFirstPartyInference:!0},', '') },
+];
+
+for (const { name, navigation, source } of layouts) test(`Dot capability toggle: ${name}`, () => {
   const runtime = createCodexProviderQuotaRuntime(false);
   let allowed = true, provider = "custom", mounted, updated = 0;
   const context = {
@@ -42,19 +61,28 @@ test("Dot toggle bypasses local account and provider gates and restores them whe
       return key.value;
     }}); },
   };
-  const patched = rewriteCodexDotEntry(initial, url);
+  const patched = rewriteCodexDotEntry(source, url);
   assert.ok(patched);
   const capability = vm.runInNewContext(patched + ';capability', context);
   assert.equal(capability("orbit").isCapable, false);
+  if (navigation) assert.equal(capability("orbit.navigation").isCapable, false);
   runtime.setEnabled(true);
-  assert.equal(capability("orbit").isCapable, true);
+  if (navigation) assert.equal(capability("orbit.navigation").isCapable, true);
+  assert.equal(capability("orbit").isCapable, name !== "Dot absent");
+  if (!navigation) assert.equal(capability("orbit.navigation").isCapable, false, "do not invent missing native capabilities");
+  assert.equal(capability("orbit.preview").isCapable, false);
   assert.equal(capability("cloud").isCapable, false);
   allowed = false;
+  if (name === "Dot absent") {
+    mounted();
+    return;
+  }
   const enabled = capability("orbit");
   assert.equal(enabled.isCapable, true);
   assert.equal(enabled.isLoading, false);
   assert.equal(enabled.isError, false);
   runtime.setEnabled(false);
+  if (navigation) assert.equal(capability("orbit.navigation").isCapable, false);
   provider = "openai";
   assert.equal(capability("orbit").isCapable, false, "disabling restores the account gate even with an official provider");
   allowed = true;

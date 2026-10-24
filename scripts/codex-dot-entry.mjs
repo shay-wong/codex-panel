@@ -4,8 +4,7 @@ const id = "[A-Za-z_$][\\w$]*";
 export function rewriteCodexDotEntry(source, sourceUrl) {
   const capabilities = [...source.matchAll(new RegExp(`(${id})=(${id})\\((${id}),\\((${id}),\\{get:(${id})\\}\\)=>\\{let (${id})=${id}\\[\\4\\.name\\];`, "g"))];
   const states = [...source.matchAll(new RegExp(`let ${id}=(${id})\\((${id}),${id}=>${id}\\(${id}\\(${id}\\),${id}\\),\\{getServerSnapshot:\\(\\)=>${id},onMount\\(`, "g"))];
-  if (capabilities.length !== 1 || states.length !== 1 || capabilities[0][3] !== states[0][2]
-    || !source.includes('orbit:{accessPolicy:`orbit`,requiresFirstPartyInference:!0}')) return null;
+  if (capabilities.length !== 1 || states.length !== 1 || capabilities[0][3] !== states[0][2]) return null;
   const [entry, , , scope, request, get, config] = capabilities[0];
   const gate = `if(${config}.requiresFirstPartyInference&&${get}(`;
   if (source.split(gate).length !== 2) return null;
@@ -13,9 +12,11 @@ export function rewriteCodexDotEntry(source, sourceUrl) {
   const runtime = 'globalThis.__codexPanelDotEntryV1__';
   const atom = `${runtime}.preference`;
   const initialize = `${atom}=${states[0][1]}(${scope},()=>${runtime}.getSnapshot(),{onMount(set){set(${runtime}.getSnapshot());return ${runtime}.subscribe(()=>set(${runtime}.getSnapshot()))}}),`;
+  // 按运行时能力名判断，避免依赖配置字段顺序和父子层级；不创建原生未定义的能力。
+  const isDot = `${config}!=null&&(${request}.name===\`orbit\`||${request}.name===\`orbit.navigation\`)`;
   // signal family 必须显式传 key；省略会将返回的布尔值当作 atom，导致主界面崩溃。
   const patched = source.replace(entry, initialize + entry
-    + `if(${request}.name===\`orbit\`&&${get}(${atom},void 0))return{isLoading:false,isError:false,isCapable:true};`);
+    + `if(${isDot}&&${get}(${atom},void 0))return{isLoading:false,isError:false,isCapable:true};`);
   return patched
     .replace(/\bfrom(["'`])(\.\/?[^"'`\n]+)\1/g, (_, quote, specifier) => `from${JSON.stringify(new URL(specifier, sourceUrl).href)}`)
     .replace(/\bimport\((["'`])(\.\/?[^"'`\n]+)\1\)/g, (_, quote, specifier) => `import(${JSON.stringify(new URL(specifier, sourceUrl).href)})`)
