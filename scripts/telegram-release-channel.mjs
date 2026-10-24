@@ -15,7 +15,7 @@ export function channelMessage(release, tag) {
   if (!dmg || dmg.size <= 0 || dmg.state !== "uploaded" || dmg.url !== dmgUrl) {
     throw new Error("macOS 安装包缺失或上传未完成");
   }
-  const header = `Codex Panel 新版本发布\n\n版本：${metadata.version}\n平台：macOS 通用版（Apple Silicon / Intel）\n\n本频道提供下载链接，未直接传包。\n`;
+  const header = `Codex Panel 新版本发布\n\n版本：${metadata.version}\n平台：macOS 通用版（Apple Silicon / Intel）\n`;
   const footer = `\n安装：打开 DMG，将 App 拖入 Applications。\n临时签名，未经 Apple 公证；首次打开可能需在“隐私与安全性”中允许。\n\n<a href="${escapeHtml(dmgUrl)}">下载安装包</a> · <a href="${escapeHtml(releaseUrl)}">完整版本说明</a>\n\n#CodexPanel #Release #${tag.replace(/[^a-zA-Z0-9_]/g, "_")}`;
   const summary = (release.body ?? "").split(/^## Changes\s*$/m)[0]
     .split("\n").filter((line) => /^- /.test(line))

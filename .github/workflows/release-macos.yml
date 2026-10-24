@@ -13,6 +13,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  announce-channel:
+    needs: release
+    uses: ./.github/workflows/telegram-release-channel.yml
+    with:
+      release_tag: ${{ github.ref_name }}
+    secrets:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_PACKAGE_CHAT_ID: ${{ secrets.TELEGRAM_PACKAGE_CHAT_ID }}
+
   release:
     if: github.repository == 'shay-wong/codex-panel'
     runs-on: macos-latest

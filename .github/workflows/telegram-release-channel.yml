@@ -1,0 +1,53 @@
+name: Telegram release channel
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published release tag to announce
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+    secrets:
+      TELEGRAM_BOT_TOKEN:
+        required: true
+      TELEGRAM_PACKAGE_CHAT_ID:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    if: github.repository == 'shay-wong/codex-panel'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # 频道公告失败不改变已完成的 Release，失败详情保留在日志和 summary。
+    continue-on-error: true
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+      - name: Read published release
+        run: |
+          test "$(gh repo view "$GITHUB_REPOSITORY" --json visibility --jq .visibility)" = PUBLIC
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,url,body,assets > "$RUNNER_TEMP/channel-release.json"
+      - name: Send channel announcement
+        id: send
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_PACKAGE_CHAT_ID: ${{ secrets.TELEGRAM_PACKAGE_CHAT_ID }}
+        run: node scripts/telegram-release-channel.mjs "$RUNNER_TEMP/channel-release.json"
+      - name: Report preparation failure
+        if: failure() && steps.send.outcome == 'skipped'
+        run: echo '频道公告未发送：准备步骤失败，请查看本次运行日志；已有 Release 不受影响。' >> "$GITHUB_STEP_SUMMARY"

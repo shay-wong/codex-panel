@@ -14,7 +14,7 @@ test("channel announcement validates the published DMG and escapes bounded Chine
   const text = channelMessage(release, tag);
   assert.match(text, /&amp; &lt;标题&gt; &quot;引号&quot; 😀/);
   assert.match(text, /感谢 贡献者/);
-  assert.match(text, /未直接传包/);
+  assert.doesNotMatch(text, /本频道提供下载链接|未直接传包/);
   assert.doesNotMatch(text, /English/);
   assert.throws(() => channelMessage({ ...release, isDraft: true }, tag));
   assert.throws(() => channelMessage({ ...release, assets: [] }, tag));
