@@ -48,6 +48,8 @@ test("a new status entry overrides the old draft status and restores the remaini
     try {
       ({ stdout } = await execFileAsync(chrome, [
         "--headless=new",
+        // 临时测试资料仍会调用系统钥匙串，使用模拟钥匙串避免 macOS 授权弹窗。
+        "--use-mock-keychain",
         "--disable-background-networking",
         "--disable-gpu",
         "--no-first-run",

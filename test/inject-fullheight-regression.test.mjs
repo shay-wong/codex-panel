@@ -397,6 +397,8 @@ test(`Panel loads from ${layout} sidebar, fills workspace and verifies frame bou
   const url = `http://127.0.0.1:${server.address().port}/fixture`;
   const child = spawn(chrome, [
     "--headless=new",
+    // 临时测试资料仍会调用系统钥匙串，使用模拟钥匙串避免 macOS 授权弹窗。
+    "--use-mock-keychain",
     "--disable-gpu",
     "--no-sandbox",
     `--user-data-dir=${profile}`,
