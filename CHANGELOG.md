@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fix AI planning timing out on newer Codex builds after the native project-state API moved to the project catalog service.
+
 - Restore the Dot entry on newer Codex builds and reduce sensitivity to changes in configuration field order, quoting, and capability nesting.
 
 - Make the Jira overview card clickable to open link management and access linked execution Issues.

@@ -1147,7 +1147,7 @@ test("the standalone web page opens unlinked issues as prefilled empty Codex tas
 
 test("native fetch preserves successful null bodies and returns undefined when unavailable", async () => {
   const functionSource = source.slice(
-    source.indexOf("function requestNativeFetch"),
+    source.indexOf("async function requestNativeFetch"),
     source.indexOf("\n\n  async function selectedNativeProjectId"),
   );
   const loadRequestNativeFetch = (window) => vm.runInNewContext(`(${functionSource})`, {
@@ -1653,7 +1653,7 @@ test("host integration stays thin", () => {
   assert.match(source, /type: "panel:theme"/);
   assert.match(source, /type: "navigate-to-route"/);
   assert.doesNotMatch(source, /__codexSessionDeleteBridge/);
-  assert.doesNotMatch(source, /import\s*\(/);
+  assert.equal((source.match(/import\s*\(/g) || []).length, 1, "only the native project catalog imports a host module");
   assert.doesNotMatch(source, /window\.fetch\s*=/);
 });
 
@@ -1971,4 +1971,41 @@ test("Panel replaces a cloned pet avatar with its own board icon", async () => {
   } finally {
     dom.window.close();
   }
+});
+
+test("native project reads use the live catalog when legacy fetch handlers were removed", async () => {
+  const projects = { fixture: { rootPaths: ["/disposable/project"] } };
+  let selection = { type: "local", projectId: "before" };
+  const catalog = {
+    readSelection: async () => selection,
+    readLocalProjects: async () => projects,
+    readRemoteProjects: async () => [],
+  };
+  let imports = 0;
+  const start = source.indexOf("  let nativeProjectCatalogPromise;");
+  const code = source.slice(start, source.indexOf("  async function readCodexProjectMetadata(", start));
+  const api = vm.runInNewContext(`(() => {
+    ${code.replaceAll("import(url)", "importModule(url)")}
+    return { requestNativeFetch, selectedNativeProjectId };
+  })()`, {
+    URL, crypto, setTimeout, clearTimeout,
+    performance: { getEntriesByType: () => [{ name: "app://-/assets/app-shared-fixture.js" }] },
+    document: { querySelectorAll: () => [] },
+    location: { href: "app://-/index.html", origin: "app://-" },
+    importModule: async () => { imports++; return { changedExportName: { projectCatalog: catalog } }; },
+    window: {
+      setTimeout, clearTimeout,
+      electronBridge: { sendMessageFromView: message => listener({ data: {
+        type: "fetch-response", requestId: message.requestId, status: 432,
+      } }) },
+      addEventListener: (_, fn) => { listener = fn; }, removeEventListener() {},
+    },
+  });
+  let listener;
+  assert.equal(await api.selectedNativeProjectId(), "before");
+  selection = { type: "local", projectId: "fixture" };
+  assert.equal(await api.selectedNativeProjectId(), "fixture", "read selection live after navigation");
+  assert.equal((await api.requestNativeFetch("get-global-state", { key: "local-projects" })).value, projects);
+  assert.deepEqual((await api.requestNativeFetch("get-global-state", { key: "remote-projects" })).value, []);
+  assert.equal(imports, 1, "cache the catalog service, not its selection");
 });

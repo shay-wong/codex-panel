@@ -302,7 +302,7 @@ The adapter replaces recognized native modules in memory without modifying the i
 
 ## Local task project navigation
 
-Local task planning and new conversations navigate by the saved Codex project ID without depending on rendered or expanded sidebar rows. Panel confirms the target project and workspace before prefilling the draft. This also covers Jira-linked planning. A missing project or an unconfirmed switch still stops preparation; no task message is sent automatically by planning.
+Local task planning and new conversations navigate by the saved Codex project ID without depending on rendered or expanded sidebar rows. Panel confirms the target project and workspace before prefilling the draft. This also covers Jira-linked planning. On newer Codex builds, Panel uses the live native project catalog rather than the removed project-state fetch handler. Older builds retain their existing fetch path. A missing project or an unconfirmed switch still stops preparation; no task message is sent automatically by planning.
 
 ## Custom-provider Dot entry
 

@@ -2,7 +2,7 @@
 
 The injected entry follows the Codex language. Windows Panel opens bring the launched Codex window forward while preserving maximization. See [sidebar language and Windows activation](docs/fork-capabilities.md#sidebar-language-and-windows-window-activation).
 
-Local task planning and new conversations navigate by the saved Codex project ID without depending on rendered or expanded sidebar rows. Panel confirms the target project and workspace before prefilling the draft.
+Local task planning and new conversations navigate by the saved Codex project ID without depending on rendered or expanded sidebar rows. Panel confirms the target project and workspace before prefilling the draft. Newer Codex builds read live project selection through the native project catalog, avoiding false switch timeouts after the legacy API was removed.
 
 On macOS, quitting cleans up managed processes once in the background so the interface can remain responsive. Panel selects an available sidebar when hidden or inactive copies coexist, keeping its existing entry position. Injection retries reuse prepared custom-provider module mappings before the composer loads. See [desktop manager](docs/fork-capabilities.md#taurirust-desktop-manager) and [sidebar navigation](docs/fork-capabilities.md#switch-between-panel-and-native-codex-destinations).
 

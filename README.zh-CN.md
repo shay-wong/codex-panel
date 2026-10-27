@@ -2,7 +2,7 @@
 
 注入入口随 Codex 语言显示“任务面板”或“Panel”；Windows 打开面板时尝试唤醒本次启动的 Codex 窗口，并保留最大化状态。参见[入口语言与 Windows 窗口唤醒](docs/fork-capabilities.md#sidebar-language-and-windows-window-activation)。
 
-本地任务继续规划和新建对话直接按已保存的 Codex 项目 ID 导航，不再依赖侧栏项目是否展开或渲染；确认目标项目与工作目录后才预填内容。
+本地任务继续规划和新建对话直接按已保存的 Codex 项目 ID 导航，不再依赖侧栏项目是否展开或渲染；确认目标项目与工作目录后才预填内容。 新版 Codex 通过原生项目目录服务实时读取项目选择，避免旧接口移除后误报切换超时。
 
 macOS 退出在后台单次清理托管进程，避免界面等待清理而卡住。多个隐藏或不可交互侧栏并存时，面板选择可用侧栏并保留原有入口位置；输入框尚未加载时，注入重试复用已准备的自定义 API 模块映射。参见[桌面管理器](docs/fork-capabilities.md#taurirust-desktop-manager)和[侧栏导航](docs/fork-capabilities.md#switch-between-panel-and-native-codex-destinations)。
 

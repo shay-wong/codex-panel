@@ -618,7 +618,47 @@
       || null;
   }
 
-  function requestNativeFetch(path, body) {
+  let nativeProjectCatalogPromise;
+  async function nativeProjectCatalog() {
+    if (!nativeProjectCatalogPromise) {
+      nativeProjectCatalogPromise = (async () => {
+        const urls = new Set([
+          ...performance.getEntriesByType("resource").map((entry) => entry.name),
+          ...Array.from(document.querySelectorAll('script[src],link[rel="modulepreload"][href]'))
+            .map((node) => node.src || node.href),
+        ]);
+        const current = new URL(location.href);
+        for (const url of urls) {
+          const parsed = new URL(url, location.href);
+          if (parsed.protocol !== current.protocol || parsed.host !== current.host || !/\/app-shared-[\w-]+\.js$/.test(parsed.pathname)) continue;
+          const module = await import(url);
+          const service = Object.values(module).find((value) => (
+            value && Object.hasOwn(value, "projectCatalog")
+            && typeof value.projectCatalog?.readSelection === "function"
+            && typeof value.projectCatalog?.readLocalProjects === "function"
+            && typeof value.projectCatalog?.readRemoteProjects === "function"
+          ));
+          if (service) return service.projectCatalog;
+        }
+        return null;
+      })().catch(() => null);
+    }
+    return nativeProjectCatalogPromise;
+  }
+
+  async function requestNativeFetch(path, body) {
+    // 新版已移除项目 fetch handler，直接复用原生目录服务并实时读取选择结果。
+    if (path === "get-global-state") {
+      const method = {
+        "selected-project": "readSelection",
+        "local-projects": "readLocalProjects",
+        "remote-projects": "readRemoteProjects",
+      }[body?.key];
+      if (method) {
+        const catalog = await nativeProjectCatalog();
+        if (catalog) return { value: await catalog[method]() };
+      }
+    }
     const bridge = window.electronBridge;
     if (!bridge || typeof bridge.sendMessageFromView !== "function") return Promise.resolve(undefined);
     return new Promise((resolve) => {
