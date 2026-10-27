@@ -88,6 +88,8 @@ Free 侧边栏兼容（等待上游吸收）：没有插件、宠物及 destinat
 
 ### 任务面板入口图标
 
+- 布局切换修复（本次）：`ensureEntry` 记录创建时是否位于图标导航栏；文字侧栏与图标栏互换时按当前原生参考按钮重建入口，保留点击与当前选中状态，避免只迁移旧文字按钮而撑宽导航栏。同种布局继续复用入口。`test/codex-sidebar-mount.test.mjs` 覆盖双向切换、入口唯一、图标容器、无障碍标签和点击；用户说明沿用中英文 README/CHANGELOG 及 `docs/fork-capabilities.md#switch-between-panel-and-native-codex-destinations`。来源定位：`git log -S'entryInRail' -- inject/codex-panel.user.js`。
+
 - 生命周期：`等待上游吸收`；内部兼容性修复。侧边栏参考行可能是宠物头像，复制样式后清空 `.icon-leading-slot` 并创建面板 SVG，不继承头像、动画或图片；旧版 SVG 参考行保持替换能力。入口子节点仅保留图标和文字，避免复制原生通知蓝点而常驻；不修改原生参考行。针对性验证：`node --test test/codex-sidebar-mount.test.mjs`，检查蓝点清除、原行不变及点击打开；合并时保留该内容边界，上游等价修复后移除。
 - 代码：`inject/codex-panel.user.js`；验证：`node --test test/inject.test.mjs` 覆盖宠物替换、重复执行及文字保留，并核对实际窗口图标。来源：`git log -S'slot.replaceChildren(icon)' -- inject/codex-panel.user.js`。上游具有等价图标槽替换后移除。
 

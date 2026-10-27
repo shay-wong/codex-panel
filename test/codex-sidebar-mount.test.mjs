@@ -13,7 +13,7 @@ function fixture(markup) {
   dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
     return {top:100,bottom:130,height:this.hidden?0:30};
   };
-  const api = vm.runInNewContext(`let entry=null, entryLabel=null; const destroyed=false, active=false;
+  const api = vm.runInNewContext(`let entry=null, entryLabel=null, entryInRail=false; const destroyed=false, active=false;
     const OWNED_ATTRIBUTE="data-codex-panel-owned",ENTRY_ID="codex-panel-entry",EXPLORE_LABELS=["探索","explore"],PLUGIN_LABELS=["plugins","插件"];
     const normalizedLabel=value=>value.trim().toLowerCase();
     ${source.slice(source.indexOf("  function hostText("), source.indexOf("  function normalizedLabel("))}
@@ -149,6 +149,30 @@ test("rail entry preserves the native icon wrapper and position before Explore",
     assert.ok(entry.querySelector(".native-icon-center > svg.size-5"));
     assert.equal(entry.nextElementSibling.id, "explore");
     assert.equal(document.getElementById("explore").outerHTML, original);
+  } finally { f.dom.window.close(); }
+});
+
+test("switching between a text sidebar and an icon rail refreshes the entry presentation", () => {
+  const f = fixture('<aside><div data-slate-sidebar-content><button class="sidebar-item" data-sidebar-destination="plugins"><svg></svg><span class="text-fade-truncate">Plugins</span></button></div><nav hidden data-app-navigation-rail><button id="explore" class="native-rail-button"><span class="native-icon-center"><svg></svg><span class="sr-only">Explore</span></span></button></nav></aside>');
+  try {
+    const { document } = f.dom.window;
+    const sidebar = document.querySelector('[data-slate-sidebar-content]');
+    const rail = document.querySelector('nav');
+    for (const inRail of [false, true, false, true]) {
+      sidebar.hidden = inRail;
+      rail.hidden = !inRail;
+      f.api.ensureEntry();
+      f.api.ensureEntry();
+      const entry = document.getElementById('codex-panel-entry');
+      assert.equal(document.querySelectorAll('#codex-panel-entry').length, 1);
+      assert.equal(entry.parentElement, inRail ? rail : sidebar);
+      assert.equal(entry.classList.contains('native-rail-button'), inRail);
+      assert.equal(Boolean(entry.querySelector('.sr-only')), inRail);
+      assert.equal(entry.getAttribute('aria-label'), '打开任务面板');
+      if (inRail) assert.ok(entry.querySelector('.native-icon-center svg'));
+      entry.click();
+    }
+    assert.equal(f.opened, 4);
   } finally { f.dom.window.close(); }
 });
 

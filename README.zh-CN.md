@@ -8,7 +8,7 @@
 
 本地任务继续规划和新建对话直接按已保存的 Codex 项目 ID 导航，不再依赖侧栏项目是否展开或渲染；确认目标项目与工作目录后才预填内容。 新版 Codex 通过原生项目目录服务实时读取项目选择，避免旧接口移除后误报切换超时。
 
-macOS 退出在后台单次清理托管进程，避免界面等待清理而卡住。多个隐藏或不可交互侧栏并存时，面板选择可用侧栏并保留原有入口位置；输入框尚未加载时，注入重试复用已准备的自定义 API 模块映射。参见[桌面管理器](docs/fork-capabilities.md#taurirust-desktop-manager)和[侧栏导航](docs/fork-capabilities.md#switch-between-panel-and-native-codex-destinations)。
+macOS 退出在后台单次清理托管进程，避免界面等待清理而卡住。多个隐藏或不可交互侧栏并存时，面板选择可用侧栏并保留原有入口位置，布局切换时同步入口样式，图标栏不显示文字或被撑宽；输入框尚未加载时，注入重试复用已准备的自定义 API 模块映射。参见[桌面管理器](docs/fork-capabilities.md#taurirust-desktop-manager)和[侧栏导航](docs/fork-capabilities.md#switch-between-panel-and-native-codex-destinations)。
 
 在 **偏好设置 → 显示与系统 → 恢复 Dot 入口** 开启独立开关，可跳过 Dot 的客户端账号权限与 Provider 限制；默认关闭，连接 Panel 时生效，服务端仍可能拒绝实际操作。适配加载后切换即时生效；首次安装或更新适配沿用原有一次界面重载。已核对 ChatGPT 26.1016.62342 源码能力路径，尚未验证真实账号的 Dot 可用性。详见 [Dot 入口说明](docs/fork-capabilities.md#custom-provider-dot-entry)。
 

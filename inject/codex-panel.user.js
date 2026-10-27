@@ -62,6 +62,7 @@
 
   let entry = null;
   let entryLabel = null;
+  let entryInRail = false;
   let page = null;
   let frame = null;
   let dragRegion = null;
@@ -526,7 +527,13 @@
     if (!reference?.parentElement) return;
     // 新聊天按钮可能只是横向行的一部分；在整行之后挂载，不能挤入快速聊天所在的行内。
     const row = reference.parentElement.closest(".sidebar-item") || reference;
-    if (!entry) entry = createEntry(reference);
+    const inRail = Boolean(reference.closest("nav[data-app-navigation-rail]"));
+    // 原生布局切换时重新借用对应样式，避免带文字的侧栏入口撑宽图标导航栏。
+    if (!entry || entryInRail !== inRail) {
+      entry?.remove();
+      entry = createEntry(reference);
+      entryInRail = inRail;
+    }
     syncEntryText();
     entry.style.height = row !== reference ? "var(--nav-item-height, var(--height-token-row, 36px))" : "";
     entry.style.flex = row !== reference ? "none" : "";
