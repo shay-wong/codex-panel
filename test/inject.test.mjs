@@ -815,6 +815,7 @@ test("planning and execution prefill the same bound conversation in the requeste
   const errors = [];
   const locationSource = source.slice(source.indexOf("function threadIdFromLocation"), source.indexOf("\n  function activeThreadRow"));
   const run = vm.runInNewContext(`(() => {
+    const nativeNavigator = null;
     let pendingThreadCreation = null;
     let pendingThreadAssociation = null;
     function setPendingThreadAssociation(value) { pendingThreadAssociation = value; savePending(value); }

@@ -601,7 +601,9 @@
   }
 
   function threadIdFromLocation() {
-    // Native in-app navigation can leave the window URL unchanged.
+    // 原生路由先于侧栏更新，窗口 URL 在新版中一直停留在 index.html。
+    const routeMatch = nativeNavigator?.location?.pathname?.match(/^\/local\/([^/]+)$/);
+    if (routeMatch) return normalizeThreadId(decodeURIComponent(routeMatch[1]));
     const activeId = normalizeThreadId(activeThreadRow()?.getAttribute("data-app-action-sidebar-thread-id"));
     if (activeId) return activeId;
     const source = `${window.location.pathname || ""}${window.location.search || ""}${window.location.hash || ""}`;

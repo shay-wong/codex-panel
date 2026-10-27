@@ -209,3 +209,40 @@ test("ordinary successful prefill leaves an unsent draft ready without confirmin
     assert.deepEqual(harness.messages.map(({ type }) => type), ["panel:thread-prepared"]);
   }
 });
+
+
+test("submitted planning uses the native route before sidebar rows appear", async () => {
+  const target = "01a17c3e-683f-7690-863d-21aeae0e05a6";
+  let route = "/local/" + target;
+  let sidebarId = "";
+  const requests = [], messages = [];
+  const api = vm.runInNewContext(`(() => {
+    let pendingThreadCreation = null;
+    let pendingThreadAssociation = {
+      taskId: "fixture-task", identifier: "FIXTURE-1", title: "FIXTURE-1 · Jira 规划 · Fixture",
+      submitted: true, expiresAt: Date.now() + 60000, existingThreadIds: new Set(["old-thread"]),
+    };
+    let lastNativeThreadId = "";
+    ${functionsBetween("  function threadIdFromLocation()", "  function activeThreadRow()")}
+    ${functionsBetween("  async function publishPendingThreadAssociation()", "  function dispatchHostMessage(message)")}
+    return { publish: publishPendingThreadAssociation, current: threadIdFromLocation };
+  })()`, {
+    window: { location: { pathname: "/index.html", search: "", hash: "" } },
+    nativeNavigator: { get location() { return { pathname: route }; } },
+    normalizeThreadId: value => String(value || "").replace(/^local:/, ""),
+    activeThreadRow: () => sidebarId ? { getAttribute: () => sidebarId } : null,
+    isTrustedPanelOrigin: () => true,
+    TASK_CONVERSATION_REQUEST_TIMEOUT_MS: 1000,
+    requestHost: async (action, payload) => { requests.push({ action, payload }); return {}; },
+    setPendingThreadAssociation() {},
+    postToFrame: message => messages.push(message),
+  });
+  assert.equal(api.current(), target);
+  sidebarId = "local:old-thread";
+  assert.equal(api.current(), target, "stale sidebar selection cannot override the current route");
+  await api.publish();
+  assert.equal(requests[0].action, "confirm-task-conversation");
+  assert.equal(requests[0].payload.threadId, target);
+  assert.equal(requests[0].payload.title, "FIXTURE-1 · Jira 规划 · Fixture");
+  assert.equal(messages[0].type, "panel:thread-created");
+});
