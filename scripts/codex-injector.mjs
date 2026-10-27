@@ -1079,56 +1079,87 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
     (++codexAutomationRequestSequence).toString(36),
   ].join("-");
   const evaluation = await cdp.send("Runtime.evaluate", {
-    expression: `(() => new Promise((resolve) => {
-      const method = ${JSON.stringify(method)};
-      const params = ${JSON.stringify(params)};
-      const requestId = ${JSON.stringify(requestId)};
-      const bridge = window.electronBridge;
-      if (!bridge || typeof bridge.sendMessageFromView !== "function") {
-        resolve({ ok: false, error: "当前 Codex 版本没有提供原生自动任务能力" });
-        return;
+    expression: `(async () => {
+      const nativeMethod = {
+        "list-automations": "list",
+        "automation-create": "create",
+        "automation-update": "update",
+        "automation-run-now": "runNow",
+        "inbox-items": "readHistory",
+      }[${JSON.stringify(method)}];
+      const urls = new Set([
+        ...performance.getEntriesByType("resource").map(entry => entry.name),
+        ...Array.from(document.querySelectorAll('script[src],link[rel="modulepreload"][href]')).map(node => node.src || node.href),
+      ]);
+      const current = new URL(location.href);
+      let service;
+      for (const url of urls) {
+        const parsed = new URL(url, location.href);
+        if (parsed.protocol !== current.protocol || parsed.host !== current.host || !/\\/app-shared-[\\w-]+\\.js$/.test(parsed.pathname)) continue;
+        let module;
+        try { module = await import(url); } catch { continue; }
+        const host = Object.values(module).find(value => value && Object.hasOwn(value, "localAutomations"));
+        if (typeof host?.localAutomations?.[nativeMethod] === "function") {
+          service = host.localAutomations;
+          break;
+        }
       }
-      let settled = false;
-      const finish = (result) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timeout);
-        window.removeEventListener("message", onMessage);
-        resolve(result);
-      };
-      const onMessage = (event) => {
-        const message = event.data;
-        if (
-          !message
-          || typeof message !== "object"
-          || message.type !== "fetch-response"
-          || message.requestId !== requestId
-        ) return;
-        finish({
-          ok: true,
-          responseType: message.responseType,
-          status: message.status,
-          bodyJsonString: message.bodyJsonString,
-        });
-      };
-      const timeout = window.setTimeout(
-        () => finish({ ok: false, error: "Codex 自动任务接口没有响应" }),
-        10_000,
-      );
-      window.addEventListener("message", onMessage);
-      Promise.resolve(bridge.sendMessageFromView({
-        type: "fetch",
-        requestId,
-        method: "POST",
-        url: \`vscode://codex/${method}\`,
-        body: JSON.stringify(params),
-      })).catch((error) => {
-        finish({
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
+      // 新版已移除自动化 fetch handler；写入失败不得回退重试，避免重复变更。
+      if (service) {
+        const result = await service[nativeMethod](${JSON.stringify(params)});
+        return { ok: true, status: 200, bodyJsonString: JSON.stringify(result ?? {}) };
+      }
+      return new Promise((resolve) => {
+        const method = ${JSON.stringify(method)};
+        const params = ${JSON.stringify(params)};
+        const requestId = ${JSON.stringify(requestId)};
+        const bridge = window.electronBridge;
+        if (!bridge || typeof bridge.sendMessageFromView !== "function") {
+          resolve({ ok: false, error: "当前 Codex 版本没有提供原生自动任务能力" });
+          return;
+        }
+        let settled = false;
+        const finish = (result) => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timeout);
+          window.removeEventListener("message", onMessage);
+          resolve(result);
+        };
+        const onMessage = (event) => {
+          const message = event.data;
+          if (
+            !message
+            || typeof message !== "object"
+            || message.type !== "fetch-response"
+            || message.requestId !== requestId
+          ) return;
+          finish({
+            ok: true,
+            responseType: message.responseType,
+            status: message.status,
+            bodyJsonString: message.bodyJsonString,
+          });
+        };
+        const timeout = window.setTimeout(
+          () => finish({ ok: false, error: "Codex 自动任务接口没有响应" }),
+          10_000,
+        );
+        window.addEventListener("message", onMessage);
+        Promise.resolve(bridge.sendMessageFromView({
+          type: "fetch",
+          requestId,
+          method: "POST",
+          url: \`vscode://codex/${method}\`,
+          body: JSON.stringify(params),
+        })).catch((error) => {
+          finish({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
         });
       });
-    }))()`,
+    })()`,
     ...(Number.isInteger(executionContextId) ? { contextId: executionContextId } : {}),
     awaitPromise: true,
     returnByValue: true,
