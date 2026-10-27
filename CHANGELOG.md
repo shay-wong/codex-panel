@@ -6,6 +6,10 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Restore newer Codex compatibility for execution worktree selection, custom-provider quota bypass, workspace path verification, and migration of legacy automations. Report quota adapter preparation separately from actual module execution.
+
+- Fix planning conversation naming and association when the new conversation has not yet appeared in the Codex sidebar.
+
 - Fix AI planning timing out on newer Codex builds after the native project-state API moved to the project catalog service.
 
 - Restore the Dot entry on newer Codex builds and reduce sensitivity to changes in configuration field order, quoting, and capability nesting.

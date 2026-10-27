@@ -1,5 +1,7 @@
 # Codex Panel
 
+新版 Codex 适配同时覆盖独立工作树开关、原生目录与旧自动任务服务，以及拆分后的输入框额度模块，详见 [Fork 功能说明](docs/fork-capabilities.md)。
+
 注入入口随 Codex 语言显示“任务面板”或“Panel”；Windows 打开面板时尝试唤醒本次启动的 Codex 窗口，并保留最大化状态。参见[入口语言与 Windows 窗口唤醒](docs/fork-capabilities.md#sidebar-language-and-windows-window-activation)。
 
 本地任务继续规划和新建对话直接按已保存的 Codex 项目 ID 导航，不再依赖侧栏项目是否展开或渲染；确认目标项目与工作目录后才预填内容。 新版 Codex 通过原生项目目录服务实时读取项目选择，避免旧接口移除后误报切换超时。

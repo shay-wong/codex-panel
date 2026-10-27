@@ -1,5 +1,7 @@
 # Codex Panel
 
+Newer Codex compatibility also covers the separate worktree switch, native workspace and legacy automation services, and the split composer quota adapter. See [fork capabilities](docs/fork-capabilities.md).
+
 The injected entry follows the Codex language. Windows Panel opens bring the launched Codex window forward while preserving maximization. See [sidebar language and Windows activation](docs/fork-capabilities.md#sidebar-language-and-windows-window-activation).
 
 Local task planning and new conversations navigate by the saved Codex project ID without depending on rendered or expanded sidebar rows. Panel confirms the target project and workspace before prefilling the draft. Newer Codex builds read live project selection through the native project catalog, avoiding false switch timeouts after the legacy API was removed.
