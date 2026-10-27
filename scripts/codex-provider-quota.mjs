@@ -39,6 +39,37 @@ function composerSignature(source, sourceUrl) {
   }
   return null;
 }
+// 新版将发送门控拆到独立模块；provider atom 仍从原生 primary 的读取器解析。
+function splitComposerSignature(source, providerSource, sourceUrl) {
+  if (!/\/codex-composer-adapter-[\w-]+\.js$/.test(new URL(sourceUrl).pathname)) return null;
+  const readers = [...providerSource.matchAll(/let\{cwd:([\w$]+),hostId:([\w$]+)\}=([\w$]+)\.get\(([\w$]+),([\w$]+)\);if\(\2!==`local`\)return null;let\{data:([\w$]+)\}=\3\.get\(([\w$]+),\{cwd:\1,hostId:\2\}\);return \6==null\|\|\(\3\.get\(([\w$]+),\5\)\?\?\6\.model_provider\?\?`openai`\)!==`openai`/g)];
+  const gates = [...source.matchAll(new RegExp(`let (${identifier})=([^;]+?)\\|\\|(${identifier})\\|\\|(${identifier}),`, "g"))]
+    .filter(match => source.includes(`submitDisabled:${match[1]},`) && match[2].includes("?.isLoading===!0"));
+  if (readers.length !== 1 || gates.length !== 1) return null;
+  const reader = readers[0], gate = gates[0];
+  const workQuota = source.match(new RegExp(`${escapePattern(gate[4])}=(${identifier})\\((${identifier})===\x60local\x60&&${identifier}\\)`));
+  if (!workQuota) return null;
+  const host = workQuota[2];
+  const context = source.match(new RegExp(`${escapePattern(host)}=(${identifier})\\(${identifier},(${identifier})\\)`));
+  if (!context || !new RegExp(`${escapePattern(gate[3])}=${escapePattern(context[1])}\\(${identifier},${escapePattern(host)}\\)`).test(source)) return null;
+  const policy = source.match(new RegExp(`(${identifier})=${identifier}===\x60failed\x60&&${identifier}\\?\\.codexErrorInfo===\x60misalignmentPolicyViolation\x60`));
+  if (!policy || !gate[2].split("||").includes(policy[1])) return null;
+  const functions = [...source.matchAll(/function [\w$]+\([^)]*\)\{/g)];
+  const containing = functions.findLast(entry => entry.index < gate.index);
+  const body = source.slice(containing?.index, gate.index);
+  const react = body.match(/\(0,([\w$]+)\.useState\)/)?.[1];
+  if (!react) return null;
+  const imports = [...providerSource.matchAll(/import\{([^}]+)\}from["`]([^"`]+)["`]/g)];
+  const atoms = [reader[4], reader[7], reader[8]].map(local => {
+    for (const entry of imports) {
+      const match = entry[1].match(new RegExp(`(?:^|,)(${identifier}) as ${escapePattern(local)}(?:,|$)`));
+      if (match) return { name: match[1], url: new URL(entry[2], sourceUrl).href };
+    }
+  });
+  if (atoms.some(atom => !atom) || new Set(atoms.map(atom => atom.url)).size !== 1) return null;
+  return { gate, host, hook: context[1], thread: context[2], react, atoms };
+}
+
 const appliedMessage = "Panel custom-provider quota fix: native module executed.";
 
 export function createCodexProviderQuotaRuntime(initialEnabled) {
@@ -47,6 +78,7 @@ export function createCodexProviderQuotaRuntime(initialEnabled) {
   return {
     installed: false,
     prepared: false,
+    applied: false,
     getSnapshot: () => enabled,
     subscribe(listener) {
       listeners.add(listener);
@@ -68,7 +100,17 @@ export function watchCodexProviderQuotaPreferences(preferencesFile, onChange) {
   });
 }
 
-export function rewriteCodexProviderQuota(source, sourceUrl) {
+export function rewriteCodexProviderQuota(source, sourceUrl, providerSource = source) {
+  const split = sourceUrl && splitComposerSignature(source, providerSource, sourceUrl);
+  if (split) {
+    const { gate, host, hook, thread, react, atoms } = split;
+    const names = ["panelQuotaTargetAtom", "panelQuotaConfigAtom", "panelQuotaProviderAtom"];
+    const importLine = `import {${atoms.map((atom, index) => `${atom.name} as ${names[index]}`).join(",")}} from ${JSON.stringify(atoms[0].url)};`;
+    const read = `const panelQuotaEnabled=(0,${react}.useSyncExternalStore)(globalThis.__codexPanelProviderQuotaV1__.subscribe,globalThis.__codexPanelProviderQuotaV1__.getSnapshot);const panelQuotaTarget=${hook}(panelQuotaTargetAtom,${thread});const panelQuotaThreadProvider=${hook}(panelQuotaProviderAtom,${thread});const panelQuotaConfig=${hook}(panelQuotaConfigAtom,panelQuotaTarget);const panelQuotaProvider=panelQuotaThreadProvider??panelQuotaConfig.data?.model_provider;`;
+    const custom = `panelQuotaEnabled&&${host}==="local"&&typeof panelQuotaProvider==="string"&&panelQuotaProvider!==""&&panelQuotaProvider!=="openai"`;
+    source = importLine + source.replace(gate[0], `${read}let ${gate[1]}=${gate[2]}||((${gate[3]}||${gate[4]})&&!(${custom})),`);
+    return absoluteModuleImports(source, sourceUrl);
+  }
   const signature = composerSignature(source, sourceUrl);
   if (!signature) return null;
   const {entry, react, gate, blockers, quotas, host, thread, store, target, provider, config} = signature;
@@ -79,7 +121,11 @@ export function rewriteCodexProviderQuota(source, sourceUrl) {
   if (!sourceUrl) return patched;
   // The matched generated chunks use literal relative imports. Keep their
   // targets and import.meta.url unchanged when the module itself moves to a blob.
-  return patched
+  return absoluteModuleImports(patched, sourceUrl);
+}
+
+function absoluteModuleImports(source, sourceUrl) {
+  return source
     .replace(/\bfrom(["'`])(\.\/?[^"'`\n]+)\1/g, (_, quote, specifier) => `from${JSON.stringify(new URL(specifier, sourceUrl).href)}`)
     .replace(/\bimport\((["'`])(\.\/?[^"'`\n]+)\1\)/g, (_, quote, specifier) => `import(${JSON.stringify(new URL(specifier, sourceUrl).href)})`)
     .replaceAll("import.meta.url", JSON.stringify(sourceUrl));
@@ -96,6 +142,7 @@ export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report 
     }
     let replacements = modules;
     let quotaPrepared = false;
+    let quotaModuleUrl = null;
     try {
       const result = await cdp.send("Runtime.evaluate", {
         expression: `(async () => {
@@ -112,7 +159,17 @@ export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report 
           for (const url of candidates) {
             try {
               const response = await fetch(url, { cache: "no-store" });
-              if (response.ok) return { url, source: await response.text() };
+              if (response.ok) {
+                const source = await response.text();
+                const adapterPath = source.match(/["'\x60](\\.\\/codex-composer-adapter-[\\w-]+\\.js)["'\x60]/)?.[1];
+                if (adapterPath) {
+                  const adapterUrl = new URL(adapterPath, url).href;
+                  const adapter = await fetch(adapterUrl, { cache: "no-store" });
+                  if (!adapter.ok) throw new Error("Native composer adapter unreadable");
+                  return { url: adapterUrl, source: await adapter.text(), providerSource: source };
+                }
+                return { url, source };
+              }
             } catch {}
           }
           throw new Error("No supported composer asset could be read");
@@ -123,8 +180,8 @@ export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report 
       if (result.exceptionDetails || typeof result.result?.value?.source !== "string") {
         throw new Error("native composer source could not be read");
       }
-      const { url, source } = result.result.value;
-      const patched = rewriteCodexProviderQuota(modules.find(module => module.url === url)?.source ?? source, url);
+      const { url, source, providerSource } = result.result.value;
+      const patched = rewriteCodexProviderQuota(modules.find(module => module.url === url)?.source ?? source, url, providerSource);
       if (patched === null) throw new Error("unsupported composer source");
       cdp.on("Runtime.consoleAPICalled", ({ args }) => {
         if (args?.[0]?.value === appliedMessage) report(appliedMessage);
@@ -132,6 +189,7 @@ export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report 
       report(`Panel custom-provider quota module prepared for the next renderer load: ${url}`);
       replacements = [...modules.filter(module => module.url !== url), {url, source: patched}];
       quotaPrepared = true;
+      quotaModuleUrl = url;
     } catch (error) {
       // 新版输入框不匹配时，Dot 等独立模块仍可安装，不能被额度适配连带禁用。
       if (modules.length === 0) throw error;
@@ -139,6 +197,7 @@ export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report 
     }
     return `(() => {
       if (window !== window.top) return;
+      window.__codexPanelQuotaBootstrapPrepared__ = ${quotaPrepared};
       window.__codexPanelUltrafastBootstrapPrepared__ = ${ultrafastPrepared};
       window.__codexPanelDotBootstrapPrepared__ = ${dotEntryPrepared};
       const runtime = globalThis.__codexPanelProviderQuotaV1__ ??= (${createCodexProviderQuotaRuntime.toString()})(${preferences.customProviderQuotaFix === true});
@@ -153,7 +212,7 @@ export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report 
         if (!document.documentElement) return;
         observer.disconnect();
         const imports = Object.fromEntries(${JSON.stringify(replacements)}.map(({url, source}) => [url,
-          URL.createObjectURL(new Blob([source + ${JSON.stringify(`\nglobalThis.__codexPanelProviderQuotaV1__.installed=true;${quotaPrepared ? `console.info(${JSON.stringify(appliedMessage)});` : ""}`)}], { type: "text/javascript" }))]));
+          URL.createObjectURL(new Blob([source + ${JSON.stringify("\nglobalThis.__codexPanelProviderQuotaV1__.installed=true;")} + (url === ${JSON.stringify(quotaModuleUrl)} ? ${JSON.stringify(`globalThis.__codexPanelProviderQuotaV1__.applied=true;console.info(${JSON.stringify(appliedMessage)});`)} : "")], { type: "text/javascript" }))]));
         const map = document.createElement("script");
         map.type = "importmap";
         map.textContent = JSON.stringify({ imports });

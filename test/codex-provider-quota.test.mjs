@@ -243,3 +243,62 @@ test("reinstallation discovers the original composer from import maps after blob
   assert.ok(bootstrap.includes("runtime.setEnabled(true)"));
   assert.match(reports.at(-1), /prepared/);
 });
+
+// 26.1021 moves the native submit gate into a lazy composer adapter.
+const splitProviderSource = `import{target as Target,config as Config,provider as Provider}from"./app-initial-fixture.js";
+function providerQuota(e,t,n=\x60fresh\x60){let{cwd:r,hostId:i}=e.get(Target,t);if(i!==\x60local\x60)return null;let{data:a}=e.get(Config,{cwd:r,hostId:i});return a==null||(e.get(Provider,t)??a.model_provider??\x60openai\x60)!==\x60openai\x60?null:quotaStatus(e,n)}
+const adapter = "./codex-composer-adapter-fixture.js";`;
+const splitSource = `function composer(e){
+  const read=(atom,key)=>atom==="host"?(e.host??"local"):atom===panelQuotaTargetAtom?{hostId:e.host??"local",cwd:"/disposable/project"}:atom===panelQuotaProviderAtom?e.threadProvider:atom===panelQuotaConfigAtom?{data:{model_provider:e.configProvider}}:e.quota;
+  const thread="fixture",Host="host",Quota="quota",host=read(Host,thread),quota=read(Quota,host),state=e.policy?"failed":"idle",error={codexErrorInfo:"misalignmentPolicyViolation"};
+  const policy=state===\x60failed\x60&&error?.codexErrorInfo===\x60misalignmentPolicyViolation\x60;
+  const Work="work-quota",use=value=>value?e.workQuota:false,work=use(host===\x60local\x60&&Work);
+  (0,React.useState)(null);
+  const disabled=e.disabled,pending=e.pending,newThread=e.newThread,settings=e.settings;
+  let blocked=disabled||pending&&newThread||policy||settings?.isLoading===!0||quota||work,next;
+  return {submitDisabled:blocked,submit:()=>blocked?false:"sent"};
+}`;
+
+test("split native composer preserves policy, pending and loading gates while bypassing only custom local quotas", () => {
+  const patched = rewriteCodexProviderQuota(splitSource, "app://-/assets/codex-composer-adapter-fixture.js", splitProviderSource);
+  assert.ok(patched);
+  const runtime = createCodexProviderQuotaRuntime(true);
+  const composer = vm.runInNewContext(patched.replace(/^import[^;]+;/, "") + ";composer", {
+    panelQuotaTargetAtom:"target",panelQuotaConfigAtom:"config",panelQuotaProviderAtom:"provider",
+    React:{useState:()=>[],useSyncExternalStore:(_,get)=>get()},
+    __codexPanelProviderQuotaV1__:runtime,
+  });
+  const allowed={threadProvider:"custom",quota:true,workQuota:true};
+  assert.equal(composer(allowed).submit(),"sent");
+  assert.equal(composer({...allowed,threadProvider:undefined,configProvider:"custom"}).submit(),"sent");
+  for(const option of [{policy:true},{disabled:true},{pending:true,newThread:true},{settings:{isLoading:true}},{host:"remote"},{threadProvider:"openai",configProvider:"custom"},{threadProvider:""},{threadProvider:undefined}]) {
+    assert.equal(composer({...allowed,...option}).submit(),false,JSON.stringify(option));
+  }
+  runtime.setEnabled(false);
+  assert.equal(composer(allowed).submit(),false);
+  assert.equal(rewriteCodexProviderQuota(splitSource+splitSource,"app://-/assets/codex-composer-adapter-fixture.js",splitProviderSource),null);
+});
+
+test("split composer discovery installs its adapter and reports quota application only when that module executes", async t => {
+  const directory=await mkdtemp(join(tmpdir(),"panel-quota-split-"));
+  t.after(()=>rm(directory,{recursive:true,force:true}));
+  const preferencesFile=join(directory,"preferences.json");
+  await writeFile(preferencesFile,'{"customProviderQuotaFix":true}');
+  const primaryUrl="app://-/assets/app-primary-fixture.js",adapterUrl="app://-/assets/codex-composer-adapter-fixture.js";
+  for(const supported of [true,false]) {
+    const cdp={on(){},async send(_,params){return {result:{value:await vm.runInNewContext(params.expression,{
+      URL,location:{href:"app://-/index.html"},performance:{getEntriesByType:()=>[{name:primaryUrl}]},document:{querySelectorAll:()=>[]},
+      fetch:async url=>({ok:true,text:async()=>url===primaryUrl?splitProviderSource:supported?splitSource:"unsupported"}),
+    })}};}};
+    const bootstrap=await prepareCodexProviderQuotaFix(cdp,preferencesFile,()=>{},[{url:"app://-/assets/dot.js",source:"void 0;"}],true,false);
+    const window={};window.top=window;
+    const blobs=[];
+    const context=vm.createContext({window,document:{documentElement:{prepend(){}},createElement:()=>({})},MutationObserver:class{observe(){}disconnect(){}},URL:{createObjectURL:()=>"blob:fixture"},Blob:class{constructor(parts){blobs.push(parts.join(""));}}});
+    vm.runInContext(bootstrap,context);
+    assert.equal(window.__codexPanelQuotaBootstrapPrepared__,supported);
+    assert.equal(context.__codexPanelProviderQuotaV1__.applied,false);
+    vm.runInContext(blobs[0],context);
+    assert.equal(context.__codexPanelProviderQuotaV1__.applied,false,"Dot execution does not prove quota applied");
+    if(supported){assert.ok(bootstrap.includes(adapterUrl));vm.runInContext(blobs[1].replace(/^import[^;]+;/,""),context);assert.equal(context.__codexPanelProviderQuotaV1__.applied,true);}
+  }
+});

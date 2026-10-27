@@ -2363,6 +2363,8 @@ async function readInjectionStatus(cdp) {
       ultrafastBootstrapPrepared: window.__codexPanelUltrafastBootstrapPrepared__ === true,
       dotBootstrapPrepared: window.__codexPanelDotBootstrapPrepared__ === true,
       quotaBootstrapPrepared: window.__codexPanelQuotaBootstrapPrepared__ === true,
+      quotaApplied: window.__codexPanelProviderQuotaV1__?.applied === true,
+      providerModulesPrepared: window.__codexPanelProviderQuotaV1__?.prepared === true,
       scriptIdentifier: window[${JSON.stringify(injectionScriptIdentifierName)}] || null,
       entryMounted: Boolean(document.getElementById("codex-panel-entry")),
       pageMounted: Boolean(document.getElementById("codex-panel-page")),
@@ -2528,7 +2530,7 @@ async function injectTarget(
     const quotaSource = keepAlive
       ? await prepareCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"), console.error, dot.modules, dot.prepared, ultrafastModules.length === 2)
       : "";
-    if (quotaSource) source = `window.__codexPanelQuotaBootstrapPrepared__ = true;\n${quotaSource}\n${source}`;
+    if (quotaSource) source = `${quotaSource}\n${source}`;
     await cdp.send("Page.setBypassCSP", { enabled: true });
     if (keepAlive && attachExisting) {
       const currentStatus = await readInjectionStatus(cdp);
@@ -2536,7 +2538,7 @@ async function injectTarget(
         currentStatus,
         source,
         sourceHash,
-        reloadRequired: Boolean(quotaSource) && (currentStatus.quotaBootstrapPrepared !== true
+        reloadRequired: Boolean(quotaSource) && (currentStatus.providerModulesPrepared !== true
           || ultrafastModules.length === 2 && currentStatus.ultrafastBootstrapPrepared !== true
           || dot.prepared && currentStatus.dotBootstrapPrepared !== true),
         shouldOpen,

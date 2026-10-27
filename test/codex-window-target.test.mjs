@@ -78,9 +78,9 @@ test("quota preparation recovering on a mount retry reloads once before reusing 
   const end = source.indexOf("async function injectAll(", start);
   const page = { window: {} };
   let reloads = 0;
-  const preparations = ["", "// quota bootstrap", "// quota bootstrap"];
+  const preparations = ["", "window.__codexPanelProviderQuotaV1__ = { prepared: true };", "window.__codexPanelProviderQuotaV1__ = { prepared: true };"];
   const status = () => ({ sourceHash: "current", startupToken: "manager", entryMounted: true,
-    quotaBootstrapPrepared: page.window.__codexPanelQuotaBootstrapPrepared__ === true });
+    providerModulesPrepared: page.window.__codexPanelProviderQuotaV1__?.prepared === true });
   const cdp = { send: async () => ({}), on() {}, close() {} };
   const inject = vm.runInNewContext(`${source.slice(start, end)}; injectTarget`, {
     installPanelHostBinding: () => ({ install: async () => {}, publishHeartbeat: async () => {} }),
