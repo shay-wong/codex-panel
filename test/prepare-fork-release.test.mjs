@@ -80,12 +80,15 @@ test("release workflow pushes only version files and repeated or older releases 
     const workflow = yaml.load(readFileSync(new URL("../.github/workflows/release-macos.yml", import.meta.url), "utf8"));
     assert.equal(workflow.jobs["sync-version"].needs, "release");
     const script = workflow.jobs["sync-version"].steps.find(step => step.name === "Commit published version to main").run;
+    const githubEnv = path.join(root, "github-env");
     const run = tag => execFileSync("bash", ["-c", script], {
       cwd: repo,
-      env: { ...process.env, RELEASE_TAG: tag, RUNNER_TEMP: root, GITHUB_STEP_SUMMARY: path.join(root, "summary.md") },
+      // 子进程会写 Actions 环境文件，必须隔离，避免模拟版本污染真实发布产物名。
+      env: { ...process.env, RELEASE_TAG: tag, RUNNER_TEMP: root, GITHUB_ENV: githubEnv, GITHUB_STEP_SUMMARY: path.join(root, "summary.md") },
       stdio: "pipe",
     });
     run("v8.0.1-fork");
+    assert.equal(readFileSync(githubEnv, "utf8"), "RELEASE_DMG=Codex.Panel_8.0.1-fork_universal.dmg\nRELEASE_ARCHIVE=Codex.Panel_8.0.1-fork_universal.app.tar.gz\n");
     const head = git("rev-parse", "HEAD");
     assert.equal(git("rev-parse", "origin/main"), head);
     assert.deepEqual(git("diff-tree", "--no-commit-id", "--name-only", "-r", head).split("\n").sort(), ["package-lock.json", "package.json", "src-tauri/Cargo.lock", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json"]);
