@@ -309,6 +309,7 @@ async function copyApplicationResources() {
   for (const fileName of [
     "codex-cdp-pipe.mjs",
     "codex-dot-entry.mjs",
+    "codex-thread-tabs.mjs",
     "codex-injector-control.mjs",
     "codex-injector.mjs",
     "codex-injector-runtime.mjs",

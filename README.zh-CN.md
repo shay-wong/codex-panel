@@ -1,5 +1,7 @@
 # Codex Panel
 
+先打开一个会话，再右键侧栏中的其他 Codex 会话，可选择**在新标签页中打开**或**在右侧并排打开**，均在同一窗口内显示。同一会话只保留一个位置，左侧点击将输入光标和高亮切换到对应会话，保留当前布局；右键“恢复为独立页面”可移出标签并回到完整会话页。参见[会话标签页与并排显示](docs/fork-capabilities.md#conversation-tabs-and-split-view)。
+
 新版 Codex 适配同时覆盖独立工作树开关、原生目录与旧自动任务服务，以及拆分后的输入框额度模块，详见 [Fork 功能说明](docs/fork-capabilities.md)。
 
 注入入口随 Codex 语言显示“任务面板”或“Panel”；Windows 打开面板时尝试唤醒本次启动的 Codex 窗口，并保留最大化状态。参见[入口语言与 Windows 窗口唤醒](docs/fork-capabilities.md#sidebar-language-and-windows-window-activation)。

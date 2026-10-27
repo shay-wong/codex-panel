@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Add sidebar conversation actions to open an existing Codex chat in a native tab or alongside the current chat in the same window, reuse already-open conversations and synchronize input focus and sidebar highlighting on sidebar clicks, and restore a tab or split conversation as a standalone page.
+
 - Automatically sync the published version back to main so source builds and local reinstalls use the correct version after pulling.
 
 - Restore newer Codex compatibility for execution worktree selection, custom-provider quota bypass, workspace path verification, and migration of legacy automations. Report quota adapter preparation separately from actual module execution.

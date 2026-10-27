@@ -34,6 +34,7 @@ import {
 } from "./codex-injector-runtime.mjs";
 import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
 import { prepareCodexDotEntry } from "./codex-dot-entry.mjs";
+import { prepareCodexThreadTabs } from "./codex-thread-tabs.mjs";
 import { prepareCodexProviderUltrafast } from "./codex-provider-ultrafast.mjs";
 import { createUltrafastCatalogAdapter } from "./codex-provider-ultrafast-catalog.mjs";
 import { prepareCodexProviderQuotaFix, watchCodexProviderQuotaPreferences } from "./codex-provider-quota.mjs";
@@ -2527,8 +2528,9 @@ async function injectTarget(
     await waitForRendererReady(cdp, 15_000);
     const ultrafastModules = keepAlive ? await prepareCodexProviderUltrafast(cdp) : [];
     const dot = keepAlive ? await prepareCodexDotEntry(cdp, ultrafastModules) : { modules: [], prepared: false };
+    const threadModules = keepAlive ? await prepareCodexThreadTabs(cdp, dot.modules) : dot.modules;
     const quotaSource = keepAlive
-      ? await prepareCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"), console.error, dot.modules, dot.prepared, ultrafastModules.length === 2)
+      ? await prepareCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"), console.error, threadModules, dot.prepared, ultrafastModules.length === 2)
       : "";
     if (quotaSource) source = `${quotaSource}\n${source}`;
     await cdp.send("Page.setBypassCSP", { enabled: true });
@@ -2712,11 +2714,13 @@ async function currentInjectionSource() {
   const providerQuotaFix = await readFile(new URL("./codex-provider-quota.mjs", import.meta.url), "utf8");
   const providerUltrafast = await readFile(new URL("./codex-provider-ultrafast.mjs", import.meta.url), "utf8");
   const dotEntry = await readFile(new URL("./codex-dot-entry.mjs", import.meta.url), "utf8");
+  const threadTabs = await readFile(new URL("./codex-thread-tabs.mjs", import.meta.url), "utf8");
   const sourceHash = createHash("sha256").update(JSON.stringify({
     userScript,
     providerQuotaFix,
     providerUltrafast,
     dotEntry,
+    threadTabs,
   })).digest("hex");
   const runtimeSource = `window.__CODEX_PANEL_MANAGED_ORIGIN__ = ${JSON.stringify(panelOrigin)};
 window.__CODEX_PANEL_HOST_CAPABILITY__ = ${JSON.stringify(hostCapability)};

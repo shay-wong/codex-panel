@@ -57,6 +57,7 @@ const runtimePayloadPaths = [
 const runtimeScriptNames = [
   "codex-cdp-pipe.mjs",
   "codex-dot-entry.mjs",
+  "codex-thread-tabs.mjs",
   "codex-injector-control.mjs",
   "codex-injector-runtime.mjs",
   "codex-injector.mjs",
