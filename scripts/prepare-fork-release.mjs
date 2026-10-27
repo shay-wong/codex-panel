@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, appendFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parse, stringify } from "smol-toml";
+import { parse } from "smol-toml";
 import { releaseMetadata } from "./release-metadata.mjs";
 
 export function prepareForkRelease(root, tag, notesPath) {
@@ -41,8 +41,19 @@ export function prepareForkRelease(root, tag, notesPath) {
   for (const [file, value] of [["package.json", pkg], ["package-lock.json", lock], ["src-tauri/tauri.conf.json", tauri]]) {
     writeFileSync(path.join(root, file), `${JSON.stringify(value, null, 2)}\n`);
   }
-  writeFileSync(path.join(root, "src-tauri/Cargo.toml"), stringify(cargo));
-  writeFileSync(path.join(root, "src-tauri/Cargo.lock"), stringify(cargoLock));
+  // 保留 Cargo 文件注释与排版，仅替换已解析确认的应用版本。
+  for (const file of ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock"]) {
+    let updated = 0;
+    const content = read(file).split(/(?=^\[)/m).map(block => {
+      if (!/^\[\[?package\]\]?\s*$/m.test(block.split("\n")[0])) return block;
+      const entry = parse(block).package;
+      if ((Array.isArray(entry) ? entry[0] : entry)?.name !== cargo.package.name) return block;
+      updated++;
+      return block.replace(/^(version\s*=\s*)"[^"]+"/m, `$1"${version}"`);
+    }).join("");
+    assert.equal(updated, 1, `Expected one application package in ${file}`);
+    writeFileSync(path.join(root, file), content);
+  }
   return metadata;
 }
 

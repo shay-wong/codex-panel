@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Automatically sync the published version back to main so source builds and local reinstalls use the correct version after pulling.
+
 - Restore newer Codex compatibility for execution worktree selection, custom-provider quota bypass, workspace path verification, and migration of legacy automations. Report quota adapter preparation separately from actual module execution.
 
 - Fix planning conversation naming and association when the new conversation has not yet appeared in the Codex sidebar.

@@ -286,8 +286,10 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 - 发布校验只核对资产集合、上传状态及签名，不限制显示或上传顺序；DMG 使用正常文件名，不添加排序前缀。
 - 首次生成并安全备份 Tauri 更新密钥（`npm run tauri -- signer generate --help`）；后续版本沿用同一密钥，私钥不得入库。
 - GitHub Actions 仓库 Variable `CODEX_PANEL_UPDATER_PUBLIC_KEY` 填公钥文件内容；Secret `TAURI_SIGNING_PRIVATE_KEY` 填私钥文件内容；可选 Secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 填私钥密码。公钥编译进 App，私钥仅用于更新包签名；缺少密钥时发布构建失败。
-- 日常改动维护中英文更新日志的 `Unreleased` / `未发布`。发版无需改版本或创建版本提交：`scripts/prepare-fork-release.mjs` 从 tag 提取版本，使用 JSON/TOML 解析器同步 5 个构建文件；读取最近可达的其他规范 Fork 标签，发布说明只收录未发布区中此前标签没有的条目（包括续行）。main 可保留已发布条目，下次不会重复发布；历史版本区不参与提取。验证：`node --test test/prepare-fork-release.test.mjs` 和 `actionlint .github/workflows/release-macos.yml`。
-- 按 Git 授权规则确保产品提交已在 `origin/main`，再推送指向该提交的 `vX.Y.Z-fork` 标签，触发 Release macOS。构建目录的版本变更不回推；保留 main 祖先检查、签名验证与资产完整性检查。此工作流只发布 macOS 通用版。
+- 日常改动维护中英文更新日志的 `Unreleased` / `未发布`。发布标签仍为版本来源，`scripts/prepare-fork-release.mjs` 自动同步构建目录的 5 个版本文件，保留 Cargo 注释与格式；发布说明继续按最近其他可达 Fork 标签去重提取双语条目。
+- 发布成功后，`release-macos.yml` 的 `sync-version` job 从最新 main 检出，用同一脚本更新 package.json、package-lock.json、Cargo.toml、Cargo.lock、tauri.conf.json，并以 GitHub Actions bot 自动提交回 main，提交包含 `[skip ci]`，不重复打包。各版本回写串行，旧发布重跑不降级，已一致不重复提交；并发 main 推进导致普通 push 拒绝时报告失败，不强推。使用工作流自带 GITHUB_TOKEN，不额外配置密钥；分支保护必须允许该回写，否则需维护者处理权限。
+- 该版本同步约定长期保留，不再要求手动版本提交；拉取包含自动回写提交的 main 后，本地编译和重装获得发布版本。发布标签和其源代码快照不改写；回写失败不撤销已发布资产。验证：版本准备测试、隔离 Git 仓库执行实际回写脚本、工作流语法检查。来源定位 `git log -S'sync-version:' -- .github/workflows/release-macos.yml`。
+- 按 Git 授权规则推送产品提交和 `vX.Y.Z-fork` 标签，触发 Release macOS；保留 main 祖先检查、签名验证与资产完整性检查。此工作流只发布 macOS 通用版。
 - 完成后核实标签目标、工作流结果、DMG，以及 `.app.tar.gz`、`.sig` 和 `latest.json`；在隔离环境验证安装，不覆盖用户已安装 App。上传失败可能留下 Draft Release，先核实失败原因和已有资产，不强制移动已发布标签。
 
 
