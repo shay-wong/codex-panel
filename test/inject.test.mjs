@@ -186,6 +186,7 @@ function selectNativeWorktreeHarness({ triggers, item, now, useWorktree = true }
   const helperEnd = source.indexOf("\n  function normalizeThreadId", helperStart);
   const selectStart = source.indexOf("async function selectNativeWorktree");
   const selectEnd = source.indexOf("\n  async function createThreadForTask", selectStart);
+  for (const trigger of triggers) trigger.attributes["data-composer-navigation-target"] = "run-location";
   const elements = [...triggers, item].filter(Boolean);
   const document = {
     elementFromPoint: (x, y) => elements.find((element) => (
@@ -1983,7 +1984,13 @@ test("native project reads use the live catalog when legacy fetch handlers were 
     readRemoteProjects: async () => [],
   };
   let imports = 0;
-  const start = source.indexOf("  let nativeProjectCatalogPromise;");
+  const rootCalls = [];
+  const workspaceRoots = { read: async (requestId, body) => {
+    assert.equal(typeof requestId, "string");
+    rootCalls.push(body);
+    return { canonicalPathByRoot: { "/disposable/link": "/disposable/project" } };
+  } };
+  const start = source.indexOf("  let nativeDesktopServicesPromise;");
   const code = source.slice(start, source.indexOf("  async function readCodexProjectMetadata(", start));
   const api = vm.runInNewContext(`(() => {
     ${code.replaceAll("import(url)", "importModule(url)")}
@@ -1993,7 +2000,7 @@ test("native project reads use the live catalog when legacy fetch handlers were 
     performance: { getEntriesByType: () => [{ name: "app://-/assets/app-shared-fixture.js" }] },
     document: { querySelectorAll: () => [] },
     location: { href: "app://-/index.html", origin: "app://-" },
-    importModule: async () => { imports++; return { changedExportName: { projectCatalog: catalog } }; },
+    importModule: async () => { imports++; return { changedExportName: { projectCatalog: catalog, workspaceRoots } }; },
     window: {
       setTimeout, clearTimeout,
       electronBridge: { sendMessageFromView: message => listener({ data: {
@@ -2008,5 +2015,12 @@ test("native project reads use the live catalog when legacy fetch handlers were 
   assert.equal(await api.selectedNativeProjectId(), "fixture", "read selection live after navigation");
   assert.equal((await api.requestNativeFetch("get-global-state", { key: "local-projects" })).value, projects);
   assert.deepEqual((await api.requestNativeFetch("get-global-state", { key: "remote-projects" })).value, []);
-  assert.equal(imports, 1, "cache the catalog service, not its selection");
+  assert.deepEqual((await api.requestNativeFetch("active-workspace-roots", {})).roots, ["/disposable/project"]);
+  selection = { type: "local", projectId: "missing" };
+  assert.equal((await api.requestNativeFetch("active-workspace-roots", {})).roots.length, 0);
+  const body = { hostId: "local", canonicalizeRoots: ["/disposable/link"] };
+  const roots = await api.requestNativeFetch("workspace-root-options", body);
+  assert.equal(roots.canonicalPathByRoot["/disposable/link"], "/disposable/project");
+  assert.equal(rootCalls[0], body);
+  assert.equal(imports, 1, "cache the service, not its selection or roots");
 });

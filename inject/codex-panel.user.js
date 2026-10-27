@@ -620,10 +620,10 @@
       || null;
   }
 
-  let nativeProjectCatalogPromise;
-  async function nativeProjectCatalog() {
-    if (!nativeProjectCatalogPromise) {
-      nativeProjectCatalogPromise = (async () => {
+  let nativeDesktopServicesPromise;
+  async function nativeDesktopServices() {
+    if (!nativeDesktopServicesPromise) {
+      nativeDesktopServicesPromise = (async () => {
         const urls = new Set([
           ...performance.getEntriesByType("resource").map((entry) => entry.name),
           ...Array.from(document.querySelectorAll('script[src],link[rel="modulepreload"][href]'))
@@ -640,12 +640,12 @@
             && typeof value.projectCatalog?.readLocalProjects === "function"
             && typeof value.projectCatalog?.readRemoteProjects === "function"
           ));
-          if (service) return service.projectCatalog;
+          if (service) return service;
         }
         return null;
       })().catch(() => null);
     }
-    return nativeProjectCatalogPromise;
+    return nativeDesktopServicesPromise;
   }
 
   async function requestNativeFetch(path, body) {
@@ -657,9 +657,24 @@
         "remote-projects": "readRemoteProjects",
       }[body?.key];
       if (method) {
-        const catalog = await nativeProjectCatalog();
+        const catalog = (await nativeDesktopServices())?.projectCatalog;
         if (catalog) return { value: await catalog[method]() };
       }
+    }
+    if (path === "active-workspace-roots") {
+      const catalog = (await nativeDesktopServices())?.projectCatalog;
+      if (catalog) {
+        const selection = await catalog.readSelection();
+        if (selection?.type === "local") {
+          const projects = await catalog.readLocalProjects();
+          return { roots: projects?.[selection.projectId]?.rootPaths ?? [] };
+        }
+        return { roots: [] };
+      }
+    }
+    if (path === "workspace-root-options") {
+      const roots = (await nativeDesktopServices())?.workspaceRoots;
+      if (roots) return roots.read(crypto.randomUUID(), body);
     }
     const bridge = window.electronBridge;
     if (!bridge || typeof bridge.sendMessageFromView !== "function") return Promise.resolve(undefined);
@@ -1499,16 +1514,61 @@
   async function selectNativeWorktree(useWorktree = true) {
     const labels = useWorktree ? NATIVE_WORKTREE_LABELS : ["local", "work locally", "本地", "本地模式", "本機", "本機作業"];
     const visibleLabel = (element) => normalizedLabel(element.innerText ?? element.textContent);
+    const settingsLabels = ["configure local environment", "配置本地环境", "設定本機環境"];
+    const locationLabels = ["location", "work in", "位置", "工作位置"];
+    const computerLabels = ["this computer", "此计算机", "這部電腦", "這台電腦"];
+    const newControl = (names, root = document) => Array.from(root.querySelectorAll('button[aria-label]'))
+      .find((button) => names.includes(normalizedLabel(button.getAttribute("aria-label")))
+        && button.closest("[data-codex-composer-root]") && !button.disabled && isInteractiveElement(button));
     const destination = useWorktree ? "新建本地工作树" : "本地目录";
     const readyDeadline = Date.now() + 4_000;
     let trigger;
     while (!trigger && Date.now() < readyDeadline) {
       trigger = Array.from(document.querySelectorAll(
         '[data-composer-navigation-target="run-location"]',
-      )).find(isInteractiveElement);
+      )).find(isInteractiveElement) || newControl(settingsLabels) || newControl(locationLabels);
       if (!trigger) await new Promise((resolve) => window.setTimeout(resolve, 40));
     }
     if (!trigger) throw new Error("Codex 没有显示运行位置选择器");
+    if (trigger.getAttribute("data-composer-navigation-target") !== "run-location") {
+      const root = trigger.closest("[data-codex-composer-root]");
+      const waitFor = async (read, message) => {
+        const deadline = Date.now() + 4_000;
+        while (Date.now() < deadline) {
+          const value = read();
+          if (value) return value;
+          await new Promise((resolve) => window.setTimeout(resolve, 40));
+        }
+        throw new Error(message);
+      };
+      const location = newControl(locationLabels, root);
+      if (!location) throw new Error("Codex 没有显示工作位置选择器");
+      if (!computerLabels.includes(visibleLabel(location))) {
+        location.click();
+        const local = await waitFor(() => Array.from(document.querySelectorAll('[role="menuitem"]'))
+          .find((item) => isInteractiveElement(item) && computerLabels.includes(visibleLabel(item))),
+        "Codex 工作位置菜单中未找到此计算机");
+        local.click();
+        await waitFor(() => {
+          const selected = newControl(locationLabels, root);
+          return selected && computerLabels.includes(visibleLabel(selected));
+        }, "Codex 未确认已切换到此计算机");
+      }
+      // 新版把工作树移到独立环境弹层；按 label 的关联开关读写，不再匹配位置菜单文本。
+      const settings = await waitFor(() => newControl(settingsLabels, root), "Codex 没有显示本地环境设置");
+      settings.click();
+      const worktreeLabels = ["new worktree", "worktree", "新建工作树", "工作树", "新增 worktree", "新增工作樹", "工作樹"];
+      const readSwitch = () => Array.from(document.querySelectorAll("label[for]"))
+        .filter((label) => worktreeLabels.includes(visibleLabel(label)))
+        .map((label) => document.getElementById(label.htmlFor))
+        .find((control) => control?.getAttribute("role") === "switch" && !control.disabled && isInteractiveElement(control));
+      const control = await waitFor(readSwitch, "Codex 本地环境中没有可用的工作树开关");
+      if (control.getAttribute("aria-checked") !== String(useWorktree)) control.click();
+      await waitFor(() => readSwitch()?.getAttribute("aria-checked") === String(useWorktree),
+        `Codex 未确认已切换到${destination}`);
+      settings.click();
+      return;
+    }
     if (labels.includes(visibleLabel(trigger))) return;
     trigger.click();
     const deadline = Date.now() + 4_000;
