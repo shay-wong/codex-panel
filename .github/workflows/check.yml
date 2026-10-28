@@ -26,25 +26,36 @@ jobs:
       run_native: ${{ steps.native-scope.outputs.run_native }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: github.event_name == 'pull_request'
         with:
           persist-credentials: false
-          fetch-depth: 2
-      - name: Select native packaging for the PR merge tree
+          fetch-depth: 0
+      - name: Select native packaging from changed paths
         id: native-scope
-        if: github.event_name == 'pull_request'
+        env:
+          CHECK_EVENT: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
           node <<'NODE'
           const { execFileSync } = require('node:child_process');
           const { appendFileSync } = require('node:fs');
-          const paths = execFileSync('git', ['diff', '--name-only', '--no-renames', '-z', 'HEAD^1', 'HEAD'], { encoding: 'utf8' }).split('\0').filter(Boolean);
-          const webOrDocsOnly = paths.every(path =>
-            path.startsWith('web/src/') || path === 'web/index.html' ||
-            (path.startsWith('web/public/') && path !== 'web/public/codex-app-icon.png') ||
-            path.startsWith('docs/') ||
-            /^(?:README(?:\.[^/]+)?\.md|AGENTS\.md|LICENSE(?:\.[^/]+)?)$/.test(path));
-          appendFileSync(process.env.GITHUB_OUTPUT, `run_native=${!webOrDocsOnly}\n`);
-          console.log(webOrDocsOnly ? 'Web/docs-only PR: run the ordinary Check.' : 'Native/runtime/build inputs changed: run all launcher checks.');
+          const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+          let runNative = true;
+          try {
+            // push 必须比较整个 before..HEAD，不能漏掉同批推送的前几个提交。
+            const base = process.env.CHECK_EVENT === 'pull_request' ? 'HEAD^1' : process.env.PUSH_BEFORE;
+            if (process.env.CHECK_EVENT !== 'workflow_dispatch' && base && !/^0+$/.test(base)) {
+              const paths = git('diff', '--name-only', '--no-renames', '-z', base, 'HEAD').split('\0').filter(Boolean);
+              runNative = !paths.every(path =>
+                path.startsWith('web/src/') || path === 'web/index.html' ||
+                (path.startsWith('web/public/') && path !== 'web/public/codex-app-icon.png') ||
+                path.startsWith('docs/') ||
+                /^(?:README(?:\.[^/]+)?\.md|CHANGELOG(?:\.[^/]+)?\.md|FORK\.md|AGENTS\.md|LICENSE(?:\.[^/]+)?)$/.test(path));
+            }
+          } catch (error) {
+            console.log(`Cannot determine changed paths; run native checks: ${error.message}`);
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `run_native=${runNative}\n`);
+          console.log(runNative ? 'Native/runtime/build inputs changed or range unknown: run launcher checks.' : 'Web/docs-only change: run the ordinary Check, skip native packaging.');
           NODE
       - name: Reuse successful PR Check for the exact tested merge tree
         id: scope
@@ -264,7 +275,7 @@ jobs:
   macos-launcher:
     name: macOS launcher
     needs: main-check-scope
-    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && (github.event_name != 'pull_request' || needs['main-check-scope'].outputs.run_native != 'false') }}
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && needs['main-check-scope'].outputs.run_native != 'false' }}
     runs-on: macos-latest
     timeout-minutes: 40
     steps:
@@ -286,6 +297,13 @@ jobs:
           shared-key: macos-universal
           cache-bin: false
       - run: npm ci
+      - name: Cache verified Node runtime archives
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            dist/tauri-runtime-cache/*.zip
+            dist/tauri-runtime-cache/*.tar.gz
+          key: node-runtime-${{ runner.os }}-${{ hashFiles('scripts/prepare-tauri-app.mjs') }}
       - run: npm run app:prepare -- --target universal-apple-darwin
       - name: Build the unsigned universal app bundle
         run: >-
@@ -313,7 +331,7 @@ jobs:
   windows-launcher:
     name: Windows x64 launcher
     needs: main-check-scope
-    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && (github.event_name != 'pull_request' || needs['main-check-scope'].outputs.run_native != 'false') }}
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && needs['main-check-scope'].outputs.run_native != 'false' }}
     runs-on: windows-2025
     timeout-minutes: 40
     steps:
@@ -333,10 +351,19 @@ jobs:
           shared-key: windows-x64
           cache-bin: false
       - run: npm ci
+      - name: Cache verified Node runtime archives
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            dist/tauri-runtime-cache/*.zip
+            dist/tauri-runtime-cache/*.tar.gz
+          key: node-runtime-${{ runner.os }}-${{ hashFiles('scripts/prepare-tauri-app.mjs') }}
       - name: Run the Windows Node.js test suite
         run: npm test
+      - name: Prepare Windows runtime and assets
+        run: npm run app:prepare -- --target x86_64-pc-windows-msvc
       - name: Build the unsigned NSIS installer
-        run: npm run app:build:windows:unsigned
+        run: npm run tauri -- build --target x86_64-pc-windows-msvc --bundles nsis --no-sign --ci --config src-tauri/tauri.windows.conf.json
       - name: Preserve the unsigned NSIS installer
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -347,7 +374,7 @@ jobs:
   linux-launcher:
     name: Ubuntu 24.04 x64 launcher
     needs: main-check-scope
-    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && (github.event_name != 'pull_request' || needs['main-check-scope'].outputs.run_native != 'false') }}
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && needs['main-check-scope'].outputs.run_native != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -381,6 +408,13 @@ jobs:
             patchelf \
             wget
       - run: npm ci
+      - name: Cache verified Node runtime archives
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            dist/tauri-runtime-cache/*.zip
+            dist/tauri-runtime-cache/*.tar.gz
+          key: node-runtime-${{ runner.os }}-${{ hashFiles('scripts/prepare-tauri-app.mjs') }}
       - name: Build the Ubuntu 24.04 x64 packages
         run: npm run app:build:linux:x64
       - name: Verify the Ubuntu 24.04 x64 package contents

@@ -164,13 +164,28 @@ async function writeRuntimeIntegrityManifest() {
 }
 
 async function download(url, destination) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Download failed: ${response.status} ${response.statusText} (${url})`);
-  }
   const temporaryPath = `${destination}.download`;
-  await writeFile(temporaryPath, Buffer.from(await response.arrayBuffer()));
-  await rename(temporaryPath, destination);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    console.log(`Downloading ${url} (attempt ${attempt}/3, timeout 120s)`);
+    try {
+      // 超时覆盖响应正文，避免连接建立后下载停滞占满整个打包任务。
+      const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+      const content = Buffer.from(await response.arrayBuffer());
+      await writeFile(temporaryPath, content);
+      await rename(temporaryPath, destination);
+      console.log(`Downloaded ${url} (${content.length} bytes)`);
+      return;
+    } catch (error) {
+      await rm(temporaryPath, { force: true });
+      const reason = `${error.message}${error.cause?.code ? ` (${error.cause.code})` : ""}`;
+      console.error(`Download attempt ${attempt}/3 failed: ${url}: ${reason}`);
+      if (attempt === 3) throw new Error(`Download failed after 3 attempts: ${url}: ${reason}`, { cause: error });
+    }
+  }
 }
 
 async function verifiedNodeArchive(archiveName, expectedChecksum) {
