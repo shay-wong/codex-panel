@@ -45,8 +45,8 @@ jobs:
             echo "main already has a newer version: $CURRENT" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          node scripts/prepare-fork-release.mjs "$RELEASE_TAG" "$RUNNER_TEMP/version-sync-notes.md"
-          git add -- package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
+          node scripts/prepare-fork-release.mjs "$RELEASE_TAG" "$RUNNER_TEMP/version-sync-notes.md" --archive-changelog
+          git add -- package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json CHANGELOG.md CHANGELOG.zh-CN.md
           if git diff --cached --quiet; then exit 0; fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'

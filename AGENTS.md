@@ -181,7 +181,7 @@ Use this local review classification:
 ## 10. Release
 
 - Release only when the user requests it or explicitly includes release in the task.
-- Merge all included product PRs first. The release tag supplies the version. Actions updates the build versions and, after successful publication, automatically commits only the five version files back to main with [skip ci]. Do not require a manual version-bump commit; do not move published tags or alter release infrastructure without a separate requirement.
+- Merge all included product PRs first. The release tag supplies the version. Actions updates the build versions and, after successful publication, automatically commits the five version files and both changelogs back to main with [skip ci]. Archive released entries under their version headings using the release-tag snapshot; keep later main changes unreleased. Do not require a manual version-bump commit; do not move published tags or alter release infrastructure without a separate requirement.
 - Use an independent Fork version starting at `0.0.1-fork` and a tag in the form `vX.Y.Z-fork`. Release notes contain product changes only.
 - Verify the release asset set and signatures; asset display order must not block publication.
 - Record live build, signing, notarization, upload, and publication progress in the Panel.

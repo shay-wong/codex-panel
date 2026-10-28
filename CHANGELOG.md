@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Archive published changelog entries under their release versions automatically, keeping newer changes in Unreleased.
+
 - Prevent terminal locale variables from changing the macOS Codex UI language when launched through Panel.
 
 - Fix missing conversation tab and split-view menu actions when loading large native Codex modules; automatically retry failed preparation in the background up to three times.
