@@ -6,11 +6,15 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.4.11-fork
+
 - Archive published changelog entries under their release versions automatically, keeping newer changes in Unreleased.
 
 - Prevent terminal locale variables from changing the macOS Codex UI language when launched through Panel.
 
 - Fix missing conversation tab and split-view menu actions when loading large native Codex modules; automatically retry failed preparation in the background up to three times.
+
+## 0.4.10-fork
 
 - Fix the Panel entry widening the icon navigation rail after Codex switches sidebar layouts.
 
@@ -18,11 +22,15 @@ This file records user-visible changes introduced by the fork.
 
 - Automatically sync the published version back to main so source builds and local reinstalls use the correct version after pulling.
 
+## 0.4.9-fork
+
 - Restore newer Codex compatibility for execution worktree selection, custom-provider quota bypass, workspace path verification, and migration of legacy automations. Report quota adapter preparation separately from actual module execution.
 
 - Fix planning conversation naming and association when the new conversation has not yet appeared in the Codex sidebar.
 
 - Fix AI planning timing out on newer Codex builds after the native project-state API moved to the project catalog service.
+
+## 0.4.8-fork
 
 - Restore the Dot entry on newer Codex builds and reduce sensitivity to changes in configuration field order, quoting, and capability nesting.
 
@@ -32,7 +40,10 @@ This file records user-visible changes introduced by the fork.
 
 - Open linked Jira requirements within the current Panel instead of reloading the embedded document and leaving its startup overlay visible.
 
+## 0.4.7-fork
+
 - Keep horizontal issue-list cards at their content height when many issues share a column, preventing priority and assignee controls from overflowing.
+
 - Add a Jira project filter based on synchronized issue keys, with multi-selection and an All projects reset. Contributions by [@InTheManXG](https://github.com/InTheManXG) in [#29](https://github.com/shay-wong/codex-panel/pull/29).
 
 - Add an off-by-default preference to restore the Dot entry by skipping client-side account and provider checks while connected to Panel. Server authorization is unchanged.
@@ -49,17 +60,23 @@ This file records user-visible changes introduced by the fork.
 
 - Read the existing model-discovery configuration before toggling Ultrafast. Prompt only when enabling needs the setting or disabling can remove it, with two choices: update configuration or only toggle. Configuration read/write failures show an error and leave the switch unchanged.
 
+## 0.4.6-fork
+
 - Add a separate Restart Codex action to the Codex connection card to reload core configuration after confirmation.
 
 - Fix custom-provider Ultrafast selections losing their tier before API submission. First enable `api_key_model_discovery = true` under `[features]` in your Codex `config.toml`; Panel leaves this setting unchanged. Restart Codex after changing the Ultrafast switch and keep Panel running.
 
 - Keep the macOS interface responsive while quitting by cleaning up managed processes once in the background.
+
 - Keep the Panel entry attached to an available sidebar when hidden or inactive sidebars coexist, preserving its existing position.
+
 - Reuse prepared custom-provider module mappings during injection retries before the composer loads. The exit, sidebar, and injection fixes include contributions by [@InTheManXG](https://github.com/InTheManXG) in [#28](https://github.com/shay-wong/codex-panel/pull/28).
 
 - Added an off-by-default preference to show Ultrafast in the native speed menu for GPT-6 Astra and GPT-6.1 Sol on local custom API providers, independently of ChatGPT account eligibility.
 
 - Fix false missing-Skill errors after successful native task prefill or submission, and preserve conversation linking when the draft is sent immediately.
+
+## 0.4.5-fork
 
 - Fix Panel immediately closing, flickering, or opening the native profile menu. Keep automatic name and avatar capture, restore icon alignment and inactive color, and preserve Back/Forward navigation.
 
@@ -77,9 +94,13 @@ This file records user-visible changes introduced by the fork.
 
 - Preserve native titlebar dragging, unify stacked notifications and Undo, hide redundant Todo comment actions, and pause automatic claiming when all pending tasks await permission.
 
+## 0.4.1-fork
+
 - Fixed custom-provider sending after updating to ChatGPT desktop 26.917.71314. The adapter now discovers and matches the composer by code structure, tolerates asset hash and minified symbol changes, and retains 26.917.51856 compatibility.
 
 - Adopted the upstream native macOS update confirmation dialog, keeping Fork release and signature validation while bringing the confirmation window to the front; other platforms retain the existing Tauri dialog.
+
+## 0.0.4-fork
 
 - Moved the main Open Panel action from the sidebar into Runtime overview beside the service status and maintenance controls; its state-based labels remain available without sidebar wrapping.
 
@@ -88,10 +109,15 @@ This file records user-visible changes introduced by the fork.
 - Fixed Jira conversation binding and planning initialization failing with `INTERNAL_ERROR` for large model catalogs; chat model discovery now reads paginated metadata without exporting model prompts.
 
 - Fixed the unresponsive retry button on the Panel loading error page. **Reload** now retries within the open Panel; a disconnected launcher prompts you to start or restart its service.
+
 - Jira **Create and start** no longer blocks later **Plan with AI**; the follow-up planning conversation can save a Spec while preserving existing execution work.
+
 - Jira details now show formal Codex conversations created for their linked execution issues after **Create and start**.
+
 - Moved Jira **Plan with AI** into the same top detail action area used by ordinary tasks.
+
 - Moved Jira repository linking into the same top action area, while keeping the Jira summary below.
+
 - Synced upstream task sorting, optional creation dates, parent-based project progress and ordinary-task child creation (Jira keeps its planning flow), external Agent session resume commands, attachment display and local file actions, Jira Cloud search pagination, and account avatar fixes.
 
 - Fixed workflow configuration reads and planning preparation failing with `INTERNAL_ERROR` when the model catalog is too large; workflow Skill resolution no longer queries models.
