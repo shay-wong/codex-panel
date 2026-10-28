@@ -7,10 +7,10 @@ import yaml from 'js-yaml';
 const workflow = yaml.load(readFileSync(new URL('../.github/workflows/check.yml', import.meta.url), 'utf8'));
 const step = workflow.jobs['main-check-scope'].steps.find(step => step.id === 'native-scope');
 const source = step.run.split("node <<'NODE'\n")[1].split('\nNODE')[0];
-function scope(event, paths, before = 'abc123', fail = false) {
+function scope(event, paths, fail = false) {
   let output = '', args;
   vm.runInNewContext(source, {
-    process: { env: { CHECK_EVENT: event, PUSH_BEFORE: before, GITHUB_OUTPUT: '/fixture/output' } },
+    process: { env: { CHECK_EVENT: event, GITHUB_OUTPUT: '/fixture/output' } },
     console: { log() {} },
     require(name) {
       if (name === 'node:fs') return { appendFileSync(_path, value) { output += value; } };
@@ -25,26 +25,26 @@ function scope(event, paths, before = 'abc123', fail = false) {
   return { native: output.trim() === 'run_native=true', args: args && Array.from(args) };
 }
 
-test('main push filters the complete push range while retaining native and unknown-path checks', () => {
-  const web = scope('push', ['web/src/App.tsx', 'CHANGELOG.zh-CN.md']);
-  assert.equal(web.native, false);
-  assert.deepEqual(web.args.slice(-2), ['abc123', 'HEAD']);
-  for (const path of ['src-tauri/src/main.rs', 'scripts/codex-injector.mjs', 'package-lock.json', 'web/public/codex-app-icon.png', '.github/workflows/check.yml']) {
-    assert.equal(scope('push', [path]).native, true, path);
+test('main pushes run types and tests without builds while PR and manual runs retain full checks', () => {
+  const mainJob = workflow.jobs['main-check'];
+  assert.equal(mainJob.if, "github.event_name == 'push'");
+  assert.deepEqual(mainJob.steps.filter(step => step.run).map(step => step.run), ['npm ci', 'npm run typecheck', 'npm test']);
+  for (const name of ['main-check-scope', 'check', 'macos-launcher', 'windows-launcher', 'linux-launcher']) {
+    assert.ok(workflow.jobs[name].if.includes("github.event_name != 'push'"), name);
   }
-  assert.equal(scope('push', ['web/src/App.tsx'], 'missing', true).native, true);
-  assert.equal(scope('push', [], '0000000000000000000000000000000000000000').native, true);
+  assert.ok(workflow.jobs.check.steps.some(step => step.run === 'npm run check'));
+  const web = scope('pull_request', ['web/src/App.tsx', 'CHANGELOG.zh-CN.md']);
+  assert.equal(web.native, false);
+  assert.deepEqual(web.args.slice(-2), ['HEAD^1', 'HEAD']);
+  assert.equal(scope('pull_request', ['src-tauri/src/main.rs']).native, true);
+  assert.equal(scope('pull_request', ['README.md'], true).native, true);
   assert.equal(scope('workflow_dispatch', ['README.md']).native, true);
-  assert.deepEqual(scope('pull_request', ['README.md']).args.slice(-2), ['HEAD^1', 'HEAD']);
-  assert.equal(scope('pull_request', ['README.md']).native, false);
 });
 
-test('all platform jobs honor path scope on main pushes and retain full-check reuse', () => {
+test('PR platform jobs retain path scope and compile without packaging', () => {
   for (const name of ['macos-launcher', 'windows-launcher', 'linux-launcher']) {
     const job = workflow.jobs[name];
     assert.ok(job.if.includes("needs['main-check-scope'].outputs.run_native != 'false'"));
-    assert.ok(!job.if.includes("github.event_name != 'pull_request'"));
-    assert.ok(job.if.includes("needs['main-check-scope'].outputs.run_full != 'false'"));
     assert.ok(job.steps.some(step => step.run?.startsWith('cargo check ')));
     assert.ok(job.steps.filter(step => step.run?.startsWith('cargo check ')).every(step => step.run.includes('--all-targets') && step.run.includes('--locked')));
     const config = JSON.parse(job.env.TAURI_CONFIG);
