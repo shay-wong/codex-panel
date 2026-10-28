@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.4.12-fork
+
 - Show conversation-menu loading status in Panel and allow a manual retry without restarting Codex.
 
 - Recover conversation menus after Codex clears resource timing records by reusing prepared modules and following imports from the page entry script.
