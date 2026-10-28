@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fix missing conversation tab and split-view menu actions when loading large native Codex modules; automatically retry failed preparation in the background up to three times.
+
 - Fix the Panel entry widening the icon navigation rail after Codex switches sidebar layouts.
 
 - Add sidebar conversation actions to open an existing Codex chat in a native tab or alongside the current chat in the same window, reuse already-open conversations and synchronize input focus and sidebar highlighting on sidebar clicks, and restore a tab or split conversation as a standalone page.

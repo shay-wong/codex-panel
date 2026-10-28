@@ -185,10 +185,40 @@ export async function prepareCodexThreadTabs(cdp, modules, report = console.erro
   try {
     const loaded = await cdp.send("Runtime.evaluate", {
       expression: `(async()=>{const urls=[...performance.getEntriesByType("resource").map(e=>e.name),...[...document.querySelectorAll('script[type="importmap"]')].flatMap(e=>{try{return Object.keys(JSON.parse(e.textContent).imports??{})}catch{return []}})];return await Promise.all(["initial","primary"].map(async kind=>{const url=urls.find(url=>new RegExp("/app-"+kind+"-[\\\\w-]+\\\\.js$").test(new URL(url,location.href).pathname));if(!url)throw Error("Native thread module missing");const response=await fetch(url);if(!response.ok)throw Error("Native thread module unreadable");return{url,source:await response.text()}}))})()`,
-      awaitPromise: true, returnByValue: true,
+      awaitPromise: true, returnByValue: false,
     });
-    if (loaded.exceptionDetails || !Array.isArray(loaded.result?.value)) throw Error("native thread modules unreadable");
-    const [initial, original] = loaded.result.value;
+    const objectId = loaded.result?.objectId;
+    if (loaded.exceptionDetails || !objectId) throw Error("native thread modules unreadable");
+    const nativeModules = [];
+    try {
+      // 原生模块合计超过十余 MB，整包返回会断开 CDP；保留远端对象并分块读取。
+      for (let index = 0; index < 2; index++) {
+        const metadata = await cdp.send("Runtime.callFunctionOn", {
+          objectId, functionDeclaration: "function(index){return {url:this[index].url,length:this[index].source.length}}",
+          arguments: [{ value: index }], returnByValue: true,
+        });
+        const value = metadata.result?.value;
+        if (metadata.exceptionDetails || typeof value?.url !== "string" || !Number.isSafeInteger(value.length) || value.length <= 0) {
+          throw Error("native thread module metadata unreadable");
+        }
+        let source = "";
+        for (let start = 0; start < value.length; start += 500_000) {
+          const chunk = await cdp.send("Runtime.callFunctionOn", {
+            objectId, functionDeclaration: "function(index,start){return this[index].source.slice(start,start+500000)}",
+            arguments: [{ value: index }, { value: start }], returnByValue: true,
+          });
+          if (chunk.exceptionDetails || typeof chunk.result?.value !== "string"
+            || chunk.result.value.length !== Math.min(500_000, value.length - start)) {
+            throw Error("native thread module chunk unreadable");
+          }
+          source += chunk.result.value;
+        }
+        nativeModules.push({ url: value.url, source });
+      }
+    } finally {
+      await cdp.send("Runtime.releaseObject", { objectId });
+    }
+    const [initial, original] = nativeModules;
     const primary = modules.find(module => module.url === original.url) ?? original;
     let source = rewriteCodexThreadTabs(primary.source, initial.source, initial.url);
     if (!source) throw Error("unsupported native thread tabs structure");

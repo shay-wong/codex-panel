@@ -1,10 +1,51 @@
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { test } from "node:test";
-import { rewriteCodexThreadTabs } from "../scripts/codex-thread-tabs.mjs";
+import { prepareCodexThreadTabs, rewriteCodexThreadTabs } from "../scripts/codex-thread-tabs.mjs";
 
 const initial = 'import{tabs as wrong}from"./other.js";function open(scope,target,title,options){tabs.openTab(scope,kind,{props:{conversationId:target.threadId}})}var kind;function init(){return(init=once(()=>{kind=register(`orbit-activity`,Component,{open:open})}))()}function layout(scope,tab,options){if(options.mode===`full`&&tab.kind===`chat`)return false;}function initLayout(){return(initLayout=once(()=>{}))()}function focus(scope,view){if(view.kind===`chat`){focusChat(scope);return}focusTab(scope,view.tab.tabId)}var host=atom(Route,({get:read})=>read(context).hostId);function navigateRoute(root,...args){return root.get(bridge).navigate(...args)}var layoutState=atom(Route,({get:read})=>read(mode)===`full`?{mode:`full`}:{contentSide:read(side),mode:`split`});function focusInput(id){clear();let request={composerId:id,expiresTimeoutId:0,focusAnimationFrameId:null};}function subscribeInput(listener){return listeners.add(listener),()=>{listeners.delete(listener)}}function currentInput(){let input=selected();return input==null?null:inputs.get(input)?.composerId??null}function clientId(scope,id){return scope.get(identity,localId(id))}export{localId as n,focusInput as j,currentInput as k,subscribeInput as l,clientId as m,layoutState as i,init as a,open as b,tabs as c,initLayout as d,layout as e,focus as f,host as g,navigateRoute as h};';
 const primary = 'function active(root){let loc=root.get(location);if(loc==null)return null;let route=parse({pathname:loc.pathname,routeTemplate:loc.pathname,search:loc.search});if(route.routeKind===`other`)return null;return root.active;}async function menu({scope:root,target:target,actions:actions,surface:surface,isUnread:unread,paneItems:paneItems}){let items=[];items.push(...paneItems??[]);return items;}function sidebar(root,id,host,state,shared){let {isActive:active}=root;let highlighted=active!==void 0&&active,summary=null,fallbackHost=null,resolvedHost=host??summary?.hostId??fallbackHost??null,attributes={"data-app-action-sidebar-thread-active":String(active===true),"data-app-action-sidebar-thread-selected":String(active===true)};root.routeActive=highlighted;(0,React.startTransition)(()=>{});let result=navigate(root,id,host===`local`?void 0:host,state==null&&!shared?void 0:{state:state,threadAccess:shared?`shared`:void 0});let cache=[],rendered;return cache[0]!==highlighted?(rendered={isActive:highlighted,dataAttributes:attributes},cache[0]=highlighted,cache[1]=rendered):rendered=cache[1],root.renderedActive=rendered.isActive,root.renderedAttributes=rendered.dataAttributes,result;}';
+
+test("large native modules use bounded CDP responses and release their remote object", async () => {
+  const initialUrl = "app://-/assets/app-initial-fixture.js";
+  const primaryUrl = "app://-/assets/app-primary-fixture.js";
+  const sources = new Map([[initialUrl, initial + "/*" + "x".repeat(10_300_000) + "*/"],
+    [primaryUrl, primary + "/*" + "y".repeat(5_100_000) + "*/"]]);
+  for (const failChunk of [false, true]) {
+    let remote, released = false;
+    const existing = [{ url: primaryUrl, source: primary + "/* existing adapter */" }];
+    const messages = [];
+    const cdp = { async send(method, params) {
+      if (method === "Runtime.evaluate") {
+        remote = await vm.runInNewContext(params.expression, {
+          performance: { getEntriesByType: () => [...sources.keys()].map(name => ({ name })) },
+          document: { querySelectorAll: () => [] }, URL, location: { href: initialUrl },
+          fetch: async url => ({ ok: sources.has(url), text: async () => sources.get(url) }),
+        });
+        if (!params.returnByValue) return { result: { objectId: "modules" } };
+        throw Error("CDP WebSocket closed: oversized response");
+      }
+      assert.equal(params.objectId, "modules");
+      if (method === "Runtime.releaseObject") { released = true; remote = null; return {}; }
+      assert.equal(method, "Runtime.callFunctionOn");
+      if (failChunk && params.arguments.length === 2) return { exceptionDetails: { text: "chunk failed" } };
+      const value = vm.runInNewContext(`(${params.functionDeclaration})`).apply(remote, params.arguments.map(arg => arg.value));
+      assert.ok(JSON.stringify(value).length < 1_000_000, "each CDP response must stay bounded");
+      return { result: { value } };
+    } };
+    const result = await prepareCodexThreadTabs(cdp, existing, message => messages.push(message));
+    assert.equal(released, true);
+    if (failChunk) {
+      assert.equal(result, existing, "a failed read preserves prior adapters");
+      assert.match(messages[0], /chunk unreadable/);
+    } else {
+      assert.equal(result.length, 1);
+      assert.equal(result[0].url, primaryUrl);
+      assert.equal(result[0].source, rewriteCodexThreadTabs(existing[0].source, sources.get(initialUrl), initialUrl));
+      assert.match(result[0].source, /panel-thread-split/);
+    }
+  }
+});
 
 function harness({deferNavigation=false}={}) {
   const patched = rewriteCodexThreadTabs(primary, initial, "app://-/assets/app-initial-fixture.js");

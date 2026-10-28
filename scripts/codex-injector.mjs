@@ -2511,6 +2511,8 @@ async function injectTarget(
 ) {
   const cdp = await runtime.connect(target);
   let retained = false;
+  let scriptIdentifier;
+  const baseSource = source;
   const hostBridge = keepAlive
     ? installPanelHostBinding(
         cdp,
@@ -2533,6 +2535,30 @@ async function injectTarget(
       ? await prepareCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"), console.error, threadModules, dot.prepared, ultrafastModules.length === 2)
       : "";
     if (quotaSource) source = `${quotaSource}\n${source}`;
+    // 已连接不等于菜单加载成功；失败留给后台巡检重试，只有准备成功才重载应用。
+    const retryThreadTabs = keepAlive && (threadModules === dot.modules || !quotaSource) ? async () => {
+      const modules = await prepareCodexThreadTabs(cdp, dot.modules);
+      if (modules === dot.modules) return false;
+      const bootstrap = await prepareCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"), console.error, modules, dot.prepared, ultrafastModules.length === 2);
+      if (!bootstrap) return false;
+      const currentStatus = await readInjectionStatus(cdp);
+      const reconciled = await reconcileInjectionRuntime({
+        currentStatus,
+        source: `${bootstrap}\n${baseSource}`,
+        sourceHash,
+        reloadRequired: true,
+        removeRegisteredSource: identifier => cdp.send("Page.removeScriptToEvaluateOnNewDocument", { identifier }),
+        registerCurrentSource: currentSource => registerInjectionSource(cdp, currentSource),
+        reloadRenderer: () => reloadRenderer(cdp, 15_000),
+        evaluateCurrentSource: currentSource => evaluateInjectionSource(cdp, currentSource),
+        publishRegistration: identifier => publishInjectionScriptIdentifier(cdp, identifier),
+        reopen: () => cdp.send("Runtime.evaluate", { expression: "window.__codexPanelInjection__?.open()", returnByValue: true }),
+      });
+      scriptIdentifier = reconciled.scriptIdentifier;
+      await hostBridge.publishHeartbeat();
+      console.error("Panel conversation tabs recovered.");
+      return true;
+    } : null;
     await cdp.send("Page.setBypassCSP", { enabled: true });
     if (keepAlive && attachExisting) {
       const currentStatus = await readInjectionStatus(cdp);
@@ -2557,9 +2583,10 @@ async function injectTarget(
           returnByValue: true,
         }),
       });
+      scriptIdentifier = reconciled.scriptIdentifier;
       cdp.on("Page.loadEventFired", async () => {
         await hostBridge.install();
-        await publishInjectionScriptIdentifier(cdp, reconciled.scriptIdentifier);
+        await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
         await hostBridge.publishHeartbeat();
       });
       await hostBridge.publishHeartbeat();
@@ -2586,12 +2613,14 @@ async function injectTarget(
         throw new Error("Codex 中的任务面板尚未就绪，请稍后重试。");
       }
       retained = true;
+      cdp.retryThreadTabs = retryThreadTabs;
+      cdp.threadTabsRetryAt = Date.now() + 5_000;
       return {
         result: { ...status, cspBypassed: true, frameLoaded },
         connection: cdp,
       };
     }
-    const scriptIdentifier = await registerInjectionSource(cdp, source);
+    scriptIdentifier = await registerInjectionSource(cdp, source);
     cdp.on("Page.loadEventFired", async () => {
       if (keepAlive) await hostBridge.install();
       await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
@@ -2633,6 +2662,8 @@ async function injectTarget(
       result.screenshot = screenshotPath;
     }
     retained = keepAlive;
+    cdp.retryThreadTabs = retryThreadTabs;
+    cdp.threadTabsRetryAt = Date.now() + 5_000;
     return { result, connection: retained ? cdp : null };
   } finally {
     if (!retained) {
@@ -2677,7 +2708,23 @@ async function injectAll(
   const results = [];
   let lastError;
   for (const target of targets) {
-    if (injectedTargets.has(target.id)) continue;
+    const existing = injectedTargets.get(target.id);
+    if (existing) {
+      if (existing.retryThreadTabs && Date.now() >= existing.threadTabsRetryAt) {
+        existing.threadTabsRetryAt = Date.now() + 5_000;
+        existing.threadTabsRetries = (existing.threadTabsRetries ?? 0) + 1;
+        try {
+          if (await existing.retryThreadTabs()) existing.retryThreadTabs = null;
+        } catch (error) {
+          console.error(`Panel conversation tabs retry failed: ${error.message}`);
+        }
+        if (existing.retryThreadTabs && existing.threadTabsRetries >= 3) {
+          existing.retryThreadTabs = null;
+          console.error("Panel conversation tabs unavailable after 3 retries; stopped until reconnect.");
+        }
+      }
+      continue;
+    }
     const firstTarget = injectedTargets.size === 0 && results.length === 0;
     try {
       const { result, connection } = await injectTarget(

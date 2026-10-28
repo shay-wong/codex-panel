@@ -102,3 +102,74 @@ test("quota preparation recovering on a mount retry reloads once before reusing 
     assert.equal(reloads, expectedReloads);
   }
 });
+
+test("a connected window retries missing tabs and applies the recovered menu once", async () => {
+  const { reconcileInjectionRuntime } = await import("../scripts/codex-injector-runtime.mjs");
+  const start = source.indexOf("async function injectTarget(");
+  const end = source.indexOf("async function currentInjectionSource(", start);
+  let now = 0, attempts = 0, reloads = 0, registeredSource = "", registration = 0;
+  const events = new Map();
+  const published = [];
+  const cdp = { send: async () => ({}), on: (event, callback) => events.set(event, callback), close() {} };
+  const status = () => ({ sourceHash: "current", entryMounted: true, providerModulesPrepared: true, scriptIdentifier: String(registration) });
+  const { injectAll } = vm.runInNewContext(`${source.slice(start, end)}; ({injectAll})`, {
+    Date: { now: () => now }, URL, console: { error() {} },
+    installPanelHostBinding: () => ({ install: async () => {}, publishHeartbeat: async () => {} }),
+    waitForRendererReady: async () => {}, panelEnvironment: () => "fixture",
+    prepareCodexProviderUltrafast: async () => [],
+    prepareCodexDotEntry: async (_cdp, modules) => ({ modules, prepared: false }),
+    prepareCodexThreadTabs: async (_cdp, modules) => ++attempts < 3 ? modules : [{ url: "primary", source: "menu" }],
+    prepareCodexProviderQuotaFix: async (_cdp, _preferences, _report, modules) => modules.length ? "// recovered menu" : "// existing adapters",
+    readInjectionStatus: async () => status(), reconcileInjectionRuntime,
+    registerInjectionSource: async (_cdp, text) => { registeredSource = text; return String(++registration); },
+    reloadRenderer: async () => { reloads++; await events.get("Page.loadEventFired")?.(); },
+    evaluateInjectionSource: async () => {},
+    publishInjectionScriptIdentifier: async (_cdp, identifier) => published.push(identifier),
+    waitForInjectionStatus: async () => status(), unregisterQuotaPolicyCdp() {},
+  });
+  const connections = new Map();
+  const runtime = { targets: async () => [{ id: "main" }], connect: async () => cdp };
+  const run = () => injectAll(runtime, "// panel source", "current", false, null, connections, true, {}, true, "token", () => {}, () => {}, () => {});
+  await run();
+  assert.equal(connections.get("main"), cdp, "Panel connects even when the tabs preparation fails");
+  assert.equal(attempts, 1);
+  await run();
+  assert.equal(attempts, 1, "polls before the retry interval do not reread modules");
+  now = 5_000;
+  await run();
+  assert.equal(attempts, 2);
+  assert.equal(reloads, 0, "failed reads do not reload the page");
+  now = 10_000;
+  await run();
+  assert.equal(attempts, 3);
+  assert.equal(reloads, 1);
+  assert.match(registeredSource, /recovered menu\n\/\/ panel source/);
+  assert.equal(cdp.retryThreadTabs, null);
+  await events.get("Page.loadEventFired")();
+  assert.equal(published.at(-1), "2", "later loads publish the updated script registration");
+  now = 15_000;
+  await run();
+  assert.equal(attempts, 3, "successful recovery stops retries");
+  assert.equal(reloads, 1);
+});
+
+
+test("background menu retries stop after three failures while retaining Panel", async () => {
+  const start = source.indexOf("async function injectAll(");
+  const end = source.indexOf("async function currentInjectionSource(", start);
+  let now = 0, attempts = 0;
+  const logs = [];
+  const connection = { closed: false, threadTabsRetryAt: 5_000,
+    retryThreadTabs: async () => { attempts++; if (attempts === 2) throw Error("temporary failure"); return false; } };
+  const inject = vm.runInNewContext(`${source.slice(start, end)}; injectAll`, {
+    Date: { now: () => now }, URL, console: { error: message => logs.push(message) },
+  });
+  const connections = new Map([["main", connection]]);
+  for (now = 0; now <= 30_000; now += 1_000) {
+    await inject({ targets: async () => [{ id: "main" }] }, "source", "hash", false, null, connections, true);
+  }
+  assert.equal(attempts, 3);
+  assert.equal(connection.retryThreadTabs, null);
+  assert.equal(connections.get("main"), connection);
+  assert.equal(logs.filter(message => message.includes("after 3 retries")).length, 1);
+});
