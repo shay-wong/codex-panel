@@ -414,6 +414,11 @@ export function launchCodex(executablePath, port) {
   ) {
     throw new Error(`Codex application executable is outside an App bundle: ${executablePath}`);
   }
+  const environment = withoutPanelLauncherEnvironment(process.env);
+  // macOS 图形应用跟随系统或应用语言，不能继承安装终端的英文 locale。
+  for (const key of Object.keys(environment)) {
+    if (key === "LANG" || key === "LANGUAGE" || key.startsWith("LC_")) delete environment[key];
+  }
   const child = spawn(
     "/usr/bin/open",
     [
@@ -426,7 +431,7 @@ export function launchCodex(executablePath, port) {
     ],
     {
       detached: true,
-      env: withoutPanelLauncherEnvironment(process.env),
+      env: environment,
       stdio: "ignore",
     },
   );

@@ -24,6 +24,8 @@ The actions are available from an existing conversation page, not the home scree
 
 ## Sidebar language and Windows window activation
 
+On macOS, launching Codex through Panel excludes terminal locale overrides so the app can use its system or application language preferences.
+
 The injected entry follows the Codex document language: Chinese locales show **任务面板**, other locales show **Panel**. Its tooltip and accessible name update with the language. Existing entry placement, hidden-sidebar filtering and the Free-account New chat fallback are preserved.
 
 On Windows, an explicit Panel open restores a minimized Codex window and requests foreground focus after the panel opens, using the PID returned when this injector launched Codex. Maximized windows stay maximized. Windows may refuse foreground focus; that failure is logged without undoing the panel open. Attaching to an existing CDP instance without a recorded PID does not activate another window. See the [read-only Windows diagnostic tool](../tools/windows/README.md) for inspection and validation limits.

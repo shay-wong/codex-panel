@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Prevent terminal locale variables from changing the macOS Codex UI language when launched through Panel.
+
 - Fix missing conversation tab and split-view menu actions when loading large native Codex modules; automatically retry failed preparation in the background up to three times.
 
 - Fix the Panel entry widening the icon navigation rail after Codex switches sidebar layouts.

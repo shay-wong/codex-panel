@@ -173,3 +173,23 @@ test("background menu retries stop after three failures while retaining Panel", 
   assert.equal(connections.get("main"), connection);
   assert.equal(logs.filter(message => message.includes("after 3 retries")).length, 1);
 });
+
+
+test("macOS Codex launch does not inherit terminal language overrides", () => {
+  const start = source.indexOf("export function launchCodex(");
+  const end = source.indexOf("function launchedCodexExited(", start);
+  const environment = { LANG: "en_US.UTF-8", LANGUAGE: "en", LC_ALL: "C.UTF-8", LC_CTYPE: "C.UTF-8", PATH: "/usr/bin", SAFE: "kept" };
+  let launched;
+  const launch = vm.runInNewContext(`${source.slice(start, end).replace("export ", "")}; launchCodex`, {
+    process: { platform: "darwin", env: environment },
+    path: { dirname: value => value.slice(0, value.lastIndexOf("/")), basename: value => value.slice(value.lastIndexOf("/") + 1), extname: () => ".app" },
+    validatedCodexExecutablePath: value => value,
+    independentCodexProfilePath: "/isolated/profile",
+    withoutPanelLauncherEnvironment: value => ({ ...value }),
+    spawn: (command, args, options) => { launched = { command, args, options }; return { unref() {} }; },
+  });
+  launch("/Applications/ChatGPT.app/Contents/MacOS/ChatGPT", 12345);
+  assert.equal(launched.command, "/usr/bin/open");
+  assert.deepEqual(launched.options.env, { PATH: "/usr/bin", SAFE: "kept" });
+  assert.equal(environment.LANG, "en_US.UTF-8", "do not change the parent process environment");
+});
