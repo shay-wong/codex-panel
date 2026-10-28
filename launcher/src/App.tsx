@@ -8,6 +8,8 @@ export type LauncherSnapshot = {
   message: string;
   childPid: number | null;
   embeddedVisible: boolean;
+  threadTabsPhase: string;
+  threadTabsMessage: string;
   openRequestPending: boolean;
   updateMessage: string;
   updateAvailable: boolean;
@@ -32,7 +34,7 @@ const labels: Record<string, string> = { running: "运行正常", waiting: "等�
 const titles: Record<string, string> = { running: "Panel 已就绪", waiting: "服务已启动", restart_required: "需要重启 Codex", error: "服务需要处理", stopped: "服务已停止", starting: "正在建立连接" };
 const initialSnapshot: LauncherSnapshot = {
   phase: "starting", version: "—", message: "正在读取服务状态…", childPid: null,
-  embeddedVisible: false, openRequestPending: false, updateMessage: "尚未检查更新。",
+  embeddedVisible: false, threadTabsPhase: "waiting", threadTabsMessage: "", openRequestPending: false, updateMessage: "尚未检查更新。",
   updateAvailable: false, updateReady: false, appPath: null,
 };
 
@@ -209,6 +211,8 @@ export function App() {
     return <Tooltip content={title}><IconButton ref={buttonRef} id={id} aria-label={title} variant={highContrast ? "solid" : "soft"} highContrast={highContrast} size="2" {...actionProps(action, disabled)}>{icon}</IconButton></Tooltip>;
   }
 
+  const threadTabsLabels: Record<string, string> = { waiting: "等待连接", loading: "加载中", prepared: "已准备，等待页面加载", ready: "已加载", failed: "加载失败" };
+
   const componentStates = [
     { id: "panel", label: "Panel 服务", text: snapshot.phase === "error" ? "启动异常" : hasProcess ? `运行中 · PID ${snapshot.childPid}` : "未启动", tone: snapshot.phase === "error" ? "error" : hasProcess ? "running" : "stopped" },
     { id: "codex", label: "Codex 连接", text: snapshot.phase === "error" ? "连接失败" : needsRestart ? "需要重启 Codex" : ready ? "连接已就绪" : hasProcess ? "正在等待连接" : "未连接", tone: snapshot.phase === "error" ? "error" : ready ? "running" : hasProcess ? "waiting" : "stopped" },
@@ -273,6 +277,16 @@ export function App() {
                 {cardAction("openCodex", "open_codex", "打开 Codex", <LinearIcon name="openExternal" />)}
                 {cardAction("restartCodex", "restart_codex", "重启 Codex", <span className="action-icon" aria-hidden="true">↻</span>)}
               </Flex>}
+              {component.id === "codex" && <Box mt="3" aria-live="polite">
+                <Text as="p" size="1" color={snapshot.threadTabsPhase === "failed" ? "red" : "gray"}>
+                  会话菜单 · {threadTabsLabels[snapshot.threadTabsPhase] || "等待连接"}
+                </Text>
+                {snapshot.threadTabsMessage && <Text as="p" size="1" color="gray" mt="1" style={{ overflowWrap: "anywhere" }}>{snapshot.threadTabsMessage}</Text>}
+                {snapshot.threadTabsPhase !== "ready" && <Box mt="2">
+                  <Button size="1" variant="soft" {...actionProps("retry_thread_tabs", !ready || snapshot.threadTabsPhase === "loading")}>重试加载</Button>
+                  <Text as="p" size="1" color="gray" mt="1">加载成功时可能刷新一次 Codex 界面。</Text>
+                </Box>}
+              </Box>}
               {component.id === "embedded" && <Flex className="card-actions">{needsRestart ? <Button ref={panelButton} id="panelAction" {...actionProps("reconnect_codex")}>重启 Codex 并连接</Button> : cardAction("panelAction", "open_embedded_panel", panelLabel, <LinearIcon name="panel" />, opening || queued, false, panelButton)}</Flex>}
             </div>)}</div>
             <Box mt="4">

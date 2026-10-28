@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::os::unix::net::UnixStream;
 #[cfg(unix)]
 use std::os::{fd::AsRawFd, unix::process::CommandExt};
@@ -127,6 +127,8 @@ struct LauncherSnapshot {
     open_signal_pid: Option<u32>,
     open_request_pending: bool,
     embedded_visible: bool,
+    thread_tabs_phase: String,
+    thread_tabs_message: String,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
@@ -147,6 +149,10 @@ enum LauncherEvent {
     OpenSignalReady,
     PanelOpened,
     Injected,
+    ThreadTabsStatus {
+        phase: String,
+        message: String,
+    },
     ManagedStatus {
         #[serde(rename = "panelManagedStatus")]
         status: RendererStatus,
@@ -417,6 +423,8 @@ impl LauncherState {
                 open_signal_pid: None,
                 open_request_pending: false,
                 embedded_visible: false,
+                thread_tabs_phase: "waiting".into(),
+                thread_tabs_message: String::new(),
             }),
             status_menu: Mutex::new(None),
             service_control_menu: Mutex::new(None),
@@ -1634,6 +1642,8 @@ fn apply_renderer_status(snapshot: &mut LauncherSnapshot, pid: u32, status: Rend
         snapshot.message = "Codex 连接和 Panel 注入已就绪。".into();
         snapshot.open_signal_pid = Some(pid);
     } else if snapshot.phase == "running" || snapshot.open_signal_pid == Some(pid) {
+        snapshot.thread_tabs_phase = "waiting".into();
+        snapshot.thread_tabs_message.clear();
         snapshot.phase = "waiting".into();
         snapshot.message = "Panel 服务已启动，正在等待 Codex 连接。".into();
         snapshot.open_signal_pid = None;
@@ -1648,6 +1658,8 @@ fn apply_waiting_for_codex(snapshot: &mut LauncherSnapshot) {
     snapshot.phase = "waiting".into();
     snapshot.message = "Panel 服务已启动，正在等待 Codex 连接。".into();
     snapshot.embedded_visible = false;
+    snapshot.thread_tabs_phase = "waiting".into();
+    snapshot.thread_tabs_message.clear();
 }
 
 fn apply_codex_restart_required(snapshot: &mut LauncherSnapshot) {
@@ -1655,6 +1667,8 @@ fn apply_codex_restart_required(snapshot: &mut LauncherSnapshot) {
     snapshot.message = "Codex 已经更新，请点击下方按钮重新启动".into();
     snapshot.open_signal_pid = None;
     snapshot.embedded_visible = false;
+    snapshot.thread_tabs_phase = "waiting".into();
+    snapshot.thread_tabs_message.clear();
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -1731,7 +1745,7 @@ fn monitor_renderer_readiness(
     });
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn send_injector_control_request(
     state: &LauncherState,
     action: &str,
@@ -2005,6 +2019,8 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
         snapshot.open_signal_pid = None;
         snapshot.open_request_pending = false;
         snapshot.embedded_visible = false;
+        snapshot.thread_tabs_phase = "waiting".into();
+        snapshot.thread_tabs_message.clear();
     });
 }
 
@@ -2058,6 +2074,10 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                     LauncherEvent::PanelOpened => {
                         snapshot.open_request_pending = false;
                         snapshot.embedded_visible = true;
+                    }
+                    LauncherEvent::ThreadTabsStatus { phase, message } => {
+                        snapshot.thread_tabs_phase = phase;
+                        snapshot.thread_tabs_message = message;
                     }
                     LauncherEvent::ManagedStatus { status } => {
                         #[cfg(target_os = "windows")]
@@ -2171,6 +2191,8 @@ fn start_launcher_locked(
         snapshot.app_path = Some(codex_app.display().to_string());
         snapshot.open_signal_pid = None;
         snapshot.embedded_visible = false;
+        snapshot.thread_tabs_phase = "waiting".into();
+        snapshot.thread_tabs_message.clear();
     });
 
     #[cfg(target_os = "macos")]
@@ -2364,6 +2386,8 @@ fn start_launcher_locked(
                 snapshot.child_pid = None;
                 snapshot.open_signal_pid = None;
                 snapshot.embedded_visible = false;
+                snapshot.thread_tabs_phase = "waiting".into();
+                snapshot.thread_tabs_message.clear();
                 if !intentional {
                     snapshot.phase = "error".into();
                     snapshot.message = "任务面板进程已退出，正在恢复…".into();
@@ -2578,6 +2602,23 @@ async fn reconnect_codex(
     let state = Arc::clone(state.inner());
     tauri::async_runtime::spawn_blocking(move || {
         restart_launcher(&app, &state, false)?;
+        current_ui_state(&app, &state)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn retry_thread_tabs(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+) -> Result<LauncherUiState, String> {
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        send_injector_control_request(&state, "retry-thread-tabs")?;
+        #[cfg(target_os = "windows")]
+        write_windows_control(&state, "retry-thread-tabs")?;
         current_ui_state(&app, &state)
     })
     .await
@@ -3067,6 +3108,7 @@ fn main() {
             stop_service,
             reconnect_codex,
             restart_codex,
+            retry_thread_tabs,
             open_embedded_panel,
             open_browser_panel,
             open_codex,
@@ -3708,6 +3750,8 @@ mod tests {
             open_signal_pid: None,
             open_request_pending: true,
             embedded_visible: false,
+            thread_tabs_phase: "waiting".into(),
+            thread_tabs_message: String::new(),
         };
         apply_renderer_status(
             &mut snapshot,
@@ -3762,6 +3806,8 @@ mod tests {
             open_signal_pid: Some(42),
             open_request_pending: false,
             embedded_visible: true,
+            thread_tabs_phase: "waiting".into(),
+            thread_tabs_message: String::new(),
         };
 
         apply_waiting_for_codex(&mut snapshot);

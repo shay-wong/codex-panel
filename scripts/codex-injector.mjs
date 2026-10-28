@@ -2535,17 +2535,29 @@ async function injectTarget(
     await waitForRendererReady(cdp, 15_000);
     const ultrafastModules = keepAlive ? await prepareCodexProviderUltrafast(cdp) : [];
     const dot = keepAlive ? await prepareCodexDotEntry(cdp, ultrafastModules) : { modules: [], prepared: false };
-    const threadModules = keepAlive ? await prepareCodexThreadTabs(cdp, dot.modules) : dot.modules;
+    const reportThreadTabs = message => {
+      console.error(message);
+      if (message.startsWith("Panel conversation tabs unavailable:")) cdp.threadTabsError = message.slice(message.indexOf(":") + 1).trim();
+    };
+    const threadModules = keepAlive ? await prepareCodexThreadTabs(cdp, dot.modules, reportThreadTabs) : dot.modules;
     const quotaSource = keepAlive
       ? await prepareCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"), console.error, threadModules, dot.prepared, ultrafastModules.length === 2)
       : "";
     if (quotaSource) source = `${quotaSource}\n${source}`;
     // 已连接不等于菜单加载成功；失败留给后台巡检重试，只有准备成功才重载应用。
-    const retryThreadTabs = keepAlive && (threadModules === dot.modules || !quotaSource) ? async () => {
-      const modules = await prepareCodexThreadTabs(cdp, dot.modules);
-      if (modules === dot.modules) return false;
-      const bootstrap = await prepareCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"), console.error, modules, dot.prepared, ultrafastModules.length === 2);
-      if (!bootstrap) return false;
+    cdp.threadTabsPhase = threadModules !== dot.modules && quotaSource ? "prepared" : "failed";
+    cdp.threadTabsError ||= cdp.threadTabsPhase === "failed" ? "会话菜单尚未准备成功" : "";
+    const retryThreadTabs = keepAlive ? async () => {
+      cdp.threadTabsPhase = "loading";
+      cdp.threadTabsError = "";
+      void cdp.onThreadTabsStatus?.();
+      // 手动重试和后台重试都读取当前模块，不能沿用首次失败时的空快照。
+      const freshUltrafast = await prepareCodexProviderUltrafast(cdp);
+      const freshDot = await prepareCodexDotEntry(cdp, freshUltrafast);
+      const modules = await prepareCodexThreadTabs(cdp, freshDot.modules, reportThreadTabs);
+      if (modules === freshDot.modules) { cdp.threadTabsPhase = "failed"; return false; }
+      const bootstrap = await prepareCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"), console.error, modules, freshDot.prepared, freshUltrafast.length === 2);
+      if (!bootstrap) { cdp.threadTabsPhase = "failed"; cdp.threadTabsError = "菜单注入脚本未准备成功"; return false; }
       const currentStatus = await readInjectionStatus(cdp);
       const reconciled = await reconcileInjectionRuntime({
         currentStatus,
@@ -2561,6 +2573,7 @@ async function injectTarget(
       });
       scriptIdentifier = reconciled.scriptIdentifier;
       await hostBridge.publishHeartbeat();
+      cdp.threadTabsPhase = "prepared";
       console.error("Panel conversation tabs recovered.");
       return true;
     } : null;
@@ -2618,7 +2631,8 @@ async function injectTarget(
         throw new Error("Codex 中的任务面板尚未就绪，请稍后重试。");
       }
       retained = true;
-      cdp.retryThreadTabs = retryThreadTabs;
+      cdp.prepareThreadTabs = retryThreadTabs;
+      cdp.retryThreadTabs = cdp.threadTabsPhase === "failed" ? retryThreadTabs : null;
       cdp.threadTabsRetryAt = Date.now() + 5_000;
       return {
         result: { ...status, cspBypassed: true, frameLoaded },
@@ -2667,7 +2681,8 @@ async function injectTarget(
       result.screenshot = screenshotPath;
     }
     retained = keepAlive;
-    cdp.retryThreadTabs = retryThreadTabs;
+    cdp.prepareThreadTabs = retryThreadTabs;
+    cdp.retryThreadTabs = cdp.threadTabsPhase === "failed" ? retryThreadTabs : null;
     cdp.threadTabsRetryAt = Date.now() + 5_000;
     return { result, connection: retained ? cdp : null };
   } finally {
@@ -2721,12 +2736,16 @@ async function injectAll(
         try {
           if (await existing.retryThreadTabs()) existing.retryThreadTabs = null;
         } catch (error) {
+          existing.threadTabsPhase = "failed";
+          existing.threadTabsError = error.message;
           console.error(`Panel conversation tabs retry failed: ${error.message}`);
         }
         if (existing.retryThreadTabs && existing.threadTabsRetries >= 3) {
           existing.retryThreadTabs = null;
-          console.error("Panel conversation tabs unavailable after 3 retries; stopped until reconnect.");
+          existing.threadTabsPhase = "failed";
+          console.error("Panel conversation tabs unavailable after 3 retries; stopped until manual retry or reconnect.");
         }
+        void existing.onThreadTabsStatus?.();
       }
       continue;
     }
@@ -3103,6 +3122,47 @@ async function main() {
     await supervisor.ensure({ force: true });
 
     const { source, sourceHash } = await currentInjectionSource();
+    let lastThreadTabsStatus = "";
+    const publishThreadTabsStatus = async () => {
+      // 只报告已成功挂载的主窗口；未挂载的 Spotlight 等窗口不能掩盖主窗口失败。
+      const connection = [...injectedTargets.values()].find(cdp => !cdp.closed);
+      let phase = connection?.threadTabsPhase ?? "waiting";
+      let message = connection?.threadTabsError ?? "等待 Codex 连接";
+      if (connection) {
+        connection.onThreadTabsStatus = publishThreadTabsStatus;
+        if (phase === "prepared" || phase === "ready") {
+          try {
+            const result = await connection.send("Runtime.evaluate", {
+              expression: "globalThis.__codexPanelThreadTabsReady__===true", returnByValue: true,
+            });
+            if (connection.threadTabsPhase !== phase) return;
+            phase = result.result?.value === true ? "ready" : "prepared";
+            connection.threadTabsPhase = phase;
+          } catch { phase = "waiting"; }
+        }
+        if (phase === "ready") message = "标签页和分栏菜单已加载";
+        else if (phase === "prepared") message = "菜单已准备，等待页面加载";
+        else if (phase === "loading") message = "正在加载会话菜单";
+        else if (phase === "failed") message = `${message || "加载失败"}${connection.retryThreadTabs ? "；将自动重试" : "；可手动重试"}`;
+      }
+      const serialized = JSON.stringify({ phase, message });
+      if (serialized !== lastThreadTabsStatus) {
+        lastThreadTabsStatus = serialized;
+        emitLauncherEvent("threadTabsStatus", { phase, message });
+      }
+    };
+    const requestThreadTabsRetry = () => {
+      const connection = [...injectedTargets.values()].find(cdp => !cdp.closed);
+      if (!connection?.prepareThreadTabs) throw Error("请先连接 Codex 主窗口");
+      if (connection.threadTabsPhase === "loading") return { queued: true };
+      connection.threadTabsRetries = 0;
+      connection.threadTabsRetryAt = 0;
+      connection.retryThreadTabs = connection.prepareThreadTabs;
+      connection.threadTabsPhase = "loading";
+      connection.threadTabsError = "";
+      void publishThreadTabsStatus();
+      return { queued: true };
+    };
     const publishManagedStatus = async () => {
       let status = { ready: false, pageVisible: false };
       if (cdpRuntime) {
@@ -3118,6 +3178,8 @@ async function main() {
           };
         } catch (_) {}
       }
+      if (!status.ready) lastThreadTabsStatus = "";
+      await publishThreadTabsStatus();
       emitLauncherEvent("managedStatus", { panelManagedStatus: status });
       return status;
     };
@@ -3165,6 +3227,8 @@ async function main() {
           openRequestGeneration += 1;
           console.log(JSON.stringify({ openPanelSignalQueued: true }));
           void requestPanelOpen();
+        } else if (action === "retry-thread-tabs") {
+          try { requestThreadTabsRetry(); } catch (error) { emitLauncherEvent("threadTabsStatus", { phase: "failed", message: error.message }); }
         } else if (action === "status") {
           void publishManagedStatus();
         } else if (action === "stop") {
@@ -3188,6 +3252,7 @@ async function main() {
         startupToken: options.startupToken,
         actions: process.platform === "win32" ? ["interrupt-thread"] : undefined,
         handlers: {
+          "retry-thread-tabs": async () => requestThreadTabsRetry(),
           status: async () => {
             if (!cdpRuntime) throw new Error("Panel renderer injection is waiting for Codex");
             const readiness = await inspectRuntimeInjectionReadiness(
@@ -3195,7 +3260,7 @@ async function main() {
               sourceHash,
               options.startupToken,
             );
-            if (!readiness.ready) throw new Error("Panel renderer injection is not ready");
+            if (!readiness.ready) { lastThreadTabsStatus = ""; throw new Error("Panel renderer injection is not ready"); }
             return readiness;
           },
           open: async () => {
@@ -3447,10 +3512,12 @@ async function main() {
           emitLauncherEvent("injected", { panelManagedReady: true });
           await publishManagedStatus();
         }
+        await publishThreadTabsStatus();
         if (hasOpenPending() && injectedTargets.size > 0) {
           await requestPanelOpen();
         }
       } catch (error) {
+        lastThreadTabsStatus = "";
         if (stopping) break;
         if (options.cdpPipe && !cdpRuntime.isHealthy()) {
           const launchedCodex = codexProcess;

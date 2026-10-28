@@ -28,6 +28,7 @@ test("the injector control endpoint requires the manager token and stays private
     startupToken,
     handlers: {
       status: async () => ({ ready: true }),
+      "retry-thread-tabs": async () => ({ queued: true }),
       open: async () => ({ opened: ++opened }),
       "interrupt-thread": async (request) => {
         interrupted.push([request.threadId, request.codexHostId]);
@@ -88,6 +89,9 @@ test("the injector control endpoint requires the manager token and stays private
     ownership,
   }), { interrupted: true });
   assert.deepEqual(interrupted, [["thread-1", "local"]]);
+  assert.deepEqual(await sendInjectorControlRequest({
+    runtimeFile, startupToken, action: "retry-thread-tabs", ownership,
+  }), { queued: true });
   await assert.rejects(
     sendInjectorControlRequest({
       runtimeFile,

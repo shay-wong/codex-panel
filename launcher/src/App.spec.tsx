@@ -16,6 +16,7 @@ it("keeps launcher feedback, live status and global preferences working through 
     snapshot: {
       phase: "waiting", message: "Panel 服务已启动，正在等待 Codex 连接。", version: "0.1.0",
       childPid: 123, openRequestPending: false, embeddedVisible: false,
+      threadTabsPhase: "waiting", threadTabsMessage: "",
       updateMessage: "尚未检查更新。", updateAvailable: false, updateReady: false,
       appPath: "/disposable/Codex.app",
     },

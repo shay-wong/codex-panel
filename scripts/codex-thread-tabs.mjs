@@ -56,6 +56,7 @@ export function rewriteCodexThreadTabs(source, initialSource, initialUrl) {
   source = source.slice(0,rowStart) + activeRow + source.slice(rowEnd < 0 ? source.length : rowEnd);
   const imports = `import {${names.map((name, index) => `${name} as panelThreadTabs${index}`).join(",")}} from ${JSON.stringify(initialUrl)};`;
   const helper = `
+globalThis.__codexPanelThreadTabsReady__=true;
 const panelThreadOwners=new Map();
 function panelThreadView(root,target){
   const scope=${activeScope}(root),id=\`orbit-activity:\${target.hostId}:\${target.conversationId}\`;
@@ -183,47 +184,80 @@ async function panelRestoreThread(root,target){
 
 export async function prepareCodexThreadTabs(cdp, modules, report = console.error) {
   try {
-    const loaded = await cdp.send("Runtime.evaluate", {
-      expression: `(async()=>{const urls=[...performance.getEntriesByType("resource").map(e=>e.name),...[...document.querySelectorAll('script[type="importmap"]')].flatMap(e=>{try{return Object.keys(JSON.parse(e.textContent).imports??{})}catch{return []}})];return await Promise.all(["initial","primary"].map(async kind=>{const url=urls.find(url=>new RegExp("/app-"+kind+"-[\\\\w-]+\\\\.js$").test(new URL(url,location.href).pathname));if(!url)throw Error("Native thread module missing");const response=await fetch(url);if(!response.ok)throw Error("Native thread module unreadable");return{url,source:await response.text()}}))})()`,
-      awaitPromise: true, returnByValue: false,
-    });
-    const objectId = loaded.result?.objectId;
-    if (loaded.exceptionDetails || !objectId) throw Error("native thread modules unreadable");
-    const nativeModules = [];
-    try {
-      // 原生模块合计超过十余 MB，整包返回会断开 CDP；保留远端对象并分块读取。
-      for (let index = 0; index < 2; index++) {
-        const metadata = await cdp.send("Runtime.callFunctionOn", {
-          objectId, functionDeclaration: "function(index){return {url:this[index].url,length:this[index].source.length}}",
-          arguments: [{ value: index }], returnByValue: true,
-        });
-        const value = metadata.result?.value;
-        if (metadata.exceptionDetails || typeof value?.url !== "string" || !Number.isSafeInteger(value.length) || value.length <= 0) {
-          throw Error("native thread module metadata unreadable");
-        }
-        let source = "";
-        for (let start = 0; start < value.length; start += 500_000) {
-          const chunk = await cdp.send("Runtime.callFunctionOn", {
-            objectId, functionDeclaration: "function(index,start){return this[index].source.slice(start,start+500000)}",
-            arguments: [{ value: index }, { value: start }], returnByValue: true,
-          });
-          if (chunk.exceptionDetails || typeof chunk.result?.value !== "string"
-            || chunk.result.value.length !== Math.min(500_000, value.length - start)) {
-            throw Error("native thread module chunk unreadable");
+    // 前面的适配器已读取当前模块时直接复用，避免页面重载后再次发现、读取失败。
+    const nativeModules = new Map(["initial", "primary"].map(kind => [kind,
+      modules.find(module => new RegExp(`/app-${kind}-[\\w-]+\\.js$`).test(module.url)),
+    ]));
+    const missing = [...nativeModules].filter(([, module]) => !module).map(([kind]) => kind);
+    if (missing.length) {
+      const loaded = await cdp.send("Runtime.evaluate", {
+        expression: String.raw`(async()=>{
+          const scripts=[...document.querySelectorAll("script[src],link[rel=modulepreload][href]")].map(e=>e.src||e.href);
+          const urls=[...performance.getEntriesByType("resource").map(e=>e.name),
+            ...[...document.querySelectorAll('script[type="importmap"]')].flatMap(e=>{try{return Object.keys(JSON.parse(e.textContent).imports??{})}catch{return []}}),...scripts];
+          const sources=new Map();
+          const read=async url=>{
+            if(sources.has(url))return sources.get(url);
+            const response=await fetch(url,{cache:"no-store"});
+            if(!response.ok)throw Error("Native thread module unreadable: "+url+" (HTTP "+response.status+")");
+            const source=await response.text();sources.set(url,source);return source;
+          };
+          const find=kind=>urls.find(url=>new RegExp("/app-"+kind+"-[\\w-]+\\.js$").test(new URL(url,location.href).pathname));
+          const discover=(source,url)=>{
+            for(const match of source.matchAll(/["'\x60](\.\/app-(?:initial|primary)-[\w-]+\.js)["'\x60]/g))urls.push(new URL(match[1],url).href);
+          };
+          // Codex 会清空资源计时记录；沿页面入口的真实 import 找回 initial，再找 primary。
+          if(!find("initial")){
+            for(const url of [...document.querySelectorAll('script[type="module"][src]')].map(e=>e.src)){
+              discover(await read(url),url);
+              if(find("initial"))break;
+            }
           }
-          source += chunk.result.value;
+          if(!find("primary")&&find("initial"))discover(await read(find("initial")),find("initial"));
+          return await Promise.all(${JSON.stringify(missing)}.map(async kind=>{
+            const url=find(kind);if(!url)throw Error("Native thread module missing: "+kind);
+            return{url,source:await read(url)};
+          }));
+        })()`,
+        awaitPromise: true, returnByValue: false,
+      });
+      const objectId = loaded.result?.objectId;
+      if (loaded.exceptionDetails || !objectId) throw Error(loaded.exceptionDetails?.exception?.description || loaded.exceptionDetails?.text || "native thread modules unreadable");
+      try {
+        // 原生模块合计超过十余 MB，整包返回会断开 CDP；保留远端对象并分块读取。
+        for (let index = 0; index < missing.length; index++) {
+          const metadata = await cdp.send("Runtime.callFunctionOn", {
+            objectId, functionDeclaration: "function(index){return {url:this[index].url,length:this[index].source.length}}",
+            arguments: [{ value: index }], returnByValue: true,
+          });
+          const value = metadata.result?.value;
+          if (metadata.exceptionDetails || typeof value?.url !== "string" || !Number.isSafeInteger(value.length) || value.length <= 0) {
+            throw Error("native thread module metadata unreadable");
+          }
+          let source = "";
+          for (let start = 0; start < value.length; start += 500_000) {
+            const chunk = await cdp.send("Runtime.callFunctionOn", {
+              objectId, functionDeclaration: "function(index,start){return this[index].source.slice(start,start+500000)}",
+              arguments: [{ value: index }, { value: start }], returnByValue: true,
+            });
+            if (chunk.exceptionDetails || typeof chunk.result?.value !== "string"
+              || chunk.result.value.length !== Math.min(500_000, value.length - start)) {
+              throw Error("native thread module chunk unreadable");
+            }
+            source += chunk.result.value;
+          }
+          nativeModules.set(missing[index], { url: value.url, source });
         }
-        nativeModules.push({ url: value.url, source });
+      } finally {
+        await cdp.send("Runtime.releaseObject", { objectId });
       }
-    } finally {
-      await cdp.send("Runtime.releaseObject", { objectId });
     }
-    const [initial, original] = nativeModules;
+    const [initial, original] = [nativeModules.get("initial"), nativeModules.get("primary")];
     const primary = modules.find(module => module.url === original.url) ?? original;
     let source = rewriteCodexThreadTabs(primary.source, initial.source, initial.url);
     if (!source) throw Error("unsupported native thread tabs structure");
-    source = source.replace(/\bfrom(["'`])(\.\/?[^"'`\n]+)\1/g, (_, quote, value) => `from${JSON.stringify(new URL(value, primary.url).href)}`)
-      .replace(/\bimport\((["'`])(\.\/?[^"'`\n]+)\1\)/g, (_, quote, value) => `import(${JSON.stringify(new URL(value, primary.url).href)})`)
+    source = source.replace(/\bfrom(["'\x60])(\.\/?[^"'`\n]+)\1/g, (_, quote, value) => `from${JSON.stringify(new URL(value, primary.url).href)}`)
+      .replace(/\bimport\((["'\x60])(\.\/?[^"'`\n]+)\1\)/g, (_, quote, value) => `import(${JSON.stringify(new URL(value, primary.url).href)})`)
       .replaceAll("import.meta.url", JSON.stringify(primary.url));
     report("Panel native conversation tabs prepared.");
     return [...modules.filter(module => module.url !== primary.url), { url: primary.url, source }];

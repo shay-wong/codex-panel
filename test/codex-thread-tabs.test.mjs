@@ -47,6 +47,52 @@ test("large native modules use bounded CDP responses and release their remote ob
   }
 });
 
+test("prepared modules do not depend on another renderer read", async () => {
+  const modules = [
+    { url: "app://-/assets/app-initial-fixture.js", source: initial },
+    { url: "app://-/assets/app-primary-fixture.js", source: primary },
+  ];
+  const result = await prepareCodexThreadTabs({ send() { throw Error("renderer read unavailable"); } }, modules, () => {});
+  assert.notEqual(result, modules);
+  assert.match(result[1].source, /panel-thread-split/);
+});
+
+test("module discovery survives cleared timing records with preload links or the entry import chain", async () => {
+  const urls = ["app://-/assets/app-initial-fixture.js", "app://-/assets/app-primary-fixture.js"];
+  for (const useEntry of [false, true]) {
+    let remote;
+    const entryUrl = "app://-/assets/index-fixture.js";
+    const sources = new Map([
+      [entryUrl, 'import "./app-initial-fixture.js";'],
+      [urls[0], 'const lazy=()=>import(`./app-primary-fixture.js`);' + initial],
+      [urls[1], primary],
+    ]);
+    const reads = [];
+    const result = await prepareCodexThreadTabs({ async send(method, params) {
+      if (method === "Runtime.evaluate") {
+        remote = await vm.runInNewContext(params.expression, {
+          performance: { getEntriesByType: () => [] },
+          document: { querySelectorAll: selector => selector.includes("importmap") ? []
+            : useEntry ? [{ src: entryUrl }] : selector.includes("modulepreload") ? urls.map(href => ({ href })) : [] },
+          URL, location: { href: "app://-/index.html" },
+          fetch: async (url, options) => {
+            assert.equal(options.cache, "no-store");
+            assert.ok(sources.has(url));
+            reads.push(url);
+            return { ok: true, text: async () => sources.get(url) };
+          },
+        });
+        return { result: { objectId: "modules" } };
+      }
+      if (method === "Runtime.releaseObject") return {};
+      return { result: { value: vm.runInNewContext(`(${params.functionDeclaration})`).apply(remote, params.arguments.map(arg => arg.value)) } };
+    } }, [], () => {});
+    assert.equal(result.length, 1);
+    assert.match(result[0].source, /panel-thread-split/);
+    assert.deepEqual(reads, useEntry ? [entryUrl, ...urls] : urls, "each module is fetched once");
+  }
+});
+
 function harness({deferNavigation=false}={}) {
   const patched = rewriteCodexThreadTabs(primary, initial, "app://-/assets/app-initial-fixture.js");
   assert.ok(patched);

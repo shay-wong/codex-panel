@@ -193,3 +193,37 @@ test("macOS Codex launch does not inherit terminal language overrides", () => {
   assert.deepEqual(launched.options.env, { PATH: "/usr/bin", SAFE: "kept" });
   assert.equal(environment.LANG, "en_US.UTF-8", "do not change the parent process environment");
 });
+
+test("menu status distinguishes preparation from execution and manual retry resets the bounded queue", async () => {
+  const start = source.indexOf('    let lastThreadTabsStatus = "";');
+  const end = source.indexOf('    const publishManagedStatus =', start);
+  let executed = false;
+  const events = [];
+  const connection = { closed: false, threadTabsPhase: "prepared", threadTabsError: "", threadTabsRetries: 3,
+    prepareThreadTabs: async () => true, retryThreadTabs: null,
+    send: async () => ({ result: { value: executed } }) };
+  const targets = new Map([["main", connection]]);
+  const { publish, retry } = vm.runInNewContext(`${source.slice(start, end)}; ({publish:publishThreadTabsStatus,retry:requestThreadTabsRetry})`, {
+    injectedTargets: targets, emitLauncherEvent: (event, details) => events.push({event, ...details}),
+  });
+  await publish();
+  assert.equal(events.at(-1).phase, "prepared");
+  executed = true;
+  await publish();
+  assert.equal(events.at(-1).phase, "ready");
+  connection.threadTabsPhase = "failed";
+  connection.threadTabsError = "Native thread module missing: primary";
+  await publish();
+  assert.match(events.at(-1).message, /primary.*手动重试/);
+  assert.equal(retry().queued, true);
+  assert.equal(connection.threadTabsRetries, 0);
+  assert.equal(connection.threadTabsRetryAt, 0);
+  assert.equal(connection.retryThreadTabs, connection.prepareThreadTabs);
+  assert.equal(events.at(-1).phase, "loading");
+  connection.threadTabsRetries = 1;
+  retry();
+  assert.equal(connection.threadTabsRetries, 1, "duplicate clicks during loading do not extend retries");
+  targets.clear();
+  await publish();
+  assert.equal(events.at(-1).phase, "waiting");
+});
