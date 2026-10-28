@@ -29,7 +29,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Select native packaging from changed paths
+      - name: Select native checks from changed paths
         id: native-scope
         env:
           CHECK_EVENT: ${{ github.event_name }}
@@ -55,7 +55,7 @@ jobs:
             console.log(`Cannot determine changed paths; run native checks: ${error.message}`);
           }
           appendFileSync(process.env.GITHUB_OUTPUT, `run_native=${runNative}\n`);
-          console.log(runNative ? 'Native/runtime/build inputs changed or range unknown: run launcher checks.' : 'Web/docs-only change: run the ordinary Check, skip native packaging.');
+          console.log(runNative ? 'Native/runtime/build inputs changed or range unknown: run Rust checks.' : 'Web/docs-only change: run the ordinary Check, skip native compilation.');
           NODE
       - name: Reuse successful PR Check for the exact tested merge tree
         id: scope
@@ -273,67 +273,46 @@ jobs:
           overwrite: true
 
   macos-launcher:
-    name: macOS launcher
+    name: macOS Rust check
     needs: main-check-scope
     if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && needs['main-check-scope'].outputs.run_native != 'false' }}
     runs-on: macos-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
+    env:
+      # 编译检查不生成安装包；正式 tag 构建继续使用真实资源和完整性清单。
+      TAURI_CONFIG: '{"bundle":{"active":false,"externalBin":[],"resources":{}}}'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version: 22
-          cache: npm
       - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
-      - name: Remove unused preinstalled Rust toolchain
-        run: rustup toolchain uninstall stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri -> target
-          shared-key: macos-universal
+          shared-key: macos-check
           cache-bin: false
-      - run: npm ci
-      - name: Cache verified Node runtime archives
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            dist/tauri-runtime-cache/*.zip
-            dist/tauri-runtime-cache/*.tar.gz
-          key: node-runtime-${{ runner.os }}-${{ hashFiles('scripts/prepare-tauri-app.mjs') }}
-      - run: npm run app:prepare -- --target universal-apple-darwin
-      - name: Build the unsigned universal app bundle
-        run: >-
-          npm run tauri -- build
-          --target universal-apple-darwin
-          --bundles app
-          --no-sign
-          --config '{"bundle":{"createUpdaterArtifacts":false}}'
-      - run: test -d "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Panel.app"
-      - name: Verify packaged panelctl and inherited listener
-        run: >-
-          npm run app:verify-packaged-panelctl --
-          "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Panel.app"
-      - name: Ad-hoc sign the launcher for bundle verification
+      - name: Prepare compile-only fixtures
+        shell: bash
         run: |
-          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Panel.app"
-          EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
-          /usr/bin/codesign --force --options runtime --entitlements src-tauri/Entitlements.plist --sign - "$APP/Contents/MacOS/$EXECUTABLE"
-          /usr/bin/codesign --force --options runtime --entitlements src-tauri/Entitlements.plist --sign - "$APP"
-      - name: Verify the Tauri app bundle
-        run: >-
-          npm run app:preflight --
-          "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Panel.app"
+          mkdir -p src-tauri/resources dist/launcher
+          printf '%s' '{"version":1,"files":[]}' > src-tauri/resources/runtime-integrity.json
+          printf '%s' '<!doctype html><title>Compile check</title>' > dist/launcher/index.html
+      - name: Check Rust targets (aarch64-apple-darwin)
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets --target aarch64-apple-darwin
+      - name: Check Rust targets (x86_64-apple-darwin)
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets --target x86_64-apple-darwin
 
   windows-launcher:
-    name: Windows x64 launcher
+    name: Windows x64 Rust check
     needs: main-check-scope
     if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && needs['main-check-scope'].outputs.run_native != 'false' }}
     runs-on: windows-2025
-    timeout-minutes: 40
+    timeout-minutes: 30
+    env:
+      # 编译检查不生成安装包；正式 tag 构建继续使用真实资源和完整性清单。
+      TAURI_CONFIG: '{"bundle":{"active":false,"externalBin":[],"resources":{}}}'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -348,85 +327,50 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri -> target
-          shared-key: windows-x64
+          shared-key: windows-check
           cache-bin: false
       - run: npm ci
-      - name: Cache verified Node runtime archives
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            dist/tauri-runtime-cache/*.zip
-            dist/tauri-runtime-cache/*.tar.gz
-          key: node-runtime-${{ runner.os }}-${{ hashFiles('scripts/prepare-tauri-app.mjs') }}
       - name: Run the Windows Node.js test suite
         run: npm test
-      - name: Prepare Windows runtime and assets
-        run: npm run app:prepare -- --target x86_64-pc-windows-msvc
-      - name: Build the unsigned NSIS installer
-        run: npm run tauri -- build --target x86_64-pc-windows-msvc --bundles nsis --no-sign --ci --config src-tauri/tauri.windows.conf.json
-      - name: Preserve the unsigned NSIS installer
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-x64-nsis-${{ github.sha }}
-          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
-          if-no-files-found: error
+      - name: Prepare compile-only fixtures
+        shell: bash
+        run: |
+          mkdir -p src-tauri/resources dist/launcher
+          printf '%s' '{"version":1,"files":[]}' > src-tauri/resources/runtime-integrity.json
+          printf '%s' '<!doctype html><title>Compile check</title>' > dist/launcher/index.html
+      - name: Check Rust targets (x86_64-pc-windows-msvc)
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets --target x86_64-pc-windows-msvc
 
   linux-launcher:
-    name: Ubuntu 24.04 x64 launcher
+    name: Ubuntu x64 Rust check
     needs: main-check-scope
     if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && needs['main-check-scope'].outputs.run_native != 'false' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 30
+    env:
+      # 编译检查不生成安装包；正式 tag 构建继续使用真实资源和完整性清单。
+      TAURI_CONFIG: '{"bundle":{"active":false,"externalBin":[],"resources":{}}}'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version: 22
-          cache: npm
       - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
         with:
           targets: x86_64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri -> target
-          shared-key: ubuntu-24.04-x64
+          shared-key: linux-check
           cache-bin: false
-      - name: Install Ubuntu build dependencies
+      - name: Install Rust check system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            curl \
-            file \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            patchelf \
-            wget
-      - run: npm ci
-      - name: Cache verified Node runtime archives
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            dist/tauri-runtime-cache/*.zip
-            dist/tauri-runtime-cache/*.tar.gz
-          key: node-runtime-${{ runner.os }}-${{ hashFiles('scripts/prepare-tauri-app.mjs') }}
-      - name: Build the Ubuntu 24.04 x64 packages
-        run: npm run app:build:linux:x64
-      - name: Verify the Ubuntu 24.04 x64 package contents
-        run: >-
-          node scripts/verify-linux-packages.mjs
-          src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
-          src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
-      - name: Preserve the Ubuntu 24.04 x64 packages
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: linux-x64-deb-appimage-${{ github.sha }}
-          path: |
-            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
-            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
-          if-no-files-found: error
+          sudo apt-get install -y libayatana-appindicator3-dev libssl-dev libwebkit2gtk-4.1-dev libxdo-dev
+      - name: Prepare compile-only fixtures
+        shell: bash
+        run: |
+          mkdir -p src-tauri/resources dist/launcher
+          printf '%s' '{"version":1,"files":[]}' > src-tauri/resources/runtime-integrity.json
+          printf '%s' '<!doctype html><title>Compile check</title>' > dist/launcher/index.html
+      - name: Check Rust targets (x86_64-unknown-linux-gnu)
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets --target x86_64-unknown-linux-gnu

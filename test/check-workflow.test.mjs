@@ -45,11 +45,14 @@ test('all platform jobs honor path scope on main pushes and retain full-check re
     assert.ok(job.if.includes("needs['main-check-scope'].outputs.run_native != 'false'"));
     assert.ok(!job.if.includes("github.event_name != 'pull_request'"));
     assert.ok(job.if.includes("needs['main-check-scope'].outputs.run_full != 'false'"));
-    const cache = job.steps.find(step => step.name === 'Cache verified Node runtime archives');
-    assert.ok(cache.with.path.includes('*.zip'));
-    assert.ok(cache.with.path.includes('*.tar.gz'));
+    assert.ok(job.steps.some(step => step.run?.startsWith('cargo check ')));
+    assert.ok(job.steps.filter(step => step.run?.startsWith('cargo check ')).every(step => step.run.includes('--all-targets') && step.run.includes('--locked')));
+    const config = JSON.parse(job.env.TAURI_CONFIG);
+    assert.equal(config.bundle.active, false);
+    assert.deepEqual(config.bundle.externalBin, []);
+    assert.deepEqual(config.bundle.resources, {});
+    const commands = job.steps.map(step => step.run || '').join('\n');
+    assert.doesNotMatch(commands, /app:prepare|tauri.*build|app:build|app:preflight|verify.*package|codesign/);
+    assert.ok(!job.steps.some(step => step.uses?.startsWith('actions/upload-artifact@')));
   }
-  const windows = workflow.jobs['windows-launcher'].steps;
-  assert.ok(windows.find(step => step.name === 'Prepare Windows runtime and assets'));
-  assert.ok(!windows.find(step => step.name === 'Build the unsigned NSIS installer').run.includes('app:prepare'));
 });
