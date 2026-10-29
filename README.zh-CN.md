@@ -1,5 +1,7 @@
 # Codex Panel
 
+在 **偏好设置 → 模型上下文 → 配置上下文** 中为每个模型单独填写上下文 token 数；留空使用目录默认值，保存后重启 Codex 生效。填写值需符合模型服务的实际限制。详见[按模型设置上下文](docs/fork-capabilities.md#per-model-context-windows)。
+
 先打开一个会话，再右键侧栏中的其他 Codex 会话，可选择**在新标签页中打开**或**在右侧并排打开**，均在同一窗口内显示。同一会话只保留一个位置，左侧点击将输入光标和高亮切换到对应会话，保留当前布局；右键“恢复为独立页面”可移出标签并回到完整会话页。参见[会话标签页与并排显示](docs/fork-capabilities.md#conversation-tabs-and-split-view)。
 
 新版 Codex 适配同时覆盖独立工作树开关、原生目录与旧自动任务服务，以及拆分后的输入框额度模块，详见 [Fork 功能说明](docs/fork-capabilities.md)。

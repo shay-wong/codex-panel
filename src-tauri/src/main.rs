@@ -2706,7 +2706,12 @@ fn reveal_data(state: State<'_, Arc<LauncherState>>) -> Result<(), String> {
     open_with_system(&state.data_directory.to_string_lossy())
 }
 
-async fn run_model_discovery(app: AppHandle, operation: &'static str) -> Result<String, String> {
+async fn run_model_configuration(
+    app: AppHandle,
+    operation: &'static str,
+    data_directory: Option<PathBuf>,
+    input: Option<serde_json::Value>,
+) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let home = app.path().home_dir().map_err(|error| error.to_string())?;
         let codex_app = find_codex_app(&home).ok_or_else(missing_codex_app_message)?;
@@ -2720,13 +2725,25 @@ async fn run_model_discovery(app: AppHandle, operation: &'static str) -> Result<
         let mut command = StdCommand::new(node);
         #[cfg(target_os = "windows")]
         command.creation_flags(CREATE_NO_WINDOW.0);
-        let output = command.arg(resources.join("app/scripts/codex-provider-ultrafast-catalog.mjs"))
+        command.arg(resources.join("app/scripts/codex-provider-ultrafast-catalog.mjs"))
             .arg(operation)
             .arg(codex_app)
             .current_dir(home)
-            .output().map_err(|error| error.to_string())?;
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(directory) = data_directory {
+            command.arg(directory);
+        }
+        let output = if let Some(input) = input {
+            let mut child = command.stdin(Stdio::piped()).spawn().map_err(|error| error.to_string())?;
+            serde_json::to_writer(child.stdin.take().ok_or("无法写入模型配置")?, &input)
+                .map_err(|error| error.to_string())?;
+            child.wait_with_output().map_err(|error| error.to_string())?
+        } else {
+            command.output().map_err(|error| error.to_string())?
+        };
         if !output.status.success() {
-            return Err(format!("读取或修改 Codex 模型发现配置失败：{}", String::from_utf8_lossy(&output.stderr).trim()));
+            return Err(format!("读取或修改 Codex 模型配置失败：{}", String::from_utf8_lossy(&output.stderr).trim()));
         }
         String::from_utf8(output.stdout).map_err(|error| error.to_string())
     }).await.map_err(|error| error.to_string())?
@@ -2734,7 +2751,7 @@ async fn run_model_discovery(app: AppHandle, operation: &'static str) -> Result<
 
 #[tauri::command]
 async fn read_model_discovery(app: AppHandle) -> Result<Option<bool>, String> {
-    let output = run_model_discovery(app, "read-discovery").await?;
+    let output = run_model_configuration(app, "read-discovery", None, None).await?;
     serde_json::from_str(output.trim()).map_err(|error| format!("读取 Codex 模型发现配置失败：{error}"))
 }
 
@@ -2753,7 +2770,7 @@ async fn set_launcher_preference(
         if key != "customProviderUltrafast" {
             return Err("仅 Ultrafast 开关可修改模型发现配置".into());
         }
-        run_model_discovery(app, if enabled { "enable-discovery" } else { "remove-discovery" }).await?;
+        run_model_configuration(app, if enabled { "enable-discovery" } else { "remove-discovery" }, None, None).await?;
     }
     update_preferences(&state, |preferences| match key.as_str() {
         "autoConnectCodex" => preferences.auto_connect_codex = enabled,
@@ -2764,6 +2781,25 @@ async fn set_launcher_preference(
         "showCustomProviderDot" => preferences.show_custom_provider_dot = enabled,
         _ => unreachable!(),
     })
+}
+
+#[tauri::command]
+async fn read_model_context_settings(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+) -> Result<serde_json::Value, String> {
+    let output = run_model_configuration(app, "read-contexts", Some(state.data_directory.clone()), None).await?;
+    serde_json::from_str(output.trim()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn set_model_context_windows(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+    context_windows: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let output = run_model_configuration(app, "write-contexts", Some(state.data_directory.clone()), Some(context_windows)).await?;
+    serde_json::from_str(output.trim()).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -3116,6 +3152,8 @@ fn main() {
             open_log,
             reveal_data,
             read_model_discovery,
+            read_model_context_settings,
+            set_model_context_windows,
             set_launcher_preference,
             set_autostart,
             check_for_updates,

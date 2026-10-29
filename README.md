@@ -1,5 +1,7 @@
 # Codex Panel
 
+Open **Preferences → 模型上下文 → 配置上下文** to set a separate context token count for each model. Leave a field empty to use its catalog default, then save and restart Codex. Values must fit the model service's actual limits. See [per-model context windows](docs/fork-capabilities.md#per-model-context-windows).
+
 Open a conversation, then right-click another Codex conversation in the sidebar to choose **Open in new tab** or **Open side by side** in the same window. Existing chats reuse one view; sidebar clicks focus the matching input and highlight that conversation without changing the layout. **Restore as standalone page** removes the tab and returns to the full conversation page. See [conversation tabs and split view](docs/fork-capabilities.md#conversation-tabs-and-split-view).
 
 Newer Codex compatibility also covers the separate worktree switch, native workspace and legacy automation services, and the split composer quota adapter. See [fork capabilities](docs/fork-capabilities.md).
