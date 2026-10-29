@@ -545,6 +545,7 @@ export interface JiraTaskContext {
   conversationArchive: JiraConversationArchive | null;
   planningThreads?: JiraPlanningThread[];
   sharedPlanningJira?: JiraPlanningThread["jiraTasks"];
+  sharedExecutionJira?: JiraPlanningThread["jiraTasks"];
 }
 
 export interface JiraConversationArchive {

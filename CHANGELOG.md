@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Let Jira requirements sharing a plan explicitly group execution by repository, reusing conversations and worktrees sequentially while preserving each requirement’s authorization and progress.
+
 - Allow related Jira requirements to explicitly share an existing planning conversation while keeping their Specs, publication and execution independent; shared conversations stay available until all linked work is complete.
 
 ## 0.4.12-fork

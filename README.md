@@ -46,6 +46,8 @@ Ordinary tasks also support **Plan with AI**, persistent inline Specs, and appro
 
 New Jira planning conversations use `Jira ID · Jira 规划 · task title`; replanning uses `Jira ID · Jira 重新规划 · task title`. Panel confirms the saved native title after submission without requiring a rendered sidebar row.
 
+After sharing a planning conversation, choose **Implement together in the same repository** in **Manage Jira links** to reuse an execution conversation, branch and worktree per repository. This does not start execution; each Jira retains its own authorization and task progress. Existing execution bindings are preserved.
+
 Related Jira requirements can explicitly **Join existing planning conversation** from their detail view. Discussion is shared; Specs, publication and execution stay separate. Jira links never join conversations automatically.
 
 Explicit Jira conversation binding initializes a missing planning record so the same conversation can save its Spec and publish tickets. Existing plans are preserved. See [Jira planning](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues).

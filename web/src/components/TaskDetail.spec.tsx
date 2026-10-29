@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
-import { getJiraTaskContext, startJiraPlanning, startSimpleJiraTask } from "../api";
+import { getJiraTaskContext, setJiraSharedExecution, startJiraPlanning, startSimpleJiraTask } from "../api";
 import { TaskDetail } from "./TaskDetail";
 import { appendUnreferencedAttachments } from "../documentModel";
 import type { Attachment } from "../types";
@@ -12,6 +12,7 @@ vi.mock("../api", async (original) => ({
   getJiraTaskContext: vi.fn(),
   startSimpleJiraTask: vi.fn(),
   startJiraPlanning: vi.fn(),
+  setJiraSharedExecution: vi.fn(),
   getTaskPlan: async () => ({ spec: "", version: 1, updatedAt: null }),
   listComments: async () => [],
   listTaskActivities: async () => [],
@@ -167,4 +168,34 @@ it("joins only an explicitly selected planning conversation in a linked reposito
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: /TEST-1 · Related feature plan/ })); });
   expect(open).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("dialog", { name: "加入已有规划会话" })).toBeNull();
+});
+
+
+it("enables shared execution only after explicit confirmation using the latest planning context", async () => {
+  const actor = { type: "user", id: "fixture", name: "Fixture", avatarUrl: null };
+  const task = { id: "jira-shared", identifier: "JIRA:TEST:2", externalKey: "TEST-2", projectId: "jira", title: "Shared requirement", description: "", creatorType: "user", creatorId: "fixture", creatorName: "Fixture", creatorAvatarUrl: null, status: "todo", priority: "none", labels: [], version: 1, source: "jira", claim: null, threadBinding: null, legacyLocalThreadId: null, conversationRefs: [], assignee: actor, relations: { parent: null, subIssues: [], blockedBy: [], blocks: [], related: [] }, createdAt: "2026-09-15T00:00:00Z", updatedAt: "2026-09-15T00:00:00Z", archivedAt: null, developmentContext: null };
+  const peer = { id: "jira-one", identifier: "JIRA:TEST:1", externalKey: "TEST-1", title: "Related feature" };
+  const plan = { threadId: "shared-thread", projectId: "repo", status: "planning", items: [], needsReview: false, spec: "", createdAt: task.createdAt, updatedAt: task.updatedAt };
+  const context = { jira: task, projects: [], issues: [], availableIssues: [], plan, simpleStart: null, lifecycle: { pending: null, duplicateOf: null, pausedIssueIds: [] }, sharedPlanningJira: [task, peer], sharedExecutionJira: [task] };
+  vi.mocked(getJiraTaskContext).mockResolvedValue(context as never);
+  vi.mocked(setJiraSharedExecution).mockClear();
+  const open = vi.fn();
+  const props = { task, tasks: [task], project: { id: "jira", name: "Jira" }, projects: [{ id: "jira", name: "Jira", source: "jira" }], jiraRepositoryProjects: [], currentUser: actor, jiraAvailable: true, availableLabels: [], developmentScan: { workspacePath: null, contexts: [] }, commentsRevision: 0, attachmentsRevision: 0, aiChatThreads: [], onError: vi.fn(), onAiChatThreadsRefresh: vi.fn(), onOpenJiraPlanning: open, onOpenThread: open, onOpenLegacyLocalThread: open } as unknown as ComponentProps<typeof TaskDetail>;
+  await act(async () => { render(<TaskboardLanguageProvider language="zh"><TaskDetail {...props} /></TaskboardLanguageProvider>); });
+  fireEvent.click(screen.getByRole("button", { name: "关联仓库" }));
+  expect(screen.getByRole("dialog", { name: "管理 Jira 关联" })).toBeTruthy();
+  expect(screen.getByText("同仓库共用执行会话和工作树，按任务依次执行；各 Jira 仍需分别授权。")).toBeTruthy();
+  expect(setJiraSharedExecution).not.toHaveBeenCalled();
+  const latest = { ...context, jira: { ...task, version: 4 } };
+  vi.mocked(getJiraTaskContext).mockResolvedValue(latest as never);
+  vi.mocked(setJiraSharedExecution).mockRejectedValueOnce(new Error("Save failed")).mockResolvedValueOnce({ ...latest, sharedExecutionJira: [task, peer] } as never);
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "同仓库一起实现" })); });
+  expect(screen.getByRole("alert").textContent).toBe("Save failed");
+  expect(screen.getByRole("dialog", { name: "管理 Jira 关联" }).contains(screen.getByRole("alert"))).toBe(true);
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "同仓库一起实现" })); });
+  expect(setJiraSharedExecution).toHaveBeenLastCalledWith(latest.jira, "shared-thread");
+  expect(screen.getByRole("status").textContent).toBe("已设置同仓库一起实现");
+  expect(screen.queryByRole("button", { name: "同仓库一起实现" })).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(open).not.toHaveBeenCalled();
 });

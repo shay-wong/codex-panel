@@ -29,6 +29,7 @@ import {
   resolvePanelUrl,
   saveJiraTaskProjects,
   saveTaskPlan,
+  setJiraSharedExecution,
   startJiraPlanning,
   startSimpleJiraTask,
   uploadAttachment,
@@ -588,6 +589,8 @@ export function TaskDetail({
   const [jiraRepositoryAnswer, setJiraRepositoryAnswer] = useState("");
   const [jiraRepositoryClarification, setJiraRepositoryClarification] = useState("");
   const [jiraPlanningSaving, setJiraPlanningSaving] = useState(false);
+  const [jiraSharedExecutionSaving, setJiraSharedExecutionSaving] = useState(false);
+  const [jiraSharedExecutionError, setJiraSharedExecutionError] = useState<TaskDetailError | null>(null);
   const [jiraLifecycleSaving, setJiraLifecycleSaving] = useState<
     "pause" | "keep" | "rework" | "replan" | "migrate" | null
   >(null);
@@ -665,6 +668,7 @@ export function TaskDetail({
     }
     if (taskChanged) {
       setJiraPlanningThreadOpen(false);
+      setJiraSharedExecutionError(null);
       setJiraRepositoryQuestion("");
       setJiraRepositoryAnswer("");
       setJiraRepositoryClarification("");
@@ -1116,6 +1120,27 @@ export function TaskDetail({
     } finally {
       onAiChatThreadsRefresh();
       setJiraPlanningSaving(false);
+    }
+  }
+
+  async function enableJiraSharedExecution() {
+    if (jiraSharedExecutionSaving) return;
+    setJiraSharedExecutionSaving(true);
+    setJiraSharedExecutionError(null);
+    try {
+      const latest = await getJiraTaskContext(currentTask.id);
+      setJiraContext(latest);
+      if (!latest.jira || !latest.plan?.threadId) {
+        setJiraSharedExecutionError(["规划会话已变化，请重新选择共用规划会话。", "The planning conversation changed. Select a shared planning conversation again."]);
+        return;
+      }
+      const context = await setJiraSharedExecution(latest.jira, latest.plan.threadId);
+      setJiraContext(context);
+      if (context.jira) setCurrentTask(context.jira);
+    } catch (error) {
+      setJiraSharedExecutionError(messageFor(error));
+    } finally {
+      setJiraSharedExecutionSaving(false);
     }
   }
 
@@ -1736,6 +1761,10 @@ export function TaskDetail({
         : jiraContext?.simpleStart
           ? text("继续规划", "Continue planning")
         : text("AI 规划", "Plan with AI");
+  const sharedExecutionIds = new Set(jiraContext?.sharedExecutionJira?.map((jira) => jira.id));
+  const jiraSharedExecutionEnabled = Boolean(jiraContext?.jira
+    && sharedExecutionIds.has(jiraContext.jira.id)
+    && jiraContext.sharedPlanningJira?.every((jira) => sharedExecutionIds.has(jira.id)));
   const sharedPlanningThreads = (jiraContext?.planningThreads ?? []).filter((thread) => {
     const projectIds = jiraContext?.projects.map((project) => project.id) ?? [];
     return projectIds.length ? projectIds.includes(thread.projectId) : thread.projectId === "local";
@@ -3322,6 +3351,7 @@ export function TaskDetail({
                       : text("尚未同步", "Not synced")}</strong>
                   {currentTask.externalSyncError && <small>{currentTask.externalSyncError}</small>}
                 </div>
+                {jiraSharedExecutionError && <p className="comments-error" role="alert">{typeof jiraSharedExecutionError === "string" ? jiraSharedExecutionError : text(jiraSharedExecutionError[0], jiraSharedExecutionError[1])}</p>}
                 {jiraContext?.plan && (
                   <div className={`jira-plan-summary${jiraContext.plan.needsReview ? " needs-review" : ""}`}>
                     <div>
@@ -3332,6 +3362,16 @@ export function TaskDetail({
                       </button>
                     </div>
                     {(jiraContext.sharedPlanningJira?.length ?? 0) > 1 && <p>{text("共用规划会话：", "Shared planning conversation: ")}{jiraContext.sharedPlanningJira!.map((jira) => jira.externalKey ?? jira.identifier).join("、")}</p>}
+                    {(jiraContext.sharedPlanningJira?.length ?? 0) > 1 && <>
+                      <p>{text("各 Jira 当前发布批次的同仓库任务共用执行会话和工作树；依次执行，分别授权。", "Current published tickets share an execution conversation and worktree per repository. Tasks run in order; each Jira still requires separate authorization.")}</p>
+                      <p>{text("已有执行绑定会保留。", "Existing execution bindings are preserved.")}</p>
+                      {jiraSharedExecutionEnabled
+                        ? <p role="status">{text("已设置同仓库一起实现", "Shared execution within each repository is enabled")}</p>
+                        : <button className="button secondary" type="button" disabled={jiraSharedExecutionSaving} aria-busy={jiraSharedExecutionSaving} onClick={() => void enableJiraSharedExecution()}>
+                          <LinearIcon name="link" />
+                          {jiraSharedExecutionSaving ? text("设置中…", "Saving…") : text("同仓库一起实现", "Implement together in each repository")}
+                        </button>}
+                    </>}
                     {jiraContext.plan.needsReview && <p>{text(
                       "Jira 内容或关联仓库已变化；未开始 Issue 已暂停进入执行，已开始成果只告警且不会自动取消。",
                       "Jira content or linked repositories changed. Unstarted issues are paused; started work is warned and will not be canceled automatically.",

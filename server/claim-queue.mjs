@@ -36,7 +36,7 @@ function executionPrompt(task, executionIdentifier = task.identifier, peers = []
     "只处理当前已授权议题，复用当前执行对话。完成适用阶段和必要验证后记录结果并移动到 in_review；需要用户输入或无法继续时记录原因并移动到 blocked。不自动标记 done。",
     branchInstruction,
     ...(peers.length > 1 ? [
-      `同一 Jira、同一仓库的执行议题：${peers.map((peer) => `${peer.identifier}（${peer.status}）`).join('、')}。共用当前执行对话、分支和工作树，按依赖顺序逐项处理；每张议题独立绑定、记录进度和审核结果。本轮只处理 ${task.identifier}，后续议题由队列继续派发；不要执行尚未授权的 backlog 议题。`,
+      `同仓库共享执行组的议题：${peers.map((peer) => `${peer.identifier}（${peer.status}）`).join('、')}。共用当前执行对话、分支和工作树，按依赖顺序逐项处理；每张议题独立绑定、记录进度和审核结果。本轮只处理 ${task.identifier}，后续议题由队列继续派发；不要执行尚未授权的 backlog 议题。`,
     ] : []),
     ...(reuse ? ['继续使用当前会话已有的分支和工作树，不要重新创建分支、工作树或执行对话。'] : []),
   ].join("\n\n");
@@ -126,13 +126,14 @@ export class ClaimQueueService {
       throw new ApiError(409, "CLAIM_TASK_STATUS", "Only waiting issues can prepare execution");
     }
     const peers = this.database.jiraExecutionPeers(taskId);
-    if (peers.some((peer) => peer.id !== taskId && (
+    const contextPeers = [task, ...peers].flatMap((peer) => this.database.executionContextPeers(peer.id));
+    if ([...peers, ...contextPeers].some((peer) => peer.id !== taskId && (
       peer.status === "in_progress"
       || (peer.status === "blocked" && (peer.threadBinding || this.database.getClaimQueueItem(peer.id)))
       || this.nativeReservations.has(peer.id)
       || this.database.getClaimQueueItem(peer.id)?.state === "running"
     ))) {
-      throw new ApiError(409, "CLAIM_THREAD_BUSY", "同一 Jira 的执行对话正在处理其他议题");
+      throw new ApiError(409, "CLAIM_THREAD_BUSY", "共享执行对话正在处理其他议题");
     }
     if (task.relations.blockedBy.some((dependency) => !["done", "canceled"].includes(dependency.status)
       && !(dependency.status === "in_review" && peers.some((peer) => peer.id === dependency.id)))) {
@@ -143,7 +144,7 @@ export class ClaimQueueService {
     const prerequisites = owners.filter((peer) => task.relations.blockedBy.some((dependency) => dependency.id === peer.id));
     const candidates = prerequisites.length ? prerequisites : owners;
     if (!task.threadBinding && new Set(candidates.map((peer) => JSON.stringify(peer.threadBinding))).size > 1) {
-      throw new ApiError(409, "CLAIM_THREAD_CONFLICT", "同一 Jira 存在多个执行上下文，请先绑定要继续的会话");
+      throw new ApiError(409, "CLAIM_THREAD_CONFLICT", "共享执行组存在多个执行上下文，请先绑定要继续的会话");
     }
     const owner = task.threadBinding ? task : candidates[0];
     const prepared = owner ? {
@@ -154,7 +155,7 @@ export class ClaimQueueService {
     return {
       taskId, identifier, title: `${identifier} · ${task.title}`,
       instruction: [
-        executionPrompt(task, identifier, [], Boolean(owner)),
+        executionPrompt(task, identifier, peers, Boolean(owner)),
         "执行位置已由用户在准备阶段选择。使用本次 Codex 任务的实际运行目录；需要分支时在该目录内创建，不要另建 worktree 或执行对话。",
       ].join("\n\n"),
       collaborationMode: "default", autoSubmit: false, executionPreparation: true,
@@ -232,7 +233,8 @@ export class ClaimQueueService {
     for (const next of this.database.listReadyClaims()) {
       if (this.nativeReservations.has(next.task.id)) continue;
       const peers = this.database.jiraExecutionPeers(next.task.id);
-      if (peers.some((peer) => peer.id !== next.task.id && (
+      const contextPeers = [next.task, ...peers].flatMap((peer) => this.database.executionContextPeers(peer.id));
+      if ([...peers, ...contextPeers].some((peer) => peer.id !== next.task.id && (
         peer.status === 'in_progress'
         || (peer.status === 'blocked' && (peer.threadBinding || this.database.getClaimQueueItem(peer.id)))
         || this.nativeReservations.has(peer.id)
@@ -259,7 +261,7 @@ export class ClaimQueueService {
       try {
         this.onQueueChanged(this.database.markClaimRunning(next.task.id, true));
         if (!next.task.threadBinding && identities.size > 1) {
-          throw new ApiError(409, 'CLAIM_THREAD_CONFLICT', '同一 Jira 存在多个执行上下文，请先为此任务绑定要继续的会话');
+          throw new ApiError(409, 'CLAIM_THREAD_CONFLICT', '共享执行组存在多个执行上下文，请先为此任务绑定要继续的会话');
         }
         const owner = next.task.threadBinding ? next.task : candidates[0];
         const prepared = owner ? {

@@ -1291,6 +1291,7 @@ export class PanelDatabase {
       CREATE TABLE IF NOT EXISTS jira_plans (
         jira_task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
         thread_id TEXT REFERENCES ai_chat_threads(id) ON DELETE SET NULL,
+        shared_execution INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL CHECK (status IN ('planning', 'review', 'publishing', 'published')),
         spec TEXT NOT NULL DEFAULT '',
         source_snapshot TEXT NOT NULL,
@@ -1339,6 +1340,9 @@ export class PanelDatabase {
       );
     `);
     this.#migrateSharedJiraPlanning();
+    if (!this.database.prepare("PRAGMA table_info(jira_plans)").all().some(column => column.name === "shared_execution")) {
+      this.database.exec("ALTER TABLE jira_plans ADD COLUMN shared_execution INTEGER NOT NULL DEFAULT 0");
+    }
     this.database.exec(`
       INSERT OR IGNORE INTO jira_plan_threads (jira_task_id, thread_id, created_at)
       SELECT jira_task_id, thread_id, created_at
@@ -2232,6 +2236,9 @@ export class PanelDatabase {
       plan,
       planningThreads,
       sharedPlanningJira: planningThreads.find(thread => thread.id === plan?.threadId)?.jiraTasks ?? [],
+      sharedExecutionJira: planningThreads.find(thread => thread.id === plan?.threadId)?.jiraTasks.filter(jira => (
+        this.database.prepare("SELECT shared_execution FROM jira_plans WHERE jira_task_id = ?").get(jira.id)?.shared_execution === 1
+      )) ?? [],
       lifecycle: this.getJiraLifecycle(jiraTask.id),
       autoCompletion: this.getJiraAutoCompletion(jiraTask.id),
       conversationArchive: this.getJiraConversationArchive(jiraTask.id),
@@ -2257,13 +2264,56 @@ export class PanelDatabase {
     return [...threads.values()];
   }
 
+  enableSharedJiraExecution(jiraTaskId, version, threadId) {
+    const jira = this.#requireTask(jiraTaskId);
+    this.#requireVersion(jira, version);
+    const plan = this.getJiraPlan(jiraTaskId);
+    const shared = this.listJiraPlanningThreads().find(thread => thread.id === threadId);
+    if (jira.source !== "jira" || jira.archivedAt !== null || plan?.threadId !== threadId
+      || !shared || shared.jiraTasks.length < 2) {
+      throw new ApiError(409, "JIRA_SHARED_EXECUTION_UNAVAILABLE", "Shared execution requires an active planning conversation shared by multiple Jira issues");
+    }
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      for (const member of shared.jiraTasks) {
+        this.#assertJiraMutationUnlocked(member.id);
+        const lifecycle = this.getJiraLifecycle(member.id);
+        if (lifecycle.pending || lifecycle.duplicateOf || lifecycle.pausedIssueIds.length) {
+          throw new ApiError(409, "JIRA_SHARED_EXECUTION_UNAVAILABLE", "Resolve Jira lifecycle notices before sharing execution");
+        }
+      }
+      const update = this.database.prepare(`
+        UPDATE jira_plans SET shared_execution = 1, version = version + 1, updated_at = ?
+        WHERE jira_task_id = ? AND shared_execution = 0
+      `);
+      const timestamp = now();
+      for (const member of shared.jiraTasks) update.run(timestamp, member.id);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getJiraContext(jiraTaskId);
+  }
+
   #sharedJiraPlanningIncomplete(jiraTaskId) {
     return Boolean(this.database.prepare(`
-      SELECT 1 FROM jira_plan_threads AS own
-      JOIN ai_chat_threads AS threads ON threads.id = own.thread_id AND threads.archived_at IS NULL
-      JOIN jira_plan_threads AS shared ON shared.thread_id = own.thread_id AND shared.jira_task_id <> own.jira_task_id
-      JOIN tasks AS jira ON jira.id = shared.jira_task_id
-      WHERE own.jira_task_id = ? AND (
+      WITH shared_jira(id) AS (
+        SELECT shared.jira_task_id FROM jira_plan_threads AS own
+        JOIN ai_chat_threads AS threads ON threads.id = own.thread_id AND threads.archived_at IS NULL
+        JOIN jira_plan_threads AS shared ON shared.thread_id = own.thread_id AND shared.jira_task_id <> own.jira_task_id
+        WHERE own.jira_task_id = ?
+        UNION
+        SELECT other_links.jira_task_id FROM jira_task_links AS own_links
+        JOIN tasks AS own ON own.id = own_links.task_id
+        JOIN tasks AS peer ON peer.thread_id = own.thread_id
+          AND peer.thread_codex_host_id IS own.thread_codex_host_id
+        JOIN jira_task_links AS other_links ON other_links.task_id = peer.id
+        WHERE own_links.jira_task_id = ? AND other_links.jira_task_id <> own_links.jira_task_id
+          AND peer.archived_at IS NULL AND peer.status <> 'canceled'
+      )
+      SELECT 1 FROM shared_jira JOIN tasks AS jira ON jira.id = shared_jira.id
+      WHERE (
         jira.status <> 'done'
         OR NOT EXISTS (SELECT 1 FROM jira_task_links WHERE jira_task_id = jira.id)
         OR EXISTS (
@@ -2271,7 +2321,7 @@ export class PanelDatabase {
           WHERE links.jira_task_id = jira.id AND (issue.status <> 'done' OR issue.archived_at IS NOT NULL)
         )
       ) LIMIT 1
-    `).get(jiraTaskId));
+    `).get(jiraTaskId, jiraTaskId));
   }
 
   getJiraConversationArchive(jiraTaskId) {
@@ -2969,7 +3019,7 @@ export class PanelDatabase {
     try {
       const plan = this.database.prepare(`
         UPDATE jira_plans
-        SET thread_id = ?, status = 'planning', source_snapshot = ?, prompted_at = ?,
+        SET thread_id = ?, status = 'planning', source_snapshot = ?, prompted_at = ?, shared_execution = 0,
             version = version + 1, updated_at = ?
         WHERE jira_task_id = ? AND version = ?
       `).run(
@@ -3348,10 +3398,11 @@ export class PanelDatabase {
     if (shouldRefresh) {
       this.database.prepare(`
         UPDATE jira_plans
-        SET thread_id = ?, status = 'planning', source_snapshot = ?, prompted_at = NULL,
+        SET shared_execution = CASE WHEN thread_id = ? THEN shared_execution ELSE 0 END,
+            thread_id = ?, status = 'planning', source_snapshot = ?, prompted_at = NULL,
             version = version + 1, updated_at = ?
         WHERE jira_task_id = ?
-      `).run(nextThreadId, sourceSnapshot, timestamp, jiraTask.id);
+      `).run(nextThreadId, nextThreadId, sourceSnapshot, timestamp, jiraTask.id);
       this.database.prepare(`
         INSERT OR IGNORE INTO jira_plan_threads (jira_task_id, thread_id, created_at)
         VALUES (?, ?, ?)
@@ -4780,12 +4831,36 @@ export class PanelDatabase {
     const context = this.getJiraContext(taskId);
     if (!context.jira) return [];
     const publication = context.plan?.items.map((item) => item.task?.id).filter(Boolean);
-    return context.issues
+    const peers = context.issues
       .filter((issue) => issue.projectId === task.projectId
         && (!publication?.includes(taskId) || publication.includes(issue.id)))
       .map((issue) => this.getTask(issue.id))
       .filter((issue) => issue.archivedAt === null && issue.status !== 'canceled'
         && (issue.status !== 'done' || publication?.includes(taskId)));
+    // 新批次只复用各 Jira 当前发布项；历史已绑定上下文单独用于串行和清理判断。
+    if (publication?.includes(taskId) && context.sharedExecutionJira.some(jira => jira.id === context.jira.id)) {
+      for (const jira of context.sharedExecutionJira) {
+        if (jira.id === context.jira.id) continue;
+        for (const item of this.getJiraPlan(jira.id).items) {
+          if (!item.task) continue;
+          const peer = this.getTask(item.task.id);
+          if (peer.projectId === task.projectId && peer.archivedAt === null && peer.status !== 'canceled') peers.push(peer);
+        }
+      }
+    }
+    return [...new Map(peers.map(peer => [peer.id, peer])).values()];
+  }
+
+  executionContextPeers(taskId) {
+    const task = this.#requireTask(taskId);
+    return this.database.prepare(`
+      SELECT id FROM tasks
+      WHERE project_id = ? AND archived_at IS NULL AND status <> 'canceled'
+        AND ((thread_id IS NOT NULL AND thread_id = ? AND thread_codex_host_id IS ?)
+          OR (worktree_path IS NOT NULL AND worktree_path = ?))
+    `).all(task.projectId, task.threadId, task.threadBinding?.codexHostId ?? null,
+      task.developmentContext?.type === "worktree" ? task.developmentContext.path : null)
+      .map(row => this.getTask(row.id));
   }
 
   listReadyClaims(at = now()) {

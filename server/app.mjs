@@ -2331,7 +2331,7 @@ export function createPanelServer(options = {}) {
   async function cleanupClaimExecution(task) {
     if (options.cleanupClaimExecution) return await options.cleanupClaimExecution(task);
     if (task.status !== "done" || task.developmentContext?.type !== "worktree") return task;
-    if (database.jiraExecutionPeers(task.id).some((peer) => (
+    if ([...database.jiraExecutionPeers(task.id), ...database.executionContextPeers(task.id)].some((peer) => (
       peer.id !== task.id && peer.status !== "done"
     ))) return task;
     const worktreePath = await canonicalWorkspace(task.developmentContext.path);
@@ -4495,6 +4495,23 @@ export function createPanelServer(options = {}) {
           200,
           publishJiraPlan(jiraTaskId, version, items, actorFromRequest(request)),
         );
+      }
+
+      const jiraSharedExecutionRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-shared-execution$/);
+      if (jiraSharedExecutionRoute) {
+        const jiraTaskId = decodeRouteSegment(jiraSharedExecutionRoute[1], "Task id");
+        assertNoQuery(url.searchParams, "POST /api/tasks/:id/jira-shared-execution");
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        const body = await readJson(request);
+        assertPlainObject(body);
+        assertAllowedKeys(body, new Set(["version", "threadId"]));
+        const threadId = parseThreadId(body.threadId);
+        if (!threadId) throw new ApiError(400, "INVALID_FIELD", "threadId is required");
+        const context = database.enableSharedJiraExecution(jiraTaskId, parseVersion(body.version), threadId);
+        for (const jira of context.sharedExecutionJira) {
+          events.emit("task.jira.updated", { taskId: jira.id, task: database.getTask(jira.id) });
+        }
+        return sendJson(response, 200, { context });
       }
 
       const jiraPlanningRoute = pathname.match(/^\/api\/tasks\/([^/]+)\/jira-planning$/);
