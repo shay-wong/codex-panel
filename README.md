@@ -48,6 +48,8 @@ New Jira planning conversations use `Jira ID · Jira 规划 · task title`; repl
 
 After sharing a planning conversation, choose **Implement together in the same repository** in **Manage Jira links** to reuse an execution conversation, branch and worktree per repository. This does not start execution; each Jira retains its own authorization and task progress. Existing execution bindings are preserved.
 
+Related Jira requirements can share planning across repositories through **Join existing planning conversation** or explicit `panelctl conversation bind JIRA_ID` (when no plan exists). Execution repositories remain independently linked.
+
 Related Jira requirements can explicitly **Join existing planning conversation** from their detail view. Discussion is shared; Specs, publication and execution stay separate. Jira links never join conversations automatically.
 
 Explicit Jira conversation binding initializes a missing planning record so the same conversation can save its Spec and publish tickets. Existing plans are preserved. See [Jira planning](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues).

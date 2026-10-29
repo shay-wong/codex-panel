@@ -5,14 +5,15 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { PanelDatabase } from '../server/database.mjs';
 import { createPanelServer } from '../server/index.mjs';
+import { main as panelctl } from '../cli/panelctl.mjs';
 
 const actor = { type: 'agent', id: 'test', name: 'Test', avatarUrl: null };
-function seed(db, workspace) {
+function seed(db, workspace, ids = [1, 2], projectId = 'local') {
   const at = new Date().toISOString();
-  const jiras = [1, 2].map(id => ({ id: `jira-${id}`, identifier: `JIRA:TEST:${id}`, title: `Part ${id}`, description: '', status: 'todo', priority: 'medium', labels: [], sortOrder: id,
+  const jiras = ids.map(id => ({ id: `jira-${id}`, identifier: `JIRA:TEST:${id}`, title: `Part ${id}`, description: '', status: 'todo', priority: 'medium', labels: [], sortOrder: id,
     creator: actor, assignee: actor, dueDate: null, externalOrigin: 'test', externalId: String(id), externalKey: `TEST-${id}`, externalUrl: `https://fixture.invalid/${id}`, externalStatus: 'todo', createdAt: at, updatedAt: at }));
   db.syncJiraTasks(jiras, { originId: 'test', projectName: 'Jira', syncedAt: at });
-  db.createAiChatThread({ id: 'shared-plan', title: 'Plan both parts', purpose: 'formal', origin: { projectId: 'local', projectName: 'Local', workspacePath: workspace }, codexThreadId: 'shared-plan', model: 'test', reasoningEffort: 'medium', sandbox: 'workspace-write' });
+  db.createAiChatThread({ id: 'shared-plan', title: 'Plan both parts', purpose: 'formal', origin: { projectId, projectName: projectId, workspacePath: workspace }, codexThreadId: 'shared-plan', model: 'test', reasoningEffort: 'medium', sandbox: 'workspace-write' });
   db.beginJiraPlanning('jira-1', db.getTask('jira-1').version, 'shared-plan');
 }
 
@@ -81,4 +82,46 @@ test('legacy unique planning tables migrate without losing published children or
     db.close(); db = null; db = new PanelDatabase(filename);
     assert.equal(db.getJiraContext('jira-2').sharedPlanningJira.length, 2);
   } finally { db?.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+
+test('cross-repository Jira planning works through explicit UI join and conversation bind without changing execution repositories', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'jira-cross-repository-'));
+  const backend = path.join(root, 'backend'), admin = path.join(root, 'admin');
+  await mkdir(backend); await mkdir(admin);
+  const app = createPanelServer({ dataDirectory: path.join(root, 'data'), codexExecutable: path.join(root, 'fake-codex'), codexStatePath: path.join(root, 'state.json'), codexProcessesPath: path.join(root, 'processes.json'), skillsDirectory: path.join(root, 'skills'), processEnv: { HOME: root, CODEX_HOME: path.join(root, 'codex'), PATH: path.dirname(process.execPath) } });
+  try {
+    const db = app.database;
+    db.createProject({ id: 'backend', name: 'Backend', workspacePath: backend });
+    db.createProject({ id: 'admin', name: 'Admin', workspacePath: admin });
+    seed(db, backend, [1, 2, 3], 'backend');
+    for (const id of ['jira-1', 'jira-2', 'jira-3']) db.setJiraProjects(id, db.getTask(id).version, [id === 'jira-1' ? 'backend' : 'admin'], actor);
+    const address = await app.listen({ port: 0 });
+    const url = `http://127.0.0.1:${address.port}`;
+    const request = async (pathname, method, body) => {
+      const response = await fetch(url + pathname, { method, headers: { 'content-type': 'application/json', 'x-panel-client': 'panelctl' }, body: JSON.stringify(body) });
+      return { status: response.status, body: await response.json() };
+    };
+    const binding = { threadId: 'shared-plan', codexProjectId: 'backend', codexProjectKind: 'local', codexHostId: 'local', workspacePath: backend };
+    assert.equal((await request('/api/local/host-runtime', 'PUT', { ...binding, threadRunning: false, threadTodoProgress: null })).status, 200);
+    let output = '', error = '';
+    const result = await panelctl(['conversation', 'bind', 'TEST-3', '--thread-id', 'shared-plan'], {
+      cwd: backend, env: { CODEX_PANEL_URL: url }, stdout: { write: value => { output += value; } }, stderr: { write: value => { error += value; } },
+    });
+    assert.equal(result, 0, error);
+    assert.equal(JSON.parse(output).task.threadBinding.threadId, 'shared-plan');
+    const joined = await request('/api/tasks/jira-2/jira-planning', 'POST', { version: db.getTask('jira-2').version, threadId: 'shared-plan', projectId: 'backend', reuseThread: true });
+    assert.equal(joined.status, 200, JSON.stringify(joined.body));
+    assert.equal(joined.body.context.plan.threadId, 'shared-plan');
+    assert.deepEqual(joined.body.context.projects.map(project => project.id), ['admin']);
+    assert.deepEqual(db.getJiraContext('jira-3').projects.map(project => project.id), ['admin']);
+    const saved = await request('/api/tasks/jira-2/jira-planning/spec', 'PUT', { version: joined.body.context.plan.version, spec: 'Only implement the admin UI.' });
+    assert.equal(saved.status, 200);
+    const rejected = await request('/api/tasks/jira-2/jira-planning/publish', 'POST', { version: db.getJiraPlan('jira-2').version, items: [{ key: 'wrong-repo', projectId: 'backend', title: 'Wrong repo', description: '', priority: 'none', labels: [], blockedBy: [] }] });
+    assert.equal(rejected.status, 409);
+    const continued = await request('/api/tasks/jira-2/jira-planning', 'POST', { version: db.getTask('jira-2').version, threadId: 'shared-plan', reuseThread: true });
+    assert.equal(continued.status, 200, JSON.stringify(continued.body));
+    assert.equal(db.getJiraPlan('jira-2').spec, 'Only implement the admin UI.');
+    assert.equal(db.getAiChatThread('shared-plan').origin.projectId, 'backend');
+  } finally { await app.close(); await rm(root, { recursive: true, force: true }); }
 });

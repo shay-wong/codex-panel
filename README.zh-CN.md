@@ -32,6 +32,8 @@ macOS Release 提供 Apple Silicon 与 Intel 通用 DMG，使用临时签名（a
 
 共用规划后，可在“管理 Jira 关联”中点击“同仓库一起实现”，让同仓库任务依次复用执行会话、分支和 worktree。该操作不启动执行，各 Jira 的授权和进度仍独立，已有执行绑定保持不变。
 
+规划会话可跨仓库共用，页面选择和显式 `panelctl conversation bind JIRA_ID`（尚无计划时）均支持；各 Jira 的执行仓库关联不变。
+
 相关 Jira 可在详情中选择“加入已有规划会话”，共享讨论上下文，各自的 Spec、发布和执行仍独立；不会根据 Jira 关联自动合并会话。
 
 Jira AI 规划可根据需求与仓库文档识别并关联一个或多个仓库：明确时自动保存并记录理由，有歧义才询问，保留已有手动关联；原生 Plan 模式退出后才写入。无需配置固定 Jira 项目映射。参见 [Jira 仓库关联](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues)。

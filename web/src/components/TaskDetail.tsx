@@ -1054,6 +1054,11 @@ export function TaskDetail({
   function requestJiraPlanning() {
     if (jiraPlanningSaving || openingThread) return;
     if (jiraContext?.plan && !jiraContext.plan.needsReview && openExistingJiraPlanning()) return;
+    const existingPlanningThread = jiraContext?.planningThreads?.find(thread => thread.id === jiraContext.plan?.threadId);
+    if (existingPlanningThread) {
+      void joinJiraPlanning(existingPlanningThread);
+      return;
+    }
     const linkedProjects = jiraContext?.projects ?? [];
     if (linkedProjects.length > 1) {
       setJiraPlanningProjectSearch("");
@@ -1765,10 +1770,7 @@ export function TaskDetail({
   const jiraSharedExecutionEnabled = Boolean(jiraContext?.jira
     && sharedExecutionIds.has(jiraContext.jira.id)
     && jiraContext.sharedPlanningJira?.every((jira) => sharedExecutionIds.has(jira.id)));
-  const sharedPlanningThreads = (jiraContext?.planningThreads ?? []).filter((thread) => {
-    const projectIds = jiraContext?.projects.map((project) => project.id) ?? [];
-    return projectIds.length ? projectIds.includes(thread.projectId) : thread.projectId === "local";
-  });
+  const sharedPlanningThreads = jiraContext?.planningThreads ?? [];
   const planningThreadLabel = (thread: JiraPlanningThread) =>
     `${thread.jiraTasks.map((jira) => jira.externalKey ?? jira.identifier).join("、")} · ${thread.title}`;
   const visiblePlanningThreads = sharedPlanningThreads.filter((thread) =>
@@ -3181,7 +3183,7 @@ export function TaskDetail({
             <header>
               <div>
                 <h2 id="jira-planning-thread-title">{text("加入已有规划会话", "Join existing planning conversation")}</h2>
-                <p>{text("选择后共用讨论上下文，各 Jira 的计划和状态仍独立。", "Share the discussion while each Jira keeps its own plan and status.")}</p>
+                <p>{text("可跨仓库共用讨论，各 Jira 的计划、执行仓库和状态仍独立。", "Share discussion across repositories while each Jira keeps its own plan, execution repositories and status.")}</p>
               </div>
               <button type="button" aria-label={text("关闭", "Close")} disabled={jiraPlanningSaving} onClick={() => setJiraPlanningThreadOpen(false)}><LinearIcon name="close" /></button>
             </header>
@@ -3195,7 +3197,7 @@ export function TaskDetail({
                 {visiblePlanningThreads.map((thread) => <button key={thread.id} type="button" disabled={jiraPlanningSaving || openingThread} onClick={() => void joinJiraPlanning(thread)}>
                   <ConversationIcon /><span>{planningThreadLabel(thread)}</span>
                 </button>)}
-                {visiblePlanningThreads.length === 0 && <div className="project-menu-empty">{text("没有同仓库的可用规划会话", "No available planning conversations in the linked repositories")}</div>}
+                {visiblePlanningThreads.length === 0 && <div className="project-menu-empty">{text("没有可用的规划会话", "No available planning conversations")}</div>}
               </div>
             </div>
             <footer>

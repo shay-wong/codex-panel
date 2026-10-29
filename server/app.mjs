@@ -2551,7 +2551,11 @@ export function createPanelServer(options = {}) {
       };
     }
 
-    const targetProjectId = resolveJiraPlanningProjectId(context, selectedProjectId);
+    // 共用讨论沿用会话的实际仓库，执行仓库仍由各 Jira 的关联和发布约束决定。
+    const planningThread = database.getAiChatThread(threadId);
+    const targetProjectId = planningThread && (reuseThread || context.plan?.threadId === threadId)
+      ? planningThread.origin.projectId
+      : resolveJiraPlanningProjectId(context, selectedProjectId);
     const existingThread = assertJiraPlanningThreadReuse(context, threadId, targetProjectId, reuseThread);
     const sharedWorkflow = reuseThread ? await resolveWorkflow(database, aiChat, targetProjectId, "planning") : null;
     const createdThread = !existingThread;
@@ -4883,10 +4887,10 @@ export function createPanelServer(options = {}) {
           }
           if (task.source === "jira" && !database.getJiraPlan(task.id)) {
             const context = database.getJiraContext(task.id);
-            const projectId = context.projects.length > 1
-              ? threadBinding.codexProjectId
-              : undefined;
-            await startJiraPlanning(task.id, task.version, threadId, projectId);
+            const projectId = context.projects.length > 1 ? threadBinding.codexProjectId : undefined;
+            // conversation bind 本身就是显式关联；与页面选择入口复用同一共享规划路径。
+            const reuseThread = context.planningThreads.some(thread => thread.id === threadId);
+            await startJiraPlanning(task.id, task.version, threadId, projectId, reuseThread);
             events.emit("task.jira.updated", { taskId: task.id, task: database.getTask(task.id) });
           }
           if (!task.threadBinding || JSON.stringify(task.threadBinding) !== JSON.stringify(threadBinding)) {

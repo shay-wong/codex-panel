@@ -144,7 +144,7 @@ it("appends eligible legacy attachments only when not rendered in the document",
 });
 
 
-it("joins only an explicitly selected planning conversation in a linked repository", async () => {
+it("explicitly joins a planning conversation across repositories", async () => {
   const actor = { type: "user", id: "fixture", name: "Fixture", avatarUrl: null };
   const task = { id: "jira-shared", identifier: "JIRA:TEST:2", externalKey: "TEST-2", projectId: "jira", title: "Shared requirement", description: "", creatorType: "user", creatorId: "fixture", creatorName: "Fixture", creatorAvatarUrl: null, status: "todo", priority: "none", labels: [], version: 1, source: "jira", claim: null, threadBinding: null, legacyLocalThreadId: null, conversationRefs: [], assignee: actor, relations: { parent: null, subIssues: [], blockedBy: [], blocks: [], related: [] }, createdAt: "2026-09-15T00:00:00Z", updatedAt: "2026-09-15T00:00:00Z", archivedAt: null, developmentContext: null };
   const candidate = { id: "shared-thread", title: "Related feature plan", projectId: "repo", jiraTasks: [{ id: "jira-one", identifier: "JIRA:TEST:1", externalKey: "TEST-1", title: "Related feature" }] };
@@ -158,14 +158,14 @@ it("joins only an explicitly selected planning conversation in a linked reposito
   expect(startJiraPlanning).not.toHaveBeenCalled();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "加入已有规划会话" })); });
   expect(screen.getByRole("dialog", { name: "加入已有规划会话" })).toBeTruthy();
-  expect(screen.queryByText(/Other repository/)).toBeNull();
+  expect(screen.getByRole("button", { name: /Other repository/ })).toBeTruthy();
   expect(startJiraPlanning).not.toHaveBeenCalled();
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /TEST-1 · Related feature plan/ })); });
-  expect(startJiraPlanning).toHaveBeenCalledWith(task, "shared-thread", "repo", true);
-  expect(open).toHaveBeenCalledWith(task, "repo", { text: "Plan TEST-2 independently", skills: [], collaborationMode: "plan", existingThreadId: "shared-thread" });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /TEST-1 · Other repository/ })); });
+  expect(startJiraPlanning).toHaveBeenCalledWith(task, "foreign", "other", true);
+  expect(open).toHaveBeenCalledWith(task, "other", { text: "Plan TEST-2 independently", skills: [], collaborationMode: "plan", existingThreadId: "foreign" });
   expect(screen.getByRole("alert").textContent).toBe("Draft prefill failed");
   expect(screen.getByRole("dialog", { name: "加入已有规划会话" })).toBeTruthy();
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /TEST-1 · Related feature plan/ })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /TEST-1 · Other repository/ })); });
   expect(open).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("dialog", { name: "加入已有规划会话" })).toBeNull();
 });
@@ -184,7 +184,7 @@ it("enables shared execution only after explicit confirmation using the latest p
   await act(async () => { render(<TaskboardLanguageProvider language="zh"><TaskDetail {...props} /></TaskboardLanguageProvider>); });
   fireEvent.click(screen.getByRole("button", { name: "关联仓库" }));
   expect(screen.getByRole("dialog", { name: "管理 Jira 关联" })).toBeTruthy();
-  expect(screen.getByText("同仓库共用执行会话和工作树，按任务依次执行；各 Jira 仍需分别授权。")).toBeTruthy();
+  expect(screen.getByText(/当前发布批次的同仓库任务/)).toBeTruthy();
   expect(setJiraSharedExecution).not.toHaveBeenCalled();
   const latest = { ...context, jira: { ...task, version: 4 } };
   vi.mocked(getJiraTaskContext).mockResolvedValue(latest as never);
