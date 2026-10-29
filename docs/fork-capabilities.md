@@ -332,3 +332,9 @@ The existing preference save and heartbeat path updates the native reactive capa
 ## Legacy automation migration compatibility
 
 When an older Panel installation has saved Codex automation records, migration reads and pauses those tasks through the current native local-automation service. Older Codex builds keep the fetch interface. A failed native write is reported without retrying through another interface. The current Panel-owned claim queue is unchanged.
+
+## Cross-repository blocking
+
+Issue details → Relations → Add blocker / Add blocked issue searches active issues across repository projects. Both endpoints show the dependency and open the target repository when clicked. Add and remove the same native relation through `POST` / `DELETE /api/tasks/:id/relations/blocks|blocked_by/:relatedId` or `panelctl issue relation add|remove --type blocks|blocked_by`. Each task keeps its repository, status and execution context. Cross-repository prerequisites must be done or canceled before execution; parent and related-issue links remain project-local. Local databases upgrade on startup; Cloud deployments must apply migration `0015_cross_project_blocking.sql` with the matching Worker.
+
+详情的“添加阻塞议题 / 添加被阻塞议题”按需读取跨仓库候选，创建后双方可查看并点击跳转；API 和 CLI 使用同一关系。任务仍保留各自仓库、状态和执行上下文，跨仓库前置任务完成或取消后才允许执行。父子和相关议题仍限同一项目。本地启动自动更新数据库约束；Cloud 需配套应用 `0015_cross_project_blocking.sql` 迁移。

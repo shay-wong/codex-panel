@@ -504,3 +504,10 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 
 
 新版 Codex 集成补充（本次修复，沿用上述能力生命周期）：26.1021.31345 将执行工作树切到“工作位置 → 此计算机 → 配置本地环境 → 新建工作树”独立开关；`selectNativeWorktree` 读取关联 label 和 aria-checked，保留旧菜单路径。项目目录改读 `projectCatalog`，路径规范化调用 `workspaceRoots.read(requestId, options)`；仍在后续 host 确认真实会话 cwd。旧自动任务迁移调用 `localAutomations` 的现有 list/update 等方法，服务写失败不回退重复写，当前 Panel 自有认领队列不变。额度阻断拆到 `codex-composer-adapter`，按 primary 的 provider reader 和原生导入映射识别，只在已知本地自定义 Provider 且开关开启时跳过两项账号额度判断，保留安全策略和其余阻断。诊断分开记录 providerModulesPrepared、quotaBootstrapPrepared、quotaApplied，重载判据使用通用映射准备状态，避免额度不匹配反复重载。代码：`inject/codex-panel.user.js`、`scripts/codex-injector.mjs`、`scripts/codex-provider-quota.mjs`；测试：`test/inject-worktree-selection.test.mjs`、`test/inject.test.mjs`、`test/injector-native-automation.test.mjs`、`test/codex-provider-quota.test.mjs`、`test/codex-window-target.test.mjs`。用户说明：中英文 README/CHANGELOG、`docs/fork-capabilities.md`。历史定位：`git log -S'splitComposerSignature' -- scripts/codex-provider-quota.mjs`。合并时保留这些真实接口边界；上游等价支持后移除适配。当前原生目录与自动任务列表只读验证通过，真实发送、任务暂停和工作树创建不作为测试执行。
+
+## 跨仓库原生阻塞关系
+
+- 生命周期：长期保留。普通关系入口允许不同项目的 `blocks` / `blocked_by`，双方详情显示并跳转到真实项目，执行队列沿用原生依赖检查；父子和相关关系继续限制同项目，不合并执行上下文。
+- 代码：`server/database.mjs`、`cloud/src/index.mjs`、`cloud/migrations/0015_cross_project_blocking.sql`、`web/src/components/IssueRelations.tsx`；本地启动替换旧全关系同项目触发器，Cloud 随 Worker 应用迁移。
+- 验证：`test/cross-project-blocking.test.mjs` 覆盖旧触发器升级、添加/删除/双向读取、同仓库成功路径和跨仓库执行等待；`web/src/components/TaskDetail.spec.tsx` 覆盖选择器。用户文档：中英文 README、CHANGELOG 与 `docs/fork-capabilities.md#cross-repository-blocking`；CLI 参考同步说明。
+- 来源：当前改动，提交后用 `git log -S'crossProject?.task.id' -- web/src/components/IssueRelations.tsx` 定位。上游等价支持关系 API、选择器、数据库升级和依赖调度后可吸收；不能只放开选择器而保留服务端跨项目拒绝。

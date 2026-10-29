@@ -82,6 +82,8 @@ Native conversation activity uses the same live session progress as the board. U
 
 Board filters support name and priority sorting, and display settings can show creation dates. When synchronized Jira issues are present, the Jira projects filter accepts multiple project keys (such as JR and JD), with All projects to reset it. Ordinary task details can create child issues; dashboard progress weights top-level issues equally and includes their completed children. Tasks and comments can record external Agent sessions and copy terminal resume commands. See [task organization and external sessions](docs/fork-capabilities.md#task-organization-and-external-sessions).
 
+Use **Relations → Add blocker / Add blocked issue** to select issues across repository projects. These are native dependencies visible from both issues and honored by execution; parent and related-issue links remain within one project. The same contract applies to `panelctl issue relation add` with `--type blocks|blocked_by`. See [cross-repository blocking](docs/fork-capabilities.md#cross-repository-blocking).
+
 ## Requirements
 
 - Node.js 22.5 or newer

@@ -1353,7 +1353,9 @@ export class PanelDatabase {
       WHERE purpose = 'temporary'
         AND id IN (SELECT thread_id FROM jira_plan_threads);
 
-      CREATE TRIGGER IF NOT EXISTS task_relations_require_same_project
+      -- 旧数据库的触发器限制所有关系，重建后才允许跨仓库阻塞。
+      DROP TRIGGER IF EXISTS task_relations_require_same_project;
+      CREATE TRIGGER task_relations_require_same_project
       BEFORE INSERT ON task_relations
       WHEN NEW.relation_type = 'parent'
       BEGIN
@@ -5835,7 +5837,7 @@ export class PanelDatabase {
       const task = this.#requireTask(id);
       const relatedTask = this.#requireTask(relatedId);
       this.#requireVersion(task, version);
-      this.#validateRelationTasks(task, relatedTask);
+      this.#validateRelationTasks(task, relatedTask, type);
 
       const { relationType, sourceTaskId, targetTaskId } = this.#relationEndpoints(
         type,
@@ -5901,7 +5903,7 @@ export class PanelDatabase {
       const task = this.#requireTask(id);
       const relatedTask = this.#requireTask(relatedId);
       this.#requireVersion(task, version);
-      this.#validateRelationTasks(task, relatedTask);
+      this.#validateRelationTasks(task, relatedTask, type);
       const { relationType, sourceTaskId, targetTaskId } = this.#relationEndpoints(
         type,
         task.id,
@@ -6368,11 +6370,11 @@ export class PanelDatabase {
     return task;
   }
 
-  #validateRelationTasks(task, relatedTask) {
+  #validateRelationTasks(task, relatedTask, type) {
     if (task.id === relatedTask.id) {
       throw new ApiError(400, "SELF_RELATION", "An issue cannot be related to itself");
     }
-    if (task.projectId !== relatedTask.projectId) {
+    if (task.projectId !== relatedTask.projectId && type !== "blocks" && type !== "blocked_by") {
       throw new ApiError(400, "CROSS_PROJECT_RELATION", "Issue relations must stay within one project");
     }
   }

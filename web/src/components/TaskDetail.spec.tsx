@@ -1,8 +1,9 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
-import { getJiraTaskContext, setJiraSharedExecution, startJiraPlanning, startSimpleJiraTask } from "../api";
+import { getJiraTaskContext, listTasks, setJiraSharedExecution, startJiraPlanning, startSimpleJiraTask } from "../api";
 import { TaskDetail } from "./TaskDetail";
+import { IssueRelationSidebar } from "./IssueRelations";
 import { appendUnreferencedAttachments } from "../documentModel";
 import type { Attachment } from "../types";
 import { TaskboardLanguageProvider } from "../i18n";
@@ -10,6 +11,7 @@ import { TaskboardLanguageProvider } from "../i18n";
 vi.mock("../api", async (original) => ({
   ...await original<typeof import("../api")>(),
   getJiraTaskContext: vi.fn(),
+  listTasks: vi.fn(),
   startSimpleJiraTask: vi.fn(),
   startJiraPlanning: vi.fn(),
   setJiraSharedExecution: vi.fn(),
@@ -198,4 +200,20 @@ it("enables shared execution only after explicit confirmation using the latest p
   expect(screen.queryByRole("button", { name: "同仓库一起实现" })).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(open).not.toHaveBeenCalled();
+});
+
+it("selects a blocker from another repository without exposing it as a related issue", async () => {
+  Element.prototype.scrollIntoView = vi.fn();
+  const relations = { parent: null, subIssues: [], blockedBy: [], blocks: [], related: [] };
+  const task = { id: "admin-task", identifier: "ADMIN-1", projectId: "admin", title: "Admin integration", status: "backlog", archivedAt: null, relations } as unknown as ComponentProps<typeof IssueRelationSidebar>["task"];
+  const blocker = { ...task, id: "backend-task", identifier: "API-1", projectId: "backend", title: "Backend contract" };
+  vi.mocked(listTasks).mockResolvedValue([task, blocker]);
+  const add = vi.fn().mockResolvedValue({ task, relatedTask: blocker });
+  render(<TaskboardLanguageProvider language="zh"><IssueRelationSidebar task={task} tasks={[task]} onOpenTask={vi.fn()} onAddRelation={add} onRemoveRelation={vi.fn()} /></TaskboardLanguageProvider>);
+  fireEvent.click(screen.getByRole("button", { name: "添加阻塞议题" }));
+  fireEvent.click(await screen.findByRole("option", { name: /API-1.*Backend contract/ }));
+  expect(add).toHaveBeenCalledWith(task, "blocked_by", blocker.id);
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: "添加相关议题" }));
+  expect(screen.queryByRole("option", { name: /API-1/ })).toBeNull();
 });
