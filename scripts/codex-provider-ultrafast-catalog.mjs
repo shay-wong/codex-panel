@@ -1,11 +1,15 @@
 import { createServer } from "node:http";
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { CodexAppServer } from "../server/codex-app-server.mjs";
 import { codexExecutableInApp } from "../shared/codex-executable.mjs";
+import { executableCommand } from "../shared/executable-command.mjs";
+import { withoutPanelLauncherEnvironment } from "../shared/codex-environment.mjs";
 
 async function readUserConfigLayer(client) {
   const { layers } = await client.request("config/read", { includeLayers: true });
@@ -40,6 +44,94 @@ export function withUltrafastCatalog(catalog) {
     return { ...model, service_tiers: [...(model.service_tiers ?? []),
       { id: "ultrafast", name: "Ultrafast", description: "" }] };
   }) };
+}
+
+async function modelContextState({ executable, dataDirectory, processEnv, cwd }, client) {
+  const { config, layers, origins } = await client.request("config/read", { includeLayers: true });
+  const userLayer = layers?.find(layer => layer.name?.type === "user" && !layer.name.profile);
+  if (!userLayer?.name.file || !userLayer.version) throw new Error("无法定位 Codex 用户配置");
+  const statePath = path.join(dataDirectory, "model-context.json");
+  const catalogPath = path.join(dataDirectory, "model-context-catalog.json");
+  let state = await readJson(statePath, null);
+  if (!state || config.model_catalog_json !== catalogPath) {
+    const args = ["debug", "models"];
+    const provider = config.model_provider ?? "openai";
+    const ultrafast = (await readJson(path.join(dataDirectory, "ultrafast-catalog.json"), null))?.providers?.[provider];
+    if (!config.model_catalog_json && ultrafast && ultrafast.url === config.model_providers?.[provider]?.model_catalog_url) {
+      // Keep the source catalog independent of the Ultrafast preference.
+      if (ultrafast.originalUrl) args.push("-c", `model_providers.${JSON.stringify(provider)}.model_catalog_url=${JSON.stringify(ultrafast.originalUrl)}`);
+      else args.push("--bundled");
+    }
+    const command = executableCommand(executable, args);
+    const { stdout } = await promisify(execFile)(command.executable, command.args, {
+      cwd, env: withoutPanelLauncherEnvironment(processEnv),
+      timeout: 30_000, maxBuffer: 32 * 1024 * 1024, windowsHide: true,
+    });
+    state = {
+      catalog: JSON.parse(stdout), contextWindows: {},
+      originalCatalog: userLayer.config?.model_catalog_json ?? null,
+    };
+  }
+  if (!Array.isArray(state.catalog?.models)) throw new Error("Codex 模型目录格式无效");
+  return { config, userLayer, origins, state, statePath, catalogPath };
+}
+
+export async function modelContextSettings({
+  executable, dataDirectory, processEnv = process.env, cwd,
+}, contextWindows) {
+  await mkdir(dataDirectory, { recursive: true });
+  dataDirectory = realpathSync(dataDirectory);
+  const client = new CodexAppServer({ executable, processEnv, cwd });
+  try {
+    const { config, userLayer, origins, state, statePath, catalogPath } = await modelContextState(
+      { executable, dataDirectory, processEnv, cwd }, client,
+    );
+    if (contextWindows !== undefined) {
+      if (!contextWindows || typeof contextWindows !== "object" || Array.isArray(contextWindows)) {
+        throw new Error("上下文设置必须是模型 ID 与 token 数的对应表");
+      }
+      const slugs = new Set(state.catalog.models.map(model => model.slug));
+      for (const [model, size] of Object.entries(contextWindows)) {
+        if (!slugs.has(model)) throw new Error(`模型目录中没有 ${model}`);
+        if (!Number.isSafeInteger(size) || size <= 0) throw new Error(`${model} 的 token 数必须为正整数`);
+      }
+      const hasOverrides = Object.keys(contextWindows).length > 0;
+      if (hasOverrides && config.model_context_window != null) {
+        throw new Error("请先移除 Codex 的全局 model_context_window，否则会覆盖每个模型的上下文设置");
+      }
+      const origin = origins?.model_catalog_json?.name;
+      if (origin && !(origin.type === "system"
+        || origin.type === "user" && !origin.profile && origin.file === userLayer.name.file)) {
+        throw new Error("模型目录由更高优先级配置管理，无法保存上下文设置");
+      }
+      state.contextWindows = contextWindows;
+      if (hasOverrides) {
+        const catalog = { ...state.catalog, models: state.catalog.models.map(model => (
+          Object.hasOwn(contextWindows, model.slug)
+            ? { ...model, context_window: contextWindows[model.slug] } : model
+        )) };
+        await writeFile(statePath + ".tmp", JSON.stringify(state), { mode: 0o600 });
+        await rename(statePath + ".tmp", statePath);
+        await writeFile(catalogPath + ".tmp", JSON.stringify(catalog), { mode: 0o600 });
+        await rename(catalogPath + ".tmp", catalogPath);
+      }
+      const value = hasOverrides ? catalogPath : state.originalCatalog;
+      if ((config.model_catalog_json ?? null) !== value) {
+        const result = await client.request("config/batchWrite", {
+          edits: [{ keyPath: "model_catalog_json", value, mergeStrategy: "replace" }],
+          filePath: userLayer.name.file, expectedVersion: userLayer.version, reloadUserConfig: true,
+        });
+        if (result.status !== "ok") throw new Error("上下文配置被更高优先级设置覆盖");
+      }
+    }
+    return {
+      models: state.catalog.models.map(model => ({
+        slug: model.slug, displayName: model.display_name ?? model.slug,
+        contextWindow: model.context_window ?? null,
+      })),
+      contextWindows: state.contextWindows,
+    };
+  } finally { await client.close(); }
 }
 
 // Read the public ModelInfo catalog compiled into this exact CLI, including its
@@ -132,13 +224,22 @@ export function createUltrafastCatalogAdapter({
     state ??= await readJson(stateFile, { providers: {} });
     for (const [name, entry] of Object.entries(state.providers)) sessionProviders.set(name, entry);
     const enabled = preferences.customProviderUltrafast === true;
-    if (!enabled && Object.keys(state.providers).length === 0) return;
+    const contexts = await readJson(path.join(dataDirectory, "model-context.json"), null);
+    if (!enabled && Object.keys(state.providers).length === 0 && !contexts) return;
     const client = createClient();
     try {
       const { config, layers, origins } = await client.request("config/read", { includeLayers: true });
       const userLayer = layers?.find(layer => layer.name?.type === "user" && !layer.name.profile);
       const provider = config.model_provider ?? "openai";
-      const active = enabled && provider !== "openai" && config.model_providers?.[provider];
+      let active = enabled && provider !== "openai" && config.model_providers?.[provider];
+      if (contexts && config.model_catalog_json === path.join(realpathSync(dataDirectory), "model-context-catalog.json")) {
+        const source = active ? withUltrafastCatalog(contexts.catalog) : contexts.catalog;
+        const combined = { ...source, models: source.models.map(model => Object.hasOwn(contexts.contextWindows, model.slug)
+          ? { ...model, context_window: contexts.contextWindows[model.slug] } : model) };
+        await writeFile(config.model_catalog_json + ".tmp", JSON.stringify(combined), { mode: 0o600 });
+        await rename(config.model_catalog_json + ".tmp", config.model_catalog_json);
+        active = false;
+      }
       if (active && config.model_catalog_json) {
         throw new Error("Ultrafast requires service_tiers in your existing model_catalog_json");
       }
@@ -208,13 +309,22 @@ export function createUltrafastCatalogAdapter({
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [operation, appPath] = process.argv.slice(2);
-  if (!["read-discovery", "enable-discovery", "remove-discovery"].includes(operation) || !appPath) {
-    throw new Error("Expected read-discovery, enable-discovery or remove-discovery and a Codex application path");
+  const [operation, appPath, dataDirectory] = process.argv.slice(2);
+  if (!["read-contexts", "write-contexts", "read-discovery", "enable-discovery", "remove-discovery"].includes(operation) || !appPath) {
+    throw new Error("Expected a model configuration operation and a Codex application path");
   }
   const client = new CodexAppServer({ executable: codexExecutableInApp(appPath) });
   try {
-    if (operation === "read-discovery") console.log(JSON.stringify(await readModelDiscovery(client)));
+    if (operation === "read-contexts" || operation === "write-contexts") {
+      if (!dataDirectory || !path.isAbsolute(dataDirectory)) throw new Error("需要绝对路径的 Panel 数据目录");
+      let input;
+      if (operation === "write-contexts") {
+        let source = "";
+        for await (const chunk of process.stdin) source += chunk;
+        input = JSON.parse(source);
+      }
+      console.log(JSON.stringify(await modelContextSettings({ executable: codexExecutableInApp(appPath), dataDirectory }, input)));
+    } else if (operation === "read-discovery") console.log(JSON.stringify(await readModelDiscovery(client)));
     else await setModelDiscovery(client, operation === "enable-discovery");
   }
   catch (error) { console.error(error.message); process.exitCode = 1; }

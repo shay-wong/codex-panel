@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Add per-model context window settings in Preferences, with catalog defaults, restore support, and a Codex restart reminder. Context settings compose with the existing custom-provider Ultrafast preference.
+
 ## 0.4.12-fork
 
 - Show conversation-menu loading status in Panel and allow a manual retry without restarting Codex.

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { AlertDialog, Badge, Box, Button, Callout, Card, Flex, Heading, IconButton, Separator, Switch, Tabs, Text, Tooltip } from "@radix-ui/themes";
 import { LinearIcon } from "../../web/src/components/LinearIcon";
+import { ModelContextSettings } from "./ModelContextSettings";
 
 export type LauncherSnapshot = {
   phase: string;
@@ -55,7 +56,8 @@ export function App() {
   const [feedback, setFeedback] = useState<Record<string, "success" | "failed">>({});
   const [savingPreference, setSavingPreference] = useState(false);
   const [ultrafastChoice, setUltrafastChoice] = useState<boolean | null>(null);
-  const [restartReminder, setRestartReminder] = useState(false);
+  const [restartReminder, setRestartReminder] = useState("");
+  const [modelContextOpen, setModelContextOpen] = useState(false);
   const [workflowUrl, setWorkflowUrl] = useState("");
   const [view, setView] = useState("overview");
   const workflowFrame = useRef<HTMLIFrameElement>(null);
@@ -178,7 +180,7 @@ export function App() {
         setState(current => current && ({ ...current, preferences: next }));
       }
       setUltrafastChoice(null);
-      if (key === "customProviderUltrafast") setRestartReminder(true);
+      if (key === "customProviderUltrafast") setRestartReminder("Ultrafast");
     } catch (cause) { setError(String(cause)); }
     finally { setSavingPreference(false); }
   }
@@ -248,10 +250,10 @@ export function App() {
       {restartReminder && <Callout.Root size="1" role="status" mb="4">
         <Callout.Icon><LinearIcon name="alert" /></Callout.Icon>
         <Box>
-          <Callout.Text>Ultrafast 设置已保存。请重启 Codex，使核心模型能力和配置完整生效；重启会中断正在运行的任务。</Callout.Text>
+          <Callout.Text>{restartReminder} 设置已保存。请重启 Codex，使核心模型能力和配置完整生效；重启会中断正在运行的任务。</Callout.Text>
           <Flex gap="3" mt="3">
             <Button size="1" variant="soft" {...actionProps("restart_codex", savingPreference)}>立即重启 Codex</Button>
-            <Button size="1" variant="ghost" onClick={() => setRestartReminder(false)}>稍后</Button>
+            <Button size="1" variant="ghost" onClick={() => setRestartReminder("")}>稍后</Button>
           </Flex>
         </Box>
       </Callout.Root>}
@@ -315,6 +317,9 @@ export function App() {
                 <Setting id="autoOpenPanel" title="连接后打开任务面板" detail={preferences?.autoConnectCodex ? "连接就绪后自动显示 Panel" : "需先开启“启动时连接 Codex”"} checked={preferences?.autoOpenPanel ?? false} disabled={!preferences?.autoConnectCodex || savingPreference} onChange={enabled => void savePreference("autoOpenPanel", enabled)} />
               </div>
             </section>
+            <section className="preference-section" aria-labelledby="modelContextTitle">
+              <Card><Flex className="preference-row" align="center" justify="between" gap="3"><Box><Heading as="h3" size="2" id="modelContextTitle">模型上下文</Heading><Text as="p" size="1" color="gray" mt="1">为每个模型设置 context token 数，留空使用默认值</Text></Box><Button variant="soft" disabled={!state || savingPreference} onClick={() => setModelContextOpen(true)}>配置上下文<LinearIcon name="chevronRight" /></Button></Flex></Card>
+            </section>
             <section className="preference-section" aria-labelledby="displayTitle">
               <Heading as="h2" size="2" id="displayTitle" mb="2">显示与系统</Heading>
               <div className="preference-rows">
@@ -350,6 +355,7 @@ export function App() {
           </Tabs.Content>
     </main>
     </Tabs.Root>
+    <ModelContextSettings open={modelContextOpen} onOpenChange={setModelContextOpen} onSaved={() => setRestartReminder("模型上下文")} />
     <AlertDialog.Root open={ultrafastChoice !== null} onOpenChange={open => { if (!open && !savingPreference) setUltrafastChoice(null); }}>
       <AlertDialog.Content maxWidth="520px" onOpenAutoFocus={event => { event.preventDefault(); keepDiscoveryButton.current?.focus(); }}>
         <AlertDialog.Title>{ultrafastChoice ? "开启 Ultrafast" : "关闭 Ultrafast"}</AlertDialog.Title>

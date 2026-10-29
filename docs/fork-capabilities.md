@@ -14,6 +14,8 @@ The project model picker supports **6 Astra** (`gpt-6-astra`) with `low`, `mediu
 
 This page indexes the user-visible differences maintained by `shay-wong/codex-panel` relative to `chuspeeism/dashi-taskboard`.
 
+See [per-model context windows](#per-model-context-windows) for the model context settings in Preferences.
+
 New Jira planning conversations are named `Jira ID · Jira 规划 · task title`; replanning uses `Jira ID · Jira 重新规划 · task title`. Ordinary task conversations use `task ID · task title`. After the prepared draft is sent, Panel validates the actual conversation and sets its native title, then reads the title back before reporting completion. A missing sidebar row does not block this confirmation. Existing conversations are not bulk-renamed.
 
 ## Conversation tabs and split view
@@ -300,6 +302,16 @@ Board filters offer default, name and priority sorting; display settings optiona
 Tasks and comments can carry an external session via `panelctl ... --agent-platform claude|pi|agy|grok --session-id ID`. Pi accepts the original session file path. External session attribution is separate from native Codex bindings; the UI copies a POSIX-shell resume command rather than opening an external app. Existing native Codex conversation actions remain available.
 
 Previously uploaded files missing from task or comment text are shown once as fallback attachments. Editing the body consumes that fallback so deliberately removed files are not repeatedly appended. In embedded Codex, ordinary file cards show local path and reveal actions on hover when a device-local copy is available; image and video controls retain their own behavior. Jira Cloud uses token-based enhanced-search pagination while Server/Data Center retains its existing search API.
+
+## Per-model context windows
+
+Open **Preferences → 模型上下文 → 配置上下文** in the Panel App. Each catalog model has its own token field; the placeholder shows its catalog default. Enter a positive whole number, save, then restart Codex using the reminder or restart later. Clearing a field restores that model's default. **全部使用默认值** clears every override; saving restores the previous catalog configuration.
+
+The official [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference) defines `model_context_window` as a single global override. Panel uses the official [model catalog](https://learn.chatgpt.com/docs/model-catalogs) mechanism instead: it saves a complete catalog snapshot in the Panel data directory and changes only the selected models' `context_window` values, then sets `model_catalog_json` through Codex's native configuration API. A global `model_context_window` must be removed before saving per-model values because it takes precedence. Higher-priority catalog configuration must be changed at its source. The current CLI must support `debug models` and the native configuration API.
+
+These values describe the context available to Codex; they do not increase a provider's actual capacity. Codex may reserve part of the window: with the verified CLI `0.165.0-alpha.1.2`, a configured value of `131072` reports `124518` usable tokens (95%). The saved catalog takes precedence over remote catalog discovery and stays a snapshot. To refresh it after a CLI or provider catalog update, clear and save all overrides, reopen the dialog, and configure the new catalog. Panel preserves the original file and configuration for restoration. Its own managed snapshot composes with the custom-provider Ultrafast preference at startup and on preference changes; externally managed catalogs retain the existing Ultrafast requirements below.
+
+The direct path was verified in a disposable HOME, CODEX_HOME and workspace with a local simulated Responses API: Astra and Sol used distinct context sizes, unrelated catalog fields stayed intact, and clearing settings restored the original catalog. The Launcher form was verified in an isolated browser preview. No real provider capacity, installed App restart or Windows/Linux runtime behavior was tested.
 
 ## Custom-provider Ultrafast
 
