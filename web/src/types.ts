@@ -525,6 +525,13 @@ export interface Task {
   updatedAt: string;
 }
 
+export interface JiraPlanningThread {
+  id: string;
+  title: string;
+  projectId: string;
+  jiraTasks: Array<Pick<Task, "id" | "identifier" | "title" | "externalKey">>;
+}
+
 export interface JiraTaskContext {
   jira: Task | null;
   projects: Project[];
@@ -536,6 +543,9 @@ export interface JiraTaskContext {
   lifecycle: JiraLifecycle | null;
   autoCompletion: JiraAutoCompletion | null;
   conversationArchive: JiraConversationArchive | null;
+  planningThreads?: JiraPlanningThread[];
+  sharedPlanningJira?: JiraPlanningThread["jiraTasks"];
+  sharedExecutionJira?: JiraPlanningThread["jiraTasks"];
 }
 
 export interface JiraConversationArchive {
@@ -544,6 +554,7 @@ export interface JiraConversationArchive {
     | "jira_not_done"
     | "no_linked_issues"
     | "linked_issues_incomplete"
+    | "shared_planning_incomplete"
     | "no_related_conversations"
     | "already_archived"
     | null;

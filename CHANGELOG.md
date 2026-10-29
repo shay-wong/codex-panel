@@ -8,6 +8,14 @@ This file records user-visible changes introduced by the fork.
 
 - Add per-model context window settings in Preferences, with catalog defaults, restore support, and a Codex restart reminder. Context settings compose with the existing custom-provider Ultrafast preference.
 
+- Allow native Blocks / Blocked by relations across repositories through the issue picker, API and CLI; execution waits for unfinished prerequisites.
+
+- Fix cross-repository shared Jira planning in both the conversation picker and explicit CLI binding; continuing a changed plan stays in its shared conversation without changing execution repositories.
+
+- Let Jira requirements sharing a plan explicitly group execution by repository, reusing conversations and worktrees sequentially while preserving each requirement’s authorization and progress.
+
+- Allow related Jira requirements to explicitly share an existing planning conversation while keeping their Specs, publication and execution independent; shared conversations stay available until all linked work is complete.
+
 ## 0.4.12-fork
 
 - Show conversation-menu loading status in Panel and allow a manual retry without restarting Codex.

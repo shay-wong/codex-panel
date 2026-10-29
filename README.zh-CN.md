@@ -32,6 +32,12 @@ macOS Release 提供 Apple Silicon 与 Intel 通用 DMG，使用临时签名（a
 
 未关联仓库时也可“识别仓库并开始”：Codex 只读识别仓库及各自范围，明确后进入现有执行队列；有歧义时在详情内补充回答，这条执行路径不要求 Spec。单个已关联仓库直接执行，多个已关联仓库保留选择并分别确定范围。自动识别本身不会创建规划会话，但开始执行后仍可点击“AI 规划”，创建正式规划会话并保存 Spec，已有执行工作会继续保留。
 
+共用规划后，可在“管理 Jira 关联”中点击“同仓库一起实现”，让同仓库任务依次复用执行会话、分支和 worktree。该操作不启动执行，各 Jira 的授权和进度仍独立，已有执行绑定保持不变。
+
+规划会话可跨仓库共用，页面选择和显式 `panelctl conversation bind JIRA_ID`（尚无计划时）均支持；各 Jira 的执行仓库关联不变。
+
+相关 Jira 可在详情中选择“加入已有规划会话”，共享讨论上下文，各自的 Spec、发布和执行仍独立；不会根据 Jira 关联自动合并会话。
+
 Jira AI 规划可根据需求与仓库文档识别并关联一个或多个仓库：明确时自动保存并记录理由，有歧义才询问，保留已有手动关联；原生 Plan 模式退出后才写入。无需配置固定 Jira 项目映射。参见 [Jira 仓库关联](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues)。
 
 Jira 会话绑定、规划初始化和聊天模型选择统一使用分页模型元数据，避免导出完整模型提示词过大导致失败。详见 [Jira 规划与绑定](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues)。
@@ -78,6 +84,8 @@ Jira 设置还可以开启默认关闭的“自动归档对话”。开启后，
 原生会话活动与看板共用实时会话进度；无法读取时显示“状态未知”，不再误报“空闲”。
 
 看板筛选支持名称和优先级排序，显示设置可开启创建日期。有已同步 Jira 议题时，筛选菜单提供“Jira 项目”，可多选 JR、JD 等项目编号，或选择“全部项目”恢复显示。普通任务详情可创建子任务，仪表盘按顶层任务等权计算进度并计入子任务完成比例。任务和评论可记录外部 Agent 会话并复制终端恢复命令，详见[任务组织与外部会话](docs/fork-capabilities.md#task-organization-and-external-sessions)。
+
+在详情的 **关系 → 添加阻塞议题 / 添加被阻塞议题** 中可选择其他仓库的任务。双方详情均显示原生依赖，执行会等待未完成的前置任务；父子和“相关议题”关系仍限同一项目。CLI 的 `panelctl issue relation add --type blocks|blocked_by` 同样支持，详见[跨仓库阻塞关系](docs/fork-capabilities.md#cross-repository-blocking)。
 
 ## 环境要求
 

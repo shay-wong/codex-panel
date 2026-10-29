@@ -2544,14 +2544,14 @@ function relationEndpoints(type, taskId, relatedTaskId) {
   );
 }
 
-async function assertRelationTasks(env, taskId, relatedTaskId, expectedVersion) {
+async function assertRelationTasks(env, taskId, relatedTaskId, expectedVersion, type) {
   const task = await requireTaskRow(env, taskId);
   const relatedTask = await requireTaskRow(env, relatedTaskId);
   assertTaskVersion(task, expectedVersion);
   if (task.id === relatedTask.id) {
     throw new ApiError(400, "SELF_RELATION", "An issue cannot be related to itself");
   }
-  if (task.project_id !== relatedTask.project_id) {
+  if (task.project_id !== relatedTask.project_id && type !== "blocks" && type !== "blocked_by") {
     throw new ApiError(
       400,
       "CROSS_PROJECT_RELATION",
@@ -2567,6 +2567,7 @@ async function addRelation(env, taskId, type, relatedTaskId, input, actor) {
     taskId,
     relatedTaskId,
     input.version,
+    type,
   );
   const endpoints = relationEndpoints(type, task.id, relatedTask.id);
   const timestamp = now();
@@ -2716,6 +2717,7 @@ async function removeRelation(env, taskId, type, relatedTaskId, input, actor) {
     taskId,
     relatedTaskId,
     input.version,
+    type,
   );
   const endpoints = relationEndpoints(type, task.id, relatedTask.id);
   const relation = await env.DB.prepare(`

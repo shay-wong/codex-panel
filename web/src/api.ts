@@ -805,6 +805,7 @@ export async function startJiraPlanning(
   task: Pick<Task, "id" | "version">,
   threadId?: string,
   projectId?: string | null,
+  reuseThread = false,
 ): Promise<{
   context: JiraTaskContext;
   composerText?: string;
@@ -824,9 +825,21 @@ export async function startJiraPlanning(
         version: task.version,
         ...(threadId ? { threadId } : {}),
         ...(projectId ? { projectId } : {}),
+        ...(reuseThread ? { reuseThread: true } : {}),
       }),
     },
   );
+}
+
+export async function setJiraSharedExecution(
+  task: Pick<Task, "id" | "version">,
+  threadId: string,
+): Promise<JiraTaskContext> {
+  const data = await request<{ context: JiraTaskContext }>(
+    `/api/tasks/${encodeURIComponent(task.id)}/jira-shared-execution`,
+    { method: "POST", body: JSON.stringify({ version: task.version, threadId }) },
+  );
+  return data.context;
 }
 
 export async function addJiraTaskLink(

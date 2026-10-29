@@ -29,6 +29,7 @@ import {
   resolvePanelUrl,
   saveJiraTaskProjects,
   saveTaskPlan,
+  setJiraSharedExecution,
   startJiraPlanning,
   startSimpleJiraTask,
   uploadAttachment,
@@ -55,6 +56,7 @@ import type {
   IssueRelationOrigin,
   IssueRelationType,
   JiraTaskContext,
+  JiraPlanningThread,
   Project,
   Recurrence,
   Task,
@@ -175,6 +177,7 @@ interface TaskDetailProps {
       text: string;
       skills: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
       replanLifecycleVersion?: number;
+      existingThreadId?: string;
       collaborationMode?: "plan" | "default";
     },
   ) => Promise<void>;
@@ -578,11 +581,16 @@ export function TaskDetail({
   const [jiraManagerOpen, setJiraManagerOpen] = useState(false);
   const [jiraPlanningProjectAction, setJiraPlanningProjectAction] = useState<"planning" | "replan" | null>(null);
   const [jiraPlanningProjectSearch, setJiraPlanningProjectSearch] = useState("");
+  const [jiraPlanningThreadOpen, setJiraPlanningThreadOpen] = useState(false);
+  const [jiraPlanningThreadSearch, setJiraPlanningThreadSearch] = useState("");
+  const [jiraPlanningThreadError, setJiraPlanningThreadError] = useState<TaskDetailError | null>(null);
   const [jiraSimpleStartSaving, setJiraSimpleStartSaving] = useState(false);
   const [jiraRepositoryQuestion, setJiraRepositoryQuestion] = useState("");
   const [jiraRepositoryAnswer, setJiraRepositoryAnswer] = useState("");
   const [jiraRepositoryClarification, setJiraRepositoryClarification] = useState("");
   const [jiraPlanningSaving, setJiraPlanningSaving] = useState(false);
+  const [jiraSharedExecutionSaving, setJiraSharedExecutionSaving] = useState(false);
+  const [jiraSharedExecutionError, setJiraSharedExecutionError] = useState<TaskDetailError | null>(null);
   const [jiraLifecycleSaving, setJiraLifecycleSaving] = useState<
     "pause" | "keep" | "rework" | "replan" | "migrate" | null
   >(null);
@@ -659,6 +667,8 @@ export function TaskDetail({
       setDescriptionSegments(createInlineMediaSegments(task.description, referenceTasks));
     }
     if (taskChanged) {
+      setJiraPlanningThreadOpen(false);
+      setJiraSharedExecutionError(null);
       setJiraRepositoryQuestion("");
       setJiraRepositoryAnswer("");
       setJiraRepositoryClarification("");
@@ -1044,6 +1054,11 @@ export function TaskDetail({
   function requestJiraPlanning() {
     if (jiraPlanningSaving || openingThread) return;
     if (jiraContext?.plan && !jiraContext.plan.needsReview && openExistingJiraPlanning()) return;
+    const existingPlanningThread = jiraContext?.planningThreads?.find(thread => thread.id === jiraContext.plan?.threadId);
+    if (existingPlanningThread) {
+      void joinJiraPlanning(existingPlanningThread);
+      return;
+    }
     const linkedProjects = jiraContext?.projects ?? [];
     if (linkedProjects.length > 1) {
       setJiraPlanningProjectSearch("");
@@ -1080,6 +1095,57 @@ export function TaskDetail({
       setJiraContext(await getJiraTaskContext(currentTask.id).catch(() => jiraContext));
     } finally {
       setJiraPlanningSaving(false);
+    }
+  }
+
+  async function joinJiraPlanning(thread: JiraPlanningThread) {
+    if (jiraPlanningSaving || openingThread) return;
+    setJiraPlanningThreadError(null);
+    setJiraPlanningSaving(true);
+    onError(null);
+    try {
+      const latest = await getJiraTaskContext(currentTask.id);
+      if (!latest.jira) return;
+      const result = await startJiraPlanning(latest.jira, thread.id, thread.projectId, true);
+      setJiraContext(result.context);
+      if (result.context.jira) setCurrentTask(result.context.jira);
+      if (result.context.jira && result.composerText && result.skills) {
+        await onOpenJiraPlanning(result.context.jira, thread.projectId === "local" ? null : thread.projectId, {
+          text: result.composerText,
+          skills: result.skills,
+          collaborationMode: result.collaborationMode,
+          existingThreadId: thread.id,
+        });
+      }
+      setJiraPlanningThreadOpen(false);
+    } catch (error) {
+      onError(messageFor(error));
+      setJiraPlanningThreadError(messageFor(error));
+      setJiraContext(await getJiraTaskContext(currentTask.id).catch(() => jiraContext));
+    } finally {
+      onAiChatThreadsRefresh();
+      setJiraPlanningSaving(false);
+    }
+  }
+
+  async function enableJiraSharedExecution() {
+    if (jiraSharedExecutionSaving) return;
+    setJiraSharedExecutionSaving(true);
+    setJiraSharedExecutionError(null);
+    try {
+      const latest = await getJiraTaskContext(currentTask.id);
+      setJiraContext(latest);
+      if (!latest.jira || !latest.plan?.threadId) {
+        setJiraSharedExecutionError(["规划会话已变化，请重新选择共用规划会话。", "The planning conversation changed. Select a shared planning conversation again."]);
+        return;
+      }
+      const context = await setJiraSharedExecution(latest.jira, latest.plan.threadId);
+      setJiraContext(context);
+      if (context.jira) setCurrentTask(context.jira);
+    } catch (error) {
+      setJiraSharedExecutionError(messageFor(error));
+    } finally {
+      setJiraSharedExecutionSaving(false);
     }
   }
 
@@ -1700,7 +1766,18 @@ export function TaskDetail({
         : jiraContext?.simpleStart
           ? text("继续规划", "Continue planning")
         : text("AI 规划", "Plan with AI");
-  const jiraArchiveTitle = jiraContext?.conversationArchive?.reason === "jira_not_done"
+  const sharedExecutionIds = new Set(jiraContext?.sharedExecutionJira?.map((jira) => jira.id));
+  const jiraSharedExecutionEnabled = Boolean(jiraContext?.jira
+    && sharedExecutionIds.has(jiraContext.jira.id)
+    && jiraContext.sharedPlanningJira?.every((jira) => sharedExecutionIds.has(jira.id)));
+  const sharedPlanningThreads = jiraContext?.planningThreads ?? [];
+  const planningThreadLabel = (thread: JiraPlanningThread) =>
+    `${thread.jiraTasks.map((jira) => jira.externalKey ?? jira.identifier).join("、")} · ${thread.title}`;
+  const visiblePlanningThreads = sharedPlanningThreads.filter((thread) =>
+    planningThreadLabel(thread).toLocaleLowerCase().includes(jiraPlanningThreadSearch.trim().toLocaleLowerCase()));
+  const jiraArchiveTitle = jiraContext?.conversationArchive?.reason === "shared_planning_incomplete"
+    ? text("共用此规划会话的其他 Jira 尚未完成", "Other Jira issues sharing this planning conversation are not complete")
+    : jiraContext?.conversationArchive?.reason === "jira_not_done"
     ? text("Jira 完成后才能归档对话", "Complete Jira before archiving conversations")
     : jiraContext?.conversationArchive?.reason === "no_linked_issues"
       ? text("至少关联一个 Issue 后才能归档", "Link at least one issue before archiving")
@@ -2466,6 +2543,20 @@ export function TaskDetail({
                       : <ConversationIcon />}
                     <span>{jiraPlanningLabel}</span>
                   </button>
+                  {!jiraContext?.plan && <button
+                    className="detail-open-thread-action"
+                    type="button"
+                    disabled={jiraContextLoading || jiraPlanningSaving || openingThread || jiraSimpleStartSaving
+                      || Boolean(jiraContext?.lifecycle?.duplicateOf) || Boolean(jiraLifecyclePending)}
+                    onClick={() => {
+                      setJiraPlanningThreadSearch("");
+                      setJiraPlanningThreadError(null);
+                      setJiraPlanningThreadOpen(true);
+                    }}
+                  >
+                    <ConversationIcon />
+                    <span>{text("加入已有规划会话", "Join existing planning conversation")}</span>
+                  </button>}
                   <button
                     className="detail-open-thread-action"
                     type="button"
@@ -3084,6 +3175,39 @@ export function TaskDetail({
         </div>
       </div>
 
+      {jiraPlanningThreadOpen && currentTask.source === "jira" && (
+        <div className="delete-backdrop jira-manager-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !jiraPlanningSaving) setJiraPlanningThreadOpen(false);
+        }}>
+          <div className="jira-manager-dialog jira-planning-project-dialog" role="dialog" aria-modal="true" aria-labelledby="jira-planning-thread-title">
+            <header>
+              <div>
+                <h2 id="jira-planning-thread-title">{text("加入已有规划会话", "Join existing planning conversation")}</h2>
+                <p>{text("可跨仓库共用讨论，各 Jira 的计划、执行仓库和状态仍独立。", "Share discussion across repositories while each Jira keeps its own plan, execution repositories and status.")}</p>
+              </div>
+              <button type="button" aria-label={text("关闭", "Close")} disabled={jiraPlanningSaving} onClick={() => setJiraPlanningThreadOpen(false)}><LinearIcon name="close" /></button>
+            </header>
+            <div className="jira-planning-project-body project-selection-menu">
+              <div className="project-menu-search">
+                <input autoFocus type="search" value={jiraPlanningThreadSearch} onChange={(event) => setJiraPlanningThreadSearch(event.target.value)}
+                  aria-label={text("筛选规划会话", "Filter planning conversations")} placeholder={text("搜索 Jira 编号或会话标题…", "Search Jira ID or conversation title…")} />
+              </div>
+              {jiraPlanningThreadError && <p className="comments-error" role="alert">{typeof jiraPlanningThreadError === "string" ? jiraPlanningThreadError : text(jiraPlanningThreadError[0], jiraPlanningThreadError[1])}</p>}
+              <div className="project-menu-list">
+                {visiblePlanningThreads.map((thread) => <button key={thread.id} type="button" disabled={jiraPlanningSaving || openingThread} onClick={() => void joinJiraPlanning(thread)}>
+                  <ConversationIcon /><span>{planningThreadLabel(thread)}</span>
+                </button>)}
+                {visiblePlanningThreads.length === 0 && <div className="project-menu-empty">{text("没有可用的规划会话", "No available planning conversations")}</div>}
+              </div>
+            </div>
+            <footer>
+              <span>{text("只填入规划内容，不自动发送", "Prefill planning instructions without sending")}</span>
+              <button className="button secondary" type="button" disabled={jiraPlanningSaving} onClick={() => setJiraPlanningThreadOpen(false)}>{text("取消", "Cancel")}</button>
+            </footer>
+          </div>
+        </div>
+      )}
+
       {jiraPlanningProjectAction && currentTask.source === "jira" && (
         <div className="delete-backdrop jira-manager-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget && !jiraPlanningSaving) {
@@ -3229,6 +3353,7 @@ export function TaskDetail({
                       : text("尚未同步", "Not synced")}</strong>
                   {currentTask.externalSyncError && <small>{currentTask.externalSyncError}</small>}
                 </div>
+                {jiraSharedExecutionError && <p className="comments-error" role="alert">{typeof jiraSharedExecutionError === "string" ? jiraSharedExecutionError : text(jiraSharedExecutionError[0], jiraSharedExecutionError[1])}</p>}
                 {jiraContext?.plan && (
                   <div className={`jira-plan-summary${jiraContext.plan.needsReview ? " needs-review" : ""}`}>
                     <div>
@@ -3238,6 +3363,17 @@ export function TaskDetail({
                         {text("打开对话", "Open conversation")}
                       </button>
                     </div>
+                    {(jiraContext.sharedPlanningJira?.length ?? 0) > 1 && <p>{text("共用规划会话：", "Shared planning conversation: ")}{jiraContext.sharedPlanningJira!.map((jira) => jira.externalKey ?? jira.identifier).join("、")}</p>}
+                    {(jiraContext.sharedPlanningJira?.length ?? 0) > 1 && <>
+                      <p>{text("各 Jira 当前发布批次的同仓库任务共用执行会话和工作树；依次执行，分别授权。", "Current published tickets share an execution conversation and worktree per repository. Tasks run in order; each Jira still requires separate authorization.")}</p>
+                      <p>{text("已有执行绑定会保留。", "Existing execution bindings are preserved.")}</p>
+                      {jiraSharedExecutionEnabled
+                        ? <p role="status">{text("已设置同仓库一起实现", "Shared execution within each repository is enabled")}</p>
+                        : <button className="button secondary" type="button" disabled={jiraSharedExecutionSaving} aria-busy={jiraSharedExecutionSaving} onClick={() => void enableJiraSharedExecution()}>
+                          <LinearIcon name="link" />
+                          {jiraSharedExecutionSaving ? text("设置中…", "Saving…") : text("同仓库一起实现", "Implement together in each repository")}
+                        </button>}
+                    </>}
                     {jiraContext.plan.needsReview && <p>{text(
                       "Jira 内容或关联仓库已变化；未开始 Issue 已暂停进入执行，已开始成果只告警且不会自动取消。",
                       "Jira content or linked repositories changed. Unstarted issues are paused; started work is warned and will not be canceled automatically.",

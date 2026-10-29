@@ -240,6 +240,14 @@ Ordinary main tasks can be split into several sub-issues after approval. Keep th
 
 ## Link Jira requirements to repository issues
 
+After joining a shared plan, open **Manage Jira links** and choose **Implement together in the same repository**. This explicitly groups the currently shared Jira plans for execution; joining a plan alone does not enable it, and newly joined requirements need the action again. Authorized tickets from each current publication in the same repository run sequentially through the native queue or **Prepare execution**, reusing the saved conversation, branch and worktree. Different repositories remain separate. The action does not start work or authorize another Jira; each requirement keeps its own publication, pause, progress and acceptance. Existing bindings are preserved, and conflicting execution contexts require selecting the intended context rather than silently moving work. Replanning resets the new plan’s participation; existing shared bindings still prevent concurrent use and premature cleanup.
+
+共用规划后，在“管理 Jira 关联”点击“同仓库一起实现”，明确将当前共用的 Jira 计划纳入执行组；单纯共用规划不会开启此功能，新加入的需求须再次明确纳入。当前发布批次的同仓库已授权任务通过原生队列或“准备执行”按顺序复用会话、分支和 worktree，不同仓库分别执行。该操作不启动任务、不替其他 Jira 授权，各需求的发布、暂停、进度和验收独立。已有绑定保持不变，存在多个执行上下文时须明确选择，不自动迁移。重新规划重置新计划的参与状态，已实际共用的上下文仍受到串行执行和清理保护。
+
+For related requirements, open a Jira detail with no existing plan and choose **Join existing planning conversation**. Select any active planning conversation, including one belonging to another repository. The conversation location does not change the Jira execution repositories. Panel adds the Jira requirement to that conversation and prefills its planning instructions without sending or renaming the conversation. Each Jira keeps its own Spec, plan version, publication and execution Issues. Read `jira planning get JIRA_ID` separately before saving or publishing for that Jira; `context.sharedPlanningJira` identifies the shared requirements. Jira links do not join conversations automatically. A shared conversation cannot be archived while another linked Jira or its execution work is incomplete. Existing plans are migrated without losing their publication records. Explicit `panelctl conversation bind JIRA_ID` also joins an existing planning conversation across repositories when the Jira has no plan; existing plans remain unchanged.
+
+相关需求可在尚无计划的 Jira 详情中选择“加入已有规划会话”，再选择活跃规划会话，可跨仓库共用；会话所属仓库不改变 Jira 的执行仓库。Panel 关联该 Jira 并填入规划草稿，不自动发送、不重命名会话。每个 Jira 独立保存 Spec、计划版本、发布和执行 Issue；保存或发布前分别读取对应 `JIRA_ID`，`context.sharedPlanningJira` 列出共用需求。Jira 关联不会自动合并会话，共用的其他 Jira 或执行工作未完成时不得归档共享会话，旧计划迁移保留发布记录。Jira 尚无计划时，显式 `panelctl conversation bind JIRA_ID` 同样支持加入跨仓库的已有规划会话；已有计划保持不变。
+
 Local planning and execution drafts use the visible Codex composer, ignoring hidden composers retained by other chats. Once the launcher confirms the Skills and prompt, Panel does not require the sent content to remain in the composer. Sending immediately after prefill still proceeds through conversation confirmation and linking; actual prefill failures remain visible.
 
 After an explicit request, `panelctl conversation bind JIRA_KEY` binds the current Codex conversation and initializes a missing planning record, including when the conversation was already bound. Read `jira planning get` again for `plan.version` before saving the Spec and publishing tickets. An existing plan, its Spec, and its planning conversation remain unchanged; binding does not send a prompt, start execution, or change Jira status.
@@ -336,3 +344,9 @@ The existing preference save and heartbeat path updates the native reactive capa
 ## Legacy automation migration compatibility
 
 When an older Panel installation has saved Codex automation records, migration reads and pauses those tasks through the current native local-automation service. Older Codex builds keep the fetch interface. A failed native write is reported without retrying through another interface. The current Panel-owned claim queue is unchanged.
+
+## Cross-repository blocking
+
+Issue details → Relations → Add blocker / Add blocked issue searches active issues across repository projects. Both endpoints show the dependency and open the target repository when clicked. Add and remove the same native relation through `POST` / `DELETE /api/tasks/:id/relations/blocks|blocked_by/:relatedId` or `panelctl issue relation add|remove --type blocks|blocked_by`. Each task keeps its repository, status and execution context. Cross-repository prerequisites must be done or canceled before execution; parent and related-issue links remain project-local. Local databases upgrade on startup; Cloud deployments must apply migration `0015_cross_project_blocking.sql` with the matching Worker.
+
+详情的“添加阻塞议题 / 添加被阻塞议题”按需读取跨仓库候选，创建后双方可查看并点击跳转；API 和 CLI 使用同一关系。任务仍保留各自仓库、状态和执行上下文，跨仓库前置任务完成或取消后才允许执行。父子和相关议题仍限同一项目。本地启动自动更新数据库约束；Cloud 需配套应用 `0015_cross_project_blocking.sql` 迁移。

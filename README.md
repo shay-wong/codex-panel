@@ -48,6 +48,12 @@ Ordinary tasks also support **Plan with AI**, persistent inline Specs, and appro
 
 New Jira planning conversations use `Jira ID · Jira 规划 · task title`; replanning uses `Jira ID · Jira 重新规划 · task title`. Panel confirms the saved native title after submission without requiring a rendered sidebar row.
 
+After sharing a planning conversation, choose **Implement together in the same repository** in **Manage Jira links** to reuse an execution conversation, branch and worktree per repository. This does not start execution; each Jira retains its own authorization and task progress. Existing execution bindings are preserved.
+
+Related Jira requirements can share planning across repositories through **Join existing planning conversation** or explicit `panelctl conversation bind JIRA_ID` (when no plan exists). Execution repositories remain independently linked.
+
+Related Jira requirements can explicitly **Join existing planning conversation** from their detail view. Discussion is shared; Specs, publication and execution stay separate. Jira links never join conversations automatically.
+
 Explicit Jira conversation binding initializes a missing planning record so the same conversation can save its Spec and publish tickets. Existing plans are preserved. See [Jira planning](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues).
 
 [简体中文](README.zh-CN.md) | [Fork capabilities](docs/fork-capabilities.md) | [Changelog](CHANGELOG.md)
@@ -77,6 +83,8 @@ Jira tickets in the same repository reuse one native execution conversation, bra
 Native conversation activity uses the same live session progress as the board. Unavailable session data shows **Status unknown**, rather than idle.
 
 Board filters support name and priority sorting, and display settings can show creation dates. When synchronized Jira issues are present, the Jira projects filter accepts multiple project keys (such as JR and JD), with All projects to reset it. Ordinary task details can create child issues; dashboard progress weights top-level issues equally and includes their completed children. Tasks and comments can record external Agent sessions and copy terminal resume commands. See [task organization and external sessions](docs/fork-capabilities.md#task-organization-and-external-sessions).
+
+Use **Relations → Add blocker / Add blocked issue** to select issues across repository projects. These are native dependencies visible from both issues and honored by execution; parent and related-issue links remain within one project. The same contract applies to `panelctl issue relation add` with `--type blocks|blocked_by`. See [cross-repository blocking](docs/fork-capabilities.md#cross-repository-blocking).
 
 ## Requirements
 

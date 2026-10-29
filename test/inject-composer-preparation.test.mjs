@@ -12,7 +12,7 @@ function functionsBetween(start, end) {
   return source.slice(from, to);
 }
 
-function composerHarness(t, { hiddenFirst = false, bound = false, localProject = false, projectSwitchFails = false, newConversation = false, onPrefill = async () => {} } = {}) {
+function composerHarness(t, { hiddenFirst = false, sharedPlanning = false, bound = false, localProject = false, projectSwitchFails = false, newConversation = false, onPrefill = async () => {} } = {}) {
   const dom = new JSDOM(`<section data-codex-composer-root data-composer-placement="home">
     ${hiddenFirst ? '<div id="hidden" data-codex-composer="true" contenteditable="true"></div>' : ""}
     <div id="visible" data-codex-composer="true" contenteditable="true"></div>
@@ -79,7 +79,7 @@ function composerHarness(t, { hiddenFirst = false, bound = false, localProject =
     },
     requestHostTaskComposerPrefill: async ({ instruction, skills }) => {
       assert.deepEqual(modes, ["plan"], "select mode before making the draft available to send");
-      assert.equal(api.pending()?.composer, editor, "track submission before host prefill completes");
+      if (!sharedPlanning) assert.equal(api.pending()?.composer, editor, "track submission before host prefill completes");
       for (const skill of skills) {
         const mention = document.createElement("span");
         mention.setAttribute("skill-mention-name", skill.name);
@@ -112,6 +112,7 @@ function composerHarness(t, { hiddenFirst = false, bound = false, localProject =
       taskId: "fixture-task", identifier: "LOCAL-42", title: "Plan fixture task",
       instruction: "Read LOCAL-42 and prepare its plan", collaborationMode: "plan",
       projectless: !bound && !localProject,
+      ...(sharedPlanning ? { existingPlanningThreadId: "existing-thread" } : {}),
       ...(localProject ? { codexProjectId: "fixture-project", workspacePath: "/disposable/fixture", newConversation } : {}),
       ...(bound ? {
         executionPreparation: true, planningPreparation: true,
@@ -245,4 +246,14 @@ test("submitted planning uses the native route before sidebar rows appear", asyn
   assert.equal(requests[0].payload.threadId, target);
   assert.equal(requests[0].payload.title, "FIXTURE-1 · Jira 规划 · Fixture");
   assert.equal(messages[0].type, "panel:thread-created");
+});
+
+test("joining a shared Jira planning thread only fills a draft without rebinding or submitting", async t => {
+  const harness = composerHarness(t, { bound: true, sharedPlanning: true });
+  await harness.run();
+  assert.match(harness.editor.textContent, /Read LOCAL-42/);
+  assert.equal(harness.pending(), null);
+  assert.deepEqual(harness.messages.map(({ type }) => type), ["panel:thread-prepared"]);
+  assert.deepEqual(harness.requests, []);
+  assert.deepEqual(harness.navigation, []);
 });

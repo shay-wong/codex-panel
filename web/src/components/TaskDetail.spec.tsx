@@ -1,8 +1,9 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
-import { getJiraTaskContext, startSimpleJiraTask } from "../api";
+import { getJiraTaskContext, listTasks, setJiraSharedExecution, startJiraPlanning, startSimpleJiraTask } from "../api";
 import { TaskDetail } from "./TaskDetail";
+import { IssueRelationSidebar } from "./IssueRelations";
 import { appendUnreferencedAttachments } from "../documentModel";
 import type { Attachment } from "../types";
 import { TaskboardLanguageProvider } from "../i18n";
@@ -10,7 +11,10 @@ import { TaskboardLanguageProvider } from "../i18n";
 vi.mock("../api", async (original) => ({
   ...await original<typeof import("../api")>(),
   getJiraTaskContext: vi.fn(),
+  listTasks: vi.fn(),
   startSimpleJiraTask: vi.fn(),
+  startJiraPlanning: vi.fn(),
+  setJiraSharedExecution: vi.fn(),
   getTaskPlan: async () => ({ spec: "", version: 1, updatedAt: null }),
   listComments: async () => [],
   listTaskActivities: async () => [],
@@ -139,4 +143,77 @@ it("appends eligible legacy attachments only when not rendered in the document",
   const appended = appendUnreferencedAttachments(code, [attachment, attachment]);
   expect(appended).toContain(`${code}\n\n[report.pdf](`);
   expect(appendUnreferencedAttachments(appended, [attachment])).toBe(appended);
+});
+
+
+it("explicitly joins a planning conversation across repositories", async () => {
+  const actor = { type: "user", id: "fixture", name: "Fixture", avatarUrl: null };
+  const task = { id: "jira-shared", identifier: "JIRA:TEST:2", externalKey: "TEST-2", projectId: "jira", title: "Shared requirement", description: "", creatorType: "user", creatorId: "fixture", creatorName: "Fixture", creatorAvatarUrl: null, status: "todo", priority: "none", labels: [], version: 1, source: "jira", claim: null, threadBinding: null, legacyLocalThreadId: null, conversationRefs: [], assignee: actor, relations: { parent: null, subIssues: [], blockedBy: [], blocks: [], related: [] }, createdAt: "2026-09-15T00:00:00Z", updatedAt: "2026-09-15T00:00:00Z", archivedAt: null, developmentContext: null };
+  const candidate = { id: "shared-thread", title: "Related feature plan", projectId: "repo", jiraTasks: [{ id: "jira-one", identifier: "JIRA:TEST:1", externalKey: "TEST-1", title: "Related feature" }] };
+  const context = { jira: task, projects: [{ id: "repo", name: "Repository" }], issues: [], availableIssues: [], plan: null, simpleStart: null, lifecycle: { pending: null, duplicateOf: null, pausedIssueIds: [] }, planningThreads: [candidate, { ...candidate, id: "foreign", title: "Other repository", projectId: "other" }] };
+  vi.mocked(getJiraTaskContext).mockResolvedValue(context as never);
+  vi.mocked(startJiraPlanning).mockClear();
+  vi.mocked(startJiraPlanning).mockResolvedValue({ context, composerText: "Plan TEST-2 independently", skills: [], collaborationMode: "plan" } as never);
+  const open = vi.fn().mockRejectedValueOnce(new Error("Draft prefill failed")).mockResolvedValue(undefined);
+  const props = { task, tasks: [task], project: { id: "jira", name: "Jira" }, projects: [{ id: "jira", name: "Jira", source: "jira" }], jiraRepositoryProjects: [], currentUser: actor, jiraAvailable: true, availableLabels: [], developmentScan: { workspacePath: null, contexts: [] }, commentsRevision: 0, attachmentsRevision: 0, aiChatThreads: [], onError: vi.fn(), onAiChatThreadsRefresh: vi.fn(), onOpenJiraPlanning: open } as unknown as ComponentProps<typeof TaskDetail>;
+  await act(async () => { render(<TaskboardLanguageProvider language="zh"><TaskDetail {...props} /></TaskboardLanguageProvider>); });
+  expect(startJiraPlanning).not.toHaveBeenCalled();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "加入已有规划会话" })); });
+  expect(screen.getByRole("dialog", { name: "加入已有规划会话" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /Other repository/ })).toBeTruthy();
+  expect(startJiraPlanning).not.toHaveBeenCalled();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /TEST-1 · Other repository/ })); });
+  expect(startJiraPlanning).toHaveBeenCalledWith(task, "foreign", "other", true);
+  expect(open).toHaveBeenCalledWith(task, "other", { text: "Plan TEST-2 independently", skills: [], collaborationMode: "plan", existingThreadId: "foreign" });
+  expect(screen.getByRole("alert").textContent).toBe("Draft prefill failed");
+  expect(screen.getByRole("dialog", { name: "加入已有规划会话" })).toBeTruthy();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /TEST-1 · Other repository/ })); });
+  expect(open).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("dialog", { name: "加入已有规划会话" })).toBeNull();
+});
+
+
+it("enables shared execution only after explicit confirmation using the latest planning context", async () => {
+  const actor = { type: "user", id: "fixture", name: "Fixture", avatarUrl: null };
+  const task = { id: "jira-shared", identifier: "JIRA:TEST:2", externalKey: "TEST-2", projectId: "jira", title: "Shared requirement", description: "", creatorType: "user", creatorId: "fixture", creatorName: "Fixture", creatorAvatarUrl: null, status: "todo", priority: "none", labels: [], version: 1, source: "jira", claim: null, threadBinding: null, legacyLocalThreadId: null, conversationRefs: [], assignee: actor, relations: { parent: null, subIssues: [], blockedBy: [], blocks: [], related: [] }, createdAt: "2026-09-15T00:00:00Z", updatedAt: "2026-09-15T00:00:00Z", archivedAt: null, developmentContext: null };
+  const peer = { id: "jira-one", identifier: "JIRA:TEST:1", externalKey: "TEST-1", title: "Related feature" };
+  const plan = { threadId: "shared-thread", projectId: "repo", status: "planning", items: [], needsReview: false, spec: "", createdAt: task.createdAt, updatedAt: task.updatedAt };
+  const context = { jira: task, projects: [], issues: [], availableIssues: [], plan, simpleStart: null, lifecycle: { pending: null, duplicateOf: null, pausedIssueIds: [] }, sharedPlanningJira: [task, peer], sharedExecutionJira: [task] };
+  vi.mocked(getJiraTaskContext).mockResolvedValue(context as never);
+  vi.mocked(setJiraSharedExecution).mockClear();
+  const open = vi.fn();
+  const props = { task, tasks: [task], project: { id: "jira", name: "Jira" }, projects: [{ id: "jira", name: "Jira", source: "jira" }], jiraRepositoryProjects: [], currentUser: actor, jiraAvailable: true, availableLabels: [], developmentScan: { workspacePath: null, contexts: [] }, commentsRevision: 0, attachmentsRevision: 0, aiChatThreads: [], onError: vi.fn(), onAiChatThreadsRefresh: vi.fn(), onOpenJiraPlanning: open, onOpenThread: open, onOpenLegacyLocalThread: open } as unknown as ComponentProps<typeof TaskDetail>;
+  await act(async () => { render(<TaskboardLanguageProvider language="zh"><TaskDetail {...props} /></TaskboardLanguageProvider>); });
+  fireEvent.click(screen.getByRole("button", { name: "关联仓库" }));
+  expect(screen.getByRole("dialog", { name: "管理 Jira 关联" })).toBeTruthy();
+  expect(screen.getByText(/当前发布批次的同仓库任务/)).toBeTruthy();
+  expect(setJiraSharedExecution).not.toHaveBeenCalled();
+  const latest = { ...context, jira: { ...task, version: 4 } };
+  vi.mocked(getJiraTaskContext).mockResolvedValue(latest as never);
+  vi.mocked(setJiraSharedExecution).mockRejectedValueOnce(new Error("Save failed")).mockResolvedValueOnce({ ...latest, sharedExecutionJira: [task, peer] } as never);
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "同仓库一起实现" })); });
+  expect(screen.getByRole("alert").textContent).toBe("Save failed");
+  expect(screen.getByRole("dialog", { name: "管理 Jira 关联" }).contains(screen.getByRole("alert"))).toBe(true);
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "同仓库一起实现" })); });
+  expect(setJiraSharedExecution).toHaveBeenLastCalledWith(latest.jira, "shared-thread");
+  expect(screen.getByRole("status").textContent).toBe("已设置同仓库一起实现");
+  expect(screen.queryByRole("button", { name: "同仓库一起实现" })).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(open).not.toHaveBeenCalled();
+});
+
+it("selects a blocker from another repository without exposing it as a related issue", async () => {
+  Element.prototype.scrollIntoView = vi.fn();
+  const relations = { parent: null, subIssues: [], blockedBy: [], blocks: [], related: [] };
+  const task = { id: "admin-task", identifier: "ADMIN-1", projectId: "admin", title: "Admin integration", status: "backlog", archivedAt: null, relations } as unknown as ComponentProps<typeof IssueRelationSidebar>["task"];
+  const blocker = { ...task, id: "backend-task", identifier: "API-1", projectId: "backend", title: "Backend contract" };
+  vi.mocked(listTasks).mockResolvedValue([task, blocker]);
+  const add = vi.fn().mockResolvedValue({ task, relatedTask: blocker });
+  render(<TaskboardLanguageProvider language="zh"><IssueRelationSidebar task={task} tasks={[task]} onOpenTask={vi.fn()} onAddRelation={add} onRemoveRelation={vi.fn()} /></TaskboardLanguageProvider>);
+  fireEvent.click(screen.getByRole("button", { name: "添加阻塞议题" }));
+  fireEvent.click(await screen.findByRole("option", { name: /API-1.*Backend contract/ }));
+  expect(add).toHaveBeenCalledWith(task, "blocked_by", blocker.id);
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: "添加相关议题" }));
+  expect(screen.queryByRole("option", { name: /API-1/ })).toBeNull();
 });

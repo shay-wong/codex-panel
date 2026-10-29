@@ -1290,7 +1290,8 @@ export class PanelDatabase {
 
       CREATE TABLE IF NOT EXISTS jira_plans (
         jira_task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
-        thread_id TEXT UNIQUE REFERENCES ai_chat_threads(id) ON DELETE SET NULL,
+        thread_id TEXT REFERENCES ai_chat_threads(id) ON DELETE SET NULL,
+        shared_execution INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL CHECK (status IN ('planning', 'review', 'publishing', 'published')),
         spec TEXT NOT NULL DEFAULT '',
         source_snapshot TEXT NOT NULL,
@@ -1304,7 +1305,7 @@ export class PanelDatabase {
 
       CREATE TABLE IF NOT EXISTS jira_plan_threads (
         jira_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-        thread_id TEXT NOT NULL UNIQUE REFERENCES ai_chat_threads(id) ON DELETE CASCADE,
+        thread_id TEXT NOT NULL REFERENCES ai_chat_threads(id) ON DELETE CASCADE,
         created_at TEXT NOT NULL,
         PRIMARY KEY (jira_task_id, thread_id)
       );
@@ -1338,6 +1339,10 @@ export class PanelDatabase {
         CHECK (source_task_id <> target_task_id)
       );
     `);
+    this.#migrateSharedJiraPlanning();
+    if (!this.database.prepare("PRAGMA table_info(jira_plans)").all().some(column => column.name === "shared_execution")) {
+      this.database.exec("ALTER TABLE jira_plans ADD COLUMN shared_execution INTEGER NOT NULL DEFAULT 0");
+    }
     this.database.exec(`
       INSERT OR IGNORE INTO jira_plan_threads (jira_task_id, thread_id, created_at)
       SELECT jira_task_id, thread_id, created_at
@@ -1348,7 +1353,9 @@ export class PanelDatabase {
       WHERE purpose = 'temporary'
         AND id IN (SELECT thread_id FROM jira_plan_threads);
 
-      CREATE TRIGGER IF NOT EXISTS task_relations_require_same_project
+      -- 旧数据库的触发器限制所有关系，重建后才允许跨仓库阻塞。
+      DROP TRIGGER IF EXISTS task_relations_require_same_project;
+      CREATE TRIGGER task_relations_require_same_project
       BEFORE INSERT ON task_relations
       WHEN NEW.relation_type = 'parent'
       BEGIN
@@ -1523,6 +1530,32 @@ export class PanelDatabase {
 
   close() {
     this.database.close();
+  }
+
+  #migrateSharedJiraPlanning() {
+    const tables = ["jira_plans", "jira_plan_threads"].map(name => ({
+      name,
+      sql: this.database.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?").get(name).sql,
+    })).filter(table => /thread_id\s+TEXT(?:\s+NOT NULL)?\s+UNIQUE/i.test(table.sql));
+    if (!tables.length) return;
+    // 保留原表名引用，避免重建规划表时级联删除已发布的 tickets 和依赖。
+    this.database.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE");
+    try {
+      for (const { name, sql } of tables) {
+        const replacement = `${name}_shared_migration`;
+        this.database.exec(sql.replace(new RegExp(`CREATE TABLE(?: IF NOT EXISTS)? "?${name}"?`, "i"), `CREATE TABLE ${replacement}`)
+          .replace(/(thread_id\s+TEXT(?:\s+NOT NULL)?)\s+UNIQUE/i, "$1"));
+        this.database.exec(`INSERT INTO ${replacement} SELECT * FROM ${name}; DROP TABLE ${name}; ALTER TABLE ${replacement} RENAME TO ${name};`);
+      }
+      const violation = this.database.prepare("PRAGMA foreign_key_check").get();
+      if (violation) throw new Error(`Shared Jira planning migration broke foreign key in '${violation.table}'`);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    } finally {
+      this.database.exec("PRAGMA foreign_keys = ON");
+    }
   }
 
   #migrateTaskStatuses() {
@@ -2193,6 +2226,8 @@ export class PanelDatabase {
         ORDER BY tasks.project_id, tasks.status, tasks.sort_order, tasks.created_at, tasks.id
       `).all(jiraTask.id).map(taskRelationSummaryFromRow)
       : [];
+    const plan = this.getJiraPlan(jiraTask.id);
+    const planningThreads = this.listJiraPlanningThreads();
     return {
       jira: jiraTask,
       projects,
@@ -2200,11 +2235,95 @@ export class PanelDatabase {
       availableIssues,
       availableJira: [],
       simpleStart: this.getJiraSimpleStartOperation(jiraTask.id),
-      plan: this.getJiraPlan(jiraTask.id),
+      plan,
+      planningThreads,
+      sharedPlanningJira: planningThreads.find(thread => thread.id === plan?.threadId)?.jiraTasks ?? [],
+      sharedExecutionJira: planningThreads.find(thread => thread.id === plan?.threadId)?.jiraTasks.filter(jira => (
+        this.database.prepare("SELECT shared_execution FROM jira_plans WHERE jira_task_id = ?").get(jira.id)?.shared_execution === 1
+      )) ?? [],
       lifecycle: this.getJiraLifecycle(jiraTask.id),
       autoCompletion: this.getJiraAutoCompletion(jiraTask.id),
       conversationArchive: this.getJiraConversationArchive(jiraTask.id),
     };
+  }
+
+  listJiraPlanningThreads() {
+    const rows = this.database.prepare(`
+      SELECT threads.id, threads.title, threads.origin_project_id,
+        jira.id AS jira_id, jira.identifier, jira.title AS jira_title, jira.external_key
+      FROM jira_plans AS plans
+      JOIN ai_chat_threads AS threads ON threads.id = plans.thread_id
+      JOIN tasks AS jira ON jira.id = plans.jira_task_id
+      WHERE threads.archived_at IS NULL AND threads.purpose = 'formal'
+        AND threads.codex_thread_id = threads.id AND jira.archived_at IS NULL
+      ORDER BY threads.updated_at DESC, threads.id, jira.id
+    `).all();
+    const threads = new Map();
+    for (const row of rows) {
+      if (!threads.has(row.id)) threads.set(row.id, { id: row.id, title: row.title, projectId: row.origin_project_id, jiraTasks: [] });
+      threads.get(row.id).jiraTasks.push({ id: row.jira_id, identifier: row.identifier, title: row.jira_title, externalKey: row.external_key });
+    }
+    return [...threads.values()];
+  }
+
+  enableSharedJiraExecution(jiraTaskId, version, threadId) {
+    const jira = this.#requireTask(jiraTaskId);
+    this.#requireVersion(jira, version);
+    const plan = this.getJiraPlan(jiraTaskId);
+    const shared = this.listJiraPlanningThreads().find(thread => thread.id === threadId);
+    if (jira.source !== "jira" || jira.archivedAt !== null || plan?.threadId !== threadId
+      || !shared || shared.jiraTasks.length < 2) {
+      throw new ApiError(409, "JIRA_SHARED_EXECUTION_UNAVAILABLE", "Shared execution requires an active planning conversation shared by multiple Jira issues");
+    }
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      for (const member of shared.jiraTasks) {
+        this.#assertJiraMutationUnlocked(member.id);
+        const lifecycle = this.getJiraLifecycle(member.id);
+        if (lifecycle.pending || lifecycle.duplicateOf || lifecycle.pausedIssueIds.length) {
+          throw new ApiError(409, "JIRA_SHARED_EXECUTION_UNAVAILABLE", "Resolve Jira lifecycle notices before sharing execution");
+        }
+      }
+      const update = this.database.prepare(`
+        UPDATE jira_plans SET shared_execution = 1, version = version + 1, updated_at = ?
+        WHERE jira_task_id = ? AND shared_execution = 0
+      `);
+      const timestamp = now();
+      for (const member of shared.jiraTasks) update.run(timestamp, member.id);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getJiraContext(jiraTaskId);
+  }
+
+  #sharedJiraPlanningIncomplete(jiraTaskId) {
+    return Boolean(this.database.prepare(`
+      WITH shared_jira(id) AS (
+        SELECT shared.jira_task_id FROM jira_plan_threads AS own
+        JOIN ai_chat_threads AS threads ON threads.id = own.thread_id AND threads.archived_at IS NULL
+        JOIN jira_plan_threads AS shared ON shared.thread_id = own.thread_id AND shared.jira_task_id <> own.jira_task_id
+        WHERE own.jira_task_id = ?
+        UNION
+        SELECT other_links.jira_task_id FROM jira_task_links AS own_links
+        JOIN tasks AS own ON own.id = own_links.task_id
+        JOIN tasks AS peer ON peer.thread_id = own.thread_id
+          AND peer.thread_codex_host_id IS own.thread_codex_host_id
+        JOIN jira_task_links AS other_links ON other_links.task_id = peer.id
+        WHERE own_links.jira_task_id = ? AND other_links.jira_task_id <> own_links.jira_task_id
+          AND peer.archived_at IS NULL AND peer.status <> 'canceled'
+      )
+      SELECT 1 FROM shared_jira JOIN tasks AS jira ON jira.id = shared_jira.id
+      WHERE (
+        jira.status <> 'done'
+        OR NOT EXISTS (SELECT 1 FROM jira_task_links WHERE jira_task_id = jira.id)
+        OR EXISTS (
+          SELECT 1 FROM jira_task_links AS links JOIN tasks AS issue ON issue.id = links.task_id
+          WHERE links.jira_task_id = jira.id AND (issue.status <> 'done' OR issue.archived_at IS NOT NULL)
+        )
+      ) LIMIT 1
+    `).get(jiraTaskId, jiraTaskId));
   }
 
   getJiraConversationArchive(jiraTaskId) {
@@ -2263,7 +2382,9 @@ export class PanelDatabase {
             ? "no_related_conversations"
             : unarchivedThreadCount === 0
               ? "already_archived"
-              : null;
+              : this.#sharedJiraPlanningIncomplete(jiraTaskId)
+                ? "shared_planning_incomplete"
+                : null;
     return {
       eligible: reason === null,
       reason,
@@ -2900,7 +3021,7 @@ export class PanelDatabase {
     try {
       const plan = this.database.prepare(`
         UPDATE jira_plans
-        SET thread_id = ?, status = 'planning', source_snapshot = ?, prompted_at = ?,
+        SET thread_id = ?, status = 'planning', source_snapshot = ?, prompted_at = ?, shared_execution = 0,
             version = version + 1, updated_at = ?
         WHERE jira_task_id = ? AND version = ?
       `).run(
@@ -3279,10 +3400,11 @@ export class PanelDatabase {
     if (shouldRefresh) {
       this.database.prepare(`
         UPDATE jira_plans
-        SET thread_id = ?, status = 'planning', source_snapshot = ?, prompted_at = NULL,
+        SET shared_execution = CASE WHEN thread_id = ? THEN shared_execution ELSE 0 END,
+            thread_id = ?, status = 'planning', source_snapshot = ?, prompted_at = NULL,
             version = version + 1, updated_at = ?
         WHERE jira_task_id = ?
-      `).run(nextThreadId, sourceSnapshot, timestamp, jiraTask.id);
+      `).run(nextThreadId, nextThreadId, sourceSnapshot, timestamp, jiraTask.id);
       this.database.prepare(`
         INSERT OR IGNORE INTO jira_plan_threads (jira_task_id, thread_id, created_at)
         VALUES (?, ?, ?)
@@ -4711,12 +4833,36 @@ export class PanelDatabase {
     const context = this.getJiraContext(taskId);
     if (!context.jira) return [];
     const publication = context.plan?.items.map((item) => item.task?.id).filter(Boolean);
-    return context.issues
+    const peers = context.issues
       .filter((issue) => issue.projectId === task.projectId
         && (!publication?.includes(taskId) || publication.includes(issue.id)))
       .map((issue) => this.getTask(issue.id))
       .filter((issue) => issue.archivedAt === null && issue.status !== 'canceled'
         && (issue.status !== 'done' || publication?.includes(taskId)));
+    // 新批次只复用各 Jira 当前发布项；历史已绑定上下文单独用于串行和清理判断。
+    if (publication?.includes(taskId) && context.sharedExecutionJira.some(jira => jira.id === context.jira.id)) {
+      for (const jira of context.sharedExecutionJira) {
+        if (jira.id === context.jira.id) continue;
+        for (const item of this.getJiraPlan(jira.id).items) {
+          if (!item.task) continue;
+          const peer = this.getTask(item.task.id);
+          if (peer.projectId === task.projectId && peer.archivedAt === null && peer.status !== 'canceled') peers.push(peer);
+        }
+      }
+    }
+    return [...new Map(peers.map(peer => [peer.id, peer])).values()];
+  }
+
+  executionContextPeers(taskId) {
+    const task = this.#requireTask(taskId);
+    return this.database.prepare(`
+      SELECT id FROM tasks
+      WHERE project_id = ? AND archived_at IS NULL AND status <> 'canceled'
+        AND ((thread_id IS NOT NULL AND thread_id = ? AND thread_codex_host_id IS ?)
+          OR (worktree_path IS NOT NULL AND worktree_path = ?))
+    `).all(task.projectId, task.threadId, task.threadBinding?.codexHostId ?? null,
+      task.developmentContext?.type === "worktree" ? task.developmentContext.path : null)
+      .map(row => this.getTask(row.id));
   }
 
   listReadyClaims(at = now()) {
@@ -5691,7 +5837,7 @@ export class PanelDatabase {
       const task = this.#requireTask(id);
       const relatedTask = this.#requireTask(relatedId);
       this.#requireVersion(task, version);
-      this.#validateRelationTasks(task, relatedTask);
+      this.#validateRelationTasks(task, relatedTask, type);
 
       const { relationType, sourceTaskId, targetTaskId } = this.#relationEndpoints(
         type,
@@ -5757,7 +5903,7 @@ export class PanelDatabase {
       const task = this.#requireTask(id);
       const relatedTask = this.#requireTask(relatedId);
       this.#requireVersion(task, version);
-      this.#validateRelationTasks(task, relatedTask);
+      this.#validateRelationTasks(task, relatedTask, type);
       const { relationType, sourceTaskId, targetTaskId } = this.#relationEndpoints(
         type,
         task.id,
@@ -6224,11 +6370,11 @@ export class PanelDatabase {
     return task;
   }
 
-  #validateRelationTasks(task, relatedTask) {
+  #validateRelationTasks(task, relatedTask, type) {
     if (task.id === relatedTask.id) {
       throw new ApiError(400, "SELF_RELATION", "An issue cannot be related to itself");
     }
-    if (task.projectId !== relatedTask.projectId) {
+    if (task.projectId !== relatedTask.projectId && type !== "blocks" && type !== "blocked_by") {
       throw new ApiError(400, "CROSS_PROJECT_RELATION", "Issue relations must stay within one project");
     }
   }

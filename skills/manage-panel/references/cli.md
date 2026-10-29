@@ -242,7 +242,7 @@ panelctl issue relation add CHILD_ID --type parent --issue MAIN_ID --if-version 
 panelctl issue relation add CHILD_ID --type blocked_by --issue PREREQUISITE_ID --if-version LATEST_CHILD_VERSION --json
 ```
 
-Use returned identifiers and fresh versions; reuse existing children when resuming. The child and parent must belong to the same project. Repeat for the approved child scopes, then verify the main task's tree and child dependencies. Saving a Spec or creating backlog children does not authorize implementation. Ordinary planning can continue into authorized execution in the same conversation.
+Use returned identifiers and fresh versions; reuse existing children when resuming. The child and parent must belong to the same project. Native `blocks` / `blocked_by` relations may connect issues from different repository projects; use their returned identifiers and fresh versions. Cross-repository dependencies do not share execution contexts. Repeat for the approved child scopes, then verify the main task's tree and child dependencies. Saving a Spec or creating backlog children does not authorize implementation. Ordinary planning can continue into authorized execution in the same conversation.
 
 ## Jira planning
 

@@ -12,6 +12,7 @@ import type {
   TaskRelationSummary,
 } from "../types";
 import { useTaskboardI18n } from "../i18n";
+import { listTasks } from "../api";
 import { ActorAvatar } from "./ActorAvatar";
 import { LinearIcon } from "./LinearIcon";
 import {
@@ -177,14 +178,34 @@ export function IssuePicker({
   candidates,
   disabled,
   onSelect,
+  crossProject,
 }: {
   label: string;
   candidates: Task[];
   disabled?: boolean;
   onSelect: (task: Task) => Promise<void>;
+  crossProject?: { task: Task; field: "blocks" | "blockedBy" };
 }) {
+  const { text } = useTaskboardI18n();
   const [open, setOpen] = useState(false);
+  const [remoteCandidates, setRemoteCandidates] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open || !crossProject) return;
+    const controller = new AbortController();
+    setLoading(true);
+    setLoadError(null);
+    // 阻塞候选按需跨项目读取，不改变看板当前的项目范围。
+    void listTasks(undefined, controller.signal).then(setRemoteCandidates).catch((error: Error) => {
+      if (!controller.signal.aborted) setLoadError(error.message);
+    }).finally(() => {
+      if (!controller.signal.aborted) setLoading(false);
+    });
+    return () => controller.abort();
+  }, [open, crossProject?.task.id]);
 
   useEffect(() => {
     if (!open) return;
@@ -210,15 +231,22 @@ export function IssuePicker({
       </button>
       {open && (
         <div className="issue-relation-popover">
-          <IssuePickerContent
-            candidates={candidates}
+          {loading ? <p role="status">{text("正在加载议题…", "Loading issues…")}</p> : loadError ? (
+            <p role="alert">{loadError}</p>
+          ) : <IssuePickerContent
+            candidates={crossProject ? [
+              ...candidates,
+              ...remoteCandidates.filter((candidate) => candidate.projectId !== crossProject.task.projectId
+                && candidate.archivedAt === null && candidate.id !== crossProject.task.id
+                && !crossProject.task.relations[crossProject.field].some((issue) => issue.id === candidate.id)),
+            ] : candidates}
             disabled={disabled}
             onEscape={() => setOpen(false)}
             onSelect={async (task) => {
               await onSelect(task);
               setOpen(false);
             }}
-          />
+          />}
         </div>
       )}
     </div>
@@ -452,6 +480,7 @@ export function IssueRelationSidebar({
         const existing = new Set(issues.map((issue) => issue.id));
         const candidates = tasks.filter((candidate) => (
           candidate.archivedAt === null
+          && candidate.projectId === task.projectId
           && candidate.id !== task.id
           && !existing.has(candidate.id)
         ));
@@ -469,6 +498,7 @@ export function IssueRelationSidebar({
               <IssuePicker
                 label={text(group.chineseAddLabel, group.englishAddLabel)}
                 candidates={candidates}
+                crossProject={group.type === "related" ? undefined : { task, field: group.field }}
                 disabled={savingKey !== null}
                 onSelect={async (candidate) => {
                   const key = `${group.type}:${candidate.id}`;
