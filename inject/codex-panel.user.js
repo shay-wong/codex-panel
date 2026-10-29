@@ -1690,6 +1690,22 @@
     pendingThreadCreation = taskId;
     setPendingThreadAssociation(null);
     try {
+      if (payload.existingPlanningThreadId && !autoSubmit) {
+        const threadId = normalizeThreadId(payload.existingPlanningThreadId);
+        if (!threadId) throw new Error("规划会话标识无效");
+        await openThread({ threadId, legacyLocal: true });
+        const deadline = Date.now() + 8_000;
+        while (normalizeThreadId(threadIdFromLocation()) !== threadId && Date.now() < deadline) {
+          await new Promise((resolve) => window.setTimeout(resolve, 40));
+        }
+        if (normalizeThreadId(threadIdFromLocation()) !== threadId) throw new Error("Codex 未确认已切换到规划对话");
+        const composer = await waitForPreparedComposer();
+        await selectNativeCollaborationMode(payload.collaborationMode === "plan" ? "plan" : "default", composer);
+        // 已明确绑定已有规划会话，只填草稿；不重命名、不重复绑定、不自动发送。
+        await requestHostTaskComposerPrefill({ instruction, skills: skillReferences, threadId });
+        postToFrame({ type: "panel:thread-prepared", payload: { taskId } });
+        return;
+      }
       if (!payload.newConversation && !autoSubmit && payload.executionPreparation && payload.threadBinding) {
         const binding = payload.threadBinding;
         await openThread(binding);

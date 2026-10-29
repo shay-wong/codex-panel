@@ -238,6 +238,10 @@ Ordinary main tasks can be split into several sub-issues after approval. Keep th
 
 ## Link Jira requirements to repository issues
 
+For related requirements, open a Jira detail with no existing plan and choose **Join existing planning conversation**. Select an active planning conversation in a linked repository (or a projectless conversation when no repository is linked). Panel adds the Jira requirement to that conversation and prefills its planning instructions without sending or renaming the conversation. Each Jira keeps its own Spec, plan version, publication and execution Issues. Read `jira planning get JIRA_ID` separately before saving or publishing for that Jira; `context.sharedPlanningJira` identifies the shared requirements. Jira links do not join conversations automatically. A shared conversation cannot be archived while another linked Jira or its execution work is incomplete. Existing plans are migrated without losing their publication records.
+
+相关需求可在尚无计划的 Jira 详情中选择“加入已有规划会话”，再选择关联仓库内的活跃规划会话；未关联仓库时只能选择无项目会话。Panel 关联该 Jira 并填入规划草稿，不自动发送、不重命名会话。每个 Jira 独立保存 Spec、计划版本、发布和执行 Issue；保存或发布前分别读取对应 `JIRA_ID`，`context.sharedPlanningJira` 列出共用需求。Jira 关联不会自动合并会话，共用的其他 Jira 或执行工作未完成时不得归档共享会话，旧计划迁移保留发布记录。
+
 Local planning and execution drafts use the visible Codex composer, ignoring hidden composers retained by other chats. Once the launcher confirms the Skills and prompt, Panel does not require the sent content to remain in the composer. Sending immediately after prefill still proceeds through conversation confirmation and linking; actual prefill failures remain visible.
 
 After an explicit request, `panelctl conversation bind JIRA_KEY` binds the current Codex conversation and initializes a missing planning record, including when the conversation was already bound. Read `jira planning get` again for `plan.version` before saving the Spec and publishing tickets. An existing plan, its Spec, and its planning conversation remain unchanged; binding does not send a prompt, start execution, or change Jira status.

@@ -855,8 +855,13 @@ function parseJiraSimpleStart(body) {
 
 function parseJiraPlanning(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "threadId", "projectId"]));
+  assertAllowedKeys(body, new Set(["version", "threadId", "projectId", "reuseThread"]));
+  if (body.reuseThread !== undefined && typeof body.reuseThread !== "boolean") {
+    throw new ApiError(400, "INVALID_FIELD", "reuseThread must be a boolean");
+  }
+  if (body.reuseThread && !body.threadId) throw new ApiError(400, "INVALID_FIELD", "reuseThread requires threadId");
   return {
+    reuseThread: body.reuseThread === true,
     version: parseVersion(body.version),
     threadId: parseThreadId(body.threadId),
     projectId: body.projectId === undefined ? undefined : validateProjectId(body.projectId),
@@ -2494,11 +2499,13 @@ export function createPanelServer(options = {}) {
     return selectedProjectId;
   }
 
-  function assertJiraPlanningThreadReuse(context, threadId, targetProjectId) {
+  function assertJiraPlanningThreadReuse(context, threadId, targetProjectId, reuseThread = false) {
     const existingThread = database.getAiChatThread(threadId);
-    if (!existingThread) return null;
+    if (!existingThread && !reuseThread) return null;
     if (
-      context.plan?.threadId !== threadId
+      !existingThread
+      || (reuseThread && context.plan && context.plan.threadId !== threadId)
+      || (context.plan?.threadId !== threadId && !(reuseThread && database.listJiraPlanningThreads().some(thread => thread.id === threadId)))
       || existingThread.archivedAt
       || existingThread.purpose !== "formal"
       || existingThread.codexThreadId !== threadId
@@ -2513,7 +2520,7 @@ export function createPanelServer(options = {}) {
     return existingThread;
   }
 
-  async function startJiraPlanning(jiraTaskId, version, threadId, selectedProjectId) {
+  async function startJiraPlanning(jiraTaskId, version, threadId, selectedProjectId, reuseThread = false) {
     const context = database.getJiraContext(jiraTaskId);
     if (!context.jira) {
       throw new ApiError(409, "JIRA_TASK_REQUIRED", "Only Jira issues can be planned");
@@ -2545,7 +2552,8 @@ export function createPanelServer(options = {}) {
     }
 
     const targetProjectId = resolveJiraPlanningProjectId(context, selectedProjectId);
-    const existingThread = assertJiraPlanningThreadReuse(context, threadId, targetProjectId);
+    const existingThread = assertJiraPlanningThreadReuse(context, threadId, targetProjectId, reuseThread);
+    const sharedWorkflow = reuseThread ? await resolveWorkflow(database, aiChat, targetProjectId, "planning") : null;
     const createdThread = !existingThread;
     if (createdThread) {
       await aiChat.createThread({
@@ -2569,6 +2577,11 @@ export function createPanelServer(options = {}) {
     }
     return {
       context: database.getJiraContext(jiraTaskId),
+      ...(sharedWorkflow ? {
+        composerText: `${jiraPlanningPrompt(context.jira, context.projects, Boolean(context.plan), context.plan, sharedWorkflow)}\n\n这是共享规划会话。分别使用每个 Jira ID 保存 Spec 和发布 tickets，不要把当前 Jira 的结果写入其他 Jira。`,
+        skills: sharedWorkflow.skills,
+        collaborationMode: sharedWorkflow.mode === "default" ? "plan" : "default",
+      } : {}),
     };
   }
 
@@ -4489,11 +4502,11 @@ export function createPanelServer(options = {}) {
         const jiraTaskId = decodeRouteSegment(jiraPlanningRoute[1], "Task id");
         assertNoQuery(url.searchParams, "POST /api/tasks/:id/jira-planning");
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
-        const { version, threadId, projectId } = parseJiraPlanning(await readJson(request));
+        const { version, threadId, projectId, reuseThread } = parseJiraPlanning(await readJson(request));
         return sendJson(
           response,
           200,
-          await startJiraPlanning(jiraTaskId, version, threadId, projectId),
+          await startJiraPlanning(jiraTaskId, version, threadId, projectId, reuseThread),
         );
       }
 

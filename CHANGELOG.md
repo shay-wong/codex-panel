@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Allow related Jira requirements to explicitly share an existing planning conversation while keeping their Specs, publication and execution independent; shared conversations stay available until all linked work is complete.
+
 ## 0.4.12-fork
 
 - Show conversation-menu loading status in Panel and allow a manual retry without restarting Codex.

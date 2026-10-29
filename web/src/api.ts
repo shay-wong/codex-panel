@@ -805,6 +805,7 @@ export async function startJiraPlanning(
   task: Pick<Task, "id" | "version">,
   threadId?: string,
   projectId?: string | null,
+  reuseThread = false,
 ): Promise<{
   context: JiraTaskContext;
   composerText?: string;
@@ -824,6 +825,7 @@ export async function startJiraPlanning(
         version: task.version,
         ...(threadId ? { threadId } : {}),
         ...(projectId ? { projectId } : {}),
+        ...(reuseThread ? { reuseThread: true } : {}),
       }),
     },
   );

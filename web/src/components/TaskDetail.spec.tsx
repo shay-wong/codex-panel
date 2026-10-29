@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
-import { getJiraTaskContext, startSimpleJiraTask } from "../api";
+import { getJiraTaskContext, startJiraPlanning, startSimpleJiraTask } from "../api";
 import { TaskDetail } from "./TaskDetail";
 import { appendUnreferencedAttachments } from "../documentModel";
 import type { Attachment } from "../types";
@@ -11,6 +11,7 @@ vi.mock("../api", async (original) => ({
   ...await original<typeof import("../api")>(),
   getJiraTaskContext: vi.fn(),
   startSimpleJiraTask: vi.fn(),
+  startJiraPlanning: vi.fn(),
   getTaskPlan: async () => ({ spec: "", version: 1, updatedAt: null }),
   listComments: async () => [],
   listTaskActivities: async () => [],
@@ -139,4 +140,31 @@ it("appends eligible legacy attachments only when not rendered in the document",
   const appended = appendUnreferencedAttachments(code, [attachment, attachment]);
   expect(appended).toContain(`${code}\n\n[report.pdf](`);
   expect(appendUnreferencedAttachments(appended, [attachment])).toBe(appended);
+});
+
+
+it("joins only an explicitly selected planning conversation in a linked repository", async () => {
+  const actor = { type: "user", id: "fixture", name: "Fixture", avatarUrl: null };
+  const task = { id: "jira-shared", identifier: "JIRA:TEST:2", externalKey: "TEST-2", projectId: "jira", title: "Shared requirement", description: "", creatorType: "user", creatorId: "fixture", creatorName: "Fixture", creatorAvatarUrl: null, status: "todo", priority: "none", labels: [], version: 1, source: "jira", claim: null, threadBinding: null, legacyLocalThreadId: null, conversationRefs: [], assignee: actor, relations: { parent: null, subIssues: [], blockedBy: [], blocks: [], related: [] }, createdAt: "2026-09-15T00:00:00Z", updatedAt: "2026-09-15T00:00:00Z", archivedAt: null, developmentContext: null };
+  const candidate = { id: "shared-thread", title: "Related feature plan", projectId: "repo", jiraTasks: [{ id: "jira-one", identifier: "JIRA:TEST:1", externalKey: "TEST-1", title: "Related feature" }] };
+  const context = { jira: task, projects: [{ id: "repo", name: "Repository" }], issues: [], availableIssues: [], plan: null, simpleStart: null, lifecycle: { pending: null, duplicateOf: null, pausedIssueIds: [] }, planningThreads: [candidate, { ...candidate, id: "foreign", title: "Other repository", projectId: "other" }] };
+  vi.mocked(getJiraTaskContext).mockResolvedValue(context as never);
+  vi.mocked(startJiraPlanning).mockClear();
+  vi.mocked(startJiraPlanning).mockResolvedValue({ context, composerText: "Plan TEST-2 independently", skills: [], collaborationMode: "plan" } as never);
+  const open = vi.fn().mockRejectedValueOnce(new Error("Draft prefill failed")).mockResolvedValue(undefined);
+  const props = { task, tasks: [task], project: { id: "jira", name: "Jira" }, projects: [{ id: "jira", name: "Jira", source: "jira" }], jiraRepositoryProjects: [], currentUser: actor, jiraAvailable: true, availableLabels: [], developmentScan: { workspacePath: null, contexts: [] }, commentsRevision: 0, attachmentsRevision: 0, aiChatThreads: [], onError: vi.fn(), onAiChatThreadsRefresh: vi.fn(), onOpenJiraPlanning: open } as unknown as ComponentProps<typeof TaskDetail>;
+  await act(async () => { render(<TaskboardLanguageProvider language="zh"><TaskDetail {...props} /></TaskboardLanguageProvider>); });
+  expect(startJiraPlanning).not.toHaveBeenCalled();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "加入已有规划会话" })); });
+  expect(screen.getByRole("dialog", { name: "加入已有规划会话" })).toBeTruthy();
+  expect(screen.queryByText(/Other repository/)).toBeNull();
+  expect(startJiraPlanning).not.toHaveBeenCalled();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /TEST-1 · Related feature plan/ })); });
+  expect(startJiraPlanning).toHaveBeenCalledWith(task, "shared-thread", "repo", true);
+  expect(open).toHaveBeenCalledWith(task, "repo", { text: "Plan TEST-2 independently", skills: [], collaborationMode: "plan", existingThreadId: "shared-thread" });
+  expect(screen.getByRole("alert").textContent).toBe("Draft prefill failed");
+  expect(screen.getByRole("dialog", { name: "加入已有规划会话" })).toBeTruthy();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /TEST-1 · Related feature plan/ })); });
+  expect(open).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("dialog", { name: "加入已有规划会话" })).toBeNull();
 });

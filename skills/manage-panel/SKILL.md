@@ -95,6 +95,8 @@ Substitute all five binding values from the latest `task.threadBinding`, includi
 
 ## Jira planning conversations
 
+A user may explicitly join several Jira requirements to one planning conversation through Panel. Read `jira planning get JIRA_ID` for each requirement in `context.sharedPlanningJira`; always use the intended exact Jira ID and its fresh plan version for save/publish. Shared discussion does not combine Specs, publication manifests, lifecycle authorization or execution Issues. Do not infer sharing from Jira links or move an existing plan into another conversation.
+
 When the conversation was opened from a Jira issue and the initial instruction provides its exact Jira task ID:
 
 1. Treat Jira as the requirement and the generated Panel Issues as repository-owned execution work. Default to planning only. If the user explicitly asks to implement in this conversation, follow **Continue from planning into execution** for the published execution Issue before editing. Spec approval and ticket publication alone do not authorize implementation.

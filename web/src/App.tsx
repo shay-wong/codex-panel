@@ -3150,6 +3150,7 @@ export function App() {
       text: string;
       skills: Array<Pick<AiChatSkill, "id" | "label" | "path">>;
       replanLifecycleVersion?: number;
+      existingThreadId?: string;
       collaborationMode?: "plan" | "default";
     },
   ) {
@@ -3199,7 +3200,8 @@ export function App() {
         path: skill.path,
       })),
     ];
-    savePendingJiraPlanning(composer.replanLifecycleVersion === undefined
+    if (composer.existingThreadId) clearPendingJiraPlanning(task.id);
+    if (!composer.existingThreadId) savePendingJiraPlanning(composer.replanLifecycleVersion === undefined
       ? { taskId: task.id, kind: "planning", projectId }
       : {
           taskId: task.id,
@@ -3207,6 +3209,27 @@ export function App() {
           lifecycleVersion: composer.replanLifecycleVersion,
           projectId,
         });
+    // 共用会话已绑定；等待草稿实际填入，失败时让选择弹窗保留重试入口。
+    const prepared = composer.existingThreadId ? new Promise<void>((resolve, reject) => {
+      const finish = (error?: Error) => {
+        window.clearTimeout(timer);
+        window.removeEventListener("message", receive);
+        setOpeningThreadTaskId(null);
+        if (error) reject(error); else resolve();
+      };
+      const receive = (event: MessageEvent) => {
+        if (event.source !== window.parent || event.data?.payload?.taskId !== task.id) return;
+        if (event.data.type === "panel:thread-prepared") finish();
+        if (event.data.type === "panel:thread-create-error") {
+          finish(new Error(event.data.payload.error || "无法填入规划草稿"));
+        }
+      };
+      const timer = window.setTimeout(() => finish(new Error(text(
+        "规划会话已关联，但未收到草稿填入确认，可重试。",
+        "The planning conversation is linked, but draft preparation was not confirmed. Retry to continue.",
+      ))), 90_000);
+      window.addEventListener("message", receive);
+    }) : null;
     setOpeningThreadTaskId(task.id);
     setActionError(null);
     postEmbeddedHostMessage({
@@ -3230,8 +3253,10 @@ export function App() {
         codexHostId: "local",
         workspacePath,
         recoverExisting: true,
+        existingPlanningThreadId: composer.existingThreadId,
       },
     });
+    if (prepared) await prepared;
   }
 
   async function prepareExecution(task: Task, useWorktree: boolean, planning = false) {
