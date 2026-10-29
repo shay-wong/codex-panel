@@ -18,7 +18,7 @@ macOS 退出在后台单次清理托管进程，避免界面等待清理而卡�
 
 打开任务面板时自动读取已有的账号姓名和头像，不再主动展开原生头像菜单。
 任务面板导航栏入口保留原生图标对齐和未选中颜色，选中颜色不变；点击原生页面不会因缓存的面板标记而重新打开面板。 Codex 原地更新当前页面状态时，侧边栏和 App 打开的面板都会保持显示。 其他 Codex 窗口挂载重试时，已连接主窗口的连接状态保持就绪，无需点击打开面板刷新。 独立 Page 文档窗口及其隐藏预热窗口不注入 Panel；主窗口内的 Page 不受影响。补丁代码未变时，挂载重试与 Panel 服务重启均保留 Codex 当前页面和草稿；首次安装或更新补丁仍重载一次。
-macOS 上 Codex 更新后，连接端口可用时 Panel 自动重连；启动参数丢失时，管理窗口会提示“重启 Codex 并连接”，确认后才重启 Codex。详见[更新后恢复连接](docs/codex-compatibility.md#recovery-after-desktop-updates)。
+macOS 上 Codex 更新后，连接端口可用时 Panel 自动重连；启动参数丢失时，管理窗口会提示“重启 Codex 并连接”，确认后才重启 Codex。详见[更新后恢复连接](docs/codex-compatibility.md#recovery-after-desktop-updates)。 macOS 原生确认框和提示框弹出前会先恢复隐藏或最小化的 Panel 管理窗口。
 
 自定义 API 发送限制开关在重新连接已安装模块映射的窗口时，会重新识别输入框脚本并保留适配。
 

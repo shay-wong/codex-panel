@@ -1284,15 +1284,30 @@ fn append_log(state: &LauncherState, line: &str) {
 }
 
 fn show_error_dialog(app: &AppHandle, title: &str, message: &str) {
+    show_message_dialog(app, title, message, MessageDialogKind::Error);
+}
+
+fn show_message_dialog(app: &AppHandle, title: &str, message: &str, kind: MessageDialogKind) {
     let _diagnostic = app.try_state::<Arc<LauncherState>>().map(|state| {
-        menu_diagnostics::Span::new(&state.log_path, "error_dialog blocking_show")
+        menu_diagnostics::Span::new(&state.log_path, "message_dialog show")
     });
+    let host = match update_dialog::prepare_dialog_window(app) {
+        Ok(host) => host,
+        Err(error) => {
+            if let Some(state) = app.try_state::<Arc<LauncherState>>() {
+                append_log(&state, &format!("{title}: {message}; 无法显示原生提示：{error}"));
+            }
+            return;
+        }
+    };
     app.dialog()
         .message(message)
+        .parent(&host)
         .title(title)
-        .kind(MessageDialogKind::Error)
+        .kind(kind)
         .buttons(MessageDialogButtons::OkCustom("关闭".into()))
-        .blocking_show();
+        // 菜单回调也会走这里，不能阻塞负责处理原生弹窗的主线程。
+        .show(|_| {});
 }
 
 fn show_main_window(app: &AppHandle) -> Result<(), String> {
@@ -3063,11 +3078,7 @@ async fn offer_update(
                 snapshot.update_message = "Fork 暂无已发布版本。".into();
             });
             if show_result {
-                app.dialog()
-                    .message("Fork 暂无已发布版本。")
-                    .title("Codex Panel 更新")
-                    .buttons(MessageDialogButtons::Ok)
-                    .blocking_show();
+                show_message_dialog(app, "Codex Panel 更新", "Fork 暂无已发布版本。", MessageDialogKind::Info);
             }
             Ok(())
         }
@@ -3076,11 +3087,7 @@ async fn offer_update(
                 snapshot.update_message = "当前已是最新版本。".into();
             });
             if show_result {
-                app.dialog()
-                    .message("当前已是最新版本。")
-                    .title("Codex Panel 更新")
-                    .buttons(MessageDialogButtons::Ok)
-                    .blocking_show();
+                show_message_dialog(app, "Codex Panel 更新", "当前已是最新版本。", MessageDialogKind::Info);
             }
             Ok(())
         }

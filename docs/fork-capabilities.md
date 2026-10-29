@@ -92,6 +92,8 @@ Each project dashboard asks Codex for a daily progress summary. A failed generat
 
 ## Tauri/Rust desktop manager
 
+On macOS, native restart/update confirmations and error/update-result messages first restore and activate the ordinary manager window, including from hidden or minimized state. This addresses dialogs becoming blank or unclickable when opened without a usable main window. Dialogs use system-managed native sheets attached to the manager, rather than manually displaying an alert window. Messages are shown without blocking menu callbacks. Confirmation, cancellation, and native installation progress remain unchanged.
+
 The **Codex connection** card includes **Restart Codex** beside **Open Codex**. After confirmation, Panel stops its automatic reconnect worker, normally quits the running Codex app (including an already connected app), then starts the service and Codex again. This reloads core configuration such as the Ultrafast catalog and interrupts active tasks. Canceling the confirmation leaves both processes running. **Restart service** retains its existing reconnect behavior.
 
 On macOS, native and menu quit requests share a single background cleanup. The interface keeps processing events while managed processes stop; exit follows cleanup. Update installation retains its existing quit protection and restart path.

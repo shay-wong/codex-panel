@@ -39,6 +39,8 @@ To build the macOS launcher on a machine with the required toolchain, install No
 
 ## Recovery after desktop updates
 
+Native confirmations and messages first restore the Panel manager window on macOS. Isolated tests on macOS 27.2 reproduced blank or unclickable alerts without an ordinary main window; activating the application alone did not fix them. Restoring the ordinary window alone also failed with Panel’s manual alert-window display. The host is now shown and restored from minimization, and the alert uses AppKit’s sheet lifecycle attached to that host. Error and update-result messages use non-blocking display so menu callbacks keep processing events. This diagnosis does not establish an internal Apple defect or behavior on other OS versions.
+
 On macOS, Codex can restart after an update without the debugging arguments that Panel supplied. A desktop version allowlist is not involved: Panel still verifies the official application signature and reconnects automatically if it finds a usable port.
 
 The recovery prompt uses the short text **Codex 已经更新，请点击下方按钮重新启动**. This copy does not change the existing launch-parameter detection.

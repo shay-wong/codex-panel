@@ -10,15 +10,41 @@ use objc2::{
 };
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSButton, NSProgressIndicator, NSProgressIndicatorStyle,
+    NSAlert, NSApplication, NSButton, NSProgressIndicator, NSProgressIndicatorStyle, NSWindow,
 };
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSObject, NSSize, NSString};
 #[cfg(target_os = "macos")]
 use std::{cell::RefCell, sync::Arc};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager, WebviewWindow};
 #[cfg(not(target_os = "macos"))]
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+
+pub(super) fn prepare_dialog_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    let window = app.get_webview_window("main")
+        .ok_or("Codex Panel 管理窗口不可用")?;
+    #[cfg(target_os = "macos")]
+    {
+        let window = window.clone();
+        run_on_main(move |mtm| {
+            let pointer = window.ns_window().map_err(|error| error.to_string())?;
+            // Tauri 持有窗口；仅在主线程借用 AppKit 对象。
+            let window = unsafe { &*pointer.cast::<NSWindow>() };
+            restore_dialog_host(window, mtm);
+            Ok::<_, String>(())
+        })?;
+    }
+    Ok(window)
+}
+
+#[cfg(target_os = "macos")]
+fn restore_dialog_host(window: &NSWindow, mtm: MainThreadMarker) {
+    // macOS 27 无普通主窗口时，独立 Alert 的玻璃层可能吞掉点击；仅 activate 不足以恢复。
+    window.deminiaturize(None);
+    window.makeKeyAndOrderFront(None);
+    window.makeMainWindow();
+    NSApplication::sharedApplication(mtm).activate();
+}
 
 #[cfg(target_os = "macos")]
 struct UpdateDialogTargetIvars {
@@ -67,6 +93,7 @@ impl UpdateDialogTarget {
 #[cfg(target_os = "macos")]
 struct NativeUpdateDialog {
     alert: Retained<NSAlert>,
+    host: Retained<NSWindow>,
     progress_indicator: Retained<NSProgressIndicator>,
     install_button: Retained<NSButton>,
     defer_button: Retained<NSButton>,
@@ -87,13 +114,23 @@ impl UpdateDialog {
     }
 
     fn prompt_message(
-        _app: &AppHandle,
+        app: &AppHandle,
         title: &'static str,
         message: String,
         confirm: &'static str,
     ) -> Option<Self> {
+        let host = match prepare_dialog_window(app) {
+            Ok(host) => host,
+            Err(error) => {
+                eprintln!("Unable to prepare native confirmation: {error}");
+                return None;
+            }
+        };
         let (response, result) = std::sync::mpsc::channel();
         let dialog = run_on_main(move |mtm| {
+            let pointer = host.ns_window().ok()?;
+            // Sheet 显示和安装期间持有其父窗口。
+            let host = unsafe { Retained::retain(pointer.cast::<NSWindow>()) }?;
             let alert = NSAlert::new(mtm);
             let target = UpdateDialogTarget::new(mtm, response);
             let progress_indicator = NSProgressIndicator::new(mtm);
@@ -107,22 +144,19 @@ impl UpdateDialog {
             alert.setInformativeText(&NSString::from_str(&message));
             let install_button = alert.addButtonWithTitle(&NSString::from_str(confirm));
             let defer_button = alert.addButtonWithTitle(&NSString::from_str("稍后"));
+            // 交由 AppKit 建立原生 Sheet 生命周期，不能只把 Alert 窗口置前。
+            alert.beginSheetModalForWindow_completionHandler(&host, None);
             unsafe {
                 install_button.setTarget(Some(&target));
                 install_button.setAction(Some(sel!(acceptUpdate:)));
                 defer_button.setTarget(Some(&target));
                 defer_button.setAction(Some(sel!(deferUpdate:)));
             }
-            alert.layout();
-            let window = alert.window();
-            window.center();
-            NSApplication::sharedApplication(mtm).activate();
-            window.makeKeyAndOrderFront(None);
-            window.orderFrontRegardless();
-            Self {
+            Some(Self {
                 native: Arc::new(MainThreadBound::new(
                     NativeUpdateDialog {
                         alert,
+                        host,
                         progress_indicator,
                         install_button,
                         defer_button,
@@ -130,8 +164,8 @@ impl UpdateDialog {
                     },
                     mtm,
                 )),
-            }
-        });
+            })
+        })?;
         if result.recv().unwrap_or(false) {
             Some(dialog)
         } else {
@@ -166,6 +200,7 @@ impl UpdateDialog {
         let native = Arc::clone(&self.native);
         run_on_main(move |mtm| {
             let native = native.get(mtm);
+            native.host.endSheet(&native.alert.window());
             native.alert.window().close();
         });
     }
