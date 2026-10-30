@@ -15,7 +15,7 @@ export function rewriteCodexThreadTabs(source, initialSource, initialUrl) {
   // 同名标识符也可能出现在 import 中，必须只读取模块自己的导出表。
   const exports = initialSource.slice(initialSource.lastIndexOf("export{"));
   const exported = name => exports.match(new RegExp(`(?:,|\\{)${name?.replace(/\$/g, "\\$")} as (${identifier})(?=,|\\})`))?.[1];
-  const focus = initialSource.match(new RegExp(`function (${identifier})\\((${identifier}),(${identifier})\\)\\{if\\(\\3\\.kind===\x60chat\x60\\)\\{${identifier}\\(\\2\\);return\\}${identifier}\\(\\2,\\3\\.tab\\.tabId\\)`))?.[1];
+  const focus = initialSource.match(new RegExp(`function (${identifier})\\((${identifier}),(${identifier})\\)\\{(?:if\\(\\3\\.kind===\x60chat\x60\\)\\{${identifier}\\(\\2\\);return\\}${identifier}\\(\\2,\\3\\.tab\\.tabId\\)|\\3\\.kind===\x60chat\x60\\?${identifier}\\(\\2\\):${identifier}\\(\\2,\\3\\.tab\\.tabId\\))`))?.[1];
   const host = initialSource.match(new RegExp(`(${identifier})=${identifier}\\(${identifier},\\(\\{get:(${identifier})\\}\\)=>\\2\\(${identifier}\\)\\.hostId\\)`))?.[1];
   const navigateRoute = initialSource.match(new RegExp(`function (${identifier})\\((${identifier}),\\.\\.\\.(${identifier})\\)\\{return \\2\\.get\\(${identifier}\\)\\.navigate\\(\\.\\.\\.\\3\\)`))?.[1];
   const layoutState = initialSource.match(new RegExp(`(${identifier})=${identifier}\\(${identifier},\\(\\{get:(${identifier})\\}\\)=>\\2\\(${identifier}\\)===\x60full\x60\\?\\{mode:\x60full\x60\\}:\\{contentSide:\\2\\(${identifier}\\),mode:\x60split\x60\\}\\)`))?.[1];
@@ -33,7 +33,7 @@ export function rewriteCodexThreadTabs(source, initialSource, initialUrl) {
   const match = source.match(insertion);
   if (!match || source.match(new RegExp(insertion.source, "g"))?.length !== 1) return null;
   // 只拦截侧栏会话行的导航，不改变深链、工具调用或其他原生导航。
-  const navigations = [...source.matchAll(new RegExp(`(${identifier})=(${identifier})\\((${identifier}),(${identifier}),(${identifier})===\x60local\x60\\?void 0:\\5,(${identifier})==null&&!(${identifier})\\?void 0:\\{state:\\6,threadAccess:\\7\\?\x60shared\x60:void 0\\}\\)`, "g"))];
+  const navigations = [...source.matchAll(new RegExp(`(${identifier})=(${identifier})\\((${identifier}),(${identifier}),(${identifier})(?:===\x60local\x60\\?void 0:\\5)?,(${identifier})==null&&!(${identifier})\\?void 0:\\{state:\\6,threadAccess:\\7\\?\x60shared\x60:void 0\\}\\)`, "g"))];
   if (navigations.length !== 1) return null;
   const [navigation, result, navigate, root, conversation, hostId] = navigations[0];
   const rowStart = source.lastIndexOf("function ", navigations[0].index);
@@ -178,7 +178,7 @@ async function panelRestoreThread(root,target){
   ].map(paths => "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`));
   const items = `${surface}===\`sidebar\`&&${activeScope}(${scope})&&${match[1]}.push(...[false,true].filter(split=>panelThreadModeAvailable(${scope},${target},split)).map(split=>({id:split?"panel-thread-split":"panel-thread-tab",icon:split?${JSON.stringify(icons[1])}:${JSON.stringify(icons[0])},message:{id:split?"panel.thread.openSplit":"panel.thread.openTab",defaultMessage:document.documentElement.lang.startsWith("zh")?(split?"在右侧并排打开":"在新标签页中打开"):(split?"Open side by side":"Open in new tab")},selectAfterClose:true,onSelect:()=>panelOpenThreadTab(${scope},${target},split)}))),`;
   const restore = `${surface}===\x60sidebar\x60&&panelThreadCanRestore(${scope},${target})&&${match[1]}.push({id:"panel-thread-restore",icon:${JSON.stringify(icons[2])},message:{id:"panel.thread.restore",defaultMessage:document.documentElement.lang.startsWith("zh")?"恢复为独立页面":"Restore as standalone page"},selectAfterClose:true,onSelect:()=>panelRestoreThread(${scope},${target})}),`;
-  const focusNavigation = `${result}=panelFocusThread(${root},{conversationId:${conversation},hostId:${hostId}})||${navigation.slice(result.length + 1)}`;
+  const focusNavigation = `${result}=panelFocusThread(${root},{conversationId:${conversation},hostId:${resolvedHost[1]}??"local"})||${navigation.slice(result.length + 1)}`;
   return imports + source.replace(match[0], items + restore + match[0]).replace(navigation, focusNavigation) + "\n" + helper;
 }
 
@@ -203,17 +203,18 @@ export async function prepareCodexThreadTabs(cdp, modules, report = console.erro
             const source=await response.text();sources.set(url,source);return source;
           };
           const find=kind=>urls.find(url=>new RegExp("/app-"+kind+"-[\\w-]+\\.js$").test(new URL(url,location.href).pathname));
-          const discover=(source,url)=>{
-            for(const match of source.matchAll(/["'\x60](\.\/app-(?:initial|primary)-[\w-]+\.js)["'\x60]/g))urls.push(new URL(match[1],url).href);
-          };
-          // Codex 会清空资源计时记录；沿页面入口的真实 import 找回 initial，再找 primary。
-          if(!find("initial")){
-            for(const url of [...document.querySelectorAll('script[type="module"][src]')].map(e=>e.src)){
-              discover(await read(url),url);
-              if(find("initial"))break;
+          // 新版入口经 app-main/app-runtime 间接加载模块，资源记录清空后沿这些引用查找。
+          const queue=[...document.querySelectorAll('script[type="module"][src]')].map(e=>e.src);
+          queue.push(...urls.filter(url=>/\/app-(?:main|runtime|initial|primary)-[\w-]+\.js$/.test(new URL(url,location.href).pathname)));
+          for(const url of queue){
+            if(${JSON.stringify(missing)}.every(kind=>find(kind)))break;
+            if(sources.has(url))continue;
+            const source=await read(url);
+            for(const match of source.matchAll(/["'\x60](\.\/app-(?:main|runtime|initial|primary)-[\w-]+\.js)["'\x60]/g)){
+              const dependency=new URL(match[1],url).href;
+              urls.push(dependency);queue.push(dependency);
             }
           }
-          if(!find("primary")&&find("initial"))discover(await read(find("initial")),find("initial"));
           return await Promise.all(${JSON.stringify(missing)}.map(async kind=>{
             const url=find(kind);if(!url)throw Error("Native thread module missing: "+kind);
             return{url,source:await read(url)};

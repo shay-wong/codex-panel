@@ -59,13 +59,23 @@ test("prepared modules do not depend on another renderer read", async () => {
 
 test("module discovery survives cleared timing records with preload links or the entry import chain", async () => {
   const urls = ["app://-/assets/app-initial-fixture.js", "app://-/assets/app-primary-fixture.js"];
-  for (const useEntry of [false, true]) {
+  for (const entry of ["preload", "direct", "split"]) {
+    const useEntry = entry !== "preload";
+    const split = entry === "split";
     let remote;
     const entryUrl = "app://-/assets/index-fixture.js";
+    const mainUrl = "app://-/assets/app-main-fixture.js";
+    const runtimeUrl = "app://-/assets/app-runtime-fixture.js";
+    const initialSource = split ? initial.replace(
+      "if(view.kind===`chat`){focusChat(scope);return}focusTab(scope,view.tab.tabId)",
+      "view.kind===`chat`?focusChat(scope):focusTab(scope,view.tab.tabId)",
+    ) : 'const lazy=()=>import(`./app-primary-fixture.js`);' + initial;
     const sources = new Map([
-      [entryUrl, 'import "./app-initial-fixture.js";'],
-      [urls[0], 'const lazy=()=>import(`./app-primary-fixture.js`);' + initial],
-      [urls[1], primary],
+      [entryUrl, split ? 'import "./app-main-fixture.js";' : 'import "./app-initial-fixture.js";'],
+      [mainUrl, 'import "./app-initial-fixture.js";import "./app-runtime-fixture.js";'],
+      [runtimeUrl, 'import "./app-primary-fixture.js";'],
+      [urls[0], initialSource],
+      [urls[1], split ? primary.replace("host===`local`?void 0:host", "host") : primary],
     ]);
     const reads = [];
     const result = await prepareCodexThreadTabs({ async send(method, params) {
@@ -89,12 +99,15 @@ test("module discovery survives cleared timing records with preload links or the
     } }, [], () => {});
     assert.equal(result.length, 1);
     assert.match(result[0].source, /panel-thread-split/);
-    assert.deepEqual(reads, useEntry ? [entryUrl, ...urls] : urls, "each module is fetched once");
+    assert.deepEqual(reads, split ? [entryUrl, mainUrl, urls[0], runtimeUrl, urls[1]]
+      : useEntry ? [entryUrl, ...urls] : urls, "each module is fetched once");
   }
 });
 
-function harness({deferNavigation=false}={}) {
-  const patched = rewriteCodexThreadTabs(primary, initial, "app://-/assets/app-initial-fixture.js");
+function harness({deferNavigation=false,nativeHostArgument=false}={}) {
+  const source = nativeHostArgument ? primary.replace("let result=navigate(root,id,host===`local`?void 0:host,",
+    "host=host===`local`?void 0:host;let result=navigate(root,id,host,") : primary;
+  const patched = rewriteCodexThreadTabs(source, initial, "app://-/assets/app-initial-fixture.js");
   assert.ok(patched);
   assert.match(patched, /c as panelThreadTabs2/);
   let focusedComposer=null;const composerFocuses=[],subscriptions=[];
@@ -219,6 +232,15 @@ test("same conversation id on a different host remains a different target", asyn
   h.sidebar(root,"second","remote");
   assert.equal(h.navigations.at(-1).host,"remote");
   assert.equal(h.focuses.length,0);
+});
+
+test("native default-host navigation focuses the existing local tab", async () => {
+  const h=harness({nativeHostArgument:true}),{root,target}=h;
+  await (await h.menu({scope:root,target,surface:"sidebar"}))[1].onSelect();
+  h.sidebar(root,"second","local"); await Promise.resolve();
+  assert.equal(h.navigations.length,0);
+  assert.equal(h.currentComposer(),"local:second");
+  assert.equal(root.active.state.mode,"split");
 });
 
 
