@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.4.14-fork
+
 - Fix conversation-menu preparation on newer Codex builds whose startup modules load through separate entry modules, including updated native focus and sidebar navigation code.
 
 - Fix signed update preparation for local Fork builds and clear stale update actions after a check or download failure.
