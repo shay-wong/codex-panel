@@ -122,7 +122,7 @@ Free 侧边栏兼容（等待上游吸收）：没有插件、宠物及 destinat
 
 更新方式已按用户新决定采用上游“预下载并验签、确认后安装并重启”流程；发布源仍固定为 `shay-wong/codex-panel`，只信任 Fork 自己的更新签名公钥。旧的仅跳转发布页策略已废止。
 
-`src-tauri/tauri.conf.json` 必须保留 `plugins.updater` 配置对象及空的 `pubkey` 占位，使未配置发布公钥的本地构建也能正常启动；实际更新仍由 `prepare_update` 强制读取编译时 `CODEX_PANEL_UPDATER_PUBLIC_KEY` 并覆盖占位值。缺少公钥只禁用安装更新，不能阻止启动面板。修改后需实际启动签名 App，确认无 `PluginInitialization("updater", ...)` 错误且服务就绪。
+`src-tauri/tauri.conf.json` 必须保留 `plugins.updater` 配置对象及空的 `pubkey` 占位，使本地构建也能正常启动；`prepare_update` 使用仓库内的 Fork 公钥，发布流水线可通过编译时 `CODEX_PANEL_UPDATER_PUBLIC_KEY` 覆盖它。自定义构建只有在替换为自己的签名源时才需要覆盖公钥。修改后需实际启动签名 App，确认无 `PluginInitialization("updater", ...)` 错误且服务就绪。
 
 上游 `1.1.22` 的 Beta App bundle 重命名与迁移、Beta 发布通道和对应发布工作流不适用于 Fork；更新包生成按 Fork 标签与签名策略单独配置，不恢复上游品牌及 Beta 发布流水线。
 
@@ -308,7 +308,7 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 
 - 生命周期：`长期保留`。
 - 原始目的：采用上游下载、验签、用户确认安装与重启流程，同时只更新 Fork 自身。
-- 行为不变量：版本发现继续使用 Fork Release 和规范 `vX.Y.Z-fork`；每个候选从精确 tag 下读取 `latest.json`，包地址属于相同 Fork Release。Tauri 插件验签成功前不得安装；构建公钥来自 `CODEX_PANEL_UPDATER_PUBLIC_KEY`，禁止使用上游公钥，未配置时明确不可安装。自动检查可下载准备，但安装必须确认；macOS 使用原生确认弹窗并置于前台，其他平台保留 Tauri 对话框。仅停止自有服务，失败尝试恢复，成功重启；Windows 按上游仍不支持自动安装。更新不迁移/覆盖用户数据目录。
+- 行为不变量：版本发现继续使用 Fork Release 和规范 `vX.Y.Z-fork`；每个候选从精确 tag 下读取 `latest.json`，包地址属于相同 Fork Release。Tauri 插件验签成功前不得安装；官方构建使用仓库内 Fork 公钥，发布流水线可用 `CODEX_PANEL_UPDATER_PUBLIC_KEY` 覆盖，禁止使用上游公钥。自动检查可下载准备，但安装必须确认；下载或验签失败会移除安装动作并保留发布页入口；macOS 使用原生确认弹窗并置于前台，其他平台保留 Tauri 对话框。仅停止自有服务，失败尝试恢复，成功重启；Windows 按上游仍不支持自动安装。更新不迁移/覆盖用户数据目录。
 - 代码及验证：`src-tauri/src/main.rs`、`src-tauri/src/update_dialog.rs`、`src-tauri/build.rs`、`src-tauri/Cargo.toml`、`launcher/src/App.tsx`、`launcher/src/launcher.css`、`scripts/create-macos-updater.mjs`、`scripts/release-metadata.mjs`、`scripts/verify-updater-signature.mjs`；`test/launcher-ui.test.mjs`、`test/release-metadata.test.mjs`、`test/updater-signature.test.mjs` 及 `cargo check --manifest-path src-tauri/Cargo.toml`。
 - 用户文档：`README.md`、`README.zh-CN.md`、`docs/fork-capabilities.md#signed-in-app-updates`；来源为当前行为调整，可用 `git log -S'prepare_update' -- src-tauri/src/main.rs` 定位。
 - 合并指引：沿用上游 updater 下载/验签/install API，保留 Fork 身份、公钥和下载链限定；不重写验证器到产品运行路径。发布脚本检测实际 macOS 架构，先验证 App 再签名归档、验证 updater 签名后生成元数据。资产顺序不作为发布条件；私钥只在发布环境中使用。

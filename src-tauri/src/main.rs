@@ -85,6 +85,8 @@ const RELEASES_ENDPOINT: &str =
 const RELEASES_API_PATH: &str = "repos/shay-wong/codex-panel/releases?per_page=100";
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const UPDATE_FAILURE_CACHE_INTERVAL: Duration = Duration::from_secs(5 * 60);
+// Fork 的公钥可公开发布；流水线变量仍可覆盖它，以便密钥轮换。
+const FORK_UPDATER_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEzNUVFQzEzNkZGQkE5MzgKUldRNHFmdHZFK3hlRTRwQk1tVnNCUm8yb2t3MGdIbEI4V01NbWhuNWlEeHF2Z2RTUUJBcHNMME4K";
 const GH_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 const RENDERER_STATUS_INTERVAL: Duration = Duration::from_secs(2);
 #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -323,6 +325,7 @@ impl ReleaseCheckFailure {
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ReleaseCheckCache {
+    current_version: String,
     checked_at: u64,
     result: Result<ReleaseCheckResult, ReleaseCheckFailure>,
 }
@@ -760,8 +763,12 @@ fn release_check_result(
 fn cached_release_check(
     path: &Path,
     now: u64,
+    current_version: &str,
 ) -> Option<Result<ReleaseCheckResult, ReleaseCheckFailure>> {
     let cache: ReleaseCheckCache = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    if cache.current_version != current_version {
+        return None;
+    }
     let cache_interval = match &cache.result {
         Ok(_) => UPDATE_CHECK_INTERVAL.as_secs(),
         Err(ReleaseCheckFailure::RateLimited {
@@ -782,10 +789,12 @@ fn cached_release_check(
 
 fn write_release_check_cache(
     path: &Path,
+    current_version: &str,
     checked_at: u64,
     result: &Result<ReleaseCheckResult, ReleaseCheckFailure>,
 ) -> Result<(), String> {
     let cache = ReleaseCheckCache {
+        current_version: current_version.into(),
         checked_at,
         result: result.clone(),
     };
@@ -2880,7 +2889,7 @@ async fn prepare_update(
     }
     let public_key = option_env!("CODEX_PANEL_UPDATER_PUBLIC_KEY")
         .filter(|key| !key.trim().is_empty())
-        .ok_or("此构建未配置 Fork 更新签名公钥，请从 Release 页面下载安装。")?;
+        .unwrap_or(FORK_UPDATER_PUBLIC_KEY);
     let current_version = state.snapshot.lock().unwrap().version.clone();
     let current = PanelVersion::parse(&current_version)
         .ok_or("当前版本无效，无法安全检查更新。")?;
@@ -3049,8 +3058,9 @@ async fn offer_update(
         .unwrap_or_default()
         .as_secs();
     let cache_path = state.data_directory.join("update-check.json");
+    let version = state.snapshot.lock().unwrap().version.clone();
     let cached = use_cache
-        .then(|| cached_release_check(&cache_path, now))
+        .then(|| cached_release_check(&cache_path, now, &version))
         .flatten();
     if cached.is_none() {
         update_snapshot(app, state, |snapshot| {
@@ -3060,13 +3070,12 @@ async fn offer_update(
             snapshot.update_url = None;
         });
     }
-    let version = state.snapshot.lock().unwrap().version.clone();
     let used_cache = cached.is_some();
     let check_result = match cached {
         Some(result) => result,
         None => {
             let result = check_fork_release(&version).await;
-            if let Err(error) = write_release_check_cache(&cache_path, now, &result) {
+            if let Err(error) = write_release_check_cache(&cache_path, &version, now, &result) {
                 append_log(state, &format!("Update cache write failed: {error}"));
             }
             result
@@ -3076,6 +3085,9 @@ async fn offer_update(
         Ok(ReleaseCheckResult::None) => {
             update_snapshot(app, state, |snapshot| {
                 snapshot.update_message = "Fork 暂无已发布版本。".into();
+                snapshot.update_available = false;
+                snapshot.update_ready = false;
+                snapshot.update_url = None;
             });
             if show_result {
                 show_message_dialog(app, "Codex Panel 更新", "Fork 暂无已发布版本。", MessageDialogKind::Info);
@@ -3085,6 +3097,9 @@ async fn offer_update(
         Ok(ReleaseCheckResult::Current) => {
             update_snapshot(app, state, |snapshot| {
                 snapshot.update_message = "当前已是最新版本。".into();
+                snapshot.update_available = false;
+                snapshot.update_ready = false;
+                snapshot.update_url = None;
             });
             if show_result {
                 show_message_dialog(app, "Codex Panel 更新", "当前已是最新版本。", MessageDialogKind::Info);
@@ -3102,17 +3117,20 @@ async fn offer_update(
             if show_result {
                 let _ = show_main_window(app);
             }
-            if let Err(error) = prepare_update(app, state, &version).await {
-                append_log(state, &format!("Update preparation failed: {error}"));
-                update_snapshot(app, state, |snapshot| {
-                    snapshot.update_message = format!("发现新版本 {version}。{error}");
-                });
-            } else if show_result {
-                let result = confirm_prepared_update(app, state).await;
-                state.update_flow_in_progress.store(false, Ordering::SeqCst);
-                return result;
-            }
-            Ok(())
+            let result = match prepare_update(app, state, &version).await {
+                Err(error) => {
+                    append_log(state, &format!("Update preparation failed: {error}"));
+                    update_snapshot(app, state, |snapshot| {
+                        snapshot.update_message = format!("发现新版本 {version}。{error}");
+                        snapshot.update_ready = false;
+                    });
+                    Err(error)
+                }
+                Ok(()) if show_result => confirm_prepared_update(app, state).await,
+                Ok(()) => Ok(()),
+            };
+            state.update_flow_in_progress.store(false, Ordering::SeqCst);
+            return result;
         }
         Err(error) => {
             let error = error.message(now, used_cache);
@@ -3120,6 +3138,7 @@ async fn offer_update(
             update_snapshot(app, state, |snapshot| {
                 snapshot.update_message = format!("更新检查失败：{error}");
                 snapshot.update_available = false;
+                snapshot.update_ready = false;
                 snapshot.update_url = None;
             });
             if show_result {
@@ -3918,28 +3937,31 @@ mod tests {
     #[test]
     fn update_cache_uses_result_specific_expiry() {
         let path = env::temp_dir().join(format!("codex-panel-update-{}.json", Uuid::new_v4()));
-        write_release_check_cache(&path, 1000, &Ok(ReleaseCheckResult::Current)).unwrap();
-        assert!(cached_release_check(&path, 1000 + 23 * 60 * 60).is_some());
+        write_release_check_cache(&path, "0.4.13-fork", 1000, &Ok(ReleaseCheckResult::Current)).unwrap();
+        assert!(cached_release_check(&path, 1000 + 23 * 60 * 60, "0.4.13-fork").is_some());
+        assert!(cached_release_check(&path, 1000 + 23 * 60 * 60, "0.4.14-fork").is_none());
 
         write_release_check_cache(
             &path,
+            "0.4.13-fork",
             1000,
             &Err(ReleaseCheckFailure::Message("temporary".into())),
         )
         .unwrap();
-        assert!(cached_release_check(&path, 1299).is_some());
-        assert!(cached_release_check(&path, 1300).is_none());
+        assert!(cached_release_check(&path, 1299, "0.4.13-fork").is_some());
+        assert!(cached_release_check(&path, 1300, "0.4.13-fork").is_none());
 
         write_release_check_cache(
             &path,
+            "0.4.13-fork",
             1000,
             &Err(ReleaseCheckFailure::RateLimited {
                 reset_at: Some(1120),
             }),
         )
         .unwrap();
-        assert!(cached_release_check(&path, 1119).is_some());
-        assert!(cached_release_check(&path, 1120).is_none());
+        assert!(cached_release_check(&path, 1119, "0.4.13-fork").is_some());
+        assert!(cached_release_check(&path, 1120, "0.4.13-fork").is_none());
         let _ = fs::remove_file(path);
     }
 }

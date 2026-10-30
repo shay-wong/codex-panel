@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fix signed update preparation for local Fork builds and clear stale update actions after a check or download failure.
+
 - Restore the macOS manager window and attach native confirmations and messages as system-managed sheets, addressing blank or unclickable dialogs; error messages no longer block menu callbacks.
 
 ## 0.4.13-fork
