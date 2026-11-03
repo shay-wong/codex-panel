@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.4.15-fork
+
 - Add a default-on “Show conversation usage” preference to hide or restore the entire usage row without restarting; add a separate switch for ordinary numbers with a fade transition or dot-matrix numbers, and improve small dot-matrix number clarity.
 
 - Calculate output TPS from total turn output tokens and elapsed time with one decimal place; estimate live while streaming, correct with actual usage, and freeze the result when the turn ends.
