@@ -264,6 +264,8 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 
 ### Tauri/Rust Codex Panel 桌面管理器
 
+- 普通窗口尺寸记忆（长期保留）：`main.rs` 在主窗口 Resized 时按显示器比例保存逻辑宽高至偏好内存，关闭/退出时复用原子偏好写入，setup 恢复；最大化/全屏不覆盖尺寸，不持久化临时弹窗。字段 `windowSize` 默认缺省，旧配置保持兼容；测试 `launcher_window_size_round_trips_preferences` 使用隔离临时目录验证缩放、读写与旧偏好保留。来源定位 `git log -S'LauncherWindowSize' -- src-tauri/src/main.rs`；上游提供等价窗口尺寸恢复后可吸收。用户说明见中英文 README 与 `docs/fork-capabilities.md`。
+
 - 菜单收起问题诊断（维护用途，定位后评估删除）：`src-tauri/src/menu_diagnostics.rs` 通过 AppKit 通知观察本进程菜单的开始/结束跟踪及原生动作发送，不替换 delegate 或关闭逻辑；日志带毫秒时间、PID、菜单对象标识。`main.rs` 记录菜单回调、异步操作、阻塞错误弹窗与菜单跟踪期间状态刷新的成对 span/耗时，启动记录版本与平台。前缀 `[menu-diagnostic]`，沿用现有日志路径，不记录任务内容、凭据或错误正文。验证：隔离 macOS `cargo check` 与原生通知投递/日志探针；真实无法收起问题仍待对方复现。
 
 - 错误提示布局修复：`launcher/src/launcher.css` 的 `#errorNotice` 使用单行 Flex，正文可收缩换行，关闭按钮保持右侧。沿用本节生命周期和用户文档；合并时避免恢复 Radix Callout 将正文与按钮排在同列的默认网格。验证：隔离的模拟启动器浏览器检查短提示、窄窗口长提示及关闭操作；来源定位：`git log -S'#errorNotice' -- launcher/src/launcher.css`。

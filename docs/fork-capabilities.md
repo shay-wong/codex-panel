@@ -362,3 +362,7 @@ Issue details → Relations → Add blocker / Add blocked issue searches active 
 ## Native composer usage
 
 Local Codex composers show output throughput and cache hit rate through the existing authenticated host bridge. The host resolves the rollout with native `thread/read` and reads only its tail (512 KiB up to 8 MiB), returning numeric usage only. Throughput uses positive cumulative output deltas divided by eligible elapsed intervals within the same turn (0.5–120 seconds); it includes waiting and tool execution. Cache hit rate uses summed cached/input tokens in the same turn. Missing boundaries fall back to the latest call with throughput unavailable. Home and remote composers do not inherit local readings. These metrics update after model calls, not on every streamed token.
+
+The last normal window size is saved on close or exit and restored at startup; fullscreen and maximized sizes do not replace it.
+
+窗口关闭或退出时保存普通尺寸，下次启动恢复；全屏和最大化尺寸不覆盖记录。

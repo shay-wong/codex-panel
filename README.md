@@ -360,3 +360,5 @@ Thanks to [Lingshan21](https://github.com/Lingshan21) for:
 
 - The parent-based project completion proposal and initial implementation in [#371](https://github.com/chuspeeism/dashi-taskboard/pull/371), which weighted top-level parent issues equally regardless of how many children each had.
 - The priority organization proposal and initial implementation in [#372](https://github.com/chuspeeism/dashi-taskboard/pull/372). The final board sorting controls were adapted to the maintainer's requirements instead of adopting the proposed priority swimlanes.
+
+The management window restores its last normal size after restarting; fullscreen and maximized sizes do not replace it.

@@ -170,6 +170,18 @@ struct LauncherPidRecord {
 }
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
+struct LauncherWindowSize {
+    width: f64,
+    height: f64,
+}
+
+impl LauncherWindowSize {
+    fn valid(self) -> bool {
+        self.width.is_finite() && self.height.is_finite() && self.width >= 620.0 && self.height >= 480.0
+    }
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LauncherPreferences {
     auto_connect_codex: bool,
@@ -182,6 +194,8 @@ struct LauncherPreferences {
     custom_provider_ultrafast: bool,
     #[serde(default)]
     show_custom_provider_dot: bool,
+    #[serde(default)]
+    window_size: Option<LauncherWindowSize>,
 }
 
 #[derive(Serialize)]
@@ -203,6 +217,7 @@ impl Default for LauncherPreferences {
             custom_provider_quota_fix: false,
             custom_provider_ultrafast: false,
             show_custom_provider_dot: false,
+            window_size: None,
         }
     }
 }
@@ -3190,9 +3205,27 @@ fn main() {
         .on_window_event(|window, event| {
             if window.label() == "main" {
                 match event {
+                    WindowEvent::Resized(size) => {
+                        if window.is_maximized().unwrap_or(true) || window.is_fullscreen().unwrap_or(true) {
+                            return;
+                        }
+                        if let (Some(state), Ok(scale)) = (window.try_state::<Arc<LauncherState>>(), window.scale_factor()) {
+                            let size = size.to_logical::<f64>(scale);
+                            let size = LauncherWindowSize { width: size.width, height: size.height };
+                            if size.valid() { state.preferences.lock().unwrap().window_size = Some(size); }
+                        }
+                    }
                     WindowEvent::CloseRequested { api, .. } => {
                         api.prevent_close();
                         let _ = window.hide();
+                        if let Some(state) = window.try_state::<Arc<LauncherState>>() {
+                            let state = Arc::clone(state.inner());
+                            tauri::async_runtime::spawn_blocking(move || {
+                                if let Err(error) = update_preferences(&state, |_| {}) {
+                                    append_log(&state, &format!("Saving launcher window size failed: {error}"));
+                                }
+                            });
+                        }
                     }
                     #[cfg(target_os = "macos")]
                     WindowEvent::ThemeChanged(theme) => {
@@ -3260,6 +3293,10 @@ fn main() {
                 instance_lock,
             ));
             app.manage(state.clone());
+            if let (Some(window), Some(size)) = (app.get_webview_window("main"), preferences.window_size.filter(|size| size.valid())) {
+                window.set_size(tauri::LogicalSize::new(size.width, size.height))?;
+            }
+
             menu_diagnostics::log(&state.log_path, &format!("startup version={version} os={} arch={}", std::env::consts::OS, std::env::consts::ARCH));
             #[cfg(target_os = "macos")]
             menu_diagnostics::install(&state.log_path);
@@ -3627,6 +3664,12 @@ fn main() {
         }
         tauri::RunEvent::Exit => {
             if let Some(state) = app_handle.try_state::<Arc<LauncherState>>() {
+                if let Err(error) = update_preferences(&state, |_| {}) {
+                    append_log(&state, &format!("Saving launcher window size failed: {error}"));
+                }
+            }
+
+            if let Some(state) = app_handle.try_state::<Arc<LauncherState>>() {
                 // 事件循环结束后不再停服务或更新 UI，避免重复清理及等待已停止的主线程。
                 #[cfg(any(target_os = "macos", target_os = "linux"))]
                 unsafe {
@@ -3716,6 +3759,26 @@ mod tests {
         finished_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         assert!(exit.complete.load(Ordering::SeqCst));
         ui.join().unwrap();
+    }
+
+    #[test]
+    fn launcher_window_size_round_trips_preferences() {
+        let root = std::env::temp_dir().join(format!("panel-window-size-{}", Uuid::new_v4()));
+        let path = root.join("preferences.json");
+        let mut preferences = super::LauncherPreferences::default();
+        assert!(preferences.window_size.is_none());
+        let logical = tauri::PhysicalSize::new(1920, 1440).to_logical::<f64>(2.0);
+        preferences.window_size = Some(super::LauncherWindowSize { width: logical.width, height: logical.height });
+        preferences.auto_open_panel = false;
+        super::write_preferences(&path, preferences).unwrap();
+        let restored = super::read_preferences(&path).unwrap();
+        let size = restored.window_size.unwrap();
+        assert!(size.valid());
+        assert_eq!((size.width, size.height), (960.0, 720.0));
+        assert!(!restored.auto_open_panel);
+        assert!(!super::LauncherWindowSize { width: 0.0, height: 0.0 }.valid());
+        assert!(!super::LauncherWindowSize { width: f64::NAN, height: 720.0 }.valid());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
