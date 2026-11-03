@@ -32,6 +32,7 @@ import {
   stopResidentInjectors,
   startPanelHostHeartbeats,
 } from "./codex-injector-runtime.mjs";
+import { readThreadUsage } from "./codex-thread-usage.mjs";
 import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
 import { prepareCodexDotEntry } from "./codex-dot-entry.mjs";
 import { prepareCodexThreadTabs } from "./codex-thread-tabs.mjs";
@@ -2145,6 +2146,8 @@ function installPanelHostBinding(
       isAuthorizedContext: (executionContextId) => executionContextId === activeContextId,
       parseAutomationRequest: parsePanelAutomationHostRequest,
       ensure: () => supervisor.ensure({ force: true }),
+      readThreadUsage: ({ threadId }) => readThreadUsage(threadId, (id) =>
+        requestCodexAppServerViaCdp(cdp, "local", "thread/read", { threadId: id, includeTurns: false }, 3_000)),
       readCurrentUser: async () => {
         let account = await requestCodexAppServerViaCdp(
           cdp,

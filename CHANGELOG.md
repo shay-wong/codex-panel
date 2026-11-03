@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Show output throughput (tok/s) and cache hit rate below local Codex composers using local session logs. Missing data shows `--`; API requests are unchanged.
+
 ## 0.4.14-fork
 
 - Fix conversation-menu preparation on newer Codex builds whose startup modules load through separate entry modules, including updated native focus and sidebar navigation code.

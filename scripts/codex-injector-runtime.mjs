@@ -39,6 +39,10 @@ function parseHostRequest(payload, parseAutomationRequest) {
   if (!id) return { id: null, request: null, error: HOST_REQUEST_ERROR };
   if (request.action === "ensure") return { id, request, error: null };
   if (request.action === "read-current-user") return { id, request, error: null };
+  if (request.action === "read-thread-usage" && typeof request.threadId === "string"
+    && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(request.threadId)) {
+    return { id, request: { id, action: request.action, threadId: request.threadId }, error: null };
+  }
   if (
     request.action === "load-frame"
     && typeof request.frameName === "string"
@@ -349,6 +353,8 @@ export async function handleHostBindingPayload(params, handlers) {
     let result;
     if (parsed.request.action === "ensure") {
       result = await handlers.ensure();
+    } else if (parsed.request.action === "read-thread-usage") {
+      result = await handlers.readThreadUsage(parsed.request);
     } else if (parsed.request.action === "read-current-user") {
       result = await handlers.readCurrentUser();
     } else if (parsed.request.action === "load-frame") {

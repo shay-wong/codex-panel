@@ -2814,6 +2814,83 @@
     postHostContext();
   }
 
+  const usageLines = new Map();
+  let usagePollInFlight = false;
+  let usagePolledAt = 0;
+
+  function usageComposerThread(card) {
+    const root = card.closest("[data-codex-composer-root]");
+    const placement = root?.getAttribute("data-composer-placement");
+    const identity = root?.querySelector("[data-above-composer-conversation-id]")
+      ?.getAttribute("data-above-composer-conversation-id");
+    // 并排会话优先认各自输入框，首页草稿与远端会话不能继承侧栏旧读数。
+    if (placement === "home" || (identity && identity.includes(":") && !identity.startsWith("local:"))) return "";
+    const id = identity ? normalizeThreadId(identity)
+      : (!placement || placement === "thread") ? normalizeThreadId(threadIdFromLocation()) : "";
+    return /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id) ? id : "";
+  }
+
+  function renderUsageLine(line, usage, unavailable = false) {
+    const zh = !document.documentElement.lang || document.documentElement.lang.startsWith("zh");
+    const speed = usage?.speed == null ? "--" : Math.round(usage.speed);
+    const cache = usage?.cache == null ? "--" : `${usage.cache.toFixed(1)}%`;
+    const text = `${speed} tok/s　 ·　 ${zh ? "缓存命中" : "Cache hit"} ${cache}`;
+    if (line.textContent !== text) line.textContent = text;
+    line.title = unavailable ? (zh ? "暂时无法读取本机会话用量" : "Local usage is unavailable")
+      : zh ? "输出吞吐：同轮输出 token 增量 ÷ 对应耗时，含等待与工具执行，非纯解码速度。缓存命中：同轮缓存输入 ÷ 输入 token。数据不足时显示 --。"
+        : "Output throughput includes waiting and tool execution, not pure decode speed. Cache hit is cached/input tokens within the turn. Missing data is shown as --.";
+    if (usage?.partial) line.title += zh ? " 日志尾部缺少轮边界，仅显示最近一次调用。" : " Turn boundary unavailable; latest call only.";
+    line.style.opacity = usage?.observedAt && Date.now() - usage.observedAt > 120_000 ? "0.55" : "1";
+  }
+
+  async function pollThreadUsage() {
+    if (destroyed || document.hidden) return;
+    const visible = new Set();
+    for (const card of document.querySelectorAll("[data-composer-surface-variant], .composer-surface-chrome")) {
+      if (card.closest('[inert], [hidden]') || !card.getBoundingClientRect().height) continue;
+      const threadId = usageComposerThread(card);
+      if (!threadId) continue;
+      visible.add(card);
+      let state = usageLines.get(card);
+      if (!state || state.threadId !== threadId) {
+        state?.line.remove();
+        const line = document.createElement("div");
+        line.setAttribute(OWNED_ATTRIBUTE, "true");
+        line.className = "codex-panel-usage-line";
+        line.style.cssText = "font-size:12px;line-height:24px;text-align:center;color:var(--color-token-text-secondary,#888);font-variant-numeric:tabular-nums;flex:none;";
+        state = { threadId, line };
+        usageLines.set(card, state);
+        renderUsageLine(line, null);
+      }
+      if (card.nextElementSibling !== state.line) card.after(state.line);
+    }
+    for (const [card, state] of usageLines) {
+      if (!visible.has(card)) {
+        state.line.remove();
+        usageLines.delete(card);
+      }
+    }
+    if (usagePollInFlight || !usageLines.size || Date.now() - usagePolledAt < 2_000 || !hasLiveHostBinding()) return;
+    usagePollInFlight = true;
+    usagePolledAt = Date.now();
+    try {
+      const ids = [...new Set([...usageLines.values()].map((state) => state.threadId))];
+      for (const threadId of ids) {
+        let result;
+        let unavailable = false;
+        try { result = await requestHost("read-thread-usage", { threadId }, 5_000); }
+        catch { unavailable = true; }
+        if (destroyed) return;
+        // 请求期间切换标签时丢弃旧结果，不把上一会话的指标写到新输入框。
+        for (const [card, state] of usageLines) {
+          if (state.threadId === threadId && usageComposerThread(card) === threadId) {
+            renderUsageLine(state.line, result?.usage, unavailable);
+          }
+        }
+      }
+    } finally { usagePollInFlight = false; }
+  }
+
   function mount() {
     document.removeEventListener("DOMContentLoaded", mount);
     if (destroyed || observer || !document.documentElement) return;
@@ -2842,14 +2919,18 @@
     hostContextTimer = window.setInterval(() => {
       postHostContext();
       void pollNativeClaim();
+      void pollThreadUsage();
     }, 1_000);
     postHostContext();
     void pollNativeClaim();
+    void pollThreadUsage();
   }
 
   function destroy() {
     if (destroyed) return;
     destroyed = true;
+    for (const { line } of usageLines.values()) line.remove();
+    usageLines.clear();
     if (reattachTimer !== null) window.clearTimeout(reattachTimer);
     reattachTimer = null;
     if (hostContextTimer !== null) window.clearInterval(hostContextTimer);
