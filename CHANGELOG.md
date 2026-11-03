@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Show three bouncing dots while conversation usage metrics await data, and animate numeric changes smoothly up or down; respect reduced-motion settings.
+
 - Add speedometer and cache icons to the conversation usage row.
 
 - Fix unavailable conversation usage metrics for native session log filenames containing an additional UUID.

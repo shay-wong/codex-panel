@@ -4,6 +4,7 @@ import path from "node:path";
 // 日志只有模型调用结束时的用量，因此计算输出吞吐，不声称是流式解码速度。
 export function summarizeThreadUsage(text) {
   let turnId = null;
+  let inProgress = false;
   let previous = null;
   let input = 0;
   let cached = 0;
@@ -21,10 +22,16 @@ export function summarizeThreadUsage(text) {
     if (!event) continue;
     if (record.type === "event_msg" && ["task_started", "turn_started"].includes(event.type)) {
       reset(event.turn_id ?? null);
+      inProgress = true;
       continue;
     }
     if (record.type === "turn_context" && event.turn_id && event.turn_id !== turnId) {
       reset(event.turn_id);
+      inProgress = true;
+      continue;
+    }
+    if (record.type === "event_msg" && ["task_complete", "turn_aborted"].includes(event.type)) {
+      if (!event.turn_id || !turnId || event.turn_id === turnId) inProgress = false;
       continue;
     }
     if (record.type !== "event_msg" || event.type !== "token_count") continue;
@@ -56,6 +63,7 @@ export function summarizeThreadUsage(text) {
     cache: input > 0 ? cached / input * 100 : null,
     observedAt: previous?.at ?? null,
     partial: !turnId,
+    inProgress,
   };
 }
 

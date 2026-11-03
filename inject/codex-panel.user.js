@@ -237,6 +237,12 @@
     style.id = STYLE_ID;
     style.setAttribute(OWNED_ATTRIBUTE, "true");
     style.textContent = `
+      .codex-panel-usage-dots { display: inline-flex; align-items: center; justify-content: center; gap: 4px; width: 20px; height: 14px; margin-inline: 2px; vertical-align: middle; }
+      .codex-panel-usage-dots i { width: 2px; height: 2px; border-radius: 50%; background: currentColor; animation: codex-panel-usage-bounce 900ms ease-in-out infinite; }
+      .codex-panel-usage-dots i:nth-child(2) { animation-delay: 120ms; }
+      .codex-panel-usage-dots i:nth-child(3) { animation-delay: 240ms; }
+      @keyframes codex-panel-usage-bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-2px); } }
+      @media (prefers-reduced-motion: reduce) { .codex-panel-usage-dots i { animation: none; } }
       #${ENTRY_ID}:not([aria-current="page"]) {
         color: var(--button-text-color, var(--color-token-foreground, inherit));
       }
@@ -2815,6 +2821,7 @@
   }
 
   const usageLines = new Map();
+  const usageValueAnimations = new WeakMap();
   let usagePollInFlight = false;
   let usagePolledAt = 0;
 
@@ -2830,20 +2837,62 @@
     return /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id) ? id : "";
   }
 
+  function renderUsageValue(label, value, format, loading) {
+    const previous = usageValueAnimations.get(label);
+    if (value == null && loading) {
+      if (previous?.frame) window.cancelAnimationFrame(previous.frame);
+      usageValueAnimations.delete(label);
+      if (label.getAttribute("aria-busy") !== "true") {
+        const [before, after] = format(null).split("--");
+        label.innerHTML = '<span class="codex-panel-usage-dots" aria-hidden="true"><i></i><i></i><i></i></span>';
+        label.prepend(before);
+        label.append(after);
+        label.setAttribute("aria-busy", "true");
+      }
+      label.setAttribute("aria-label", format(null).replace("--", loading));
+      return;
+    }
+    if (label.hasAttribute("aria-busy")) {
+      label.removeAttribute("aria-busy");
+      label.removeAttribute("aria-label");
+    }
+    const write = (number) => {
+      const text = format(number);
+      if (label.textContent !== text) label.textContent = text;
+    };
+    if (previous?.target === value) { write(previous.value); return; }
+    if (previous?.frame) window.cancelAnimationFrame(previous.frame);
+    const state = { target: value, value, frame: 0 };
+    usageValueAnimations.set(label, state);
+    if (value == null || previous?.value == null || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      write(value);
+      return;
+    }
+    const from = previous.value;
+    const startedAt = performance.now();
+    const tick = (now) => {
+      if (!label.isConnected) return;
+      const progress = Math.min(1, (now - startedAt) / 200);
+      state.value = progress === 1 ? value : from + (value - from) * (1 - (1 - progress) ** 3);
+      write(state.value);
+      state.frame = progress < 1 ? window.requestAnimationFrame(tick) : 0;
+    };
+    state.value = from;
+    state.frame = window.requestAnimationFrame(tick);
+  }
+
   function renderUsageLine(line, usage, unavailable = false) {
     const zh = !document.documentElement.lang || document.documentElement.lang.startsWith("zh");
-    const speed = usage?.speed == null ? "--" : Math.round(usage.speed);
-    const cache = usage?.cache == null ? "--" : `${usage.cache.toFixed(1)}%`;
     const speedLabel = line.querySelector("[data-usage-speed]");
     const cacheLabel = line.querySelector("[data-usage-cache]");
-    const speedText = `${speed} tok/s`;
-    const cacheText = `${zh ? "缓存命中" : "Cache hit"} ${cache}`;
-    if (speedLabel.textContent !== speedText) speedLabel.textContent = speedText;
-    if (cacheLabel.textContent !== cacheText) cacheLabel.textContent = cacheText;
+    const loading = !unavailable && usage?.inProgress ? (zh ? "统计中" : "Calculating") : "";
+    renderUsageValue(speedLabel, usage?.speed ?? null, value => `${value == null ? "--" : Math.round(value)} tok/s`, loading);
+    renderUsageValue(cacheLabel, usage?.cache ?? null, value => `${zh ? "缓存命中" : "Cache hit"} ${value == null ? "--" : `${value.toFixed(1)}%`}`, loading);
     line.title = unavailable ? (zh ? "暂时无法读取本机会话用量" : "Local usage is unavailable")
       : zh ? "输出吞吐：同轮输出 token 增量 ÷ 对应耗时，含等待与工具执行，非纯解码速度。缓存命中：同轮缓存输入 ÷ 输入 token。数据不足时显示 --。"
         : "Output throughput includes waiting and tool execution, not pure decode speed. Cache hit is cached/input tokens within the turn. Missing data is shown as --.";
     if (usage?.partial) line.title += zh ? " 日志尾部缺少轮边界，仅显示最近一次调用。" : " Turn boundary unavailable; latest call only.";
+    if (loading && (usage.speed == null || usage.cache == null)) line.title += zh ? " 本轮数据统计中…" : " Calculating this turn’s usage…";
     line.style.opacity = usage?.observedAt && Date.now() - usage.observedAt > 120_000 ? "0.55" : "1";
   }
 

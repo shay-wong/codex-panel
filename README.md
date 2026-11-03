@@ -90,7 +90,7 @@ Board filters support name and priority sorting, and display settings can show c
 
 Use **Relations → Add blocker / Add blocked issue** to select issues across repository projects. These are native dependencies visible from both issues and honored by execution; parent and related-issue links remain within one project. The same contract applies to `panelctl issue relation add` with `--type blocks|blocked_by`. See [cross-repository blocking](docs/fork-capabilities.md#cross-repository-blocking).
 
-Local Codex composers display output throughput (tok/s) and cache hit rate from local session logs, with speedometer and database icons. Throughput includes waiting and tool execution, not pure decoding speed; cache hit rate is weighted by input tokens within the turn. Values update after model calls, show `--` when unavailable, and do not change requests or caching. Native session logs with an additional UUID after the conversation ID are supported. Remote sessions are not supported.
+Local Codex composers display output throughput (tok/s) and cache hit rate from local session logs, with speedometer and database icons. While a turn is running, metrics awaiting data show three bouncing dots; readings appear independently as data arrives. Numeric values transition smoothly. Both animations respect reduced-motion settings; unavailable readings show `--` after the turn ends. Throughput includes waiting and tool execution, not pure decoding speed; cache hit rate is weighted by input tokens within the turn. Values update after model calls, show `--` when unavailable, and do not change requests or caching. Native session logs with an additional UUID after the conversation ID are supported. Remote sessions are not supported.
 
 ## Requirements
 
