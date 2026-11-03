@@ -73,12 +73,34 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd },
     };
   }
   if (!Array.isArray(state.catalog?.models)) throw new Error("Codex 模型目录格式无效");
+  state.autoCompactTokenLimits ??= {};
   return { config, userLayer, origins, state, statePath, catalogPath };
+}
+
+function withModelContextSettings(catalog, { contextWindows, autoCompactTokenLimits = {} }) {
+  return { ...catalog, models: catalog.models.map(model => {
+    const updated = { ...model,
+      ...(Object.hasOwn(contextWindows, model.slug) ? { context_window: contextWindows[model.slug] } : {}),
+    };
+    let limit = autoCompactTokenLimits[model.slug];
+    if (typeof limit === "string") {
+      const percent = /^\d+(?:\.\d+)?%$/.test(limit) ? Number(limit.slice(0, -1)) : NaN;
+      if (!(percent > 0 && percent <= 90)) throw new Error(`${model.slug} 的自动压缩百分比必须大于 0 且不超过 90%`);
+      const context = updated.context_window ?? updated.max_context_window;
+      if (!Number.isSafeInteger(context) || context <= 0) throw new Error(`${model.slug} 缺少上下文大小，请先填写上下文 token 数再设置百分比`);
+      limit = Math.floor(context * percent / 100);
+    }
+    if (limit !== undefined) {
+      if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error(`${model.slug} 的自动压缩阈值必须至少为 1 token`);
+      updated.auto_compact_token_limit = limit;
+    }
+    return updated;
+  }) };
 }
 
 export async function modelContextSettings({
   executable, dataDirectory, processEnv = process.env, cwd,
-}, contextWindows) {
+}, contextWindows, autoCompactTokenLimits) {
   await mkdir(dataDirectory, { recursive: true });
   dataDirectory = realpathSync(dataDirectory);
   const client = new CodexAppServer({ executable, processEnv, cwd });
@@ -87,29 +109,30 @@ export async function modelContextSettings({
       { executable, dataDirectory, processEnv, cwd }, client,
     );
     if (contextWindows !== undefined) {
-      if (!contextWindows || typeof contextWindows !== "object" || Array.isArray(contextWindows)) {
-        throw new Error("上下文设置必须是模型 ID 与 token 数的对应表");
-      }
+      autoCompactTokenLimits ??= state.autoCompactTokenLimits;
       const slugs = new Set(state.catalog.models.map(model => model.slug));
-      for (const [model, size] of Object.entries(contextWindows)) {
-        if (!slugs.has(model)) throw new Error(`模型目录中没有 ${model}`);
-        if (!Number.isSafeInteger(size) || size <= 0) throw new Error(`${model} 的 token 数必须为正整数`);
+      for (const [label, values] of [["上下文", contextWindows], ["自动压缩阈值", autoCompactTokenLimits]]) {
+        if (!values || typeof values !== "object" || Array.isArray(values)) {
+          throw new Error(`${label}设置必须是模型 ID 与 token 数的对应表`);
+        }
+        for (const [model, size] of Object.entries(values)) {
+          if (!slugs.has(model)) throw new Error(`模型目录中没有 ${model}`);
+          if (label === "自动压缩阈值" && typeof size === "string") continue;
+          if (!Number.isSafeInteger(size) || size <= 0) throw new Error(`${model} 的${label} token 数必须为正整数`);
+        }
       }
-      const hasOverrides = Object.keys(contextWindows).length > 0;
-      if (hasOverrides && config.model_context_window != null) {
-        throw new Error("请先移除 Codex 的全局 model_context_window，否则会覆盖每个模型的上下文设置");
-      }
+      const hasContexts = Object.keys(contextWindows).length > 0;
+      const hasCompactLimits = Object.keys(autoCompactTokenLimits).length > 0;
+      const hasOverrides = hasContexts || hasCompactLimits;
       const origin = origins?.model_catalog_json?.name;
       if (origin && !(origin.type === "system"
         || origin.type === "user" && !origin.profile && origin.file === userLayer.name.file)) {
         throw new Error("模型目录由更高优先级配置管理，无法保存上下文设置");
       }
       state.contextWindows = contextWindows;
+      state.autoCompactTokenLimits = autoCompactTokenLimits;
       if (hasOverrides) {
-        const catalog = { ...state.catalog, models: state.catalog.models.map(model => (
-          Object.hasOwn(contextWindows, model.slug)
-            ? { ...model, context_window: contextWindows[model.slug] } : model
-        )) };
+        const catalog = withModelContextSettings(state.catalog, state);
         await writeFile(statePath + ".tmp", JSON.stringify(state), { mode: 0o600 });
         await rename(statePath + ".tmp", statePath);
         await writeFile(catalogPath + ".tmp", JSON.stringify(catalog), { mode: 0o600 });
@@ -127,9 +150,13 @@ export async function modelContextSettings({
     return {
       models: state.catalog.models.map(model => ({
         slug: model.slug, displayName: model.display_name ?? model.slug,
-        contextWindow: model.context_window ?? null,
+        contextWindow: model.context_window ?? model.max_context_window ?? null,
+        autoCompactTokenLimit: model.auto_compact_token_limit ?? null,
       })),
       contextWindows: state.contextWindows,
+      autoCompactTokenLimits: state.autoCompactTokenLimits,
+      globalContextWindow: config.model_context_window ?? null,
+      globalAutoCompactTokenLimit: config.model_auto_compact_token_limit ?? null,
     };
   } finally { await client.close(); }
 }
@@ -234,8 +261,7 @@ export function createUltrafastCatalogAdapter({
       let active = enabled && provider !== "openai" && config.model_providers?.[provider];
       if (contexts && config.model_catalog_json === path.join(realpathSync(dataDirectory), "model-context-catalog.json")) {
         const source = active ? withUltrafastCatalog(contexts.catalog) : contexts.catalog;
-        const combined = { ...source, models: source.models.map(model => Object.hasOwn(contexts.contextWindows, model.slug)
-          ? { ...model, context_window: contexts.contextWindows[model.slug] } : model) };
+        const combined = withModelContextSettings(source, contexts);
         await writeFile(config.model_catalog_json + ".tmp", JSON.stringify(combined), { mode: 0o600 });
         await rename(config.model_catalog_json + ".tmp", config.model_catalog_json);
         active = false;
@@ -323,7 +349,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
         for await (const chunk of process.stdin) source += chunk;
         input = JSON.parse(source);
       }
-      console.log(JSON.stringify(await modelContextSettings({ executable: codexExecutableInApp(appPath), dataDirectory }, input)));
+      console.log(JSON.stringify(await modelContextSettings({ executable: codexExecutableInApp(appPath), dataDirectory }, input?.contextWindows, input?.autoCompactTokenLimits)));
     } else if (operation === "read-discovery") console.log(JSON.stringify(await readModelDiscovery(client)));
     else await setModelDiscovery(client, operation === "enable-discovery");
   }

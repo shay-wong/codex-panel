@@ -234,7 +234,7 @@ export function App() {
           <Tabs.Trigger value="about"><LinearIcon name="file" />关于</Tabs.Trigger>
         </Tabs.List>
       </aside>
-    <main key={workflowUrl ? "workflow" : view} className={`launcher-main${workflowUrl ? " workflow-page" : ""}`}>
+    <main key={workflowUrl ? "workflow" : view} className={`launcher-main${workflowUrl ? " workflow-page" : ""}`} style={modelContextOpen ? { overflowY: "hidden" } : undefined}>
       {!workflowUrl && <header className="page-heading">
         <Box><Heading as="h2" size="5">{view === "overview" ? "运行概览" : view === "preferences" ? "偏好设置" : "关于"}</Heading><Text as="p" size="1" color="gray" mt="1">{view === "overview" ? "管理本机服务与 Codex 连接" : view === "preferences" ? "所有项目共用的工作流与使用偏好" : "应用信息与版本更新"}</Text></Box>
         <Flex className="page-heading-actions" align="center" gap="2">
@@ -318,7 +318,7 @@ export function App() {
               </div>
             </section>
             <section className="preference-section" aria-labelledby="modelContextTitle">
-              <Card><Flex className="preference-row" align="center" justify="between" gap="3"><Box><Heading as="h3" size="2" id="modelContextTitle">模型上下文</Heading><Text as="p" size="1" color="gray" mt="1">为每个模型设置 context token 数，留空使用默认值</Text></Box><Button variant="soft" disabled={!state || savingPreference} onClick={() => setModelContextOpen(true)}>配置上下文<LinearIcon name="chevronRight" /></Button></Flex></Card>
+              <Card><Flex className="preference-row" align="center" justify="between" gap="3"><Box><Heading as="h3" size="2" id="modelContextTitle">模型上下文</Heading><Text as="p" size="1" color="gray" mt="1">按模型设置上下文和自动压缩阈值，留空使用默认值</Text></Box><Button variant="soft" disabled={!state || savingPreference} onClick={() => setModelContextOpen(true)}>配置上下文<LinearIcon name="chevronRight" /></Button></Flex></Card>
             </section>
             <section className="preference-section" aria-labelledby="displayTitle">
               <Heading as="h2" size="2" id="displayTitle" mb="2">显示与系统</Heading>
