@@ -8,6 +8,8 @@ This file records user-visible changes introduced by the fork.
 
 - Restore the last normal window size after restarting.
 
+- Keep Runtime overview as cards: three equal-height connection cards and a compact maintenance card, with icon actions, hover labels, readable dark-mode controls.
+
 - Restore the macOS native Edit menu so launcher fields support copy, paste, cut and select-all shortcuts.
 
 - Add per-model automatic compaction thresholds with token and percentage modes, numeric model defaults, and fixed cards showing global overrides. Allow per-model saves while preserving global configuration, and improve the settings dialog layout and scrolling. Restart Codex after saving to apply changes.

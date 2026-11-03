@@ -268,29 +268,38 @@ export function App() {
               </Flex>
                   <Text as="p" id="message" size="2" color="gray" mt="2" aria-live="polite">{snapshot.message}</Text>
             </section>
-            <div className="status-card-grid" aria-label="组件状态">{componentStates.map(component => <div className={`status-card ${component.tone}`} key={component.id} id={`${component.id}Component`}>
-              <Flex align="center" justify="between" gap="3"><Text size="1" color="gray">{component.label}</Text><span className={`status-dot ${component.tone}`} /></Flex>
-              <Text id={`${component.id}Status`} as="div" size="2" weight="medium" mt="3">{component.text}</Text>
-              {component.id === "panel" && <Flex className="card-actions" gap="2" wrap="wrap" aria-label="服务控制">
-                {cardAction("serviceToggle", hasProcess ? "stop_service" : "start_service", hasProcess ? "停止服务" : "启动服务", <LinearIcon name={hasProcess ? "pause" : "play"} />)}
-                {cardAction("restartService", "reconnect_codex", "重启服务", <span className="action-icon" aria-hidden="true">↻</span>, !hasProcess)}
-              </Flex>}
-              {component.id === "codex" && <Flex className="card-actions" gap="2">
-                {cardAction("openCodex", "open_codex", "打开 Codex", <LinearIcon name="openExternal" />)}
-                {cardAction("restartCodex", "restart_codex", "重启 Codex", <span className="action-icon" aria-hidden="true">↻</span>)}
-              </Flex>}
-              {component.id === "codex" && <Box mt="3" aria-live="polite">
-                <Text as="p" size="1" color={snapshot.threadTabsPhase === "failed" ? "red" : "gray"}>
-                  会话菜单 · {threadTabsLabels[snapshot.threadTabsPhase] || "等待连接"}
-                </Text>
-                {snapshot.threadTabsMessage && <Text as="p" size="1" color="gray" mt="1" style={{ overflowWrap: "anywhere" }}>{snapshot.threadTabsMessage}</Text>}
-                {snapshot.threadTabsPhase !== "ready" && <Box mt="2">
-                  <Button size="1" variant="soft" {...actionProps("retry_thread_tabs", !ready || snapshot.threadTabsPhase === "loading")}>重试加载</Button>
-                  <Text as="p" size="1" color="gray" mt="1">加载成功时可能刷新一次 Codex 界面。</Text>
-                </Box>}
-              </Box>}
-              {component.id === "embedded" && <Flex className="card-actions">{needsRestart ? <Button ref={panelButton} id="panelAction" {...actionProps("reconnect_codex")}>重启 Codex 并连接</Button> : cardAction("panelAction", "open_embedded_panel", panelLabel, <LinearIcon name="panel" />, opening || queued, false, panelButton)}</Flex>}
-            </div>)}</div>
+            <section className="overview-section" aria-labelledby="connectionStatusTitle">
+              <Heading as="h3" size="2" id="connectionStatusTitle" mb="3">服务与连接</Heading>
+              <div className="status-card-grid" aria-label="组件状态">{componentStates.map(component => <div className={`status-card ${component.tone}`} key={component.id} id={`${component.id}Component`}>
+                <div className="status-row-copy">
+                  <Flex align="center" gap="2"><span className={`status-dot ${component.tone}`} /><Text size="2" weight="medium">{component.label}</Text></Flex>
+                  <Text id={`${component.id}Status`} as="p" size="1" color="gray" mt="1">{component.text}</Text>
+                </div>
+                {component.id === "panel" && <Flex className="card-actions" gap="2" wrap="wrap" aria-label="服务控制">
+                  {cardAction("serviceToggle", hasProcess ? "stop_service" : "start_service", hasProcess ? "停止服务" : "启动服务", <LinearIcon name={hasProcess ? "pause" : "play"} />)}
+                  {cardAction("restartService", "reconnect_codex", "重启服务", <span className="action-icon" aria-hidden="true">↻</span>, !hasProcess)}
+                </Flex>}
+                {component.id === "codex" && <Flex className="card-actions" gap="2" wrap="wrap">
+                  {cardAction("openCodex", "open_codex", "打开 Codex", <LinearIcon name="openExternal" />)}
+                  {cardAction("restartCodex", "restart_codex", "重启 Codex", <span className="action-icon" aria-hidden="true">↻</span>)}
+                </Flex>}
+                {component.id === "embedded" && <Flex className="card-actions">{needsRestart ? cardAction("panelAction", "reconnect_codex", "重启 Codex 并连接", <span className="action-icon" aria-hidden="true">↻</span>, false, true, panelButton) : cardAction("panelAction", "open_embedded_panel", panelLabel, <LinearIcon name="panel" />, opening || queued, true, panelButton)}</Flex>}
+              </div>)}</div>
+            </section>
+            <section className="overview-section" aria-labelledby="extensionStatusTitle">
+              <Heading as="h3" size="2" id="extensionStatusTitle" mb="3">功能与维护</Heading>
+              <div className="maintenance-card-grid">
+                <div className="maintenance-card" id="threadTabsComponent">
+                  <div className="status-row-copy" aria-live="polite">
+                    <Flex align="center" gap="2"><Text size="2" weight="medium">会话菜单</Text><Badge size="1" color={snapshot.threadTabsPhase === "failed" ? "red" : snapshot.threadTabsPhase === "ready" ? "green" : "gray"}>{threadTabsLabels[snapshot.threadTabsPhase] || "等待连接"}</Badge></Flex>
+                    <Text as="p" size="1" color="gray" mt="1">新标签页与并排会话</Text>
+                    {snapshot.threadTabsMessage && <details className="menu-diagnostics"><summary>加载详情</summary><Text as="p" size="1" color="gray" mt="2">{snapshot.threadTabsMessage}</Text></details>}
+                    {snapshot.threadTabsPhase !== "ready" && <Text as="p" size="1" color="gray" mt="1">加载成功时可能刷新一次 Codex 界面。</Text>}
+                  </div>
+                  {snapshot.threadTabsPhase !== "ready" && <Flex className="card-actions">{cardAction("retryThreadTabs", "retry_thread_tabs", "重试加载", <span className="action-icon" aria-hidden="true">↻</span>, !ready || snapshot.threadTabsPhase === "loading")}</Flex>}
+                </div>
+              </div>
+            </section>
             <Box mt="4">
               <Flex gap="2" wrap="wrap">
                 <Button variant="outline" {...actionProps("open_log")}>运行日志</Button>
