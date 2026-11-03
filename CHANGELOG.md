@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Calculate output TPS from total turn output tokens and elapsed time with one decimal place; estimate live while streaming, correct with actual usage, and freeze the result when the turn ends.
+
 - Show three bouncing dots while conversation usage metrics await data, and animate numeric changes smoothly up or down; respect reduced-motion settings.
 
 - Add speedometer and cache icons to the conversation usage row.

@@ -525,7 +525,7 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 - 本次新增，等待上游吸收。参考 CodexPlusPlus 的本地 rollout 数据口径，按 Panel 宿主桥独立实现，不引入其扩展框架。代码：`scripts/codex-thread-usage.mjs`、`scripts/codex-injector-runtime.mjs`、`scripts/codex-injector.mjs`、`inject/codex-panel.user.js`；两条打包资源清单均包含新模块。
 - 用量条使用速度表和数据库图标，SVG 跟随文字颜色；轮询只更新数值节点，不覆盖图标。数字变化采用 200ms 插值递增或递减，缺失值直接切换，数值不变和 prefers-reduced-motion 时不播放；保留新一轮清空统计的规则。日志解析返回 inProgress，依据原生 task_started/turn_started、task_complete/turn_aborted 区分等待与结束；进行中且缺数据的指标独立显示三点跳动，结束或读取失败不持续 loading，减少动态效果时三点静止。
 - 日志文件名兼容原生的 `会话ID.jsonl` 和 `会话ID_附加UUID.jsonl`；仍校验原生返回的会话 ID 与文件名，不接受其他会话文件。对应回归覆盖普通文件名、附加 UUID 和不匹配 ID。
-- 只读本地原生会话，不接受前端文件路径；缓存命中率按当前轮输入量加权，tok/s 表示包含等待和工具执行的输出吞吐。轮边界缺失时只显示最近调用的命中率，不估算速度；首页不显示旧会话指标，不增加上下文占用。源码注释与 tooltip 明示这些边界。
+- 只读本地原生会话，不接受前端文件路径；缓存命中率按当前轮真实输入量加权；tok/s = 本轮全部输出 Token ÷ 本轮总耗时，包含等待、思考和工具执行，保留一位小数，不再用相邻日志差值或过滤长调用。日志逐次累加 last_token_usage.output_tokens，按累计用量去重；返回轮 ID、起止时间和本轮计数。注入层订阅原生 mcp-notification 的本地 turn/started、输出/计划/思考文本 delta、thread/tokenUsage/updated 与 turn/completed，首段文本即估算，每秒更新，真实用量校准，结束后固定。ASCII 暂按 4 字符/token、其他字符按 1 字符/token，隐藏思考与分词误差由真实用量校准；不加约等号，只在 tooltip 标明估算。沿用 preload 的空 source/origin 广播或同源窗口消息，按本地宿主、线程和轮 ID 筛选；异步日志回读不覆盖更新的流事件。事件字段已用当前打包 CLI 的隔离 generate-json-schema 输出核对。轮边界缺失时只显示最近调用的命中率，不估算速度；首页不显示旧会话指标，不增加上下文占用。源码注释与 tooltip 明示这些边界。
 - 验证：`test/codex-thread-usage.test.mjs` 的隔离日志、宿主校验、输入框显示与首页清理，以及宿主桥原有检查；静态隔离浏览器验证布局。实际 Codex 安装后显示尚待确认。用户说明同步中英文 README、CHANGELOG 和 `docs/fork-capabilities.md`；上游具有等价指标后移除此差异。当前环境无 fork-doc 技能，按维护契约手动同步。
 
 

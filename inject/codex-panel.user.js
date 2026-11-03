@@ -2825,6 +2825,75 @@
   let usagePollInFlight = false;
   let usagePolledAt = 0;
 
+  function renderUsageState(state) {
+    if (!state.usage) return;
+    const usage = { ...state.usage };
+    const tokens = (usage.outputTokens ?? 0) + state.pendingTokens;
+    const elapsed = usage.startedAt == null ? 0
+      : ((usage.inProgress ? Date.now() : usage.endedAt) - usage.startedAt) / 1000;
+    usage.speed = tokens > 0 && elapsed > 0 ? tokens / elapsed : null;
+    usage.estimated = state.pendingTokens > 0;
+    renderUsageLine(state.line, usage);
+  }
+
+  function onUsageNotification(event) {
+    // 原生 preload 通过无 source/origin 的 MessageEvent 广播；排除嵌入页面消息。
+    if (event.source !== null && (event.source !== window || event.origin !== window.location.origin)) return;
+    if (event.source === null && event.origin) return;
+    const message = event.data;
+    if (message?.type !== "mcp-notification" || message.hostId !== "local") return;
+    const { method, params } = message;
+    if (!params || typeof params.threadId !== "string") return;
+    const delta = ["item/agentMessage/delta", "item/plan/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta"].includes(method);
+    if (!delta && !["turn/started", "turn/completed", "thread/tokenUsage/updated"].includes(method)) return;
+    const turnId = params.turn?.id ?? params.turnId;
+    if (typeof turnId !== "string") return;
+    for (const [card, state] of usageLines) {
+      if (state.threadId !== params.threadId || usageComposerThread(card) !== params.threadId) continue;
+      if (method === "turn/started") {
+        if (state.usage?.turnId === turnId) continue;
+        state.usage = {
+          turnId, startedAt: Number.isFinite(params.turn.startedAt) ? params.turn.startedAt * 1000 : Date.now(),
+          endedAt: null, inProgress: true, outputTokens: 0, inputTokens: 0, cachedInputTokens: 0,
+          totalTokens: state.usage?.totalTokens ?? null, cache: null,
+        };
+        state.pendingTokens = 0;
+      } else {
+        if (state.usage?.turnId !== turnId) continue;
+        const usage = state.usage;
+        if (delta) {
+          if (!usage.inProgress || typeof params.delta !== "string" || !params.delta) continue;
+          const hadOutput = usage.outputTokens > 0 || state.pendingTokens > 0;
+          // shortcut: ASCII 约 4 字符/token，其他字符约 1；若原生提供逐 token 用量则替换估算。
+          for (const character of params.delta) state.pendingTokens += character.codePointAt(0) < 128 ? 0.25 : 1;
+          state.revision++;
+          if (!hadOutput) renderUsageState(state);
+          continue;
+        }
+        if (method === "thread/tokenUsage/updated") {
+          const { last, total } = params.tokenUsage ?? {};
+          if (!last || !total || !Number.isFinite(total.totalTokens) || total.totalTokens < 0
+            || ![last.outputTokens, last.inputTokens, last.cachedInputTokens].every(value => Number.isFinite(value) && value >= 0)
+            || total.totalTokens === usage.totalTokens) continue;
+          usage.outputTokens += last.outputTokens;
+          usage.inputTokens += last.inputTokens;
+          usage.cachedInputTokens += Math.min(last.cachedInputTokens, last.inputTokens);
+          usage.cache = usage.inputTokens > 0 ? usage.cachedInputTokens / usage.inputTokens * 100 : null;
+          usage.totalTokens = total.totalTokens;
+          usage.observedAt = Date.now();
+          state.pendingTokens = 0;
+        } else {
+          usage.inProgress = false;
+          usage.endedAt = Number.isFinite(params.turn.durationMs) && usage.startedAt != null
+            ? usage.startedAt + params.turn.durationMs
+            : Number.isFinite(params.turn.completedAt) ? params.turn.completedAt * 1000 : Date.now();
+        }
+      }
+      state.revision++;
+      renderUsageState(state);
+    }
+  }
+
   function usageComposerThread(card) {
     const root = card.closest("[data-codex-composer-root]");
     const placement = root?.getAttribute("data-composer-placement");
@@ -2886,11 +2955,12 @@
     const speedLabel = line.querySelector("[data-usage-speed]");
     const cacheLabel = line.querySelector("[data-usage-cache]");
     const loading = !unavailable && usage?.inProgress ? (zh ? "统计中" : "Calculating") : "";
-    renderUsageValue(speedLabel, usage?.speed ?? null, value => `${value == null ? "--" : Math.round(value)} tok/s`, loading);
+    renderUsageValue(speedLabel, usage?.speed ?? null, value => `${value == null ? "--" : value.toFixed(1)} tok/s`, loading);
     renderUsageValue(cacheLabel, usage?.cache ?? null, value => `${zh ? "缓存命中" : "Cache hit"} ${value == null ? "--" : `${value.toFixed(1)}%`}`, loading);
     line.title = unavailable ? (zh ? "暂时无法读取本机会话用量" : "Local usage is unavailable")
-      : zh ? "输出吞吐：同轮输出 token 增量 ÷ 对应耗时，含等待与工具执行，非纯解码速度。缓存命中：同轮缓存输入 ÷ 输入 token。数据不足时显示 --。"
-        : "Output throughput includes waiting and tool execution, not pure decode speed. Cache hit is cached/input tokens within the turn. Missing data is shown as --.";
+      : zh ? "输出 TPS：本轮输出 Token ÷ 本轮总耗时，含等待、思考与工具执行，保留一位小数。缓存命中：同轮缓存输入 ÷ 输入 Token。数据不足时显示 --。"
+        : "Output TPS: turn output tokens / total turn seconds, including waiting, reasoning and tools; one decimal place. Cache hit is cached/input tokens within the turn. Missing data is shown as --.";
+    if (usage?.estimated) line.title += zh ? " 输出中按文本估算 Token，真实用量到达后校准。" : "Streaming tokens are estimated from text and corrected when actual usage arrives.";
     if (usage?.partial) line.title += zh ? " 日志尾部缺少轮边界，仅显示最近一次调用。" : " Turn boundary unavailable; latest call only.";
     if (loading && (usage.speed == null || usage.cache == null)) line.title += zh ? " 本轮数据统计中…" : " Calculating this turn’s usage…";
     line.style.opacity = usage?.observedAt && Date.now() - usage.observedAt > 120_000 ? "0.55" : "1";
@@ -2912,11 +2982,12 @@
         line.className = "codex-panel-usage-line";
         line.style.cssText = "font-size:12px;line-height:24px;text-align:center;color:var(--color-token-text-secondary,#888);font-variant-numeric:tabular-nums;flex:none;";
         line.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:4px"><path d="M3 18a9 9 0 1 1 18 0M12 14l4-6"/><circle cx="12" cy="15" r="1"/></svg><span data-usage-speed></span>　 ·　 <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:4px"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v14c0 4 14 4 14 0V5M5 12c0 4 14 4 14 0"/></svg><span data-usage-cache></span>';
-        state = { threadId, line };
+        state = { threadId, line, usage: null, pendingTokens: 0, revision: 0 };
         usageLines.set(card, state);
         renderUsageLine(line, null);
       }
       if (card.nextElementSibling !== state.line) card.after(state.line);
+      renderUsageState(state);
     }
     for (const [card, state] of usageLines) {
       if (!visible.has(card)) {
@@ -2924,12 +2995,13 @@
         usageLines.delete(card);
       }
     }
-    if (usagePollInFlight || !usageLines.size || Date.now() - usagePolledAt < 2_000 || !hasLiveHostBinding()) return;
+    if (usagePollInFlight || !usageLines.size || Date.now() - usagePolledAt < 1_000 || !hasLiveHostBinding()) return;
     usagePollInFlight = true;
     usagePolledAt = Date.now();
     try {
       const ids = [...new Set([...usageLines.values()].map((state) => state.threadId))];
       for (const threadId of ids) {
+        const revisions = new Map([...usageLines.values()].map(state => [state, state.revision]));
         let result;
         let unavailable = false;
         try { result = await requestHost("read-thread-usage", { threadId }, 5_000); }
@@ -2938,7 +3010,18 @@
         // 请求期间切换标签时丢弃旧结果，不把上一会话的指标写到新输入框。
         for (const [card, state] of usageLines) {
           if (state.threadId === threadId && usageComposerThread(card) === threadId) {
-            renderUsageLine(state.line, result?.usage, unavailable);
+            if (state.revision !== revisions.get(state)) continue;
+            const usage = result?.usage;
+            if (usage && state.usage) {
+              if (usage.turnId !== state.usage.turnId && state.usage.startedAt > (usage.startedAt ?? 0)) continue;
+              if (usage.turnId === state.usage.turnId && (usage.outputTokens < state.usage.outputTokens
+                || (!state.usage.inProgress && usage.inProgress))) continue;
+            }
+            if (!usage || usage.turnId !== state.usage?.turnId
+              || usage.outputTokens > (state.usage?.outputTokens ?? 0)) state.pendingTokens = 0;
+            state.usage = usage ?? null;
+            if (usage) renderUsageState(state);
+            else renderUsageLine(state.line, null, unavailable);
           }
         }
       }
@@ -3009,6 +3092,7 @@
     document.removeEventListener("keydown", markPendingThreadAssociationSubmitted, true);
     window.removeEventListener("message", onFrameMessage);
     window.removeEventListener("message", onHostBridgeMessage);
+    window.removeEventListener("message", onUsageNotification);
     window.removeEventListener("resize", scheduleRefresh);
     closePanel(false);
     document.querySelectorAll(`[${OWNED_ATTRIBUTE}="true"]`).forEach((node) => node.remove());
@@ -3050,6 +3134,7 @@
 
   window.addEventListener("message", onFrameMessage);
   window.addEventListener("message", onHostBridgeMessage);
+  window.addEventListener("message", onUsageNotification);
   window.addEventListener("resize", scheduleRefresh);
   document.addEventListener("click", onDocumentClick, true);
   document.addEventListener("click", markPendingThreadAssociationSubmitted, true);

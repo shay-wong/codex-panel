@@ -1,68 +1,75 @@
 import { open, realpath } from "node:fs/promises";
 import path from "node:path";
 
-// 日志只有模型调用结束时的用量，因此计算输出吞吐，不声称是流式解码速度。
-export function summarizeThreadUsage(text) {
+// 用量由原生调用上报；耗时覆盖整轮，包含等待、思考和工具执行。
+export function summarizeThreadUsage(text, now = Date.now()) {
   let turnId = null;
+  let startedAt = null;
+  let endedAt = null;
   let inProgress = false;
   let previous = null;
   let input = 0;
   let cached = 0;
   let tokens = 0;
-  let seconds = 0;
-  const reset = (id) => {
+  let observedAt = null;
+  const reset = (id, at) => {
     turnId = id;
-    previous = null;
-    input = cached = tokens = seconds = 0;
+    startedAt = Number.isFinite(at) ? at : null;
+    endedAt = observedAt = null;
+    input = cached = tokens = 0;
   };
   for (const line of text.split("\n")) {
     let record;
     try { record = JSON.parse(line); } catch { continue; }
     const event = record?.payload;
     if (!event) continue;
+    const at = Date.parse(record.timestamp);
     if (record.type === "event_msg" && ["task_started", "turn_started"].includes(event.type)) {
-      reset(event.turn_id ?? null);
+      reset(event.turn_id ?? null, at);
       inProgress = true;
       continue;
     }
     if (record.type === "turn_context" && event.turn_id && event.turn_id !== turnId) {
-      reset(event.turn_id);
+      reset(event.turn_id, at);
       inProgress = true;
       continue;
     }
     if (record.type === "event_msg" && ["task_complete", "turn_aborted"].includes(event.type)) {
-      if (!event.turn_id || !turnId || event.turn_id === turnId) inProgress = false;
+      if (!event.turn_id || !turnId || event.turn_id === turnId) {
+        inProgress = false;
+        endedAt = Number.isFinite(at) ? at : null;
+      }
       continue;
     }
     if (record.type !== "event_msg" || event.type !== "token_count") continue;
     const last = event.info?.last_token_usage;
     const total = event.info?.total_token_usage;
-    const at = Date.parse(record.timestamp);
     if (!last || !total || !Number.isFinite(at)) continue;
-    const output = total.output_tokens;
-    if (!Number.isFinite(output) || output < 0) continue;
-    // 重复 token_count 不能重复计入缓存分母；累计值回退则不跨段计算。
-    if (previous?.output === output && previous.total === total.total_tokens) continue;
-    if (!turnId || (previous && output < previous.output)) reset(turnId);
-    if (previous) {
-      const elapsed = (at - previous.at) / 1000;
-      if (output > previous.output && elapsed >= 0.5 && elapsed <= 120) {
-        tokens += output - previous.output;
-        seconds += elapsed;
-      }
-    }
+    if (previous?.output_tokens === total.output_tokens && previous.total_tokens === total.total_tokens) continue;
+    // 缺少轮边界时只能显示最近调用的缓存，不能把会话累计输出当成本轮输出。
+    if (!turnId) reset(null, null);
+    if (Number.isFinite(last.output_tokens) && last.output_tokens >= 0) tokens += last.output_tokens;
     if (Number.isFinite(last.input_tokens) && last.input_tokens > 0
       && Number.isFinite(last.cached_input_tokens) && last.cached_input_tokens >= 0) {
       input += last.input_tokens;
       cached += Math.min(last.cached_input_tokens, last.input_tokens);
     }
-    previous = { at, output, total: total.total_tokens };
+    previous = total;
+    observedAt = at;
   }
+  const elapsed = startedAt == null ? 0 : ((inProgress ? now : endedAt) - startedAt) / 1000;
   return {
-    speed: seconds > 0 ? tokens / seconds : null,
+    speed: tokens > 0 && elapsed > 0 ? tokens / elapsed : null,
     cache: input > 0 ? cached / input * 100 : null,
-    observedAt: previous?.at ?? null,
-    partial: !turnId,
+    outputTokens: tokens,
+    inputTokens: input,
+    cachedInputTokens: cached,
+    totalTokens: previous?.total_tokens ?? null,
+    turnId,
+    startedAt,
+    endedAt,
+    observedAt,
+    partial: !turnId || startedAt == null,
     inProgress,
   };
 }
