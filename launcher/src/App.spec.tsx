@@ -17,7 +17,7 @@ it("keeps launcher feedback, live status and global preferences working through 
       phase: "waiting", message: "Panel 服务已启动，正在等待 Codex 连接。", version: "0.1.0",
       childPid: 123, openRequestPending: false, embeddedVisible: false,
       threadTabsPhase: "waiting", threadTabsMessage: "",
-      updateMessage: "尚未检查更新。", updateAvailable: false, updateReady: false,
+      updateMessage: "尚未检查更新。", updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateMessage: "", codexUpdateChecking: false,
       appPath: "/disposable/Codex.app",
     },
     preferences: { autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false },
@@ -67,6 +67,23 @@ it("keeps launcher feedback, live status and global preferences working through 
   };
   const view = render(<Theme><App /></Theme>);
   await act(async () => {});
+  expect(document.getElementById("codexUpdateComponent")).toBeTruthy();
+  expect(document.getElementById("installCodexUpdate")).toBeNull();
+  await publish({ phase: "running", codexUpdateReady: true });
+  expect(button("installCodexUpdate")).toBeTruthy();
+  await publish({ phase: "running", codexUpdateReady: false, codexUpdateMessage: "当前已是最新版 · 26.1027.61615" });
+  expect(screen.getByText("当前已是最新版 · 26.1027.61615")).toBeTruthy();
+  await click(button("checkCodexUpdates"));
+  await advance(300);
+  expect(invoke).toHaveBeenCalledWith("check_codex_updates");
+  await publish({ codexUpdateChecking: true });
+  expect(button("checkCodexUpdates").disabled).toBe(true);
+  expect(button("checkCodexUpdates").getAttribute("aria-label")).toContain("正在检查");
+  await publish({ codexUpdateChecking: false });
+
+  await publish({ phase: "waiting", codexUpdateReady: false });
+  expect(document.getElementById("codexUpdateComponent")).toBeTruthy();
+  expect(document.getElementById("installCodexUpdate")).toBeNull();
   expect(document.getElementById("embeddedComponent")?.contains(button("panelAction"))).toBe(true);
   expect(document.getElementById("panelComponent")?.contains(button("serviceToggle"))).toBe(true);
   expect(document.getElementById("panelComponent")?.contains(button("restartService"))).toBe(true);
@@ -74,9 +91,9 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(document.getElementById("codexComponent")?.contains(button("restartCodex"))).toBe(true);
   expect(document.querySelector(".page-heading")?.contains(button("browserPanel"))).toBe(true);
   expect(document.querySelector(".sidebar-footer")).toBeNull();
-  expect(screen.queryByRole("button", { name: "检查更新" })).toBeNull();
+  expect(button("checkCodexUpdates")).toBeTruthy();
   fireEvent.mouseDown(screen.getByRole("tab", { name: /关于/ }), { button: 0, ctrlKey: false });
-  expect(screen.getByRole("button", { name: "检查更新" })).toBeTruthy();
+  expect(within(document.getElementById("aboutView")!).getByRole("button", { name: "检查更新" })).toBeTruthy();
   expect(document.getElementById("installUpdate")).toBeNull();
   await publish({ updateReady: true });
   await click(button("installUpdate"));

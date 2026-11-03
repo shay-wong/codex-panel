@@ -243,6 +243,14 @@ impl UpdateDialog {
 }
 
 impl UpdateDialog {
+    pub(super) fn confirm_codex_update(app: &AppHandle) -> bool {
+        let Some(dialog) = Self::prompt_message(app, "安装 Codex 更新并重启",
+            "Codex 将退出安装已下载的更新，正在运行的任务会中断。安装完成后由 Panel 启动并连接。".into(),
+            "安装并重启") else { return false; };
+        dialog.close();
+        true
+    }
+
     pub(super) fn confirm_codex_restart(app: &AppHandle) -> bool {
         // 复用可置前的原生确认框，避免后台启动器的 Tauri 弹窗不可见而卡住恢复。
         let Some(dialog) = Self::prompt_message(app, "需要重启 Codex",

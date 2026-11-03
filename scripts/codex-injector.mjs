@@ -33,6 +33,7 @@ import {
   startPanelHostHeartbeats,
 } from "./codex-injector-runtime.mjs";
 import { readThreadUsage } from "./codex-thread-usage.mjs";
+import { readCodexUpdateState, readCodexUpdateStatus } from "./codex-update.mjs";
 import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
 import { prepareCodexDotEntry } from "./codex-dot-entry.mjs";
 import { prepareCodexThreadTabs } from "./codex-thread-tabs.mjs";
@@ -3255,6 +3256,19 @@ async function main() {
         startupToken: options.startupToken,
         actions: process.platform === "win32" ? ["interrupt-thread"] : undefined,
         handlers: {
+          "codex-update-status": async () => {
+            if (process.platform !== "darwin" || options.cdpPipe) throw new Error("安装后由 Panel 重启目前需要 macOS TCP 连接模式");
+            const connection = [...injectedTargets.values()].find(cdp => !cdp.closed);
+            if (!connection) throw new Error("请先通过 Panel 连接 Codex");
+            return readCodexUpdateState(connection);
+          },
+          "check-codex-updates": async () => {
+            if (process.platform !== "darwin" || options.cdpPipe) throw new Error("目前需要 macOS TCP 连接模式");
+            const connection = [...injectedTargets.values()].find(cdp => !cdp.closed);
+            if (!connection) throw new Error("请先通过 Panel 连接 Codex");
+            const update = await readCodexUpdateStatus(connection, { force: true });
+            return { ready: true, codexUpdateReady: update.ready, codexUpdateMessage: update.message, codexUpdateChecking: update.checking };
+          },
           "retry-thread-tabs": async () => requestThreadTabsRetry(),
           status: async () => {
             if (!cdpRuntime) throw new Error("Panel renderer injection is waiting for Codex");
@@ -3264,7 +3278,22 @@ async function main() {
               options.startupToken,
             );
             if (!readiness.ready) { lastThreadTabsStatus = ""; throw new Error("Panel renderer injection is not ready"); }
-            return readiness;
+            let codexUpdateReady = false;
+            let codexUpdateChecking = false;
+            let codexUpdateMessage = "暂时无法读取更新状态";
+            if (process.platform === "darwin" && !options.cdpPipe) {
+              const connection = [...injectedTargets.values()].find(cdp => !cdp.closed);
+              if (connection) {
+                try {
+                  const update = await readCodexUpdateStatus(connection);
+                  codexUpdateReady = update.ready;
+                  codexUpdateMessage = update.message;
+                  codexUpdateChecking = update.checking;
+                }
+                catch { /* Unknown update state must not offer installation. */ }
+              }
+            }
+            return { ...readiness, codexUpdateReady, codexUpdateMessage, codexUpdateChecking };
           },
           open: async () => {
             if (!cdpRuntime) throw new Error("Panel renderer injection is waiting for Codex");

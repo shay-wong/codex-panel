@@ -63,6 +63,7 @@ const runtimeScriptNames = [
   "codex-injector.mjs",
   "codex-rate-limits.mjs",
   "codex-thread-usage.mjs",
+  "codex-update.mjs",
   "codex-provider-quota.mjs",
   "codex-provider-ultrafast.mjs",
   "codex-provider-ultrafast-catalog.mjs",

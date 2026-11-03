@@ -5,6 +5,8 @@ mod menu_diagnostics;
 mod macos_exit;
 
 mod update_dialog;
+#[cfg(target_os = "macos")]
+mod codex_update;
 
 use update_dialog::UpdateDialog;
 
@@ -122,6 +124,9 @@ struct LauncherSnapshot {
     update_message: String,
     update_available: bool,
     update_ready: bool,
+    codex_update_ready: bool,
+    codex_update_message: String,
+    codex_update_checking: bool,
     update_url: Option<String>,
     version: String,
     app_path: Option<String>,
@@ -133,11 +138,17 @@ struct LauncherSnapshot {
     thread_tabs_message: String,
 }
 
-#[derive(Clone, Copy, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RendererStatus {
     ready: bool,
     page_visible: bool,
+    #[serde(default)]
+    codex_update_ready: bool,
+    #[serde(default)]
+    codex_update_message: String,
+    #[serde(default)]
+    codex_update_checking: bool,
 }
 
 #[derive(Deserialize)]
@@ -434,6 +445,9 @@ impl LauncherState {
                 update_message: "尚未检查更新。".into(),
                 update_available: false,
                 update_ready: false,
+                codex_update_ready: false,
+                codex_update_message: String::new(),
+                codex_update_checking: false,
                 update_url: None,
                 version,
                 app_path: None,
@@ -1676,6 +1690,9 @@ fn signal_pending_panel_open(app: &AppHandle, state: &Arc<LauncherState>) -> Res
 
 fn apply_renderer_status(snapshot: &mut LauncherSnapshot, pid: u32, status: RendererStatus) {
     snapshot.embedded_visible = status.ready && status.page_visible;
+    snapshot.codex_update_ready = status.ready && status.codex_update_ready;
+    snapshot.codex_update_message = status.codex_update_message;
+    snapshot.codex_update_checking = status.ready && status.codex_update_checking;
     if status.ready {
         snapshot.phase = "running".into();
         snapshot.message = "Codex 连接和 Panel 注入已就绪。".into();
@@ -1697,6 +1714,7 @@ fn apply_waiting_for_codex(snapshot: &mut LauncherSnapshot) {
     snapshot.phase = "waiting".into();
     snapshot.message = "Panel 服务已启动，正在等待 Codex 连接。".into();
     snapshot.embedded_visible = false;
+    snapshot.codex_update_ready = false;
     snapshot.thread_tabs_phase = "waiting".into();
     snapshot.thread_tabs_message.clear();
 }
@@ -1706,6 +1724,7 @@ fn apply_codex_restart_required(snapshot: &mut LauncherSnapshot) {
     snapshot.message = "Codex 已经更新，请点击下方按钮重新启动".into();
     snapshot.open_signal_pid = None;
     snapshot.embedded_visible = false;
+    snapshot.codex_update_ready = false;
     snapshot.thread_tabs_phase = "waiting".into();
     snapshot.thread_tabs_message.clear();
 }
@@ -1749,6 +1768,9 @@ fn monitor_renderer_readiness(
                 snapshot.phase != "running"
                     || snapshot.open_signal_pid != Some(pid)
                     || snapshot.embedded_visible != status.page_visible
+                    || snapshot.codex_update_ready != status.codex_update_ready
+                    || snapshot.codex_update_message != status.codex_update_message
+                    || snapshot.codex_update_checking != status.codex_update_checking
             } else {
                 snapshot.phase == "running"
                     || snapshot.open_signal_pid == Some(pid)
@@ -1767,7 +1789,7 @@ fn monitor_renderer_readiness(
                             snapshot.phase = "waiting".into();
                             apply_waiting_for_codex(snapshot);
                         }
-                        apply_renderer_status(snapshot, pid, status);
+                        apply_renderer_status(snapshot, pid, status.clone());
                     }
                 }
             });
@@ -1848,6 +1870,9 @@ fn send_injector_control_request(
                 .and_then(|value| value.get("ready"))
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
+            codex_update_checking: result.and_then(|value| value.get("codexUpdateChecking")).and_then(serde_json::Value::as_bool).unwrap_or(false),
+            codex_update_message: result.and_then(|value| value.get("codexUpdateMessage")).and_then(serde_json::Value::as_str).unwrap_or_default().to_string(),
+            codex_update_ready: result.and_then(|value| value.get("codexUpdateReady")).and_then(serde_json::Value::as_bool).unwrap_or(false),
             page_visible: result
                 .and_then(|value| value.get("status"))
                 .and_then(|value| value.get("pageVisible"))
@@ -1892,7 +1917,7 @@ fn query_renderer_status(state: &LauncherState) -> RendererStatus {
     }
     let deadline = requested_at + Duration::from_secs(3);
     while Instant::now() < deadline {
-        if let Some((received_at, status)) = *state.renderer_status.lock().unwrap() {
+        if let Some((received_at, status)) = state.renderer_status.lock().unwrap().clone() {
             if received_at >= requested_at {
                 return status;
             }
@@ -2058,6 +2083,7 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
         snapshot.open_signal_pid = None;
         snapshot.open_request_pending = false;
         snapshot.embedded_visible = false;
+        snapshot.codex_update_ready = false;
         snapshot.thread_tabs_phase = "waiting".into();
         snapshot.thread_tabs_message.clear();
     });
@@ -2121,9 +2147,9 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                     LauncherEvent::ManagedStatus { status } => {
                         #[cfg(target_os = "windows")]
                         {
-                            *state.renderer_status.lock().unwrap() = Some((Instant::now(), status));
+                            *state.renderer_status.lock().unwrap() = Some((Instant::now(), status.clone()));
                         }
-                        apply_renderer_status(snapshot, pid, status);
+                        apply_renderer_status(snapshot, pid, status.clone());
                     }
                     LauncherEvent::Injected => {
                         apply_renderer_status(
@@ -2132,6 +2158,9 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                             RendererStatus {
                                 ready: true,
                                 page_visible: snapshot.embedded_visible,
+                                codex_update_ready: snapshot.codex_update_ready,
+                                codex_update_message: snapshot.codex_update_message.clone(),
+                                codex_update_checking: snapshot.codex_update_checking,
                             },
                         );
                     }
@@ -2230,6 +2259,7 @@ fn start_launcher_locked(
         snapshot.app_path = Some(codex_app.display().to_string());
         snapshot.open_signal_pid = None;
         snapshot.embedded_visible = false;
+        snapshot.codex_update_ready = false;
         snapshot.thread_tabs_phase = "waiting".into();
         snapshot.thread_tabs_message.clear();
     });
@@ -2425,6 +2455,7 @@ fn start_launcher_locked(
                 snapshot.child_pid = None;
                 snapshot.open_signal_pid = None;
                 snapshot.embedded_visible = false;
+                snapshot.codex_update_ready = false;
                 snapshot.thread_tabs_phase = "waiting".into();
                 snapshot.thread_tabs_message.clear();
                 if !intentional {
@@ -2496,11 +2527,17 @@ fn start_launcher(
     start_launcher_locked(app, state, should_open)
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum RestartTarget { Service, Codex, CodexUpdate }
+
 fn restart_launcher(
     app: &AppHandle,
     state: &Arc<LauncherState>,
-    restart_codex: bool,
+    target: RestartTarget,
 ) -> Result<LauncherSnapshot, String> {
+    if target == RestartTarget::CodexUpdate && !cfg!(target_os = "macos") {
+        return Err("通过 Panel 安装 Codex 更新目前仅支持 macOS".into());
+    }
     let (result, result_generation) = {
         let _lifecycle = state.lifecycle.lock().unwrap();
         if state.exit.requested.load(Ordering::SeqCst) {
@@ -2513,13 +2550,26 @@ fn restart_launcher(
         let home_directory = app.path().home_dir().map_err(|error| error.to_string())?;
         let codex_app = find_codex_app(&home_directory).ok_or_else(missing_codex_app_message)?;
         verify_codex_app(&codex_app)?;
+        #[cfg(target_os = "macos")]
+        let update_info = if target == RestartTarget::CodexUpdate {
+            if !send_injector_control_request(state, "codex-update-status")?.ready {
+                return Err("Codex 尚无已下载完成的更新".into());
+            }
+            Some(fs::read(codex_app.join("Contents/Info.plist")).map_err(|error| error.to_string())?)
+        } else { None };
         let should_open = {
             let snapshot = state.snapshot.lock().unwrap();
             snapshot.phase == "restart_required" || snapshot.open_request_pending
         };
-        let codex_pid = if restart_codex {
+        let codex_pid = if target != RestartTarget::Service {
             let pid = codex_process(&codex_app, &state.data_directory.join("codex-profile"), true)?;
-            if pid.is_some() && !UpdateDialog::confirm_codex_restart(app) {
+            if target == RestartTarget::CodexUpdate && pid.is_none() {
+                return Err("Codex 已退出，请重新连接后检查更新状态".into());
+            }
+            let confirmed = if target == RestartTarget::CodexUpdate {
+                UpdateDialog::confirm_codex_update(app)
+            } else { pid.is_none() || UpdateDialog::confirm_codex_restart(app) };
+            if !confirmed {
                 return Ok(state.snapshot.lock().unwrap().clone());
             }
             pid
@@ -2539,6 +2589,14 @@ fn restart_launcher(
                 if codex_process(&codex_app, &state.data_directory.join("codex-profile"), true)? == Some(pid) {
                     quit_codex_normally(pid)?;
                 }
+            }
+            #[cfg(target_os = "macos")]
+            if let Some(original_info) = update_info {
+                update_snapshot(app, state, |snapshot| {
+                    snapshot.phase = "starting".into();
+                    snapshot.message = "正在等待 Codex 安装更新，完成后将通过 Panel 启动…".into();
+                });
+                codex_update::wait_for_installation(&codex_app, &original_info, Duration::from_secs(120), verify_codex_app)?;
             }
             start_launcher_locked(app, state, should_open)
         })();
@@ -2640,7 +2698,7 @@ async fn reconnect_codex(
 ) -> Result<LauncherUiState, String> {
     let state = Arc::clone(state.inner());
     tauri::async_runtime::spawn_blocking(move || {
-        restart_launcher(&app, &state, false)?;
+        restart_launcher(&app, &state, RestartTarget::Service)?;
         current_ui_state(&app, &state)
     })
     .await
@@ -2671,11 +2729,45 @@ async fn restart_codex(
 ) -> Result<LauncherUiState, String> {
     let state = Arc::clone(state.inner());
     tauri::async_runtime::spawn_blocking(move || {
-        restart_launcher(&app, &state, true)?;
+        restart_launcher(&app, &state, RestartTarget::Codex)?;
         current_ui_state(&app, &state)
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn check_codex_updates(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+) -> Result<LauncherUiState, String> {
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "macos")]
+        {
+            let status = send_injector_control_request(&state, "check-codex-updates")?;
+            update_snapshot(&app, &state, |snapshot| {
+                snapshot.codex_update_ready = status.codex_update_ready;
+                snapshot.codex_update_message = status.codex_update_message;
+                snapshot.codex_update_checking = status.codex_update_checking;
+            });
+            current_ui_state(&app, &state)
+        }
+        #[cfg(not(target_os = "macos"))]
+        { let _ = (app, state); Err("目前仅支持 macOS Codex 更新检查".into()) }
+    }).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn install_codex_update(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+) -> Result<LauncherUiState, String> {
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        restart_launcher(&app, &state, RestartTarget::CodexUpdate)?;
+        current_ui_state(&app, &state)
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -3186,6 +3278,8 @@ fn main() {
             stop_service,
             reconnect_codex,
             restart_codex,
+            install_codex_update,
+            check_codex_updates,
             retry_thread_tabs,
             open_embedded_panel,
             open_browser_panel,
@@ -3478,7 +3572,7 @@ fn main() {
                         let app = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {
                             let _diagnostic = menu_diagnostics::Span::new(&state.log_path, "worker id=restart-service");
-                            if let Err(error) = restart_launcher(&app, &state, false) {
+                            if let Err(error) = restart_launcher(&app, &state, RestartTarget::Service) {
                                 append_log(
                                     &state,
                                     &format!("Launcher menu restart failed: {error}"),
@@ -3811,7 +3905,7 @@ mod tests {
             serde_json::from_str::<super::LauncherEvent>(
                 r#"{"launcherEvent":"managedStatus","panelManagedStatus":{"ready":true,"pageVisible":false}}"#
             ).unwrap(),
-            super::LauncherEvent::ManagedStatus { status: RendererStatus { ready: true, page_visible: false } }
+            super::LauncherEvent::ManagedStatus { status: RendererStatus { ready: true, page_visible: false, .. } }
         ));
         assert!(serde_json::from_str::<super::LauncherEvent>(
             r#"{"message":"Waiting for Codex","panelManagedReady":true}"#
@@ -3871,6 +3965,9 @@ mod tests {
             update_message: String::new(),
             update_available: false,
             update_ready: false,
+            codex_update_ready: false,
+            codex_update_message: String::new(),
+            codex_update_checking: false,
             update_url: None,
             version: "0.1.0".into(),
             app_path: None,
@@ -3887,6 +3984,9 @@ mod tests {
             RendererStatus {
                 ready: true,
                 page_visible: false,
+                codex_update_ready: false,
+                codex_update_message: String::new(),
+                codex_update_checking: false,
             },
         );
         assert_eq!(snapshot.phase, "running");
@@ -3913,6 +4013,9 @@ mod tests {
             RendererStatus {
                 ready: true,
                 page_visible: true,
+                codex_update_ready: false,
+                codex_update_message: String::new(),
+                codex_update_checking: false,
             },
         );
         assert_eq!(snapshot.phase, "running");
@@ -3927,6 +4030,9 @@ mod tests {
             update_message: String::new(),
             update_available: false,
             update_ready: false,
+            codex_update_ready: false,
+            codex_update_message: String::new(),
+            codex_update_checking: false,
             update_url: None,
             version: "0.1.0".into(),
             app_path: None,

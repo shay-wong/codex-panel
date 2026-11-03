@@ -8,7 +8,9 @@ This file records user-visible changes introduced by the fork.
 
 - Restore the last normal window size after restarting.
 
-- Keep Runtime overview as cards: three equal-height connection cards and a compact maintenance card, with icon actions, hover labels, readable dark-mode controls.
+- Keep Runtime overview as cards: three equal-height connection cards and two maintenance cards, with icon actions, hover labels, readable dark-mode controls, and an update button that switches between check, checking and installation.
+
+- Show the native Codex update-check result and current version on macOS; offer installation through Panel only after an update is downloaded, and wait for the signed app replacement before reconnecting.
 
 - Restore the macOS native Edit menu so launcher fields support copy, paste, cut and select-all shortcuts.
 

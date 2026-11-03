@@ -15,6 +15,9 @@ export type LauncherSnapshot = {
   updateMessage: string;
   updateAvailable: boolean;
   updateReady: boolean;
+  codexUpdateReady: boolean;
+  codexUpdateMessage: string;
+  codexUpdateChecking: boolean;
   appPath: string | null;
 };
 export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean };
@@ -36,7 +39,7 @@ const titles: Record<string, string> = { running: "Panel 已就绪", waiting: "�
 const initialSnapshot: LauncherSnapshot = {
   phase: "starting", version: "—", message: "正在读取服务状态…", childPid: null,
   embeddedVisible: false, threadTabsPhase: "waiting", threadTabsMessage: "", openRequestPending: false, updateMessage: "尚未检查更新。",
-  updateAvailable: false, updateReady: false, appPath: null,
+  updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateMessage: "", codexUpdateChecking: false, appPath: null,
 };
 
 function Setting({ id, title, detail, checked, disabled, onChange }: {
@@ -298,6 +301,13 @@ export function App() {
                   </div>
                   {snapshot.threadTabsPhase !== "ready" && <Flex className="card-actions">{cardAction("retryThreadTabs", "retry_thread_tabs", "重试加载", <span className="action-icon" aria-hidden="true">↻</span>, !ready || snapshot.threadTabsPhase === "loading")}</Flex>}
                 </div>
+                {snapshot.appPath?.endsWith(".app") && <div className="maintenance-card" id="codexUpdateComponent">
+                  <div className="status-row-copy"><Text size="2" weight="medium">Codex 更新</Text><Text as="p" size="1" color="gray" mt="1">{!ready ? "连接 Codex 后读取更新状态" : snapshot.codexUpdateMessage || "正在读取更新状态…"}</Text></div>
+                  <Flex className="card-actions">
+                    {ready && snapshot.codexUpdateReady ? cardAction("installCodexUpdate", "install_codex_update", "安装 Codex 更新并重启", <LinearIcon name="download" />)
+                      : <Tooltip content={snapshot.codexUpdateChecking ? "正在检查更新…" : "检查更新"}><IconButton id="checkCodexUpdates" aria-label={snapshot.codexUpdateChecking ? "正在检查更新…" : "检查更新"} size="2" variant="soft" {...actionProps("check_codex_updates", !ready || snapshot.codexUpdateChecking)} loading={busyAction === "check_codex_updates" || snapshot.codexUpdateChecking}><span className="action-icon" aria-hidden="true">↻</span></IconButton></Tooltip>}
+                  </Flex>
+                </div>}
               </div>
             </section>
             <Box mt="4">
