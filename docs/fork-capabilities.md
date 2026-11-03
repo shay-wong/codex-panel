@@ -365,7 +365,7 @@ Issue details → Relations → Add blocker / Add blocked issue searches active 
 
 ## Native composer usage
 
-Local Codex composers show output throughput and cache hit rate through the existing authenticated host bridge. The host resolves the rollout with native `thread/read` and reads only its tail (512 KiB up to 8 MiB), returning numeric usage only. Throughput uses positive cumulative output deltas divided by eligible elapsed intervals within the same turn (0.5–120 seconds); it includes waiting and tool execution. Cache hit rate uses summed cached/input tokens in the same turn. Missing boundaries fall back to the latest call with throughput unavailable. Home and remote composers do not inherit local readings. These metrics update after model calls, not on every streamed token.
+Local Codex composers show output throughput and cache hit rate through the existing authenticated host bridge. The host resolves the rollout with native `thread/read` and reads only its tail (512 KiB up to 8 MiB), returning numeric usage only. Native filenames may include an additional UUID after the conversation ID; both forms are accepted. 会话 ID 后附加 UUID 的原生日志文件同样支持。 Throughput uses positive cumulative output deltas divided by eligible elapsed intervals within the same turn (0.5–120 seconds); it includes waiting and tool execution. Cache hit rate uses summed cached/input tokens in the same turn. Missing boundaries fall back to the latest call with throughput unavailable. Home and remote composers do not inherit local readings. These metrics update after model calls, not on every streamed token.
 
 
 ## Codex updates through Panel

@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fix unavailable conversation usage metrics for native session log filenames containing an additional UUID.
+
 - Restore the last normal window size after restarting.
 
 - Keep Runtime overview as cards: three equal-height connection cards and two maintenance cards, with icon actions, hover labels, readable dark-mode controls, and an update button that switches between check, checking and installation.

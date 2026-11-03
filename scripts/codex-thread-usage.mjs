@@ -67,7 +67,9 @@ export async function readThreadUsage(threadId, readThread) {
   const result = await readThread(threadId);
   if (result?.thread?.id !== threadId || !result.thread.path) return { usage: null };
   const file = await realpath(result.thread.path);
-  if (!path.basename(file).endsWith(`-${threadId}.jsonl`)) throw new Error("会话日志路径不匹配");
+  // 原生延续日志可能在会话 ID 后附加另一个 UUID。
+  const filename = new RegExp(`-${threadId}(?:_[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})?\\.jsonl$`, "i");
+  if (!filename.test(path.basename(file))) throw new Error("会话日志路径不匹配");
   const handle = await open(file, "r");
   try {
     const stat = await handle.stat();

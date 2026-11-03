@@ -47,6 +47,24 @@ test("reads a bounded local tail through the trusted native thread path", async 
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test("accepts native continuation filenames while rejecting another thread's log", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "panel-usage-continuation-"));
+  const continuationId = "22222222-2222-4222-8222-222222222222";
+  try {
+    for (const suffix of [id, `${id}_${continuationId}`, continuationId]) {
+      const file = path.join(dir, `rollout-2026-10-23T11-16-27-${suffix}.jsonl`);
+      await writeFile(file, fixture);
+      const read = () => readThreadUsage(id, async () => ({ thread: { id, path: file } }));
+      if (suffix === continuationId) await assert.rejects(read(), /路径不匹配/);
+      else {
+        const { usage: result } = await read();
+        assert.equal(result.speed, 20);
+        assert.equal(result.cache, 81);
+      }
+    }
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test("host bridge validates thread identity and does not forward renderer file paths", async () => {
   const request = { id: "usage-1", action: "read-thread-usage", threadId: id, path: "/secret" };
   let invalid;
