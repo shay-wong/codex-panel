@@ -6,9 +6,11 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Add a default-on “Show conversation usage” preference to hide or restore the entire usage row without restarting; add a separate switch for ordinary numbers with a fade transition or dot-matrix numbers, and improve small dot-matrix number clarity.
+
 - Calculate output TPS from total turn output tokens and elapsed time with one decimal place; estimate live while streaming, correct with actual usage, and freeze the result when the turn ends.
 
-- Show three bouncing dots while conversation usage metrics await data, and animate numeric changes smoothly up or down; respect reduced-motion settings.
+- Show three bouncing dots while conversation usage metrics await data, then expand those dots into the reading; render numbers in a compact dot matrix that morphs into each new value without counting through intermediate numbers; keep labels and units in ordinary text; respect reduced-motion settings.
 
 - Add speedometer and cache icons to the conversation usage row.
 

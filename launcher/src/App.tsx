@@ -20,7 +20,7 @@ export type LauncherSnapshot = {
   codexUpdateChecking: boolean;
   appPath: string | null;
 };
-export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean };
+export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; usageDotMatrix: boolean; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean };
 export type LauncherState = {
   snapshot: LauncherSnapshot;
   preferences: LauncherPreferences;
@@ -343,6 +343,10 @@ export function App() {
               <Heading as="h2" size="2" id="displayTitle" mb="2">显示与系统</Heading>
               <div className="preference-rows">
                 <Setting id="hideUsageBanner" title="隐藏额度耗尽提示" detail="收起对话中的额度横幅，不改变实际额度" checked={preferences?.hideUsageBanner ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("hideUsageBanner", enabled)} />
+                <Separator size="4" />
+                <Setting id="showThreadUsage" title="显示会话用量" detail="在输入框下方显示速度与缓存命中率，关闭后停止统计读取；无需重启" checked={preferences?.showThreadUsage ?? true} disabled={!state || savingPreference} onChange={enabled => void savePreference("showThreadUsage", enabled)} />
+                <Separator size="4" />
+                <Setting id="usageDotMatrix" title="使用点阵数字" detail="关闭后显示普通数字，统计方式不变；无需重启" checked={preferences?.usageDotMatrix ?? true} disabled={!state || savingPreference} onChange={enabled => void savePreference("usageDotMatrix", enabled)} />
                 <Separator size="4" />
                 <Setting id="customProviderQuotaFix" title="移除账号额度不足时 API 发送限制" detail="仅限自定义 API；首次安装适配时重载一次，之后开关即时生效" checked={preferences?.customProviderQuotaFix ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("customProviderQuotaFix", enabled)} />
                 <Separator size="4" />

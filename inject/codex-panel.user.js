@@ -101,6 +101,8 @@
   let active = false;
   let destroyed = false;
   let hideUsageBanner = false;
+  let showThreadUsage = false;
+  let usageDotMatrix = true;
 
   function isExhaustedUsageBanner(banner) {
     const fiberKey = Object.keys(banner).find((key) => key.startsWith("__reactFiber$"));
@@ -237,6 +239,10 @@
     style.id = STYLE_ID;
     style.setAttribute(OWNED_ATTRIBUTE, "true");
     style.textContent = `
+      .codex-panel-usage-number-text { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+      .codex-panel-usage-prefix { margin-right: 3px; }
+      .codex-panel-usage-suffix { margin-left: 3px; }
+      .codex-panel-usage-line [data-usage-cache] > .codex-panel-usage-suffix { margin-left: 4px; }
       .codex-panel-usage-dots { display: inline-flex; align-items: center; justify-content: center; gap: 4px; width: 20px; height: 14px; margin-inline: 2px; vertical-align: middle; }
       .codex-panel-usage-dots i { width: 2px; height: 2px; border-radius: 50%; background: currentColor; animation: codex-panel-usage-bounce 900ms ease-in-out infinite; }
       .codex-panel-usage-dots i:nth-child(2) { animation-delay: 120ms; }
@@ -2526,6 +2532,8 @@
     if (message.type === HOST_HEARTBEAT_MESSAGE) {
       hostHeartbeatAt = Number(message.at) || 0;
       hideUsageBanner = message.hideUsageBanner === true;
+      setUsageDotMatrix(message.usageDotMatrix !== false);
+      setThreadUsageVisible(message.showThreadUsage !== false);
       window.__codexPanelProviderQuotaV1__?.setEnabled(message.customProviderQuotaFix === true);
       window.__codexPanelProviderUltrafastV1__?.setEnabled(message.customProviderUltrafast === true);
       window.__codexPanelDotEntryV1__?.setEnabled(message.showCustomProviderDot === true);
@@ -2822,8 +2830,33 @@
 
   const usageLines = new Map();
   const usageValueAnimations = new WeakMap();
+  const usageDigitPatterns = {
+    "0": "01110/10001/10001/10001/10001/10001/01110",
+    "1": "00100/01100/00100/00100/00100/00100/01110",
+    "2": "01110/10001/00001/00010/00100/01000/11111",
+    "3": "11110/00001/00001/01110/00001/00001/11110",
+    "4": "00010/00110/01010/10010/11111/00010/00010",
+    "5": "11111/10000/10000/11110/00001/00001/11110",
+    "6": "01110/10000/10000/11110/10001/10001/01110",
+    "7": "11111/00001/00010/00100/01000/01000/01000",
+    "8": "01110/10001/10001/01110/10001/10001/01110",
+    "9": "01110/10001/10001/01111/00001/00001/01110",
+    ".": "0/0/0/0/0/0/1",
+  };
   let usagePollInFlight = false;
   let usagePolledAt = 0;
+
+  function setThreadUsageVisible(enabled) {
+    if (showThreadUsage === enabled) return;
+    showThreadUsage = enabled;
+    if (enabled) {
+      usagePolledAt = 0;
+      void pollThreadUsage();
+    } else {
+      for (const { line } of usageLines.values()) line.remove();
+      usageLines.clear();
+    }
+  }
 
   function renderUsageState(state) {
     if (!state.usage) return;
@@ -2836,7 +2869,14 @@
     renderUsageLine(state.line, usage);
   }
 
+  function setUsageDotMatrix(enabled) {
+    if (usageDotMatrix === enabled) return;
+    usageDotMatrix = enabled;
+    for (const state of usageLines.values()) renderUsageState(state);
+  }
+
   function onUsageNotification(event) {
+    if (!showThreadUsage) return;
     // 原生 preload 通过无 source/origin 的 MessageEvent 广播；排除嵌入页面消息。
     if (event.source !== null && (event.source !== window || event.origin !== window.location.origin)) return;
     if (event.source === null && event.origin) return;
@@ -2906,48 +2946,151 @@
     return /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id) ? id : "";
   }
 
-  function renderUsageValue(label, value, format, loading) {
+  function usageNumberShape(text) {
+    const points = [];
+    let left = 0;
+    for (const digit of text) {
+      const rows = usageDigitPatterns[digit].split("/");
+      rows.forEach((row, y) => [...row].forEach((on, x) => {
+        if (on === "1") points.push({ x: left + 1 + x * 1.5, y: 1.4 + y * 1.5 });
+      }));
+      left += (rows[0].length + 1) * 1.5;
+    }
+    const first = Math.min(...points.map(point => point.x)) - 0.65;
+    const last = Math.max(...points.map(point => point.x)) + 0.65;
+    return { points: points.map(point => ({ ...point, x: point.x - first })), width: last - first };
+  }
+
+  function replaceUsageLabel(label, contents, prefix, suffix) {
+    const before = document.createElement("span");
+    before.className = "codex-panel-usage-prefix";
+    before.textContent = prefix.trimEnd();
+    const after = document.createElement("span");
+    after.className = "codex-panel-usage-suffix";
+    after.textContent = suffix.trimStart();
+    label.replaceChildren(...(prefix ? [before] : []), ...contents, ...(suffix ? [after] : []));
+  }
+
+  function renderUsageNumber(label, number, prefix, suffix) {
+    const text = prefix + number + suffix;
+    let previous = usageValueAnimations.get(label);
+    if (previous?.points && previous.text === text) return;
+    previous?.animations.forEach(animation => animation.cancel());
+    if (!previous?.points) previous = null;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const loadingDots = !reducedMotion && label.querySelector(".codex-panel-usage-dots");
+    const loadingPoints = loadingDots && [...loadingDots.children].map(dot => dot.getBoundingClientRect());
+    const loadingWidth = loadingDots && loadingDots.offsetWidth + 4;
+    const shape = usageNumberShape(number);
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("height", "12");
+    svg.setAttribute("width", String(shape.width));
+    svg.style.cssText = "display:inline-block;vertical-align:-1px;fill:currentColor;overflow:visible;";
+    const accessible = document.createElement("span");
+    accessible.className = "codex-panel-usage-number-text";
+    accessible.textContent = number;
+    replaceUsageLabel(label, [svg, accessible], prefix, suffix);
+    if (loadingPoints) {
+      const width = loadingWidth - parseFloat(getComputedStyle(svg).marginRight || "0");
+      svg.style.width = `${width}px`;
+      const bounds = svg.getBoundingClientRect();
+      const scale = bounds.width / width;
+      previous = {
+        points: loadingPoints.map(point => ({
+          x: (point.left + point.width / 2 - bounds.left) / scale,
+          y: (point.top + point.height / 2 - bounds.top) / scale,
+          radius: point.width / 2 / scale,
+        })),
+        width,
+      };
+    }
+    const state = { ...shape, text, animations: [] };
+    usageValueAnimations.set(label, state);
+    const animate = previous && !reducedMotion;
+    const remaining = animate ? [...previous.points] : [];
+    const motion = { duration: 500, easing: "cubic-bezier(0.4, 0, 0.2, 1)" };
+    const distance = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+    const nearest = (points, target) => points.reduce((best, point, index) =>
+      distance(point, target) < distance(points[best], target) ? index : best, 0);
+    const dot = (target, from, entering = false, leaving = false) => {
+      const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      circle.setAttribute("cx", String(target.x));
+      circle.setAttribute("cy", String(target.y));
+      circle.setAttribute("r", "0.65");
+      svg.append(circle);
+      if (!animate || (!entering && !leaving && from.x === target.x && from.y === target.y)) return;
+      const animation = circle.animate([
+        { transform: `translate(${from.x - target.x}px, ${from.y - target.y}px)`, opacity: entering ? 0 : 1, r: `${from.radius ?? 0.65}px` },
+        { transform: "translate(0, 0)", opacity: leaving ? 0 : 1, r: "0.65px" },
+      ], motion);
+      if (leaving) animation.onfinish = () => circle.remove();
+      state.animations.push(animation);
+    };
+    for (const target of shape.points) {
+      const from = remaining.length ? remaining.splice(nearest(remaining, target), 1)[0] : null;
+      dot(target, from ?? (animate ? previous.points[nearest(previous.points, target)] : target), !from);
+    }
+    if (animate) {
+      for (const from of remaining) dot(shape.points[nearest(shape.points, from)], from, false, true);
+      state.animations.push(svg.animate([{ width: `${previous.width}px` }, { width: `${shape.width}px` }], motion));
+    }
+    svg.style.removeProperty("width");
+  }
+
+  function renderUsagePlainNumber(label, number, prefix, suffix) {
+    const text = prefix + number + suffix;
     const previous = usageValueAnimations.get(label);
-    if (value == null && loading) {
-      if (previous?.frame) window.cancelAnimationFrame(previous.frame);
+    let node = label.querySelector(".codex-panel-usage-plain-number");
+    if (node && previous?.text === text) return;
+    const opacity = node ? getComputedStyle(node).opacity : "1";
+    previous?.animations.forEach(animation => animation.cancel());
+    const animate = node && node.textContent !== number
+      && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (!node) {
+      node = document.createElement("span");
+      node.className = "codex-panel-usage-plain-number";
+    }
+    replaceUsageLabel(label, [node], prefix, suffix);
+    const state = { text, animations: [] };
+    usageValueAnimations.set(label, state);
+    if (!animate) { node.textContent = number; return; }
+    const fadeOut = node.animate([{ opacity }, { opacity: 0 }], { duration: 120, easing: "ease-in", fill: "forwards" });
+    state.animations.push(fadeOut);
+    fadeOut.onfinish = () => {
+      if (usageValueAnimations.get(label) !== state) return;
+      fadeOut.cancel();
+      node.textContent = number;
+      state.animations = [node.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease-out" })];
+    };
+  }
+
+  function renderUsageValue(label, number, prefix, suffix, loading) {
+    if (number == null && loading) {
+      usageValueAnimations.get(label)?.animations.forEach(animation => animation.cancel());
       usageValueAnimations.delete(label);
       if (label.getAttribute("aria-busy") !== "true") {
-        const [before, after] = format(null).split("--");
         label.innerHTML = '<span class="codex-panel-usage-dots" aria-hidden="true"><i></i><i></i><i></i></span>';
-        label.prepend(before);
-        label.append(after);
+        replaceUsageLabel(label, [label.firstElementChild], prefix, suffix);
         label.setAttribute("aria-busy", "true");
       }
-      label.setAttribute("aria-label", format(null).replace("--", loading));
+      label.setAttribute("aria-label", prefix + loading + suffix);
       return;
     }
     if (label.hasAttribute("aria-busy")) {
       label.removeAttribute("aria-busy");
       label.removeAttribute("aria-label");
     }
-    const write = (number) => {
-      const text = format(number);
-      if (label.textContent !== text) label.textContent = text;
-    };
-    if (previous?.target === value) { write(previous.value); return; }
-    if (previous?.frame) window.cancelAnimationFrame(previous.frame);
-    const state = { target: value, value, frame: 0 };
-    usageValueAnimations.set(label, state);
-    if (value == null || previous?.value == null || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      write(value);
+    if (number == null) {
+      usageValueAnimations.get(label)?.animations.forEach(animation => animation.cancel());
+      usageValueAnimations.delete(label);
+      const value = number ?? "--";
+      const text = prefix.trimEnd() + value + suffix.trimStart();
+      if (label.textContent !== text || label.querySelector("svg")) replaceUsageLabel(label, [value], prefix, suffix);
       return;
     }
-    const from = previous.value;
-    const startedAt = performance.now();
-    const tick = (now) => {
-      if (!label.isConnected) return;
-      const progress = Math.min(1, (now - startedAt) / 200);
-      state.value = progress === 1 ? value : from + (value - from) * (1 - (1 - progress) ** 3);
-      write(state.value);
-      state.frame = progress < 1 ? window.requestAnimationFrame(tick) : 0;
-    };
-    state.value = from;
-    state.frame = window.requestAnimationFrame(tick);
+    if (usageDotMatrix) renderUsageNumber(label, number, prefix, suffix);
+    else renderUsagePlainNumber(label, number, prefix, suffix);
   }
 
   function renderUsageLine(line, usage, unavailable = false) {
@@ -2955,8 +3098,8 @@
     const speedLabel = line.querySelector("[data-usage-speed]");
     const cacheLabel = line.querySelector("[data-usage-cache]");
     const loading = !unavailable && usage?.inProgress ? (zh ? "统计中" : "Calculating") : "";
-    renderUsageValue(speedLabel, usage?.speed ?? null, value => `${value == null ? "--" : value.toFixed(1)} tok/s`, loading);
-    renderUsageValue(cacheLabel, usage?.cache ?? null, value => `${zh ? "缓存命中" : "Cache hit"} ${value == null ? "--" : `${value.toFixed(1)}%`}`, loading);
+    renderUsageValue(speedLabel, usage?.speed == null ? null : usage.speed.toFixed(1), "", " tok/s", loading);
+    renderUsageValue(cacheLabel, usage?.cache == null ? null : usage.cache.toFixed(1), `${zh ? "缓存命中" : "Cache hit"} `, usage?.cache == null ? "" : "%", loading);
     line.title = unavailable ? (zh ? "暂时无法读取本机会话用量" : "Local usage is unavailable")
       : zh ? "输出 TPS：本轮输出 Token ÷ 本轮总耗时，含等待、思考与工具执行，保留一位小数。缓存命中：同轮缓存输入 ÷ 输入 Token。数据不足时显示 --。"
         : "Output TPS: turn output tokens / total turn seconds, including waiting, reasoning and tools; one decimal place. Cache hit is cached/input tokens within the turn. Missing data is shown as --.";
@@ -2967,7 +3110,7 @@
   }
 
   async function pollThreadUsage() {
-    if (destroyed || document.hidden) return;
+    if (destroyed || document.hidden || !showThreadUsage) return;
     const visible = new Set();
     for (const card of document.querySelectorAll("[data-composer-surface-variant], .composer-surface-chrome")) {
       if (card.closest('[inert], [hidden]') || !card.getBoundingClientRect().height) continue;
@@ -2981,7 +3124,7 @@
         line.setAttribute(OWNED_ATTRIBUTE, "true");
         line.className = "codex-panel-usage-line";
         line.style.cssText = "font-size:12px;line-height:24px;text-align:center;color:var(--color-token-text-secondary,#888);font-variant-numeric:tabular-nums;flex:none;";
-        line.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:4px"><path d="M3 18a9 9 0 1 1 18 0M12 14l4-6"/><circle cx="12" cy="15" r="1"/></svg><span data-usage-speed></span>　 ·　 <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:4px"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v14c0 4 14 4 14 0V5M5 12c0 4 14 4 14 0"/></svg><span data-usage-cache></span>';
+        line.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:6px"><path d="M3 18a9 9 0 1 1 18 0M12 14l4-6"/><circle cx="12" cy="15" r="1"/></svg><span data-usage-speed></span>　 ·　 <svg aria-hidden="true" width="14" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:4px"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v14c0 4 14 4 14 0V5M5 12c0 4 14 4 14 0"/></svg><span data-usage-cache></span>';
         state = { threadId, line, usage: null, pendingTokens: 0, revision: 0 };
         usageLines.set(card, state);
         renderUsageLine(line, null);

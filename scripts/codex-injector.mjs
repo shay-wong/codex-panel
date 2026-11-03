@@ -2322,6 +2322,8 @@ function installPanelHostBinding(
         (async () => {
           const executionContextId = await install();
           let hideUsageBanner = false;
+          let showThreadUsage = true;
+          let usageDotMatrix = true;
           let customProviderQuotaFix = false;
           let customProviderUltrafast = false;
           let showCustomProviderDot = false;
@@ -2330,6 +2332,8 @@ function installPanelHostBinding(
             try {
               const preferences = JSON.parse(await readFile(preferencesFile, "utf8"));
               hideUsageBanner = preferences.hideUsageBanner === true;
+              showThreadUsage = preferences.showThreadUsage !== false;
+              usageDotMatrix = preferences.usageDotMatrix !== false;
               customProviderQuotaFix = preferences.customProviderQuotaFix === true;
               customProviderUltrafast = preferences.customProviderUltrafast === true;
               showCustomProviderDot = preferences.showCustomProviderDot === true;
@@ -2342,6 +2346,8 @@ function installPanelHostBinding(
               capability: ${JSON.stringify(hostCapability)},
               at: Date.now(),
               hideUsageBanner: ${JSON.stringify(hideUsageBanner)},
+              showThreadUsage: ${JSON.stringify(showThreadUsage)},
+              usageDotMatrix: ${JSON.stringify(usageDotMatrix)},
               customProviderQuotaFix: ${JSON.stringify(customProviderQuotaFix)},
               customProviderUltrafast: ${JSON.stringify(customProviderUltrafast)},
               showCustomProviderDot: ${JSON.stringify(showCustomProviderDot)},
