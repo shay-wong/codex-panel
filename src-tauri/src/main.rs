@@ -3159,7 +3159,6 @@ async fn offer_update(
 
 fn main() {
     let app = tauri::Builder::default()
-        .enable_macos_default_menu(false)
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             None,
