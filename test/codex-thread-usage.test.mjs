@@ -95,6 +95,7 @@ test("composer status follows its own thread and removes values on Home", async 
     await dom.window.pollUsage();
     const line = dom.window.document.querySelector(".codex-panel-usage-line");
     assert.match(line.textContent, /20 tok\/s.*缓存命中 81.0%/);
+    assert.equal(line.querySelectorAll('svg[aria-hidden="true"][stroke="currentColor"]').length, 2);
     assert.equal(line.previousElementSibling.hasAttribute("data-composer-surface-variant"), true);
     dom.window.document.querySelector("[data-codex-composer-root]").setAttribute("data-composer-placement", "home");
     await dom.window.pollUsage();

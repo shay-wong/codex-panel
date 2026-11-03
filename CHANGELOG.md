@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Add speedometer and cache icons to the conversation usage row.
+
 - Fix unavailable conversation usage metrics for native session log filenames containing an additional UUID.
 
 - Restore the last normal window size after restarting.

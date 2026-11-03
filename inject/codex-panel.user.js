@@ -2834,8 +2834,12 @@
     const zh = !document.documentElement.lang || document.documentElement.lang.startsWith("zh");
     const speed = usage?.speed == null ? "--" : Math.round(usage.speed);
     const cache = usage?.cache == null ? "--" : `${usage.cache.toFixed(1)}%`;
-    const text = `${speed} tok/s　 ·　 ${zh ? "缓存命中" : "Cache hit"} ${cache}`;
-    if (line.textContent !== text) line.textContent = text;
+    const speedLabel = line.querySelector("[data-usage-speed]");
+    const cacheLabel = line.querySelector("[data-usage-cache]");
+    const speedText = `${speed} tok/s`;
+    const cacheText = `${zh ? "缓存命中" : "Cache hit"} ${cache}`;
+    if (speedLabel.textContent !== speedText) speedLabel.textContent = speedText;
+    if (cacheLabel.textContent !== cacheText) cacheLabel.textContent = cacheText;
     line.title = unavailable ? (zh ? "暂时无法读取本机会话用量" : "Local usage is unavailable")
       : zh ? "输出吞吐：同轮输出 token 增量 ÷ 对应耗时，含等待与工具执行，非纯解码速度。缓存命中：同轮缓存输入 ÷ 输入 token。数据不足时显示 --。"
         : "Output throughput includes waiting and tool execution, not pure decode speed. Cache hit is cached/input tokens within the turn. Missing data is shown as --.";
@@ -2858,6 +2862,7 @@
         line.setAttribute(OWNED_ATTRIBUTE, "true");
         line.className = "codex-panel-usage-line";
         line.style.cssText = "font-size:12px;line-height:24px;text-align:center;color:var(--color-token-text-secondary,#888);font-variant-numeric:tabular-nums;flex:none;";
+        line.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:4px"><path d="M3 18a9 9 0 1 1 18 0M12 14l4-6"/><circle cx="12" cy="15" r="1"/></svg><span data-usage-speed></span>　 ·　 <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:4px"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v14c0 4 14 4 14 0V5M5 12c0 4 14 4 14 0"/></svg><span data-usage-cache></span>';
         state = { threadId, line };
         usageLines.set(card, state);
         renderUsageLine(line, null);
