@@ -10,6 +10,8 @@ This file records user-visible changes introduced by the fork.
 
 - Add per-model automatic compaction thresholds with token and percentage modes, numeric model defaults, and fixed cards showing global overrides. Allow per-model saves while preserving global configuration, and improve the settings dialog layout and scrolling. Restart Codex after saving to apply changes.
 
+- Show output throughput (tok/s) and cache hit rate below local Codex composers using local session logs. Missing data shows `--`; API requests are unchanged.
+
 ## 0.4.14-fork
 
 - Fix conversation-menu preparation on newer Codex builds whose startup modules load through separate entry modules, including updated native focus and sidebar navigation code.

@@ -517,3 +517,9 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 - 代码：`server/database.mjs`、`cloud/src/index.mjs`、`cloud/migrations/0015_cross_project_blocking.sql`、`web/src/components/IssueRelations.tsx`；本地启动替换旧全关系同项目触发器，Cloud 随 Worker 应用迁移。
 - 验证：`test/cross-project-blocking.test.mjs` 覆盖旧触发器升级、添加/删除/双向读取、同仓库成功路径和跨仓库执行等待；`web/src/components/TaskDetail.spec.tsx` 覆盖选择器。用户文档：中英文 README、CHANGELOG 与 `docs/fork-capabilities.md#cross-repository-blocking`；CLI 参考同步说明。
 - 来源：当前改动，提交后用 `git log -S'crossProject?.task.id' -- web/src/components/IssueRelations.tsx` 定位。上游等价支持关系 API、选择器、数据库升级和依赖调度后可吸收；不能只放开选择器而保留服务端跨项目拒绝。
+
+### 输入框输出吞吐与缓存命中率
+
+- 本次新增，等待上游吸收。参考 CodexPlusPlus 的本地 rollout 数据口径，按 Panel 宿主桥独立实现，不引入其扩展框架。代码：`scripts/codex-thread-usage.mjs`、`scripts/codex-injector-runtime.mjs`、`scripts/codex-injector.mjs`、`inject/codex-panel.user.js`；两条打包资源清单均包含新模块。
+- 只读本地原生会话，不接受前端文件路径；缓存命中率按当前轮输入量加权，tok/s 表示包含等待和工具执行的输出吞吐。轮边界缺失时只显示最近调用的命中率，不估算速度；首页不显示旧会话指标，不增加上下文占用。源码注释与 tooltip 明示这些边界。
+- 验证：`test/codex-thread-usage.test.mjs` 的隔离日志、宿主校验、输入框显示与首页清理，以及宿主桥原有检查；静态隔离浏览器验证布局。实际 Codex 安装后显示尚待确认。用户说明同步中英文 README、CHANGELOG 和 `docs/fork-capabilities.md`；上游具有等价指标后移除此差异。当前环境无 fork-doc 技能，按维护契约手动同步。
