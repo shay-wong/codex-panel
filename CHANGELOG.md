@@ -6,6 +6,20 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Smooth velocity when usage targets change and reuse digit strips to reduce animation stutter.
+
+- Group the four conversation usage preferences in a dedicated settings dialog, with one entry on the Preferences page.
+
+- Make usage numbers continuously track their latest target with bounded, distance-dependent speed; add saved minimum and maximum speed settings that apply immediately.
+
+- Add a saved conversation usage position preference: show statistics above or below the composer, defaulting to below and applying without restart.
+
+- Move the speedometer needle with TPS updates on a 0–100 tok/s scale, synchronized with the rolling digits.
+
+- Align rolling usage digits, icons, labels and units along one vertical center.
+
+- Animate TPS and cache hit rate with per-digit odometer rolling in both ordinary and dot-matrix styles; increases roll up, decreases roll down, and unchanged digits stay still.
+
 ## 0.4.15-fork
 
 - Add a default-on “Show conversation usage” preference to hide or restore the entire usage row without restarting; add a separate switch for ordinary numbers with a fade transition or dot-matrix numbers, and improve small dot-matrix number clarity.

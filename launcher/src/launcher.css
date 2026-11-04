@@ -93,4 +93,5 @@ button, input { font: inherit; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
-.rt-BaseDialogScrollPadding:has(.model-context-dialog) { padding: 12px; }
+.rt-BaseDialogScrollPadding:has(.model-context-dialog),
+.rt-BaseDialogScrollPadding:has(.usage-settings-dialog) { padding: 12px; }

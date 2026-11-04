@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
-import { AlertDialog, Badge, Box, Button, Callout, Card, Flex, Heading, IconButton, Separator, Switch, Tabs, Text, Tooltip } from "@radix-ui/themes";
+import { AlertDialog, Badge, Box, Button, Callout, Card, Dialog, Flex, Heading, IconButton, Select, Separator, Switch, Tabs, Text, TextField, Tooltip } from "@radix-ui/themes";
 import { LinearIcon } from "../../web/src/components/LinearIcon";
 import { ModelContextSettings } from "./ModelContextSettings";
 
@@ -20,7 +20,7 @@ export type LauncherSnapshot = {
   codexUpdateChecking: boolean;
   appPath: string | null;
 };
-export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; usageDotMatrix: boolean; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean };
+export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean };
 export type LauncherState = {
   snapshot: LauncherSnapshot;
   preferences: LauncherPreferences;
@@ -58,9 +58,12 @@ export function App() {
   const [busyAction, setBusyAction] = useState("");
   const [feedback, setFeedback] = useState<Record<string, "success" | "failed">>({});
   const [savingPreference, setSavingPreference] = useState(false);
+  const [usageMinimum, setUsageMinimum] = useState("5");
+  const [usageMaximum, setUsageMaximum] = useState("40");
   const [ultrafastChoice, setUltrafastChoice] = useState<boolean | null>(null);
   const [restartReminder, setRestartReminder] = useState("");
   const [modelContextOpen, setModelContextOpen] = useState(false);
+  const [usageSettingsOpen, setUsageSettingsOpen] = useState(false);
   const [workflowUrl, setWorkflowUrl] = useState("");
   const [view, setView] = useState("overview");
   const workflowFrame = useRef<HTMLIFrameElement>(null);
@@ -70,6 +73,10 @@ export function App() {
   const feedbackTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const busy = Boolean(busyAction);
   const preferences = state?.preferences;
+  useEffect(() => {
+    setUsageMinimum(String(preferences?.usageAnimationMinSpeed ?? 5));
+    setUsageMaximum(String(preferences?.usageAnimationMaxSpeed ?? 40));
+  }, [preferences?.usageAnimationMinSpeed, preferences?.usageAnimationMaxSpeed]);
   const hasProcess = snapshot.childPid !== null && snapshot.childPid !== undefined;
   const ready = snapshot.phase === "running";
   const needsRestart = snapshot.phase === "restart_required";
@@ -188,6 +195,22 @@ export function App() {
     finally { setSavingPreference(false); }
   }
 
+  async function saveUsageAnimationSpeeds() {
+    const minimum = Number(usageMinimum);
+    const maximum = Number(usageMaximum);
+    if (!Number.isFinite(minimum) || !Number.isFinite(maximum) || minimum <= 0 || maximum < minimum) {
+      setError("最低速度须大于 0，最高速度须不小于最低速度。");
+      return;
+    }
+    setError("");
+    setSavingPreference(true);
+    try {
+      const next = await window.__TAURI__.core.invoke<LauncherPreferences>("set_usage_animation_speeds", { minimum, maximum });
+      setState(current => current && ({ ...current, preferences: next }));
+    } catch (cause) { setError(String(cause)); }
+    finally { setSavingPreference(false); }
+  }
+
   async function changeUltrafast(enabled: boolean) {
     setError("");
     setSavingPreference(true);
@@ -237,7 +260,7 @@ export function App() {
           <Tabs.Trigger value="about"><LinearIcon name="file" />关于</Tabs.Trigger>
         </Tabs.List>
       </aside>
-    <main key={workflowUrl ? "workflow" : view} className={`launcher-main${workflowUrl ? " workflow-page" : ""}`} style={modelContextOpen ? { overflowY: "hidden" } : undefined}>
+    <main key={workflowUrl ? "workflow" : view} className={`launcher-main${workflowUrl ? " workflow-page" : ""}`} style={modelContextOpen || usageSettingsOpen ? { overflowY: "hidden" } : undefined}>
       {!workflowUrl && <header className="page-heading">
         <Box><Heading as="h2" size="5">{view === "overview" ? "运行概览" : view === "preferences" ? "偏好设置" : "关于"}</Heading><Text as="p" size="1" color="gray" mt="1">{view === "overview" ? "管理本机服务与 Codex 连接" : view === "preferences" ? "所有项目共用的工作流与使用偏好" : "应用信息与版本更新"}</Text></Box>
         <Flex className="page-heading-actions" align="center" gap="2">
@@ -245,7 +268,7 @@ export function App() {
           {iconAction("browserPanel", "open_browser_panel", "在浏览器中打开", <LinearIcon name="openExternal" />, !hasProcess)}
         </Flex>
       </header>}
-      {error && <Callout.Root id="errorNotice" color="red" size="1" role="alert" mb="4">
+      {error && !usageSettingsOpen && <Callout.Root id="errorNotice" color="red" size="1" role="alert" mb="4">
         <Callout.Icon><LinearIcon name="alert" /></Callout.Icon>
         <Callout.Text id="errorText" className="launcher-error">{error}</Callout.Text>
         <IconButton id="dismissError" variant="ghost" color="red" size="1" aria-label="关闭提示" onClick={() => setError("")}><LinearIcon name="close" /></IconButton>
@@ -344,9 +367,15 @@ export function App() {
               <div className="preference-rows">
                 <Setting id="hideUsageBanner" title="隐藏额度耗尽提示" detail="收起对话中的额度横幅，不改变实际额度" checked={preferences?.hideUsageBanner ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("hideUsageBanner", enabled)} />
                 <Separator size="4" />
-                <Setting id="showThreadUsage" title="显示会话用量" detail="在输入框下方显示速度与缓存命中率，关闭后停止统计读取；无需重启" checked={preferences?.showThreadUsage ?? true} disabled={!state || savingPreference} onChange={enabled => void savePreference("showThreadUsage", enabled)} />
-                <Separator size="4" />
-                <Setting id="usageDotMatrix" title="使用点阵数字" detail="关闭后显示普通数字，统计方式不变；无需重启" checked={preferences?.usageDotMatrix ?? true} disabled={!state || savingPreference} onChange={enabled => void savePreference("usageDotMatrix", enabled)} />
+                <Flex className="preference-row" align="center" justify="between" gap="4">
+                  <Box><Text as="div" size="2" weight="medium">会话用量</Text><Text as="p" size="1" color="gray" mt="1">显示位置、数字样式与动画速度</Text></Box>
+                  <Button id="configureThreadUsage" variant="soft" disabled={!state || savingPreference} onClick={() => {
+                    setUsageMinimum(String(preferences?.usageAnimationMinSpeed ?? 5));
+                    setUsageMaximum(String(preferences?.usageAnimationMaxSpeed ?? 40));
+                    setError("");
+                    setUsageSettingsOpen(true);
+                  }}>配置会话用量<LinearIcon name="chevronRight" /></Button>
+                </Flex>
                 <Separator size="4" />
                 <Setting id="customProviderQuotaFix" title="移除账号额度不足时 API 发送限制" detail="仅限自定义 API；首次安装适配时重载一次，之后开关即时生效" checked={preferences?.customProviderQuotaFix ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("customProviderQuotaFix", enabled)} />
                 <Separator size="4" />
@@ -378,6 +407,39 @@ export function App() {
           </Tabs.Content>
     </main>
     </Tabs.Root>
+    <Dialog.Root open={usageSettingsOpen} onOpenChange={open => {
+      if (!savingPreference) { setUsageSettingsOpen(open); if (!open) setError(""); }
+    }}>
+      <Dialog.Content className="usage-settings-dialog" maxWidth="540px" size="2" style={{ maxHeight: "calc(100dvh - 24px)", overflowY: "auto" }}>
+        <Dialog.Title mb="1">会话用量设置</Dialog.Title>
+        <Dialog.Description size="1" color="gray">显示选项即时生效；修改数字速度后点击“保存速度”。</Dialog.Description>
+        <div className="preference-rows" style={{ marginTop: 16 }}>
+          <Setting id="showThreadUsage" title="显示会话用量" detail="显示速度与缓存命中率，关闭后停止统计读取；无需重启" checked={preferences?.showThreadUsage ?? true} disabled={!state || savingPreference} onChange={enabled => void savePreference("showThreadUsage", enabled)} />
+          <Separator size="4" />
+          <Flex className="preference-row" align="center" justify="between" gap="4">
+            <Box><Text as="label" htmlFor="threadUsagePosition" size="2" weight="medium">会话用量位置</Text><Text as="p" id="threadUsagePositionDetail" size="1" color="gray" mt="1">切换统计的显示位置，无需重启</Text></Box>
+            <Select.Root value={preferences?.threadUsageAboveComposer ? "above" : "below"} disabled={!state || savingPreference} onValueChange={value => void savePreference("threadUsageAboveComposer", value === "above")}>
+              <Select.Trigger id="threadUsagePosition" aria-describedby="threadUsagePositionDetail" />
+              <Select.Content><Select.Item value="above">输入框上方</Select.Item><Select.Item value="below">输入框下方</Select.Item></Select.Content>
+            </Select.Root>
+          </Flex>
+          <Separator size="4" />
+          <Setting id="usageDotMatrix" title="使用点阵数字" detail="关闭后显示普通数字，统计方式不变；无需重启" checked={preferences?.usageDotMatrix ?? true} disabled={!state || savingPreference} onChange={enabled => void savePreference("usageDotMatrix", enabled)} />
+          <Separator size="4" />
+          <Box className="preference-row">
+            <Text as="div" size="2" weight="medium">数字变化速度</Text>
+            <Text as="p" id="usageSpeedDetail" size="1" color="gray" mt="1">离目标越远越快，越近越慢；起停与换向平滑过渡。单位：刻度/秒，TPS 与缓存命中率共用</Text>
+            <Flex gap="3" align="end" wrap="wrap" mt="3">
+              <Box><Text as="label" htmlFor="usageMinimumSpeed" size="1">最低速度</Text><TextField.Root id="usageMinimumSpeed" type="number" min="0.1" step="0.1" value={usageMinimum} onChange={event => setUsageMinimum(event.target.value)} disabled={!state || savingPreference} aria-describedby="usageSpeedDetail" style={{ width: 100 }} /></Box>
+              <Box><Text as="label" htmlFor="usageMaximumSpeed" size="1">最高速度</Text><TextField.Root id="usageMaximumSpeed" type="number" min="0.1" step="0.1" value={usageMaximum} onChange={event => setUsageMaximum(event.target.value)} disabled={!state || savingPreference} aria-describedby="usageSpeedDetail" style={{ width: 100 }} /></Box>
+              <Button variant="soft" disabled={!state || savingPreference} onClick={() => void saveUsageAnimationSpeeds()}>保存速度</Button>
+            </Flex>
+          </Box>
+        </div>
+        {error && <Text as="p" size="2" color="red" role="alert" mt="3">{error}</Text>}
+        <Flex justify="end" mt="3"><Dialog.Close><Button variant="soft" disabled={savingPreference}>关闭</Button></Dialog.Close></Flex>
+      </Dialog.Content>
+    </Dialog.Root>
     <ModelContextSettings open={modelContextOpen} onOpenChange={setModelContextOpen} onSaved={() => setRestartReminder("模型上下文")} />
     <AlertDialog.Root open={ultrafastChoice !== null} onOpenChange={open => { if (!open && !savingPreference) setUltrafastChoice(null); }}>
       <AlertDialog.Content maxWidth="520px" onOpenAutoFocus={event => { event.preventDefault(); keepDiscoveryButton.current?.focus(); }}>

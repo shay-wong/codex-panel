@@ -201,8 +201,14 @@ struct LauncherPreferences {
     hide_usage_banner: bool,
     #[serde(default = "enabled_by_default")]
     show_thread_usage: bool,
+    #[serde(default)]
+    thread_usage_above_composer: bool,
     #[serde(default = "enabled_by_default")]
     usage_dot_matrix: bool,
+    #[serde(default = "default_usage_animation_min_speed")]
+    usage_animation_min_speed: f64,
+    #[serde(default = "default_usage_animation_max_speed")]
+    usage_animation_max_speed: f64,
     #[serde(default)]
     custom_provider_quota_fix: bool,
     #[serde(default)]
@@ -230,7 +236,10 @@ impl Default for LauncherPreferences {
             auto_open_panel: true,
             hide_usage_banner: false,
             show_thread_usage: true,
+            thread_usage_above_composer: false,
             usage_dot_matrix: true,
+            usage_animation_min_speed: default_usage_animation_min_speed(),
+            usage_animation_max_speed: default_usage_animation_max_speed(),
             custom_provider_quota_fix: false,
             custom_provider_ultrafast: false,
             show_custom_provider_dot: false,
@@ -241,6 +250,14 @@ impl Default for LauncherPreferences {
 
 fn enabled_by_default() -> bool {
     true
+}
+
+fn default_usage_animation_min_speed() -> f64 {
+    5.0
+}
+
+fn default_usage_animation_max_speed() -> f64 {
+    40.0
 }
 
 #[derive(Deserialize)]
@@ -2904,7 +2921,7 @@ async fn set_launcher_preference(
     enabled: bool,
     update_model_discovery: Option<bool>,
 ) -> Result<LauncherPreferences, String> {
-    if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel" | "hideUsageBanner" | "showThreadUsage" | "usageDotMatrix" | "customProviderQuotaFix" | "customProviderUltrafast" | "showCustomProviderDot") {
+    if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel" | "hideUsageBanner" | "showThreadUsage" | "threadUsageAboveComposer" | "usageDotMatrix" | "customProviderQuotaFix" | "customProviderUltrafast" | "showCustomProviderDot") {
         return Err("未知的偏好设置".to_string());
     }
     if update_model_discovery == Some(true) {
@@ -2918,11 +2935,27 @@ async fn set_launcher_preference(
         "autoOpenPanel" => preferences.auto_open_panel = enabled,
         "hideUsageBanner" => preferences.hide_usage_banner = enabled,
         "showThreadUsage" => preferences.show_thread_usage = enabled,
+        "threadUsageAboveComposer" => preferences.thread_usage_above_composer = enabled,
         "usageDotMatrix" => preferences.usage_dot_matrix = enabled,
         "customProviderQuotaFix" => preferences.custom_provider_quota_fix = enabled,
         "customProviderUltrafast" => preferences.custom_provider_ultrafast = enabled,
         "showCustomProviderDot" => preferences.show_custom_provider_dot = enabled,
         _ => unreachable!(),
+    })
+}
+
+#[tauri::command]
+fn set_usage_animation_speeds(
+    state: State<'_, Arc<LauncherState>>,
+    minimum: f64,
+    maximum: f64,
+) -> Result<LauncherPreferences, String> {
+    if !minimum.is_finite() || !maximum.is_finite() || minimum <= 0.0 || maximum < minimum {
+        return Err("最低速度须大于 0，最高速度须不小于最低速度。".into());
+    }
+    update_preferences(&state, |preferences| {
+        preferences.usage_animation_min_speed = minimum;
+        preferences.usage_animation_max_speed = maximum;
     })
 }
 
@@ -3303,6 +3336,7 @@ fn main() {
             read_model_context_settings,
             set_model_context_windows,
             set_launcher_preference,
+            set_usage_animation_speeds,
             set_autostart,
             check_for_updates,
             open_available_release,

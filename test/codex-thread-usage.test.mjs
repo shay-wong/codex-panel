@@ -97,7 +97,7 @@ test("composer status follows its own thread and removes values on Home", async 
   try {
     dom.window.Element.prototype.getBoundingClientRect = () => ({ height: 100 });
     dom.window.matchMedia = () => ({ matches: true });
-    dom.window.eval(`let destroyed = false; let showThreadUsage = true; let usageDotMatrix = true; const OWNED_ATTRIBUTE = "data-codex-panel-owned";
+    dom.window.eval(`let destroyed = false; let showThreadUsage = true; let threadUsageAboveComposer = false; let usageDotMatrix = true; let usageAnimationMinSpeed = 5; let usageAnimationMaxSpeed = 40; const OWNED_ATTRIBUTE = "data-codex-panel-owned";
       const normalizeThreadId = value => value.replace(/^local:/, "");
       const threadIdFromLocation = () => "${id}"; const hasLiveHostBinding = () => true;
       const requestHost = async () => ({ usage: { speed: 20, outputTokens: 200, inputTokens: 100, cachedInputTokens: 81, cache: 81, totalTokens: 300, turnId: "first", startedAt: Date.now() - 10000, endedAt: Date.now(), observedAt: Date.now(), inProgress: false } });
@@ -155,5 +155,92 @@ test("composer status follows its own thread and removes values on Home", async 
     dom.window.document.querySelector("[data-codex-composer-root]").setAttribute("data-composer-placement", "home");
     await dom.window.pollUsage();
     assert.equal(dom.window.document.querySelector(".codex-panel-usage-line"), null);
+  } finally { dom.window.close(); }
+});
+
+test("usage retargeting changes velocity gradually while keeping the current value", async () => {
+  const source = await readFile(new URL("../inject/codex-panel.user.js", import.meta.url), "utf8");
+  const block = source.slice(source.indexOf("  const usageLines = new Map();"), source.indexOf("  function mount() {"));
+  const dom = new JSDOM('<div id="line"><svg><path data-usage-needle></path></svg><span data-usage-speed></span><span data-usage-cache></span></div>', { runScripts: "outside-only", pretendToBeVisual: true });
+  try {
+    let time = 0;
+    let sequence = 0;
+    const frames = new Map();
+    dom.window.matchMedia = () => ({ matches: false });
+    dom.window.performance.now = () => time;
+    dom.window.requestAnimationFrame = callback => { frames.set(++sequence, callback); return sequence; };
+    dom.window.cancelAnimationFrame = frame => frames.delete(frame);
+    dom.window.eval(`let usageDotMatrix = false; let usageAnimationMinSpeed = 0.2; let usageAnimationMaxSpeed = 20;
+      ${block}\nwindow.showUsage = speed => renderUsageLine(document.getElementById("line"), { speed, cache: 80 });`);
+    const value = () => (Number(dom.window.document.querySelector("[data-usage-needle]").getAttribute("transform").match(/rotate\(([^ ]+)/)[1]) + 90) / 1.8;
+    const step = () => {
+      const before = value();
+      time += 20;
+      const callbacks = [...frames.values()];
+      frames.clear();
+      callbacks.forEach(callback => callback(time));
+      return (value() - before) / 0.02;
+    };
+    dom.window.showUsage(40);
+    dom.window.showUsage(42);
+    let priorVelocity;
+    for (let frame = 0; frame < 6; frame++) priorVelocity = step();
+    const beforeRetarget = value();
+    dom.window.showUsage(90);
+    assert.equal(value(), beforeRetarget);
+    const accelerating = step();
+    assert.ok(accelerating > priorVelocity);
+    assert.ok(accelerating < 20 - 1e-6, "a new target must not instantly jump to maximum speed");
+    let forwardVelocity;
+    for (let frame = 0; frame < 8; frame++) forwardVelocity = step();
+    const beforeReverse = value();
+    dom.window.showUsage(10);
+    assert.equal(value(), beforeReverse);
+    const reversing = step();
+    assert.ok(reversing < forwardVelocity);
+    assert.ok(reversing > -20 + 1e-6, "direction changes must decelerate instead of jumping to reverse maximum");
+    for (let frame = 0; frame < 40; frame++) step();
+    assert.ok(value() < beforeReverse, "the latest target must take over without waiting for the old one");
+  } finally { dom.window.close(); }
+});
+
+test("active turn TPS keeps updating between host samples and stops after completion", async () => {
+  const source = await readFile(new URL("../inject/codex-panel.user.js", import.meta.url), "utf8");
+  const block = source.slice(source.indexOf("  const usageLines = new Map();"), source.indexOf("  function mount() {"));
+  const dom = new JSDOM('<div id="line"><svg><path data-usage-needle></path></svg><span data-usage-speed></span><span data-usage-cache></span></div>', { runScripts: "outside-only", pretendToBeVisual: true });
+  try {
+    let time = 10_000;
+    let sequence = 0;
+    const frames = new Map();
+    dom.window.matchMedia = () => ({ matches: false });
+    dom.window.performance.now = () => time;
+    dom.window.Date.now = () => time;
+    dom.window.requestAnimationFrame = callback => { frames.set(++sequence, callback); return sequence; };
+    dom.window.cancelAnimationFrame = frame => frames.delete(frame);
+    dom.window.eval(`let usageDotMatrix = false; let usageAnimationMinSpeed = 20; let usageAnimationMaxSpeed = 20;
+      ${block}\nwindow.liveUsage = { line: document.getElementById("line"), pendingTokens: 0,
+        usage: { startedAt: 0, inProgress: true, outputTokens: 400, cache: 80 } };
+      window.drawLiveUsage = () => renderUsageState(window.liveUsage); window.drawLiveUsage();`);
+    const value = () => Number(dom.window.document.querySelector(".codex-panel-usage-number-text").textContent);
+    const step = () => {
+      time += 20;
+      const callbacks = [...frames.values()];
+      frames.clear();
+      callbacks.forEach(callback => callback(time));
+    };
+    assert.equal(value(), 40);
+    for (let frame = 0; frame < 50; frame++) step();
+    assert.ok(value() < 40, "elapsed time must update the target without another host response");
+    assert.ok(frames.size > 0, "an active turn must keep tracking its live target");
+    const shown = (Number(dom.window.document.querySelector("[data-usage-needle]").getAttribute("transform").match(/rotate\(([^ ]+)/)[1]) + 90) / 1.8;
+    const fraction = dom.window.document.querySelector(".codex-panel-usage-odometer").lastElementChild.querySelector(".codex-panel-usage-track");
+    assert.ok(Math.abs(Number(fraction.style.getPropertyValue("--usage-offset")) - (1 + (shown * 10 % 10 + 10) % 10)) < 1e-8,
+      "live targets must retain the fractional wheel position between displayed decimal values");
+    dom.window.liveUsage.usage.inProgress = false;
+    dom.window.liveUsage.usage.endedAt = time;
+    dom.window.drawLiveUsage();
+    for (let frame = 0; frame < 600 && frames.size; frame++) step();
+    assert.equal(frames.size, 0);
+    assert.equal(value(), Number((400 / 11).toFixed(1)));
   } finally { dom.window.close(); }
 });

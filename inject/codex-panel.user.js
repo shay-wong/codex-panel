@@ -102,7 +102,10 @@
   let destroyed = false;
   let hideUsageBanner = false;
   let showThreadUsage = false;
+  let threadUsageAboveComposer = false;
   let usageDotMatrix = true;
+  let usageAnimationMinSpeed = 5;
+  let usageAnimationMaxSpeed = 40;
 
   function isExhaustedUsageBanner(banner) {
     const fiberKey = Object.keys(banner).find((key) => key.startsWith("__reactFiber$"));
@@ -240,6 +243,16 @@
     style.setAttribute(OWNED_ATTRIBUTE, "true");
     style.textContent = `
       .codex-panel-usage-number-text { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+      .codex-panel-usage-line { display: flex; align-items: center; justify-content: center; }
+      .codex-panel-usage-line > [data-usage-speed], .codex-panel-usage-line > [data-usage-cache] { display: inline-flex; align-items: center; }
+      .codex-panel-usage-odometer { display: inline-flex; height: 14px; font-variant-numeric: tabular-nums; }
+      .codex-panel-usage-reel { display: block; width: 0.64em; height: 14px; overflow: hidden; }
+      .codex-panel-usage-reel[hidden] { display: none; }
+      .codex-panel-usage-odometer[data-dot-matrix="true"] .codex-panel-usage-reel { width: 8.8px; }
+      .codex-panel-usage-odometer > .codex-panel-usage-glyph { width: 3px; }
+      .codex-panel-usage-track { display: block; transform: translateY(calc(var(--usage-offset, 1) * -14px)); }
+      .codex-panel-usage-glyph { display: flex; align-items: center; justify-content: center; height: 14px; line-height: 14px; }
+      .codex-panel-usage-glyph::before { content: attr(data-digit); }
       .codex-panel-usage-prefix { margin-right: 3px; }
       .codex-panel-usage-suffix { margin-left: 3px; }
       .codex-panel-usage-line [data-usage-cache] > .codex-panel-usage-suffix { margin-left: 4px; }
@@ -2533,6 +2546,8 @@
       hostHeartbeatAt = Number(message.at) || 0;
       hideUsageBanner = message.hideUsageBanner === true;
       setUsageDotMatrix(message.usageDotMatrix !== false);
+      setUsageAnimationSpeeds(message.usageAnimationMinSpeed, message.usageAnimationMaxSpeed);
+      setThreadUsageAboveComposer(message.threadUsageAboveComposer === true);
       setThreadUsageVisible(message.showThreadUsage !== false);
       window.__codexPanelProviderQuotaV1__?.setEnabled(message.customProviderQuotaFix === true);
       window.__codexPanelProviderUltrafastV1__?.setEnabled(message.customProviderUltrafast === true);
@@ -2858,15 +2873,32 @@
     }
   }
 
-  function renderUsageState(state) {
-    if (!state.usage) return;
-    const usage = { ...state.usage };
+  function setThreadUsageAboveComposer(enabled) {
+    if (threadUsageAboveComposer === enabled) return;
+    threadUsageAboveComposer = enabled;
+    void pollThreadUsage();
+  }
+
+  function setUsageAnimationSpeeds(minimum, maximum) {
+    if (!Number.isFinite(minimum) || !Number.isFinite(maximum) || minimum <= 0 || maximum < minimum) return;
+    usageAnimationMinSpeed = minimum;
+    usageAnimationMaxSpeed = maximum;
+  }
+
+  function currentUsageSpeed(state) {
+    const usage = state.usage;
+    if (!usage) return null;
     const tokens = (usage.outputTokens ?? 0) + state.pendingTokens;
     const elapsed = usage.startedAt == null ? 0
       : ((usage.inProgress ? Date.now() : usage.endedAt) - usage.startedAt) / 1000;
-    usage.speed = tokens > 0 && elapsed > 0 ? tokens / elapsed : null;
+    return tokens > 0 && elapsed > 0 ? tokens / elapsed : null;
+  }
+
+  function renderUsageState(state) {
+    if (!state.usage) return;
+    const usage = { ...state.usage, speed: currentUsageSpeed(state) };
     usage.estimated = state.pendingTokens > 0;
-    renderUsageLine(state.line, usage);
+    renderUsageLine(state.line, usage, false, state);
   }
 
   function setUsageDotMatrix(enabled) {
@@ -2971,103 +3003,118 @@
     label.replaceChildren(...(prefix ? [before] : []), ...contents, ...(suffix ? [after] : []));
   }
 
-  function renderUsageNumber(label, number, prefix, suffix) {
-    const text = prefix + number + suffix;
-    let previous = usageValueAnimations.get(label);
-    if (previous?.points && previous.text === text) return;
-    previous?.animations.forEach(animation => animation.cancel());
-    if (!previous?.points) previous = null;
-    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const loadingDots = !reducedMotion && label.querySelector(".codex-panel-usage-dots");
-    const loadingPoints = loadingDots && [...loadingDots.children].map(dot => dot.getBoundingClientRect());
-    const loadingWidth = loadingDots && loadingDots.offsetWidth + 4;
-    const shape = usageNumberShape(number);
+  function createUsageGlyph(digit) {
+    const glyph = document.createElement("span");
+    glyph.className = "codex-panel-usage-glyph";
+    if (!usageDotMatrix) {
+      glyph.dataset.digit = String(digit);
+      return glyph;
+    }
+    const shape = usageNumberShape(String(digit));
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("aria-hidden", "true");
     svg.setAttribute("height", "12");
     svg.setAttribute("width", String(shape.width));
-    svg.style.cssText = "display:inline-block;vertical-align:-1px;fill:currentColor;overflow:visible;";
-    const accessible = document.createElement("span");
-    accessible.className = "codex-panel-usage-number-text";
-    accessible.textContent = number;
-    replaceUsageLabel(label, [svg, accessible], prefix, suffix);
-    if (loadingPoints) {
-      const width = loadingWidth - parseFloat(getComputedStyle(svg).marginRight || "0");
-      svg.style.width = `${width}px`;
-      const bounds = svg.getBoundingClientRect();
-      const scale = bounds.width / width;
-      previous = {
-        points: loadingPoints.map(point => ({
-          x: (point.left + point.width / 2 - bounds.left) / scale,
-          y: (point.top + point.height / 2 - bounds.top) / scale,
-          radius: point.width / 2 / scale,
-        })),
-        width,
-      };
-    }
-    const state = { ...shape, text, animations: [] };
-    usageValueAnimations.set(label, state);
-    const animate = previous && !reducedMotion;
-    const remaining = animate ? [...previous.points] : [];
-    const motion = { duration: 500, easing: "cubic-bezier(0.4, 0, 0.2, 1)" };
-    const distance = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
-    const nearest = (points, target) => points.reduce((best, point, index) =>
-      distance(point, target) < distance(points[best], target) ? index : best, 0);
-    const dot = (target, from, entering = false, leaving = false) => {
+    svg.style.fill = "currentColor";
+    for (const point of shape.points) {
       const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      circle.setAttribute("cx", String(target.x));
-      circle.setAttribute("cy", String(target.y));
+      circle.setAttribute("cx", String(point.x));
+      circle.setAttribute("cy", String(point.y));
       circle.setAttribute("r", "0.65");
       svg.append(circle);
-      if (!animate || (!entering && !leaving && from.x === target.x && from.y === target.y)) return;
-      const animation = circle.animate([
-        { transform: `translate(${from.x - target.x}px, ${from.y - target.y}px)`, opacity: entering ? 0 : 1, r: `${from.radius ?? 0.65}px` },
-        { transform: "translate(0, 0)", opacity: leaving ? 0 : 1, r: "0.65px" },
-      ], motion);
-      if (leaving) animation.onfinish = () => circle.remove();
-      state.animations.push(animation);
-    };
-    for (const target of shape.points) {
-      const from = remaining.length ? remaining.splice(nearest(remaining, target), 1)[0] : null;
-      dot(target, from ?? (animate ? previous.points[nearest(previous.points, target)] : target), !from);
     }
-    if (animate) {
-      for (const from of remaining) dot(shape.points[nearest(shape.points, from)], from, false, true);
-      state.animations.push(svg.animate([{ width: `${previous.width}px` }, { width: `${shape.width}px` }], motion));
-    }
-    svg.style.removeProperty("width");
+    glyph.append(svg);
+    return glyph;
   }
 
-  function renderUsagePlainNumber(label, number, prefix, suffix) {
-    const text = prefix + number + suffix;
-    const previous = usageValueAnimations.get(label);
-    let node = label.querySelector(".codex-panel-usage-plain-number");
-    if (node && previous?.text === text) return;
-    const opacity = node ? getComputedStyle(node).opacity : "1";
-    previous?.animations.forEach(animation => animation.cancel());
-    const animate = node && node.textContent !== number
-      && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    if (!node) {
-      node = document.createElement("span");
-      node.className = "codex-panel-usage-plain-number";
+  function drawUsageNumber(state) {
+    const settled = state.value === state.target && !state.liveState?.usage?.inProgress;
+    const scaled = settled ? Math.round(state.value * 10) : state.value * 10;
+    const count = Math.max(2, String(Math.floor(scaled)).length);
+    while (state.columns.length < count) {
+      const index = state.columns.length;
+      const reel = document.createElement("span");
+      reel.className = "codex-panel-usage-reel";
+      const track = document.createElement("span");
+      track.className = "codex-panel-usage-track";
+      track.append(...Array.from({ length: 12 }, (_, digit) => createUsageGlyph((digit + 9) % 10)));
+      reel.append(track);
+      if (index === 0) state.odometer.append(reel);
+      else state.odometer.prepend(reel);
+      state.columns.push({ place: 10 ** index, reel, track });
     }
-    replaceUsageLabel(label, [node], prefix, suffix);
-    const state = { text, animations: [] };
-    usageValueAnimations.set(label, state);
-    if (!animate) { node.textContent = number; return; }
-    const fadeOut = node.animate([{ opacity }, { opacity: 0 }], { duration: 120, easing: "ease-in", fill: "forwards" });
-    state.animations.push(fadeOut);
-    fadeOut.onfinish = () => {
-      if (usageValueAnimations.get(label) !== state) return;
-      fadeOut.cancel();
-      node.textContent = number;
-      state.animations = [node.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease-out" })];
-    };
+    for (const [index, column] of state.columns.entries()) {
+      const whole = Math.floor(scaled / column.place);
+      const remainder = scaled - whole * column.place;
+      const phase = whole + Math.max(0, remainder - (column.place - 1));
+      column.track.style.setProperty("--usage-offset", String(1 + (phase % 10 + 10) % 10));
+      column.reel.hidden = index >= count;
+    }
+    const text = state.value.toFixed(1);
+    if (state.accessible.textContent !== text) state.accessible.textContent = text;
+    state.needle?.setAttribute("transform", `rotate(${Math.min(state.value, 100) / 100 * 180 - 90} 12 15)`);
   }
 
-  function renderUsageValue(label, number, prefix, suffix, loading) {
+  function renderUsageNumber(label, number, prefix, suffix, liveState) {
+    let state = usageValueAnimations.get(label);
+    const target = Number(number);
+    if (!state || state.dotMatrix !== usageDotMatrix || state.prefix !== prefix || state.suffix !== suffix) {
+      if (state?.frame) window.cancelAnimationFrame(state.frame);
+      const odometer = document.createElement("span");
+      odometer.className = "codex-panel-usage-odometer";
+      odometer.dataset.dotMatrix = String(usageDotMatrix);
+      odometer.setAttribute("aria-hidden", "true");
+      odometer.append(createUsageGlyph("."));
+      const accessible = document.createElement("span");
+      accessible.className = "codex-panel-usage-number-text";
+      state = { value: state?.value ?? target, velocity: state?.velocity ?? 0, target, dotMatrix: usageDotMatrix, prefix, suffix, odometer, accessible,
+        needle: label.previousElementSibling?.querySelector("[data-usage-needle]"), columns: [], frame: 0 };
+      replaceUsageLabel(label, [odometer, accessible], prefix, suffix);
+      usageValueAnimations.set(label, state);
+    }
+    state.target = target;
+    state.liveState = liveState;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reducedMotion) {
+      window.cancelAnimationFrame(state.frame);
+      state.frame = 0;
+      state.value = target;
+      state.velocity = 0;
+    }
+    drawUsageNumber(state);
+    if (reducedMotion || state.frame || (state.value === state.target && !liveState?.usage?.inProgress)) return;
+    state.updatedAt = performance.now();
+    const tick = now => {
+      if (!label.isConnected) { state.frame = 0; return; }
+      const dt = (now - state.updatedAt) / 1000;
+      state.updatedAt = now;
+      const live = state.liveState?.usage?.inProgress === true;
+      if (live) {
+        const latest = currentUsageSpeed(state.liveState);
+        if (latest != null) state.target = latest;
+      }
+      const difference = state.target - state.value;
+      const distance = Math.abs(difference);
+      const speed = Math.min(usageAnimationMaxSpeed, Math.max(usageAnimationMinSpeed, distance * 2));
+      const desiredVelocity = Math.sign(difference) * speed;
+      state.velocity += (desiredVelocity - state.velocity) * (1 - Math.exp(-dt / 0.12));
+      state.velocity = Math.max(-usageAnimationMaxSpeed, Math.min(usageAnimationMaxSpeed, state.velocity));
+      const next = state.value + state.velocity * dt;
+      if (difference === 0 || (difference > 0 && next >= state.target) || (difference < 0 && next <= state.target)) {
+        state.value = state.target;
+        if (!live) state.velocity = 0;
+      } else {
+        state.value = Math.max(0, next);
+        if (next < 0) state.velocity = 0;
+      }
+      drawUsageNumber(state);
+      state.frame = state.value === state.target && !live ? 0 : window.requestAnimationFrame(tick);
+    };
+    state.frame = window.requestAnimationFrame(tick);
+  }
+
+  function renderUsageValue(label, number, prefix, suffix, loading, liveState) {
     if (number == null && loading) {
-      usageValueAnimations.get(label)?.animations.forEach(animation => animation.cancel());
+      window.cancelAnimationFrame(usageValueAnimations.get(label)?.frame);
       usageValueAnimations.delete(label);
       if (label.getAttribute("aria-busy") !== "true") {
         label.innerHTML = '<span class="codex-panel-usage-dots" aria-hidden="true"><i></i><i></i><i></i></span>';
@@ -3082,29 +3129,30 @@
       label.removeAttribute("aria-label");
     }
     if (number == null) {
-      usageValueAnimations.get(label)?.animations.forEach(animation => animation.cancel());
+      window.cancelAnimationFrame(usageValueAnimations.get(label)?.frame);
       usageValueAnimations.delete(label);
       const value = number ?? "--";
       const text = prefix.trimEnd() + value + suffix.trimStart();
       if (label.textContent !== text || label.querySelector("svg")) replaceUsageLabel(label, [value], prefix, suffix);
       return;
     }
-    if (usageDotMatrix) renderUsageNumber(label, number, prefix, suffix);
-    else renderUsagePlainNumber(label, number, prefix, suffix);
+    renderUsageNumber(label, number, prefix, suffix, liveState);
   }
 
-  function renderUsageLine(line, usage, unavailable = false) {
+  function renderUsageLine(line, usage, unavailable = false, liveState) {
     const zh = !document.documentElement.lang || document.documentElement.lang.startsWith("zh");
     const speedLabel = line.querySelector("[data-usage-speed]");
     const cacheLabel = line.querySelector("[data-usage-cache]");
     const loading = !unavailable && usage?.inProgress ? (zh ? "统计中" : "Calculating") : "";
-    renderUsageValue(speedLabel, usage?.speed == null ? null : usage.speed.toFixed(1), "", " tok/s", loading);
-    renderUsageValue(cacheLabel, usage?.cache == null ? null : usage.cache.toFixed(1), `${zh ? "缓存命中" : "Cache hit"} `, usage?.cache == null ? "" : "%", loading);
+    renderUsageValue(speedLabel, usage?.speed ?? null, "", " tok/s", loading, liveState);
+    renderUsageValue(cacheLabel, usage?.cache ?? null, `${zh ? "缓存命中" : "Cache hit"} `, usage?.cache == null ? "" : "%", loading);
+    if (usage?.speed == null) line.querySelector("[data-usage-needle]")?.setAttribute("transform", "rotate(-90 12 15)");
     line.title = unavailable ? (zh ? "暂时无法读取本机会话用量" : "Local usage is unavailable")
       : zh ? "输出 TPS：本轮输出 Token ÷ 本轮总耗时，含等待、思考与工具执行，保留一位小数。缓存命中：同轮缓存输入 ÷ 输入 Token。数据不足时显示 --。"
         : "Output TPS: turn output tokens / total turn seconds, including waiting, reasoning and tools; one decimal place. Cache hit is cached/input tokens within the turn. Missing data is shown as --.";
     if (usage?.estimated) line.title += zh ? " 输出中按文本估算 Token，真实用量到达后校准。" : "Streaming tokens are estimated from text and corrected when actual usage arrives.";
     if (usage?.partial) line.title += zh ? " 日志尾部缺少轮边界，仅显示最近一次调用。" : " Turn boundary unavailable; latest call only.";
+    line.title += zh ? " 指针刻度为 0–100 tok/s，超过 100 时保持满格。" : " Needle scale: 0–100 tok/s; higher rates keep the needle at full scale.";
     if (loading && (usage.speed == null || usage.cache == null)) line.title += zh ? " 本轮数据统计中…" : " Calculating this turn’s usage…";
     line.style.opacity = usage?.observedAt && Date.now() - usage.observedAt > 120_000 ? "0.55" : "1";
   }
@@ -3124,12 +3172,14 @@
         line.setAttribute(OWNED_ATTRIBUTE, "true");
         line.className = "codex-panel-usage-line";
         line.style.cssText = "font-size:12px;line-height:24px;text-align:center;color:var(--color-token-text-secondary,#888);font-variant-numeric:tabular-nums;flex:none;";
-        line.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:6px"><path d="M3 18a9 9 0 1 1 18 0M12 14l4-6"/><circle cx="12" cy="15" r="1"/></svg><span data-usage-speed></span>　 ·　 <svg aria-hidden="true" width="14" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:4px"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v14c0 4 14 4 14 0V5M5 12c0 4 14 4 14 0"/></svg><span data-usage-cache></span>';
+        line.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:6px"><path d="M3 18a9 9 0 1 1 18 0"/><path data-usage-needle d="M12 15V8" transform="rotate(-90 12 15)"/><circle cx="12" cy="15" r="1"/></svg><span data-usage-speed></span>　 ·　 <svg aria-hidden="true" width="14" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:4px"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v14c0 4 14 4 14 0V5M5 12c0 4 14 4 14 0"/></svg><span data-usage-cache></span>';
         state = { threadId, line, usage: null, pendingTokens: 0, revision: 0 };
         usageLines.set(card, state);
         renderUsageLine(line, null);
       }
-      if (card.nextElementSibling !== state.line) card.after(state.line);
+      if (threadUsageAboveComposer) {
+        if (card.previousElementSibling !== state.line) card.before(state.line);
+      } else if (card.nextElementSibling !== state.line) card.after(state.line);
       renderUsageState(state);
     }
     for (const [card, state] of usageLines) {
