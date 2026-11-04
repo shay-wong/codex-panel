@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Animate TPS and cache hit rate with per-digit odometer rolling in both ordinary and dot-matrix styles; increases roll up, decreases roll down, and unchanged digits stay still.
+
 ## 0.4.15-fork
 
 - Add a default-on “Show conversation usage” preference to hide or restore the entire usage row without restarting; add a separate switch for ordinary numbers with a fade transition or dot-matrix numbers, and improve small dot-matrix number clarity.
