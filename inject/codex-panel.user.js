@@ -240,7 +240,9 @@
     style.setAttribute(OWNED_ATTRIBUTE, "true");
     style.textContent = `
       .codex-panel-usage-number-text { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-      .codex-panel-usage-odometer { display: inline-flex; height: 14px; vertical-align: -2px; font-variant-numeric: tabular-nums; }
+      .codex-panel-usage-line { display: flex; align-items: center; justify-content: center; }
+      .codex-panel-usage-line > [data-usage-speed], .codex-panel-usage-line > [data-usage-cache] { display: inline-flex; align-items: center; }
+      .codex-panel-usage-odometer { display: inline-flex; height: 14px; font-variant-numeric: tabular-nums; }
       .codex-panel-usage-reel { display: block; width: 0.64em; height: 14px; overflow: hidden; }
       .codex-panel-usage-reel[hidden] { display: none; }
       .codex-panel-usage-odometer[data-dot-matrix="true"] .codex-panel-usage-reel { width: 8.8px; }

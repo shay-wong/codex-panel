@@ -529,6 +529,7 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 - 只读本地原生会话，不接受前端文件路径；缓存命中率按当前轮真实输入量加权；tok/s = 本轮全部输出 Token ÷ 本轮总耗时，包含等待、思考和工具执行，保留一位小数，不再用相邻日志差值或过滤长调用。日志逐次累加 last_token_usage.output_tokens，按累计用量去重；返回轮 ID、起止时间和本轮计数。注入层订阅原生 mcp-notification 的本地 turn/started、输出/计划/思考文本 delta、thread/tokenUsage/updated 与 turn/completed，首段文本即估算，每秒更新，真实用量校准，结束后固定。ASCII 暂按 4 字符/token、其他字符按 1 字符/token，隐藏思考与分词误差由真实用量校准；不加约等号，只在 tooltip 标明估算。沿用 preload 的空 source/origin 广播或同源窗口消息，按本地宿主、线程和轮 ID 筛选；异步日志回读不覆盖更新的流事件。事件字段已用当前打包 CLI 的隔离 generate-json-schema 输出核对。轮边界缺失时只显示最近调用的命中率，不估算速度；首页不显示旧会话指标，不增加上下文占用。源码注释与 tooltip 明示这些边界。
 - 验证：`test/codex-thread-usage.test.mjs` 的隔离日志、宿主校验、输入框显示与首页清理，以及宿主桥原有检查；静态隔离浏览器验证布局。实际 Codex 安装后显示尚待确认。用户说明同步中英文 README、CHANGELOG 和 `docs/fork-capabilities.md`；上游具有等价指标后移除此差异。当前环境无 fork-doc 技能，按维护契约手动同步。
 - 本次滚轮验证：复用 `test/codex-thread-usage.test.mjs` 的输入框显示用例，在新建临时数据目录与工作区运行通过；隔离浏览器直接载入当前共享渲染代码和模拟宿主数据，验证 TPS 与缓存命中率递增、递减、99.9 → 100.0 进位及字形切换。未新增回归测试。经用户授权使用仓库安装器构建并安装至 `~/Applications/Codex Panel.app`；App 与内置 Node 验签通过，App 和固定 runtime 中的注入脚本与源码 SHA-256 一致，重启 Panel 后受管控制接口返回 `ready: true`。真实会话中的动画观感仍由用户确认。
+- 滚轮对齐修复：实际 Codex renderer 中，行内滚轮基线使数字中心比标签、单位低 6.5px。统计行及速度、缓存两组标签改用 Flex 垂直居中，移除滚轮的行内基线偏移；重新安装后读取实际 renderer，两个指标的数字、标签与单位中心差均为 0px，保留滚轮动画。
 
 ### 通过 Panel 完成 Codex 更新重启
 
