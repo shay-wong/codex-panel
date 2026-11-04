@@ -531,6 +531,7 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 - 本次滚轮验证：复用 `test/codex-thread-usage.test.mjs` 的输入框显示用例，在新建临时数据目录与工作区运行通过；隔离浏览器直接载入当前共享渲染代码和模拟宿主数据，验证 TPS 与缓存命中率递增、递减、99.9 → 100.0 进位及字形切换。未新增回归测试。经用户授权使用仓库安装器构建并安装至 `~/Applications/Codex Panel.app`；App 与内置 Node 验签通过，App 和固定 runtime 中的注入脚本与源码 SHA-256 一致，重启 Panel 后受管控制接口返回 `ready: true`。真实会话中的动画观感仍由用户确认。
 - 滚轮对齐修复：实际 Codex renderer 中，行内滚轮基线使数字中心比标签、单位低 6.5px。统计行及速度、缓存两组标签改用 Flex 垂直居中，移除滚轮的行内基线偏移；重新安装后读取实际 renderer，两个指标的数字、标签与单位中心差均为 0px，保留滚轮动画。
 - 速度表指针：表盘与指针拆成独立 SVG path，指针围绕 (12,15) 旋转；`renderUsageNumber` 复用逐帧插值数值驱动指针，0–100 tok/s 对应 -90° 至 90°，超过上限停在右端，首次显示及减少动态效果直接定位，无数据时归零。宿主和统计口径不变。隔离模拟宿主验证升降、中间帧、缺失值和满量程，既有输入框检查通过；已安装用户指定的 0–100 刻度版本，核对 App 脚本与源码一致、受管状态 ready，并在真实会话采样中观察到指针随 TPS 变化。
+- 会话用量位置：Launcher“偏好设置 → 显示与系统 → 会话用量位置”提供输入框上方/下方，布尔偏好 `threadUsageAboveComposer` 默认 false，通过既有 `set_launcher_preference` 原子保存、injector 心跳和 `setThreadUsageAboveComposer` 传递；缺字段沿用下方。`pollThreadUsage` 复用统计 DOM 行，以 before/after 移至对应输入框前后，切换不重置统计或动画。代码：`launcher/src/App.tsx`、`src-tauri/src/main.rs`、`scripts/codex-injector.mjs`、`inject/codex-panel.user.js`；更新既有测试数据类型，未新增回归测试。隔离浏览器使用真实 Launcher 构建、临时偏好文件和模拟宿主验证上方、下方、保存重读及心跳后位置更新；类型检查、既有 Launcher/输入框检查和本机构建通过。已安装并核对两份脚本与源码一致、受管状态 ready，本机偏好界面显示位置选项；实际使用效果由用户确认。
 
 ### 通过 Panel 完成 Codex 更新重启
 

@@ -201,6 +201,8 @@ struct LauncherPreferences {
     hide_usage_banner: bool,
     #[serde(default = "enabled_by_default")]
     show_thread_usage: bool,
+    #[serde(default)]
+    thread_usage_above_composer: bool,
     #[serde(default = "enabled_by_default")]
     usage_dot_matrix: bool,
     #[serde(default)]
@@ -230,6 +232,7 @@ impl Default for LauncherPreferences {
             auto_open_panel: true,
             hide_usage_banner: false,
             show_thread_usage: true,
+            thread_usage_above_composer: false,
             usage_dot_matrix: true,
             custom_provider_quota_fix: false,
             custom_provider_ultrafast: false,
@@ -2904,7 +2907,7 @@ async fn set_launcher_preference(
     enabled: bool,
     update_model_discovery: Option<bool>,
 ) -> Result<LauncherPreferences, String> {
-    if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel" | "hideUsageBanner" | "showThreadUsage" | "usageDotMatrix" | "customProviderQuotaFix" | "customProviderUltrafast" | "showCustomProviderDot") {
+    if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel" | "hideUsageBanner" | "showThreadUsage" | "threadUsageAboveComposer" | "usageDotMatrix" | "customProviderQuotaFix" | "customProviderUltrafast" | "showCustomProviderDot") {
         return Err("未知的偏好设置".to_string());
     }
     if update_model_discovery == Some(true) {
@@ -2918,6 +2921,7 @@ async fn set_launcher_preference(
         "autoOpenPanel" => preferences.auto_open_panel = enabled,
         "hideUsageBanner" => preferences.hide_usage_banner = enabled,
         "showThreadUsage" => preferences.show_thread_usage = enabled,
+        "threadUsageAboveComposer" => preferences.thread_usage_above_composer = enabled,
         "usageDotMatrix" => preferences.usage_dot_matrix = enabled,
         "customProviderQuotaFix" => preferences.custom_provider_quota_fix = enabled,
         "customProviderUltrafast" => preferences.custom_provider_ultrafast = enabled,

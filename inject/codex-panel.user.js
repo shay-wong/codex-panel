@@ -102,6 +102,7 @@
   let destroyed = false;
   let hideUsageBanner = false;
   let showThreadUsage = false;
+  let threadUsageAboveComposer = false;
   let usageDotMatrix = true;
 
   function isExhaustedUsageBanner(banner) {
@@ -2543,6 +2544,7 @@
       hostHeartbeatAt = Number(message.at) || 0;
       hideUsageBanner = message.hideUsageBanner === true;
       setUsageDotMatrix(message.usageDotMatrix !== false);
+      setThreadUsageAboveComposer(message.threadUsageAboveComposer === true);
       setThreadUsageVisible(message.showThreadUsage !== false);
       window.__codexPanelProviderQuotaV1__?.setEnabled(message.customProviderQuotaFix === true);
       window.__codexPanelProviderUltrafastV1__?.setEnabled(message.customProviderUltrafast === true);
@@ -2868,6 +2870,12 @@
     }
   }
 
+  function setThreadUsageAboveComposer(enabled) {
+    if (threadUsageAboveComposer === enabled) return;
+    threadUsageAboveComposer = enabled;
+    void pollThreadUsage();
+  }
+
   function renderUsageState(state) {
     if (!state.usage) return;
     const usage = { ...state.usage };
@@ -3133,7 +3141,9 @@
         usageLines.set(card, state);
         renderUsageLine(line, null);
       }
-      if (card.nextElementSibling !== state.line) card.after(state.line);
+      if (threadUsageAboveComposer) {
+        if (card.previousElementSibling !== state.line) card.before(state.line);
+      } else if (card.nextElementSibling !== state.line) card.after(state.line);
       renderUsageState(state);
     }
     for (const [card, state] of usageLines) {

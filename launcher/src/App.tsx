@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
-import { AlertDialog, Badge, Box, Button, Callout, Card, Flex, Heading, IconButton, Separator, Switch, Tabs, Text, Tooltip } from "@radix-ui/themes";
+import { AlertDialog, Badge, Box, Button, Callout, Card, Flex, Heading, IconButton, Select, Separator, Switch, Tabs, Text, Tooltip } from "@radix-ui/themes";
 import { LinearIcon } from "../../web/src/components/LinearIcon";
 import { ModelContextSettings } from "./ModelContextSettings";
 
@@ -20,7 +20,7 @@ export type LauncherSnapshot = {
   codexUpdateChecking: boolean;
   appPath: string | null;
 };
-export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; usageDotMatrix: boolean; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean };
+export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean };
 export type LauncherState = {
   snapshot: LauncherSnapshot;
   preferences: LauncherPreferences;
@@ -344,7 +344,15 @@ export function App() {
               <div className="preference-rows">
                 <Setting id="hideUsageBanner" title="隐藏额度耗尽提示" detail="收起对话中的额度横幅，不改变实际额度" checked={preferences?.hideUsageBanner ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("hideUsageBanner", enabled)} />
                 <Separator size="4" />
-                <Setting id="showThreadUsage" title="显示会话用量" detail="在输入框下方显示速度与缓存命中率，关闭后停止统计读取；无需重启" checked={preferences?.showThreadUsage ?? true} disabled={!state || savingPreference} onChange={enabled => void savePreference("showThreadUsage", enabled)} />
+                <Setting id="showThreadUsage" title="显示会话用量" detail="显示速度与缓存命中率，关闭后停止统计读取；无需重启" checked={preferences?.showThreadUsage ?? true} disabled={!state || savingPreference} onChange={enabled => void savePreference("showThreadUsage", enabled)} />
+                <Separator size="4" />
+                <Flex className="preference-row" align="center" justify="between" gap="4">
+                  <Box><Text as="label" htmlFor="threadUsagePosition" size="2" weight="medium">会话用量位置</Text><Text as="p" id="threadUsagePositionDetail" size="1" color="gray" mt="1">切换统计的显示位置，无需重启</Text></Box>
+                  <Select.Root value={preferences?.threadUsageAboveComposer ? "above" : "below"} disabled={!state || savingPreference} onValueChange={value => void savePreference("threadUsageAboveComposer", value === "above")}>
+                    <Select.Trigger id="threadUsagePosition" aria-describedby="threadUsagePositionDetail" />
+                    <Select.Content><Select.Item value="above">输入框上方</Select.Item><Select.Item value="below">输入框下方</Select.Item></Select.Content>
+                  </Select.Root>
+                </Flex>
                 <Separator size="4" />
                 <Setting id="usageDotMatrix" title="使用点阵数字" detail="关闭后显示普通数字，统计方式不变；无需重启" checked={preferences?.usageDotMatrix ?? true} disabled={!state || savingPreference} onChange={enabled => void savePreference("usageDotMatrix", enabled)} />
                 <Separator size="4" />

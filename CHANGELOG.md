@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Add a saved conversation usage position preference: show statistics above or below the composer, defaulting to below and applying without restart.
+
 - Move the speedometer needle with TPS updates on a 0–100 tok/s scale, synchronized with the rolling digits.
 
 - Align rolling usage digits, icons, labels and units along one vertical center.
