@@ -6,7 +6,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
-- Move the speedometer needle with TPS updates on a 0–200 tok/s scale, synchronized with the rolling digits.
+- Move the speedometer needle with TPS updates on a 0–100 tok/s scale, synchronized with the rolling digits.
 
 - Align rolling usage digits, icons, labels and units along one vertical center.
 

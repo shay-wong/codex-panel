@@ -3044,7 +3044,7 @@
     const draw = progress => {
       const eased = 1 - (1 - progress) ** 3;
       state.value = startValue + (value - startValue) * eased;
-      needle?.setAttribute("transform", `rotate(${Math.min(state.value, 200) / 200 * 180 - 90} 12 15)`);
+      needle?.setAttribute("transform", `rotate(${Math.min(state.value, 100) / 100 * 180 - 90} 12 15)`);
       for (const [place, column] of state.columns) {
         column.phase = progress === 1 ? Math.round(column.to) : column.from + (column.to - column.from) * eased;
         const base = Math.floor(column.phase);
@@ -3108,7 +3108,7 @@
         : "Output TPS: turn output tokens / total turn seconds, including waiting, reasoning and tools; one decimal place. Cache hit is cached/input tokens within the turn. Missing data is shown as --.";
     if (usage?.estimated) line.title += zh ? " 输出中按文本估算 Token，真实用量到达后校准。" : "Streaming tokens are estimated from text and corrected when actual usage arrives.";
     if (usage?.partial) line.title += zh ? " 日志尾部缺少轮边界，仅显示最近一次调用。" : " Turn boundary unavailable; latest call only.";
-    line.title += zh ? " 指针刻度为 0–200 tok/s，超过 200 时保持满格。" : " Needle scale: 0–200 tok/s; higher rates keep the needle at full scale.";
+    line.title += zh ? " 指针刻度为 0–100 tok/s，超过 100 时保持满格。" : " Needle scale: 0–100 tok/s; higher rates keep the needle at full scale.";
     if (loading && (usage.speed == null || usage.cache == null)) line.title += zh ? " 本轮数据统计中…" : " Calculating this turn’s usage…";
     line.style.opacity = usage?.observedAt && Date.now() - usage.observedAt > 120_000 ? "0.55" : "1";
   }
