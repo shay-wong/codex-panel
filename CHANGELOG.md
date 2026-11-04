@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Group the four conversation usage preferences in a dedicated settings dialog, with one entry on the Preferences page.
+
 - Make usage numbers continuously track their latest target with bounded, distance-dependent speed; add saved minimum and maximum speed settings that apply immediately.
 
 - Add a saved conversation usage position preference: show statistics above or below the composer, defaulting to below and applying without restart.
