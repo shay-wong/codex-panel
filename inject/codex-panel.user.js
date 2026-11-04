@@ -2885,15 +2885,20 @@
     usageAnimationMaxSpeed = maximum;
   }
 
-  function renderUsageState(state) {
-    if (!state.usage) return;
-    const usage = { ...state.usage };
+  function currentUsageSpeed(state) {
+    const usage = state.usage;
+    if (!usage) return null;
     const tokens = (usage.outputTokens ?? 0) + state.pendingTokens;
     const elapsed = usage.startedAt == null ? 0
       : ((usage.inProgress ? Date.now() : usage.endedAt) - usage.startedAt) / 1000;
-    usage.speed = tokens > 0 && elapsed > 0 ? tokens / elapsed : null;
+    return tokens > 0 && elapsed > 0 ? tokens / elapsed : null;
+  }
+
+  function renderUsageState(state) {
+    if (!state.usage) return;
+    const usage = { ...state.usage, speed: currentUsageSpeed(state) };
     usage.estimated = state.pendingTokens > 0;
-    renderUsageLine(state.line, usage);
+    renderUsageLine(state.line, usage, false, state);
   }
 
   function setUsageDotMatrix(enabled) {
@@ -3022,7 +3027,8 @@
   }
 
   function drawUsageNumber(state) {
-    const scaled = state.value === state.target ? Math.round(state.value * 10) : state.value * 10;
+    const settled = state.value === state.target && !state.liveState?.usage?.inProgress;
+    const scaled = settled ? Math.round(state.value * 10) : state.value * 10;
     const count = Math.max(2, String(Math.floor(scaled)).length);
     while (state.columns.length < count) {
       const index = state.columns.length;
@@ -3030,28 +3036,25 @@
       reel.className = "codex-panel-usage-reel";
       const track = document.createElement("span");
       track.className = "codex-panel-usage-track";
+      track.append(...Array.from({ length: 12 }, (_, digit) => createUsageGlyph((digit + 9) % 10)));
       reel.append(track);
       if (index === 0) state.odometer.append(reel);
       else state.odometer.prepend(reel);
-      state.columns.push({ place: 10 ** index, reel, track, base: null });
+      state.columns.push({ place: 10 ** index, reel, track });
     }
     for (const [index, column] of state.columns.entries()) {
       const whole = Math.floor(scaled / column.place);
       const remainder = scaled - whole * column.place;
       const phase = whole + Math.max(0, remainder - (column.place - 1));
-      const base = Math.floor(phase);
-      if (column.base !== base) {
-        column.track.replaceChildren(...[-1, 0, 1].map(offset => createUsageGlyph(((base + offset) % 10 + 10) % 10)));
-        column.base = base;
-      }
-      column.track.style.setProperty("--usage-offset", String(1 + phase - base));
+      column.track.style.setProperty("--usage-offset", String(1 + (phase % 10 + 10) % 10));
       column.reel.hidden = index >= count;
     }
-    state.accessible.textContent = state.value.toFixed(1);
+    const text = state.value.toFixed(1);
+    if (state.accessible.textContent !== text) state.accessible.textContent = text;
     state.needle?.setAttribute("transform", `rotate(${Math.min(state.value, 100) / 100 * 180 - 90} 12 15)`);
   }
 
-  function renderUsageNumber(label, number, prefix, suffix) {
+  function renderUsageNumber(label, number, prefix, suffix, liveState) {
     let state = usageValueAnimations.get(label);
     const target = Number(number);
     if (!state || state.dotMatrix !== usageDotMatrix || state.prefix !== prefix || state.suffix !== suffix) {
@@ -3063,35 +3066,53 @@
       odometer.append(createUsageGlyph("."));
       const accessible = document.createElement("span");
       accessible.className = "codex-panel-usage-number-text";
-      state = { value: state?.value ?? target, target, dotMatrix: usageDotMatrix, prefix, suffix, odometer, accessible,
+      state = { value: state?.value ?? target, velocity: state?.velocity ?? 0, target, dotMatrix: usageDotMatrix, prefix, suffix, odometer, accessible,
         needle: label.previousElementSibling?.querySelector("[data-usage-needle]"), columns: [], frame: 0 };
       replaceUsageLabel(label, [odometer, accessible], prefix, suffix);
       usageValueAnimations.set(label, state);
     }
     state.target = target;
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+    state.liveState = liveState;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reducedMotion) {
       window.cancelAnimationFrame(state.frame);
       state.frame = 0;
       state.value = target;
+      state.velocity = 0;
     }
     drawUsageNumber(state);
-    if (state.frame || state.value === state.target) return;
+    if (reducedMotion || state.frame || (state.value === state.target && !liveState?.usage?.inProgress)) return;
     state.updatedAt = performance.now();
     const tick = now => {
       if (!label.isConnected) { state.frame = 0; return; }
-      const dt = Math.min((now - state.updatedAt) / 1000, 0.05);
+      const dt = (now - state.updatedAt) / 1000;
       state.updatedAt = now;
+      const live = state.liveState?.usage?.inProgress === true;
+      if (live) {
+        const latest = currentUsageSpeed(state.liveState);
+        if (latest != null) state.target = latest;
+      }
       const difference = state.target - state.value;
       const distance = Math.abs(difference);
       const speed = Math.min(usageAnimationMaxSpeed, Math.max(usageAnimationMinSpeed, distance * 2));
-      state.value = speed * dt >= distance ? state.target : state.value + Math.sign(difference) * speed * dt;
+      const desiredVelocity = Math.sign(difference) * speed;
+      state.velocity += (desiredVelocity - state.velocity) * (1 - Math.exp(-dt / 0.12));
+      state.velocity = Math.max(-usageAnimationMaxSpeed, Math.min(usageAnimationMaxSpeed, state.velocity));
+      const next = state.value + state.velocity * dt;
+      if (difference === 0 || (difference > 0 && next >= state.target) || (difference < 0 && next <= state.target)) {
+        state.value = state.target;
+        if (!live) state.velocity = 0;
+      } else {
+        state.value = Math.max(0, next);
+        if (next < 0) state.velocity = 0;
+      }
       drawUsageNumber(state);
-      state.frame = state.value === state.target ? 0 : window.requestAnimationFrame(tick);
+      state.frame = state.value === state.target && !live ? 0 : window.requestAnimationFrame(tick);
     };
     state.frame = window.requestAnimationFrame(tick);
   }
 
-  function renderUsageValue(label, number, prefix, suffix, loading) {
+  function renderUsageValue(label, number, prefix, suffix, loading, liveState) {
     if (number == null && loading) {
       window.cancelAnimationFrame(usageValueAnimations.get(label)?.frame);
       usageValueAnimations.delete(label);
@@ -3115,16 +3136,16 @@
       if (label.textContent !== text || label.querySelector("svg")) replaceUsageLabel(label, [value], prefix, suffix);
       return;
     }
-    renderUsageNumber(label, number, prefix, suffix);
+    renderUsageNumber(label, number, prefix, suffix, liveState);
   }
 
-  function renderUsageLine(line, usage, unavailable = false) {
+  function renderUsageLine(line, usage, unavailable = false, liveState) {
     const zh = !document.documentElement.lang || document.documentElement.lang.startsWith("zh");
     const speedLabel = line.querySelector("[data-usage-speed]");
     const cacheLabel = line.querySelector("[data-usage-cache]");
     const loading = !unavailable && usage?.inProgress ? (zh ? "统计中" : "Calculating") : "";
-    renderUsageValue(speedLabel, usage?.speed == null ? null : usage.speed.toFixed(1), "", " tok/s", loading);
-    renderUsageValue(cacheLabel, usage?.cache == null ? null : usage.cache.toFixed(1), `${zh ? "缓存命中" : "Cache hit"} `, usage?.cache == null ? "" : "%", loading);
+    renderUsageValue(speedLabel, usage?.speed ?? null, "", " tok/s", loading, liveState);
+    renderUsageValue(cacheLabel, usage?.cache ?? null, `${zh ? "缓存命中" : "Cache hit"} `, usage?.cache == null ? "" : "%", loading);
     if (usage?.speed == null) line.querySelector("[data-usage-needle]")?.setAttribute("transform", "rotate(-90 12 15)");
     line.title = unavailable ? (zh ? "暂时无法读取本机会话用量" : "Local usage is unavailable")
       : zh ? "输出 TPS：本轮输出 Token ÷ 本轮总耗时，含等待、思考与工具执行，保留一位小数。缓存命中：同轮缓存输入 ÷ 输入 Token。数据不足时显示 --。"

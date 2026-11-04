@@ -428,7 +428,7 @@ export function App() {
           <Separator size="4" />
           <Box className="preference-row">
             <Text as="div" size="2" weight="medium">数字变化速度</Text>
-            <Text as="p" id="usageSpeedDetail" size="1" color="gray" mt="1">离目标越远越快，越近越慢；单位：刻度/秒，TPS 与缓存命中率共用</Text>
+            <Text as="p" id="usageSpeedDetail" size="1" color="gray" mt="1">离目标越远越快，越近越慢；起停与换向平滑过渡。单位：刻度/秒，TPS 与缓存命中率共用</Text>
             <Flex gap="3" align="end" wrap="wrap" mt="3">
               <Box><Text as="label" htmlFor="usageMinimumSpeed" size="1">最低速度</Text><TextField.Root id="usageMinimumSpeed" type="number" min="0.1" step="0.1" value={usageMinimum} onChange={event => setUsageMinimum(event.target.value)} disabled={!state || savingPreference} aria-describedby="usageSpeedDetail" style={{ width: 100 }} /></Box>
               <Box><Text as="label" htmlFor="usageMaximumSpeed" size="1">最高速度</Text><TextField.Root id="usageMaximumSpeed" type="number" min="0.1" step="0.1" value={usageMaximum} onChange={event => setUsageMaximum(event.target.value)} disabled={!state || savingPreference} aria-describedby="usageSpeedDetail" style={{ width: 100 }} /></Box>

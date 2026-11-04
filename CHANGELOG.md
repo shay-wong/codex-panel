@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Smooth velocity when usage targets change and reuse digit strips to reduce animation stutter.
+
 - Group the four conversation usage preferences in a dedicated settings dialog, with one entry on the Preferences page.
 
 - Make usage numbers continuously track their latest target with bounded, distance-dependent speed; add saved minimum and maximum speed settings that apply immediately.
