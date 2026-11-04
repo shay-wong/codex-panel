@@ -3016,6 +3016,7 @@
     const increasing = value >= (previous?.value ?? value);
     const wrap = digit => ((digit % 10) + 10) % 10;
     const state = { text, number, value: previous?.value ?? value, dotMatrix: usageDotMatrix, columns: new Map(), frame: 0 };
+    const needle = label.previousElementSibling?.querySelector("[data-usage-needle]");
     const odometer = document.createElement("span");
     odometer.className = "codex-panel-usage-odometer";
     odometer.dataset.dotMatrix = String(usageDotMatrix);
@@ -3043,6 +3044,7 @@
     const draw = progress => {
       const eased = 1 - (1 - progress) ** 3;
       state.value = startValue + (value - startValue) * eased;
+      needle?.setAttribute("transform", `rotate(${Math.min(state.value, 300) / 300 * 180 - 90} 12 15)`);
       for (const [place, column] of state.columns) {
         column.phase = progress === 1 ? Math.round(column.to) : column.from + (column.to - column.from) * eased;
         const base = Math.floor(column.phase);
@@ -3100,11 +3102,13 @@
     const loading = !unavailable && usage?.inProgress ? (zh ? "统计中" : "Calculating") : "";
     renderUsageValue(speedLabel, usage?.speed == null ? null : usage.speed.toFixed(1), "", " tok/s", loading);
     renderUsageValue(cacheLabel, usage?.cache == null ? null : usage.cache.toFixed(1), `${zh ? "缓存命中" : "Cache hit"} `, usage?.cache == null ? "" : "%", loading);
+    if (usage?.speed == null) line.querySelector("[data-usage-needle]")?.setAttribute("transform", "rotate(-90 12 15)");
     line.title = unavailable ? (zh ? "暂时无法读取本机会话用量" : "Local usage is unavailable")
       : zh ? "输出 TPS：本轮输出 Token ÷ 本轮总耗时，含等待、思考与工具执行，保留一位小数。缓存命中：同轮缓存输入 ÷ 输入 Token。数据不足时显示 --。"
         : "Output TPS: turn output tokens / total turn seconds, including waiting, reasoning and tools; one decimal place. Cache hit is cached/input tokens within the turn. Missing data is shown as --.";
     if (usage?.estimated) line.title += zh ? " 输出中按文本估算 Token，真实用量到达后校准。" : "Streaming tokens are estimated from text and corrected when actual usage arrives.";
     if (usage?.partial) line.title += zh ? " 日志尾部缺少轮边界，仅显示最近一次调用。" : " Turn boundary unavailable; latest call only.";
+    line.title += zh ? " 指针刻度为 0–300 tok/s，超过 300 时保持满格。" : " Needle scale: 0–300 tok/s; higher rates keep the needle at full scale.";
     if (loading && (usage.speed == null || usage.cache == null)) line.title += zh ? " 本轮数据统计中…" : " Calculating this turn’s usage…";
     line.style.opacity = usage?.observedAt && Date.now() - usage.observedAt > 120_000 ? "0.55" : "1";
   }
@@ -3124,7 +3128,7 @@
         line.setAttribute(OWNED_ATTRIBUTE, "true");
         line.className = "codex-panel-usage-line";
         line.style.cssText = "font-size:12px;line-height:24px;text-align:center;color:var(--color-token-text-secondary,#888);font-variant-numeric:tabular-nums;flex:none;";
-        line.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:6px"><path d="M3 18a9 9 0 1 1 18 0M12 14l4-6"/><circle cx="12" cy="15" r="1"/></svg><span data-usage-speed></span>　 ·　 <svg aria-hidden="true" width="14" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:4px"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v14c0 4 14 4 14 0V5M5 12c0 4 14 4 14 0"/></svg><span data-usage-cache></span>';
+        line.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:6px"><path d="M3 18a9 9 0 1 1 18 0"/><path data-usage-needle d="M12 15V8" transform="rotate(-90 12 15)"/><circle cx="12" cy="15" r="1"/></svg><span data-usage-speed></span>　 ·　 <svg aria-hidden="true" width="14" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:4px"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v14c0 4 14 4 14 0V5M5 12c0 4 14 4 14 0"/></svg><span data-usage-cache></span>';
         state = { threadId, line, usage: null, pendingTokens: 0, revision: 0 };
         usageLines.set(card, state);
         renderUsageLine(line, null);

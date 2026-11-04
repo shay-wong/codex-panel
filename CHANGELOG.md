@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Move the speedometer needle with TPS updates, synchronized with the rolling digits.
+
 - Align rolling usage digits, icons, labels and units along one vertical center.
 
 - Animate TPS and cache hit rate with per-digit odometer rolling in both ordinary and dot-matrix styles; increases roll up, decreases roll down, and unchanged digits stay still.
