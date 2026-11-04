@@ -205,6 +205,10 @@ struct LauncherPreferences {
     thread_usage_above_composer: bool,
     #[serde(default = "enabled_by_default")]
     usage_dot_matrix: bool,
+    #[serde(default = "default_usage_animation_min_speed")]
+    usage_animation_min_speed: f64,
+    #[serde(default = "default_usage_animation_max_speed")]
+    usage_animation_max_speed: f64,
     #[serde(default)]
     custom_provider_quota_fix: bool,
     #[serde(default)]
@@ -234,6 +238,8 @@ impl Default for LauncherPreferences {
             show_thread_usage: true,
             thread_usage_above_composer: false,
             usage_dot_matrix: true,
+            usage_animation_min_speed: default_usage_animation_min_speed(),
+            usage_animation_max_speed: default_usage_animation_max_speed(),
             custom_provider_quota_fix: false,
             custom_provider_ultrafast: false,
             show_custom_provider_dot: false,
@@ -244,6 +250,14 @@ impl Default for LauncherPreferences {
 
 fn enabled_by_default() -> bool {
     true
+}
+
+fn default_usage_animation_min_speed() -> f64 {
+    5.0
+}
+
+fn default_usage_animation_max_speed() -> f64 {
+    40.0
 }
 
 #[derive(Deserialize)]
@@ -2931,6 +2945,21 @@ async fn set_launcher_preference(
 }
 
 #[tauri::command]
+fn set_usage_animation_speeds(
+    state: State<'_, Arc<LauncherState>>,
+    minimum: f64,
+    maximum: f64,
+) -> Result<LauncherPreferences, String> {
+    if !minimum.is_finite() || !maximum.is_finite() || minimum <= 0.0 || maximum < minimum {
+        return Err("最低速度须大于 0，最高速度须不小于最低速度。".into());
+    }
+    update_preferences(&state, |preferences| {
+        preferences.usage_animation_min_speed = minimum;
+        preferences.usage_animation_max_speed = maximum;
+    })
+}
+
+#[tauri::command]
 async fn read_model_context_settings(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
@@ -3307,6 +3336,7 @@ fn main() {
             read_model_context_settings,
             set_model_context_windows,
             set_launcher_preference,
+            set_usage_animation_speeds,
             set_autostart,
             check_for_updates,
             open_available_release,

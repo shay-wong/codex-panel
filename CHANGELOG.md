@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Make usage numbers continuously track their latest target with bounded, distance-dependent speed; add saved minimum and maximum speed settings that apply immediately.
+
 - Add a saved conversation usage position preference: show statistics above or below the composer, defaulting to below and applying without restart.
 
 - Move the speedometer needle with TPS updates on a 0–100 tok/s scale, synchronized with the rolling digits.

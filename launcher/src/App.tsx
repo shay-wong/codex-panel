@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
-import { AlertDialog, Badge, Box, Button, Callout, Card, Flex, Heading, IconButton, Select, Separator, Switch, Tabs, Text, Tooltip } from "@radix-ui/themes";
+import { AlertDialog, Badge, Box, Button, Callout, Card, Flex, Heading, IconButton, Select, Separator, Switch, Tabs, Text, TextField, Tooltip } from "@radix-ui/themes";
 import { LinearIcon } from "../../web/src/components/LinearIcon";
 import { ModelContextSettings } from "./ModelContextSettings";
 
@@ -20,7 +20,7 @@ export type LauncherSnapshot = {
   codexUpdateChecking: boolean;
   appPath: string | null;
 };
-export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean };
+export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean };
 export type LauncherState = {
   snapshot: LauncherSnapshot;
   preferences: LauncherPreferences;
@@ -58,6 +58,8 @@ export function App() {
   const [busyAction, setBusyAction] = useState("");
   const [feedback, setFeedback] = useState<Record<string, "success" | "failed">>({});
   const [savingPreference, setSavingPreference] = useState(false);
+  const [usageMinimum, setUsageMinimum] = useState("5");
+  const [usageMaximum, setUsageMaximum] = useState("40");
   const [ultrafastChoice, setUltrafastChoice] = useState<boolean | null>(null);
   const [restartReminder, setRestartReminder] = useState("");
   const [modelContextOpen, setModelContextOpen] = useState(false);
@@ -70,6 +72,10 @@ export function App() {
   const feedbackTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const busy = Boolean(busyAction);
   const preferences = state?.preferences;
+  useEffect(() => {
+    setUsageMinimum(String(preferences?.usageAnimationMinSpeed ?? 5));
+    setUsageMaximum(String(preferences?.usageAnimationMaxSpeed ?? 40));
+  }, [preferences?.usageAnimationMinSpeed, preferences?.usageAnimationMaxSpeed]);
   const hasProcess = snapshot.childPid !== null && snapshot.childPid !== undefined;
   const ready = snapshot.phase === "running";
   const needsRestart = snapshot.phase === "restart_required";
@@ -184,6 +190,22 @@ export function App() {
       }
       setUltrafastChoice(null);
       if (key === "customProviderUltrafast") setRestartReminder("Ultrafast");
+    } catch (cause) { setError(String(cause)); }
+    finally { setSavingPreference(false); }
+  }
+
+  async function saveUsageAnimationSpeeds() {
+    const minimum = Number(usageMinimum);
+    const maximum = Number(usageMaximum);
+    if (!Number.isFinite(minimum) || !Number.isFinite(maximum) || minimum <= 0 || maximum < minimum) {
+      setError("最低速度须大于 0，最高速度须不小于最低速度。");
+      return;
+    }
+    setError("");
+    setSavingPreference(true);
+    try {
+      const next = await window.__TAURI__.core.invoke<LauncherPreferences>("set_usage_animation_speeds", { minimum, maximum });
+      setState(current => current && ({ ...current, preferences: next }));
     } catch (cause) { setError(String(cause)); }
     finally { setSavingPreference(false); }
   }
@@ -355,6 +377,16 @@ export function App() {
                 </Flex>
                 <Separator size="4" />
                 <Setting id="usageDotMatrix" title="使用点阵数字" detail="关闭后显示普通数字，统计方式不变；无需重启" checked={preferences?.usageDotMatrix ?? true} disabled={!state || savingPreference} onChange={enabled => void savePreference("usageDotMatrix", enabled)} />
+                <Separator size="4" />
+                <Box className="preference-row">
+                  <Text as="div" size="2" weight="medium">数字变化速度</Text>
+                  <Text as="p" id="usageSpeedDetail" size="1" color="gray" mt="1">离目标越远越快，越近越慢；单位：刻度/秒，TPS 与缓存命中率共用</Text>
+                  <Flex gap="3" align="end" wrap="wrap" mt="3">
+                    <Box><Text as="label" htmlFor="usageMinimumSpeed" size="1">最低速度</Text><TextField.Root id="usageMinimumSpeed" type="number" min="0.1" step="0.1" value={usageMinimum} onChange={event => setUsageMinimum(event.target.value)} disabled={!state || savingPreference} aria-describedby="usageSpeedDetail" style={{ width: 100 }} /></Box>
+                    <Box><Text as="label" htmlFor="usageMaximumSpeed" size="1">最高速度</Text><TextField.Root id="usageMaximumSpeed" type="number" min="0.1" step="0.1" value={usageMaximum} onChange={event => setUsageMaximum(event.target.value)} disabled={!state || savingPreference} aria-describedby="usageSpeedDetail" style={{ width: 100 }} /></Box>
+                    <Button variant="soft" disabled={!state || savingPreference} onClick={() => void saveUsageAnimationSpeeds()}>保存速度</Button>
+                  </Flex>
+                </Box>
                 <Separator size="4" />
                 <Setting id="customProviderQuotaFix" title="移除账号额度不足时 API 发送限制" detail="仅限自定义 API；首次安装适配时重载一次，之后开关即时生效" checked={preferences?.customProviderQuotaFix ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("customProviderQuotaFix", enabled)} />
                 <Separator size="4" />

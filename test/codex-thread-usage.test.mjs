@@ -97,7 +97,7 @@ test("composer status follows its own thread and removes values on Home", async 
   try {
     dom.window.Element.prototype.getBoundingClientRect = () => ({ height: 100 });
     dom.window.matchMedia = () => ({ matches: true });
-    dom.window.eval(`let destroyed = false; let showThreadUsage = true; let threadUsageAboveComposer = false; let usageDotMatrix = true; const OWNED_ATTRIBUTE = "data-codex-panel-owned";
+    dom.window.eval(`let destroyed = false; let showThreadUsage = true; let threadUsageAboveComposer = false; let usageDotMatrix = true; let usageAnimationMinSpeed = 5; let usageAnimationMaxSpeed = 40; const OWNED_ATTRIBUTE = "data-codex-panel-owned";
       const normalizeThreadId = value => value.replace(/^local:/, "");
       const threadIdFromLocation = () => "${id}"; const hasLiveHostBinding = () => true;
       const requestHost = async () => ({ usage: { speed: 20, outputTokens: 200, inputTokens: 100, cachedInputTokens: 81, cache: 81, totalTokens: 300, turnId: "first", startedAt: Date.now() - 10000, endedAt: Date.now(), observedAt: Date.now(), inProgress: false } });

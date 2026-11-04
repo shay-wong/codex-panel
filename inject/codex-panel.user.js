@@ -104,6 +104,8 @@
   let showThreadUsage = false;
   let threadUsageAboveComposer = false;
   let usageDotMatrix = true;
+  let usageAnimationMinSpeed = 5;
+  let usageAnimationMaxSpeed = 40;
 
   function isExhaustedUsageBanner(banner) {
     const fiberKey = Object.keys(banner).find((key) => key.startsWith("__reactFiber$"));
@@ -2544,6 +2546,7 @@
       hostHeartbeatAt = Number(message.at) || 0;
       hideUsageBanner = message.hideUsageBanner === true;
       setUsageDotMatrix(message.usageDotMatrix !== false);
+      setUsageAnimationSpeeds(message.usageAnimationMinSpeed, message.usageAnimationMaxSpeed);
       setThreadUsageAboveComposer(message.threadUsageAboveComposer === true);
       setThreadUsageVisible(message.showThreadUsage !== false);
       window.__codexPanelProviderQuotaV1__?.setEnabled(message.customProviderQuotaFix === true);
@@ -2876,6 +2879,12 @@
     void pollThreadUsage();
   }
 
+  function setUsageAnimationSpeeds(minimum, maximum) {
+    if (!Number.isFinite(minimum) || !Number.isFinite(maximum) || minimum <= 0 || maximum < minimum) return;
+    usageAnimationMinSpeed = minimum;
+    usageAnimationMaxSpeed = maximum;
+  }
+
   function renderUsageState(state) {
     if (!state.usage) return;
     const usage = { ...state.usage };
@@ -3012,66 +3021,72 @@
     return glyph;
   }
 
-  function renderUsageNumber(label, number, prefix, suffix) {
-    const text = prefix + number + suffix;
-    let previous = usageValueAnimations.get(label);
-    if (previous?.text === text && previous.dotMatrix === usageDotMatrix) return;
-    if (previous?.frame) window.cancelAnimationFrame(previous.frame);
-    if (previous?.dotMatrix !== usageDotMatrix) previous = null;
-    const animate = previous
-      && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const value = Number(number);
-    const increasing = value >= (previous?.value ?? value);
-    const wrap = digit => ((digit % 10) + 10) % 10;
-    const state = { text, number, value: previous?.value ?? value, dotMatrix: usageDotMatrix, columns: new Map(), frame: 0 };
-    const needle = label.previousElementSibling?.querySelector("[data-usage-needle]");
-    const odometer = document.createElement("span");
-    odometer.className = "codex-panel-usage-odometer";
-    odometer.dataset.dotMatrix = String(usageDotMatrix);
-    odometer.setAttribute("aria-hidden", "true");
-    const padded = number.padStart(Math.max(number.length, previous?.number.length ?? 0), "0");
-    for (const [index, digit] of [...padded].entries()) {
-      if (digit === ".") { odometer.append(createUsageGlyph(digit)); continue; }
-      const place = padded.length - index - 1;
+  function drawUsageNumber(state) {
+    const scaled = state.value === state.target ? Math.round(state.value * 10) : state.value * 10;
+    const count = Math.max(2, String(Math.floor(scaled)).length);
+    while (state.columns.length < count) {
+      const index = state.columns.length;
       const reel = document.createElement("span");
       reel.className = "codex-panel-usage-reel";
       const track = document.createElement("span");
       track.className = "codex-panel-usage-track";
       reel.append(track);
-      odometer.append(reel);
-      const from = animate ? previous.columns.get(place)?.phase ?? 0 : Number(digit);
-      const distance = increasing ? wrap(Number(digit) - wrap(from)) : -wrap(wrap(from) - Number(digit));
-      state.columns.set(place, { reel, track, from, to: from + distance, phase: from, base: null });
+      if (index === 0) state.odometer.append(reel);
+      else state.odometer.prepend(reel);
+      state.columns.push({ place: 10 ** index, reel, track, base: null });
     }
-    const accessible = document.createElement("span");
-    accessible.className = "codex-panel-usage-number-text";
-    accessible.textContent = number;
-    replaceUsageLabel(label, [odometer, accessible], prefix, suffix);
-    usageValueAnimations.set(label, state);
-    const startValue = state.value;
-    const draw = progress => {
-      const eased = 1 - (1 - progress) ** 3;
-      state.value = startValue + (value - startValue) * eased;
-      needle?.setAttribute("transform", `rotate(${Math.min(state.value, 100) / 100 * 180 - 90} 12 15)`);
-      for (const [place, column] of state.columns) {
-        column.phase = progress === 1 ? Math.round(column.to) : column.from + (column.to - column.from) * eased;
-        const base = Math.floor(column.phase);
-        if (column.base !== base) {
-          column.track.replaceChildren(...[-1, 0, 1].map(offset => createUsageGlyph(wrap(base + offset))));
-          column.base = base;
-        }
-        column.track.style.setProperty("--usage-offset", String(1 + column.phase - base));
-        column.reel.hidden = progress === 1 && place >= number.length;
+    for (const [index, column] of state.columns.entries()) {
+      const whole = Math.floor(scaled / column.place);
+      const remainder = scaled - whole * column.place;
+      const phase = whole + Math.max(0, remainder - (column.place - 1));
+      const base = Math.floor(phase);
+      if (column.base !== base) {
+        column.track.replaceChildren(...[-1, 0, 1].map(offset => createUsageGlyph(((base + offset) % 10 + 10) % 10)));
+        column.base = base;
       }
-    };
-    if (!animate) { draw(1); return; }
-    draw(0);
-    const startedAt = performance.now();
+      column.track.style.setProperty("--usage-offset", String(1 + phase - base));
+      column.reel.hidden = index >= count;
+    }
+    state.accessible.textContent = state.value.toFixed(1);
+    state.needle?.setAttribute("transform", `rotate(${Math.min(state.value, 100) / 100 * 180 - 90} 12 15)`);
+  }
+
+  function renderUsageNumber(label, number, prefix, suffix) {
+    let state = usageValueAnimations.get(label);
+    const target = Number(number);
+    if (!state || state.dotMatrix !== usageDotMatrix || state.prefix !== prefix || state.suffix !== suffix) {
+      if (state?.frame) window.cancelAnimationFrame(state.frame);
+      const odometer = document.createElement("span");
+      odometer.className = "codex-panel-usage-odometer";
+      odometer.dataset.dotMatrix = String(usageDotMatrix);
+      odometer.setAttribute("aria-hidden", "true");
+      odometer.append(createUsageGlyph("."));
+      const accessible = document.createElement("span");
+      accessible.className = "codex-panel-usage-number-text";
+      state = { value: state?.value ?? target, target, dotMatrix: usageDotMatrix, prefix, suffix, odometer, accessible,
+        needle: label.previousElementSibling?.querySelector("[data-usage-needle]"), columns: [], frame: 0 };
+      replaceUsageLabel(label, [odometer, accessible], prefix, suffix);
+      usageValueAnimations.set(label, state);
+    }
+    state.target = target;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      window.cancelAnimationFrame(state.frame);
+      state.frame = 0;
+      state.value = target;
+    }
+    drawUsageNumber(state);
+    if (state.frame || state.value === state.target) return;
+    state.updatedAt = performance.now();
     const tick = now => {
-      if (!label.isConnected) return;
-      const progress = Math.min(1, (now - startedAt) / 950);
-      draw(progress);
-      state.frame = progress < 1 ? window.requestAnimationFrame(tick) : 0;
+      if (!label.isConnected) { state.frame = 0; return; }
+      const dt = Math.min((now - state.updatedAt) / 1000, 0.05);
+      state.updatedAt = now;
+      const difference = state.target - state.value;
+      const distance = Math.abs(difference);
+      const speed = Math.min(usageAnimationMaxSpeed, Math.max(usageAnimationMinSpeed, distance * 2));
+      state.value = speed * dt >= distance ? state.target : state.value + Math.sign(difference) * speed * dt;
+      drawUsageNumber(state);
+      state.frame = state.value === state.target ? 0 : window.requestAnimationFrame(tick);
     };
     state.frame = window.requestAnimationFrame(tick);
   }
