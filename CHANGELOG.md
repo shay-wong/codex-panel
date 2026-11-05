@@ -6,6 +6,10 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Center the quick-phrase configuration dialog under Codex's native reset styles.
+
+- Add locally saved, line-configured quick phrases below the conversation's project summary, with one-click native sending.
+
 ## 0.4.16-fork
 
 - Smooth velocity when usage targets change and reuse digit strips to reduce animation stutter.

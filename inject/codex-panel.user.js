@@ -13,6 +13,8 @@
   const NO_DRAG_RIGHT_ID = "codex-panel-no-drag-right";
   const STATUS_ID = "codex-panel-status";
   const STYLE_ID = "codex-panel-inject-style";
+  const QUICK_PHRASES_ID = "codex-panel-quick-phrases";
+  const QUICK_PHRASES_KEY = "codex-panel.quick-phrases.v1";
   const OWNED_ATTRIBUTE = "data-codex-panel-owned";
   const HIDDEN_ATTRIBUTE = "data-codex-panel-native-hidden";
   const USAGE_BANNER_HIDDEN_ATTRIBUTE = "data-codex-panel-usage-banner-hidden";
@@ -106,6 +108,9 @@
   let usageDotMatrix = true;
   let usageAnimationMinSpeed = 5;
   let usageAnimationMaxSpeed = 40;
+  let quickPhrasesPanel = null;
+  let quickPhrasesDialog = null;
+  let quickPhraseSending = false;
 
   function isExhaustedUsageBanner(banner) {
     const fiberKey = Object.keys(banner).find((key) => key.startsWith("__reactFiber$"));
@@ -242,6 +247,31 @@
     style.id = STYLE_ID;
     style.setAttribute(OWNED_ATTRIBUTE, "true");
     style.textContent = `
+      #${QUICK_PHRASES_ID}, .codex-panel-phrases-dialog {
+        color: var(--color-token-foreground, CanvasText); font: inherit; font-size: 14px; line-height: 1.5;
+      }
+      #${QUICK_PHRASES_ID} { position: fixed; z-index: 30; overflow: auto; padding: 0 6px 6px; box-sizing: border-box; -webkit-app-region: no-drag; }
+      #${QUICK_PHRASES_ID}[hidden] { display: none; }
+      .codex-panel-phrases-heading { display: flex; align-items: center; gap: 7px; }
+      .codex-panel-phrases-heading h2 { margin: 0; font-size: 14px; font-weight: 500; }
+      .codex-panel-phrases-heading svg { width: 16px; height: 16px; flex: none; }
+      .codex-panel-phrases-config { margin-left: auto; padding: 4px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--color-token-text-secondary, GrayText); font: inherit; font-size: 12px; }
+      .codex-panel-phrases-hint { margin: 4px 0 12px; color: var(--color-token-text-secondary, GrayText); font-size: 12px; }
+      .codex-panel-phrases-list { display: grid; gap: 7px; }
+      .codex-panel-phrase { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 0; border-radius: 9px; background: var(--color-token-bg-secondary, light-dark(#f8f8f8, #292929)); color: inherit; font: inherit; text-align: left; }
+      .codex-panel-phrase:hover, .codex-panel-phrases-config:hover { background: var(--color-token-bg-tertiary, light-dark(#eee, #353535)); }
+      .codex-panel-phrase span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+      .codex-panel-phrase svg { width: 14px; height: 14px; flex: none; color: var(--color-token-text-secondary, GrayText); }
+      .codex-panel-phrase:disabled { opacity: .5; }
+      .codex-panel-phrases-status { min-height: 18px; margin: 10px 0 0; color: var(--color-token-text-secondary, GrayText); font-size: 12px; overflow-wrap: anywhere; }
+      .codex-panel-phrases-dialog { width: min(440px, calc(100vw - 32px)); margin: auto; padding: 24px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 18px; background: var(--color-token-main-surface-primary, Canvas); -webkit-app-region: no-drag; }
+      .codex-panel-phrases-dialog::backdrop { background: rgb(0 0 0 / .3); }
+      .codex-panel-phrases-dialog h2 { margin: 0 0 6px; font-size: 18px; font-weight: 500; }
+      .codex-panel-phrases-dialog label { display: block; margin: 18px 0 8px; }
+      .codex-panel-phrases-dialog textarea { box-sizing: border-box; width: 100%; padding: 12px; resize: vertical; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 10px; background: inherit; color: inherit; font: inherit; line-height: 1.9; }
+      .codex-panel-phrases-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+      .codex-panel-phrases-dialog footer button { padding: 7px 14px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 8px; background: transparent; color: inherit; font: inherit; }
+      .codex-panel-phrases-dialog button[type="submit"] { background: var(--color-token-foreground, CanvasText); color: var(--color-token-main-surface-primary, Canvas); }
       .codex-panel-usage-number-text { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
       .codex-panel-usage-line { display: flex; align-items: center; justify-content: center; }
       .codex-panel-usage-line > [data-usage-speed], .codex-panel-usage-line > [data-usage-cache] { display: inline-flex; align-items: center; }
@@ -2830,6 +2860,7 @@
       if (mountActivePage()) reloadFrame();
       void publishPendingThreadAssociation();
       postHostContext();
+      syncQuickPhrases();
     }, REATTACH_DELAY_MS);
   }
 
@@ -2841,6 +2872,147 @@
     if (mountActivePage()) reloadFrame();
     void publishPendingThreadAssociation();
     postHostContext();
+    syncQuickPhrases();
+  }
+
+  function readQuickPhrases() {
+    const saved = window.localStorage.getItem(QUICK_PHRASES_KEY);
+    return (saved ?? hostText(
+      "继续\n按这个方案执行\n先给我一个 demo\n检查改动并说明影响\n运行相关检查\n总结当前进度",
+      "Continue\nImplement this plan\nShow me a demo first\nReview the changes and their impact\nRun the relevant checks\nSummarize the current progress",
+    )).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  }
+
+  function quickPhraseComposer() {
+    const threadId = threadIdFromLocation();
+    return Array.from(document.querySelectorAll('[data-codex-composer-root][data-composer-placement="thread"]'))
+      .find(root => root.getClientRects().length > 0
+        && normalizeThreadId(root.querySelector('[data-above-composer-conversation-id]')
+          ?.getAttribute('data-above-composer-conversation-id')) === threadId);
+  }
+
+  function renderQuickPhrases() {
+    if (!quickPhrasesPanel) return;
+    const list = quickPhrasesPanel.querySelector(".codex-panel-phrases-list");
+    const phrases = readQuickPhrases();
+    list.replaceChildren();
+    for (const phrase of phrases) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "codex-panel-phrase cursor-interaction";
+      button.disabled = quickPhraseSending;
+      button.setAttribute("aria-label", hostText("发送：", "Send: ") + phrase);
+      const label = document.createElement("span");
+      label.textContent = phrase;
+      button.append(label);
+      button.insertAdjacentHTML("beforeend", '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg>');
+      button.addEventListener("click", () => void sendQuickPhrase(phrase));
+      list.append(button);
+    }
+    if (!phrases.length) list.textContent = hostText("还没有短语，点击配置添加", "No phrases yet. Add them in Configure.");
+  }
+
+  function configureQuickPhrases() {
+    if (!quickPhrasesDialog) {
+      const dialog = document.createElement("dialog");
+      dialog.className = "codex-panel-phrases-dialog";
+      dialog.setAttribute(OWNED_ATTRIBUTE, "true");
+      dialog.setAttribute("aria-labelledby", "codex-panel-phrases-title");
+      dialog.innerHTML = `<form><h2 id="codex-panel-phrases-title"></h2><p class="codex-panel-phrases-hint"></p><label for="codex-panel-phrases-input"></label><textarea id="codex-panel-phrases-input" rows="8" spellcheck="false"></textarea><p role="alert" class="codex-panel-phrases-status"></p><footer><button type="button" class="cursor-interaction"></button><button type="submit" class="cursor-interaction"></button></footer></form>`;
+      dialog.querySelector("h2").textContent = hostText("配置快捷短语", "Configure quick phrases");
+      dialog.querySelector(".codex-panel-phrases-hint").textContent = hostText("每行一条，保存后点击即可发送。", "One phrase per line. Save, then click a phrase to send it.");
+      dialog.querySelector("label").textContent = hostText("短语内容", "Phrases");
+      const cancel = dialog.querySelector('button[type="button"]');
+      cancel.textContent = hostText("取消", "Cancel");
+      cancel.addEventListener("click", () => dialog.close());
+      dialog.querySelector('button[type="submit"]').textContent = hostText("保存", "Save");
+      dialog.querySelector("form").addEventListener("submit", event => {
+        event.preventDefault();
+        try {
+          const phrases = dialog.querySelector("textarea").value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+          window.localStorage.setItem(QUICK_PHRASES_KEY, phrases.join("\n"));
+          renderQuickPhrases();
+          dialog.close();
+        } catch {
+          dialog.querySelector('[role="alert"]').textContent = hostText("无法保存快捷短语，请重试。", "Could not save quick phrases. Please try again.");
+        }
+      });
+      document.body.append(dialog);
+      quickPhrasesDialog = dialog;
+    }
+    quickPhrasesDialog.querySelector("textarea").value = readQuickPhrases().join("\n");
+    quickPhrasesDialog.querySelector('[role="alert"]').textContent = "";
+    quickPhrasesDialog.showModal();
+  }
+
+  async function sendQuickPhrase(phrase) {
+    if (quickPhraseSending) return;
+    const status = quickPhrasesPanel.querySelector('[role="status"]');
+    try {
+      const root = quickPhraseComposer();
+      const editor = root?.querySelector('[data-codex-composer="true"][contenteditable="true"]');
+      let controller;
+      // shortcut: uses the native React composer contract; update when Codex changes its editor.
+      let owner = editor;
+      while (owner && !Object.keys(owner).some(key => key.startsWith("__reactFiber$"))) owner = owner.parentElement;
+      const fiberKey = owner && Object.keys(owner).find(key => key.startsWith("__reactFiber$"));
+      for (let fiber = owner?.[fiberKey]; fiber; fiber = fiber.return) {
+        const props = fiber.memoizedProps;
+        const candidate = props?.composerController ?? props?.input?.composerController;
+        if (candidate?.view?.dom === editor && typeof candidate.setText === "function") { controller = candidate; break; }
+      }
+      if (!controller) throw new Error(hostText("当前会话输入框尚未就绪", "The current composer is not ready"));
+      if (controller.getText().trim() || root.querySelector('[data-composer-attachment-pill]')) {
+        throw new Error(hostText("输入框已有草稿或附件，请先发送或清空", "Send or clear the existing draft or attachments first"));
+      }
+      quickPhraseSending = true;
+      renderQuickPhrases();
+      status.textContent = "";
+      controller.setText(phrase);
+      await new Promise(resolve => window.requestAnimationFrame(resolve));
+      if (quickPhraseComposer() !== root) throw new Error(hostText("会话已切换，短语保留在原输入框中", "The conversation changed. The phrase remains in the original composer."));
+      const send = Array.from(root.querySelectorAll('button[aria-label]'))
+        .find(button => SEND_LABELS.includes(normalizedLabel(button.getAttribute("aria-label"))) && !button.disabled);
+      if (!send) throw new Error(hostText("当前无法发送，短语已填入输入框", "Sending is unavailable. The phrase is in the composer."));
+      send.click();
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      quickPhraseSending = false;
+      renderQuickPhrases();
+    }
+  }
+
+  function syncQuickPhrases() {
+    const summary = Array.from(document.querySelectorAll('[data-summary-panel-variant]'))
+      .find(panel => panel.getClientRects().length > 0 && !panel.closest('[inert], [hidden]'));
+    if (active || !summary || !quickPhraseComposer()) {
+      quickPhrasesPanel?.toggleAttribute("hidden", true);
+      quickPhrasesDialog?.close();
+      return;
+    }
+    if (!quickPhrasesPanel) {
+      installStyles();
+      quickPhrasesPanel = document.createElement("section");
+      quickPhrasesPanel.id = QUICK_PHRASES_ID;
+      quickPhrasesPanel.setAttribute(OWNED_ATTRIBUTE, "true");
+      quickPhrasesPanel.setAttribute("aria-label", hostText("快捷短语", "Quick phrases"));
+      quickPhrasesPanel.innerHTML = '<div class="codex-panel-phrases-heading"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 10-12h-7z"/></svg><h2></h2><button type="button" class="codex-panel-phrases-config cursor-interaction"></button></div><p class="codex-panel-phrases-hint"></p><div class="codex-panel-phrases-list"></div><p role="status" class="codex-panel-phrases-status"></p>';
+      quickPhrasesPanel.querySelector("h2").textContent = hostText("快捷短语", "Quick phrases");
+      const configure = quickPhrasesPanel.querySelector("button");
+      configure.textContent = hostText("配置", "Configure");
+      configure.addEventListener("click", configureQuickPhrases);
+      quickPhrasesPanel.querySelector(".codex-panel-phrases-hint").textContent = hostText("点击短语，直接发送", "Click a phrase to send it");
+      document.body.append(quickPhrasesPanel);
+      renderQuickPhrases();
+    }
+    const rect = summary.getBoundingClientRect();
+    const top = rect.bottom + 20;
+    quickPhrasesPanel.toggleAttribute("hidden", rect.width < 180 || top >= window.innerHeight - 80);
+    quickPhrasesPanel.style.left = `${rect.left}px`;
+    quickPhrasesPanel.style.top = `${top}px`;
+    quickPhrasesPanel.style.width = `${rect.width}px`;
+    quickPhrasesPanel.style.maxHeight = `${Math.max(0, window.innerHeight - top - 20)}px`;
   }
 
   const usageLines = new Map();
@@ -3227,6 +3399,7 @@
     ensureEntry();
     connectNativeNavigation();
     syncNativeNavigation();
+    syncQuickPhrases();
     observer = new MutationObserver(scheduleRefresh);
     observer.observe(document.documentElement, {
       childList: true,
