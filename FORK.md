@@ -542,3 +542,14 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 - 路径：`launcher/src/App.tsx` → `install_codex_update` → 私有 injector 控制通道 `codex-update-status` → `scripts/codex-update.mjs` 读取原生缓存状态 → `restart_launcher` 停止重连并正常退出 → `src-tauri/src/codex_update.rs` 等待 bundle Info.plist 变化和官方 App/CLI 验签 → 受管启动。原生模块订阅函数按结构及导出表定位，不固定资源哈希或压缩名；仅 ready 且存在已下载 App 品牌时继续，未知接口报错。
 - 原生依据：ChatGPT 26.1027.61615 的 `sparkle.node` 支持 `willInstallUpdateOnQuit`；官方 Sparkle 的同名委托文档明确正常退出也会安装。此能力依赖 Codex 后台下载；不控制下载策略，不绕过更新策略，不更改官方更新按钮。当前限定 macOS TCP；两分钟内未确认安装则不启动，不通过二次重启掩盖失败。
 - 两份 runtime 清单包含新模块。更新模块定位在资源记录清空时沿当前页面入口及 app-main/app-runtime 引用查找；`test/codex-update.test.mjs` 覆盖有记录和空记录两条路径，真实 Codex 主窗口缓存状态已只读核验。验证：隔离真实 Launcher 页面检查新按钮与未下载/已下载的模拟响应；当前原生资源订阅解析、自检中的下载状态校验、模拟 bundle 替换及签名完成等待通过；TypeScript、Launcher 构建和 macOS Rust check 通过。真实 Sparkle 安装升级尚未执行。用户入口同步中英文 README/CHANGELOG 及 `docs/fork-capabilities.md#codex-updates-through-panel`。上游原生更新支持保留 Panel 连接参数或等价重启交接后重新评估。
+
+## 会话快捷短语（2026-11-05，长期保留）
+
+- 目的：实现用户确认的“轻量列表” demo，在会话右侧项目摘要下方直接发送常用短语。
+- 路径：`inject/codex-panel.user.js` 的 `syncQuickPhrases` 跟随可见 `[data-summary-panel-variant]` 定位列表；配置窗口按行写入当前 Codex profile 的 `localStorage`（`codex-panel.quick-phrases.v1`）；`sendQuickPhrase` 查找当前会话编辑器的原生 `composerController`，调用 `setText` 后点击原生 Send。没有新增 host API、数据库结构或 Launcher 配置。
+- 不变量：短语跨当前 profile 内的会话共用，空行忽略；沿用当前会话模型和权限，不覆盖草稿或附件；没有可用发送按钮时保留已填入短语并提示。首页、无可见摘要的页面和已打开的 Panel 不显示列表。仅修改 DOM 注入，不修改官方 App 包。
+- 弹窗居中修复：原生 CSS 的 `*,:after,:before,::backdrop{margin:0}` 清除了浏览器 dialog 的自动外边距；`.codex-panel-phrases-dialog` 明确设置 `margin:auto`。使用当前安装包 CSS 和实际注入脚本在隔离浏览器复现 `(0,0)` 偏位，修复后 1280×720 视窗内横纵中心偏差均为 0px；不改变配置和发送逻辑。
+- 验证：实际注入脚本的语法检查，以及隔离临时数据、工作区和独立 origin 中的配置 → 保存 → 刷新 → 点击发送路径。已只读核实当前安装版的摘要节点和 ProseMirror 编辑器父级 React controller；未向真实会话发送消息，未新增回归测试。按用户随后授权，已安装到 `~/Applications/Codex Panel.app`，更新资源清单并通过深度严格签名校验；保留现有 Launcher/Node 二进制，通过现有安装流程重连原 Codex 实例。运行控制通道确认 ready，实际加载的组合 source hash 与已安装源码一致。工具安全限制禁止直接访问 Codex 窗口，真实界面点击发送、Windows/Linux 仍待确认。
+- 用户入口：中英文 README；详细说明及索引：`docs/fork-capabilities.md#quick-phrases`；更新日志：中英文 CHANGELOG。
+- 发布前检查：`test/inject.test.mjs`、`test/inject-usage-banner.test.mjs`、`test/inject-composer-preparation.test.mjs` 共 74 项既有检查通过；本地审查确认修改局限于快捷短语 DOM、当前输入框发送和本地配置，不调整原生宿主 API。
+- 来源：2026-11-05 用户要求按已确认 demo 实现，当前 `codex/quick-phrases` 分支。合并时保留本地存储键、当前会话定位和原生发送路径；上游提供等价的快捷短语配置与发送能力后重新评估移除。当前无 fork-doc 技能，按本文件维护契约手动同步。
