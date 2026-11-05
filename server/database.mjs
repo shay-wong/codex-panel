@@ -5463,7 +5463,7 @@ export class PanelDatabase {
     }
   }
 
-  updateTask(id, version, changes, threadId, threadBinding, actor, agentSession) {
+  updateTask(id, version, changes, threadId, threadBinding, actor, agentSession, preservePreviousBinding = false) {
     const current = this.#requireTaskRecord(id);
     this.#requireVersion(current, version);
     this.#assertJiraMutationUnlocked(current.id);
@@ -5605,6 +5605,24 @@ export class PanelDatabase {
     try {
       if (current.source === "jira" && Object.hasOwn(changes, "status") && changes.status !== current.status) {
         this.#syncJiraLifecycle(current, changes.status, timestamp);
+      }
+      // Preserve the previous conversation in the same transaction as its replacement.
+      if (preservePreviousBinding && storedBinding?.[0] && current.threadId && storedBinding[0] !== current.threadId
+        && !Object.hasOwn(changes, "projectId")) {
+        this.database.prepare(`
+          INSERT INTO comments (
+            id, task_id, body, thread_id, thread_codex_project_id, thread_codex_project_kind,
+            thread_codex_host_id, thread_workspace_path,
+            author_type, author_id, author_name, author_avatar_url,
+            version, created_at, updated_at, change_revision
+          ) SELECT ?, id, ?, thread_id, thread_codex_project_id, thread_codex_project_kind,
+            thread_codex_host_id, thread_workspace_path, ?, ?, ?, ?, 1, ?, ?, ?
+            FROM tasks WHERE id = ?
+        `).run(
+          randomUUID(), `执行会话已从 ${current.threadId} 转交至 ${storedBinding[0]}。保留原会话记录，沿用任务开发上下文。`,
+          actor.type, actor.id, actor.name, actor.avatarUrl,
+          timestamp, timestamp, this.#nextCommentAttachmentRevision(), current.id,
+        );
       }
       const result = this.database.prepare(`
         UPDATE tasks SET ${assignments.join(", ")} WHERE id = ? AND version = ?

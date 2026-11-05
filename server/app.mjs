@@ -4858,8 +4858,13 @@ export function createPanelServer(options = {}) {
           if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
           const body = await readJson(request);
           assertPlainObject(body);
-          assertAllowedKeys(body, new Set(["threadId"]));
+          assertAllowedKeys(body, new Set(["threadId", "replaceThreadId"]));
           const threadId = parseThreadId(body.threadId);
+          const replaceThreadId = body.replaceThreadId === undefined
+            ? undefined : parseThreadId(body.replaceThreadId);
+          if (body.replaceThreadId !== undefined && !replaceThreadId) {
+            throw new ApiError(400, "INVALID_FIELD", "'replaceThreadId' must be a conversation ID");
+          }
           if (!threadId) {
             throw new ApiError(400, "INVALID_FIELD", "'threadId' is required");
           }
@@ -4877,11 +4882,12 @@ export function createPanelServer(options = {}) {
             throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot bind a conversation");
           }
           const existingThreadId = task.threadBinding?.threadId ?? task.legacyLocalThreadId;
-          if (existingThreadId && existingThreadId !== threadId) {
+          if ((replaceThreadId !== undefined && replaceThreadId !== existingThreadId)
+            || (existingThreadId && existingThreadId !== threadId && replaceThreadId === undefined)) {
             throw new ApiError(
               409,
               "TASK_THREAD_BINDING_CONFLICT",
-              "该议题已绑定到其他 Codex 会话",
+              "该议题的会话绑定与预期不符；请重读任务，用户明确要求接手后使用 --replace-thread-id 指定当前绑定",
               { existingThreadId },
             );
           }
@@ -4901,6 +4907,8 @@ export function createPanelServer(options = {}) {
               threadId,
               threadBinding,
               actorFromRequest(request),
+              undefined,
+              replaceThreadId !== undefined,
             );
             events.emit("task.updated", { task });
           }

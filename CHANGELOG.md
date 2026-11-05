@@ -10,6 +10,8 @@ This file records user-visible changes introduced by the fork.
 
 - Add locally saved, line-configured quick phrases below the conversation's project summary, with one-click native sending.
 
+- Allow explicitly authorized task takeover from a new conversation, retaining the previous conversation in activity history and preserving the task’s Spec and development context.
+
 ## 0.4.16-fork
 
 - Smooth velocity when usage targets change and reuse digit strips to reduce animation stutter.

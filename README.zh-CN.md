@@ -2,6 +2,8 @@
 
 Codex 会话右侧的项目摘要下方新增**快捷短语**。点击“配置”，每行输入一条并保存，再点击短语即可通过当前会话的原生输入框发送。配置保存在本机，同一 Codex 配置环境下的会话共用；不会覆盖已有草稿或附件。详见[快捷短语](docs/fork-capabilities.md#quick-phrases)。
 
+任务支持在明确授权后由新会话接手：`panelctl conversation bind ISSUE_ID --replace-thread-id OLD_ID` 替换刚读取的旧绑定，旧会话保留在活动记录中，Spec、状态、分支和工作树不变。详见[会话工作流](docs/fork-capabilities.md#configurable-ai-workflows)。
+
 macOS 上，Codex 更新卡片常驻并支持检查更新；仅在更新已下载、待安装时显示安装按钮；在 **运行概览 → 功能与维护 → 安装 Codex 更新并重启** 中完成更新。Panel 正常退出 Codex，等待 Sparkle 安装并校验新版应用后再启动连接，省去手动二次重启。详见[通过 Panel 完成 Codex 更新](docs/fork-capabilities.md#codex-updates-through-panel)。
 
 macOS 管理窗口的输入框支持系统编辑快捷键：`⌘C` 复制、`⌘V` 粘贴、`⌘X` 剪切、`⌘A` 全选。

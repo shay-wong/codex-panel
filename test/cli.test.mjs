@@ -442,6 +442,16 @@ test("conversation bind has command-specific help", async () => {
   assert.match(output, /without changing its status or fields/);
 });
 
+test("conversation bind forwards the explicitly authorized previous binding", async () => {
+  let body;
+  const result = await run(["conversation", "bind", "SUB-11", "--replace-thread-id", "old-thread"], async (_url, init) => {
+    body = JSON.parse(init.body);
+    return response({ task: { id: "SUB-11", threadId: "thread-current" } });
+  });
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(body, { threadId: "thread-current", replaceThreadId: "old-thread" });
+});
+
 test("jira repositories set replaces the explicit repository list", async () => {
   let request;
   const result = await run(

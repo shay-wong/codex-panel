@@ -1029,7 +1029,7 @@ test("an active Codex conversation can explicitly bind an issue without changing
   const baseUrl = await startServer();
   const created = (await request(baseUrl, "/api/tasks", {
     method: "POST",
-    body: { title: "Bind me", status: "todo" },
+    body: { title: "Bind me", description: "Keep the agreed scope", status: "todo", developmentContext: { type: "branch", branch: "existing-work" } },
   })).body.task;
   await request(baseUrl, "/api/local/host-runtime", {
     method: "PUT",
@@ -1084,6 +1084,30 @@ test("an active Codex conversation can explicitly bind an issue without changing
   });
   assert.equal(conflict.response.status, 409);
   assert.equal(conflict.body.error.code, "TASK_THREAD_BINDING_CONFLICT");
+
+  const stale = await request(baseUrl, `/api/tasks/${created.id}/bind-thread`, {
+    method: "POST",
+    body: { threadId: "other-thread", replaceThreadId: "stale-thread" },
+  });
+  assert.equal(stale.response.status, 409);
+  const takeover = await request(baseUrl, `/api/tasks/${created.id}/bind-thread`, {
+    method: "POST",
+    body: { threadId: "other-thread", replaceThreadId: "manual-thread" },
+  });
+  assert.equal(takeover.response.status, 200);
+  assert.equal(takeover.body.task.threadBinding.threadId, "other-thread");
+  assert.equal(takeover.body.task.status, "todo");
+  assert.equal(takeover.body.task.description, "Keep the agreed scope");
+  assert.deepEqual(takeover.body.task.developmentContext, first.body.task.developmentContext);
+  const previous = takeover.body.task.conversationRefs.find(ref => ref.threadId === "manual-thread");
+  assert.equal(previous.source, "comment");
+  assert.equal(previous.workspacePath, "/work/local-project");
+  const retry = await request(baseUrl, `/api/tasks/${created.id}/bind-thread`, {
+    method: "POST",
+    body: { threadId: "other-thread" },
+  });
+  assert.equal(retry.body.task.version, takeover.body.task.version);
+  assert.equal(retry.body.task.conversationRefs.length, takeover.body.task.conversationRefs.length);
 });
 
 test("a saved local Codex conversation binds even when another project is currently open", async () => {

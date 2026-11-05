@@ -47,6 +47,8 @@ test("the Panel skill preserves complete task bindings", () => {
   assert.match(skillSource, /explicitly asks to bind the current conversation[\s\S]*`conversation bind ISSUE_ID`/i);
   assert.match(cliReference, /panelctl conversation bind ISSUE_ID/);
   assert.match(cliReference, /refuses to replace another conversation's binding/i);
+  assert.match(skillSource, /conversation bind ISSUE_ID --replace-thread-id OLD_THREAD_ID/);
+  assert.match(skillSource, /This request is sufficient authorization/);
 });
 
 test("the Panel skill resolves an explicit Jira ID before workspace context", () => {

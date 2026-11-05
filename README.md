@@ -2,6 +2,8 @@
 
 The right side of a Codex conversation now has **Quick phrases** below the project summary. Choose **Configure**, enter one phrase per line, and save; click a phrase to send it through the current conversation's native composer. Phrases are saved locally and shared across conversations in the same Codex profile. Existing drafts and attachments are not overwritten. See [quick phrases](docs/fork-capabilities.md#quick-phrases).
 
+Tasks can be implemented in a new conversation after explicit authorization: `panelctl conversation bind ISSUE_ID --replace-thread-id OLD_ID` replaces the freshly read binding and retains the old conversation in activity history, preserving the Spec, status, branch and worktree. See [conversation workflow](docs/fork-capabilities.md#configurable-ai-workflows).
+
 On macOS, use **Overview → Features & maintenance → 安装 Codex 更新并重启** after Codex finishes downloading an update; the action is hidden when no downloaded update is pending. Panel quits Codex normally, waits for Sparkle to install and verifies the new app before reconnecting, avoiding a second manual restart. See [Codex updates through Panel](docs/fork-capabilities.md#codex-updates-through-panel).
 
 Launcher inputs on macOS support native editing shortcuts: `⌘C` copy, `⌘V` paste, `⌘X` cut and `⌘A` select all.

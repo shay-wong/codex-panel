@@ -35,7 +35,7 @@ const COMMAND_OPTIONS = new Map([
   ["project create", new Set(["id", "name", "issue-key", "workspace-path", "json"])],
   ["project map", new Set(["workspace-path", "json"])],
   ["project readme", new Set(["content", "file", "if-version", "json"])],
-  ["conversation bind", new Set(["thread-id", "json"])],
+  ["conversation bind", new Set(["thread-id", "replace-thread-id", "json"])],
   ["cloud login", new Set(["url", "actor-name", "json"])],
   ["cloud status", new Set(["json"])],
   ["cloud logout", new Set(["json"])],
@@ -135,7 +135,7 @@ Commands:
   project map PROJECT_ID --workspace-path PATH
   project readme get [PROJECT_ID]
   project readme set [PROJECT_ID] (--content TEXT | --file FILE) [--if-version N]
-  conversation bind ISSUE_ID [--thread-id ID]
+  conversation bind ISSUE_ID [--thread-id ID] [--replace-thread-id OLD_ID]
   cloud login --url URL --actor-name NAME
   cloud status|logout
   issue list|get|create|update|move|archive|restore|tree|relation
@@ -222,12 +222,13 @@ Options:
   --if-version N   Current plan.version from issue planning get
   --json           Make the JSON output contract explicit
   --help           Show this help`],
-  ["conversation bind", `Usage: panelctl conversation bind ISSUE_ID [--thread-id ID] [--json]
+  ["conversation bind", `Usage: panelctl conversation bind ISSUE_ID [--thread-id ID] [--replace-thread-id OLD_ID] [--json]
 
 Bind the current Codex conversation to one Panel Issue or Jira requirement without changing its status or fields.
 
 Options:
   --thread-id ID  Override CODEX_THREAD_ID
+  --replace-thread-id OLD_ID  Explicitly take over the freshly read conversation binding
   --json          Make the JSON output contract explicit
   --help          Show this help`],
   ["jira repositories", `Usage: panelctl jira repositories list [--json]
@@ -438,6 +439,7 @@ async function execute(parsed, overrides) {
       expectOperandCount(parsed, 1);
       return api.request("POST", `${taskPath(parsed.operands[0])}/bind-thread`, {
         threadId: resolveThreadId(parsed.options, overrides),
+        ...optionalField("replaceThreadId", parsed.options["replace-thread-id"]),
       });
     case "cloud login":
       expectOperandCount(parsed, 0);

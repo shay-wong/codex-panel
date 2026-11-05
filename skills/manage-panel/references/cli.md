@@ -171,10 +171,10 @@ Use `issue move` to set `in_progress` before implementation and `in_review` afte
 To explicitly bind the current Codex conversation without changing the Issue status or fields:
 
 ```bash
-panelctl conversation bind ISSUE_ID [--thread-id ID] [--json]
+panelctl conversation bind ISSUE_ID [--thread-id ID] [--replace-thread-id OLD_ID] [--json]
 ```
 
-`ISSUE_ID` may be a Panel ID, Panel identifier, or an unambiguous Jira key. The command requires the running Codex host to provide a complete project, host, and workspace identity. It is idempotent for the current conversation and refuses to replace another conversation's binding. For a Jira requirement it initializes a missing local planning record, even if the same conversation was already bound. Existing plans, Specs, and planning conversations are preserved. Read `jira planning get` again for `plan.version`; binding never changes Jira fields or status.
+`ISSUE_ID` may be a Panel ID, Panel identifier, or an unambiguous Jira key. The command requires the running Codex host to provide a complete project, host, and workspace identity. It is idempotent for the current conversation and refuses to replace another conversation's binding by default. When the user explicitly asks to implement or take over the Issue in this conversation, reread the Issue and pass `--replace-thread-id OLD_ID` with its exact existing binding ID. The server rejects a changed binding; on success it preserves the previous conversation in activity history and leaves the status, Spec, branch and worktree unchanged. Reread the Issue before claiming with its new complete binding. For a Jira requirement it initializes a missing local planning record, even if the same conversation was already bound. Existing plans, Specs, and planning conversations are preserved. Read `jira planning get` again for `plan.version`; binding never changes Jira fields or status.
 
 Use either `--git-branch` or `--worktree-path`/`--worktree-branch`; an issue has only one development context. Issue JSON stores it as `developmentContext`, either `{ "type": "branch", "branch": "..." }` or `{ "type": "worktree", "path": "...", "branch": "..." }`. Its singular `threadId` retains the existing native Codex meaning; external sessions are stored separately in `agentSession`. Recurrence requires a due date. Changing only `--project` preserves the issue's existing linked conversation.
 
