@@ -6,11 +6,13 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Allow explicitly authorized task takeover from a new conversation, retaining the previous conversation in activity history and preserving the task’s Spec and development context.
+
+## 0.4.17-fork
+
 - Center the quick-phrase configuration dialog under Codex's native reset styles.
 
 - Add locally saved, line-configured quick phrases below the conversation's project summary, with one-click native sending.
-
-- Allow explicitly authorized task takeover from a new conversation, retaining the previous conversation in activity history and preserving the task’s Spec and development context.
 
 ## 0.4.16-fork
 
