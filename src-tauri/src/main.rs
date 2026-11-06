@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod menu_diagnostics;
+#[cfg(any(target_os = "windows", test))]
+mod windows_open;
 #[cfg(target_os = "macos")]
 mod macos_exit;
 
@@ -661,14 +663,7 @@ fn open_with_system(target: &str) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn open_with_system(target: &str) -> Result<(), String> {
-    let status = StdCommand::new("explorer.exe")
-        .arg(target)
-        .status()
-        .map_err(|error| error.to_string())?;
-    status
-        .success()
-        .then_some(())
-        .ok_or_else(|| format!("无法打开 {target}"))
+    windows_open::open(target)
 }
 
 #[cfg(target_os = "linux")]

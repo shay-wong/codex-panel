@@ -623,3 +623,8 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 
 - 等待上游吸收：现有 UF 开关对受支持模型同时补齐 `priority` 与 `ultrafast`，原生菜单选择快速后使用 `priority` 请求档位。旧 ESM、Rspack 权限与模型目录保持一致，已有档位元数据不覆盖、不重复添加。代码位于 `scripts/codex-provider-ultrafast.mjs`、`scripts/codex-rspack-capabilities.mjs`、`scripts/codex-provider-ultrafast-catalog.mjs`。
 - 定向隔离测试验证无原生快速权限及目录时菜单出现快速、选择后请求档位为 priority、关闭开关恢复限制。尚未安装或验证真实服务商请求。上游等价支持后移除此差异；当前无 fork-doc 技能，按契约手工同步。
+
+### Windows 系统打开结果判断
+
+- 等待上游吸收：`src-tauri/src/windows_open.rs` 使用现有 windows 依赖的 ShellExecuteW，替代 `main.rs` 通过 explorer.exe 退出码判断打开成败的实现。大于 32 表示系统接受打开请求；其余保留目标和 Shell 错误码，拒绝内嵌 NUL。共用入口覆盖 Codex、日志、目录及链接，不更改连接、调试端口或启动配置。
+- Windows 真实接口验证：无操作命令打开返回 42，文件不存在返回 2；返回值边界单元测试通过，生产模块及测试代码使用 windows 0.61.3 完成 x86_64-pc-windows-msvc 编译检查。系统接受请求不等于目标应用完成启动，已安装 Panel 按钮效果仍待重新打包后验证。上游等价修复后移除此差异；当前无 fork-doc 技能，按契约手工同步。
