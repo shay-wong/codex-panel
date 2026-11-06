@@ -45,6 +45,7 @@ it("keeps launcher feedback, live status and global preferences working through 
     if (command === "set_launcher_preference") {
       if (args?.updateModelDiscovery) discovery = args.enabled ? true : null;
       current.preferences = { ...current.preferences, [args?.key as keyof LauncherPreferences]: args?.enabled };
+      if (args?.key === "customProviderUltrafast") current.codexRestartReminder = "Ultrafast";
       return { ...current.preferences };
     }
     if (command === "set_usage_animation_mode") {
@@ -59,12 +60,13 @@ it("keeps launcher feedback, live status and global preferences working through 
     if (command === "workflow_settings_url") return workflowUrl;
     return command === "launcher_ui_state" ? structuredClone(current) : undefined;
   });
+
+
   vi.stubGlobal("__TAURI__", {
     core: { invoke },
     event: { listen: async (event: string, listener: typeof statusListener) => {
-      expect(event).toBe("launcher-status");
-      statusListener = listener;
-      return unlisten;
+      if (event === "launcher-status") { statusListener = listener; return unlisten; }
+      return () => {};
     } },
   } as unknown as TauriBridge);
   const button = (id: string) => document.getElementById(id) as HTMLButtonElement;
@@ -310,3 +312,37 @@ it("keeps launcher feedback, live status and global preferences working through 
   view.unmount();
   expect(unlisten).toHaveBeenCalledOnce();
 }, 15_000);
+
+it("restores pending Codex restart reminders after reopening Panel and keeps Later local", async () => {
+  vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  let reminder: string | null = "模型上下文";
+  let windowOpened!: () => void;
+  let statusListener!: (event: { payload: LauncherSnapshot }) => void;
+  const snapshot = { phase: "running", version: "test", childPid: 123, appPath: "/disposable/Codex.app" } as LauncherSnapshot;
+  const invoke = vi.fn(async () => ({ snapshot, preferences: {}, codexRestartReminder: reminder, autostart: false }));
+  vi.stubGlobal("__TAURI__", {
+    core: { invoke },
+    event: { listen: async (event: string, listener: typeof statusListener) => {
+      if (event === "launcher-status") statusListener = listener;
+      else windowOpened = listener as unknown as () => void;
+      return () => {};
+    } },
+  });
+  let view = render(<Theme><App /></Theme>);
+  expect(await screen.findByText(/模型上下文 设置已保存/)).toBeTruthy();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "稍后" })); });
+  expect(screen.queryByText(/模型上下文 设置已保存/)).toBeNull();
+  await act(async () => { windowOpened(); });
+  expect(screen.getByText(/模型上下文 设置已保存/)).toBeTruthy();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "稍后" })); });
+  view.unmount();
+  view = render(<Theme><App /></Theme>);
+  expect(await screen.findByText(/模型上下文 设置已保存/)).toBeTruthy();
+  await act(async () => { statusListener({ payload: { ...snapshot, phase: "waiting" } }); });
+  expect(screen.getByText(/模型上下文 设置已保存/)).toBeTruthy();
+  reminder = null; // The native layer confirmed a newer Codex process.
+  await act(async () => { statusListener({ payload: snapshot }); });
+  expect(screen.queryByText(/模型上下文 设置已保存/)).toBeNull();
+  view.unmount();
+});

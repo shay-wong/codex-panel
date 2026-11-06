@@ -30,6 +30,7 @@ export type LauncherState = {
   autostart: boolean;
   dataDirectory: string;
   logPath: string;
+  codexRestartReminder?: string | null;
 };
 export type TauriBridge = {
   core: { invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> };
@@ -66,6 +67,7 @@ export function App() {
   const [usageAnimationMode, setUsageAnimationMode] = useState<"smooth" | "morph">("smooth");
   const [ultrafastChoice, setUltrafastChoice] = useState<boolean | null>(null);
   const [restartReminder, setRestartReminder] = useState("");
+  const [restartReminderDismissed, setRestartReminderDismissed] = useState(false);
   const [modelContextOpen, setModelContextOpen] = useState(false);
   const [usageSettingsOpen, setUsageSettingsOpen] = useState(false);
   const [workflowUrl, setWorkflowUrl] = useState("");
@@ -110,12 +112,23 @@ export function App() {
   function acceptState(next: LauncherState) {
     setState(next);
     setSnapshot(next.snapshot);
+    setRestartReminder(next.codexRestartReminder ?? "");
     if (next.snapshot.phase === "error") setError(next.snapshot.message);
   }
 
   useEffect(() => {
+    if (snapshot.phase !== "running" || !restartReminder) return;
+    let cancelled = false;
+    window.__TAURI__.core.invoke<LauncherState>("launcher_ui_state").then(next => {
+      if (!cancelled) acceptState(next);
+    }).catch(cause => { if (!cancelled) setError(String(cause)); });
+    return () => { cancelled = true; };
+  }, [snapshot.phase, restartReminder]);
+
+  useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
+    let unlistenWindow: (() => void) | undefined;
     const timers = feedbackTimers.current;
     window.__TAURI__.core.invoke<LauncherState>("launcher_ui_state").then(next => {
       if (!cancelled) acceptState(next);
@@ -125,6 +138,14 @@ export function App() {
       setSnapshot(event.payload);
       if (event.payload.phase === "error") setError(event.payload.message);
     }).then(stop => { if (cancelled) stop(); else unlisten = stop; })
+      .catch(cause => { if (!cancelled) setError(String(cause)); });
+    window.__TAURI__.event.listen("launcher-window-opened", () => {
+      if (cancelled) return;
+      setRestartReminderDismissed(false);
+      window.__TAURI__.core.invoke<LauncherState>("launcher_ui_state").then(next => {
+        if (!cancelled) acceptState(next);
+      }).catch(cause => { if (!cancelled) setError(String(cause)); });
+    }).then(stop => { if (cancelled) stop(); else unlistenWindow = stop; })
       .catch(cause => { if (!cancelled) setError(String(cause)); });
     function onKey(event: KeyboardEvent) {
       if (event.metaKey && event.shiftKey && event.key.toLowerCase() === "p") {
@@ -136,6 +157,7 @@ export function App() {
     return () => {
       cancelled = true;
       unlisten?.();
+      unlistenWindow?.();
       document.removeEventListener("keydown", onKey);
       timers.forEach(clearTimeout);
     };
@@ -198,7 +220,10 @@ export function App() {
         setState(current => current && ({ ...current, preferences: next }));
       }
       setUltrafastChoice(null);
-      if (key === "customProviderUltrafast") setRestartReminder("Ultrafast");
+      if (key === "customProviderUltrafast") {
+        acceptState(await window.__TAURI__.core.invoke<LauncherState>("launcher_ui_state"));
+        setRestartReminderDismissed(false);
+      }
     } catch (cause) { setError(String(cause)); }
     finally { setSavingPreference(false); }
   }
@@ -296,13 +321,13 @@ export function App() {
         <Callout.Text id="errorText" className="launcher-error">{error}</Callout.Text>
         <IconButton id="dismissError" variant="ghost" color="red" size="1" aria-label="关闭提示" onClick={() => setError("")}><LinearIcon name="close" /></IconButton>
       </Callout.Root>}
-      {restartReminder && <Callout.Root size="1" role="status" mb="4">
+      {restartReminder && !restartReminderDismissed && <Callout.Root size="1" role="status" mb="4">
         <Callout.Icon><LinearIcon name="alert" /></Callout.Icon>
         <Box>
           <Callout.Text>{restartReminder} 设置已保存。请重启 Codex，使核心模型能力和配置完整生效；重启会中断正在运行的任务。</Callout.Text>
           <Flex align="center" wrap="wrap" mt="3" style={{ gap: 8 }}>
             <Button size="2" variant="soft" {...actionProps("restart_codex", savingPreference)}>立即重启 Codex</Button>
-            <Button size="2" variant="outline" onClick={() => setRestartReminder("")}>稍后</Button>
+            <Button size="2" variant="outline" onClick={() => setRestartReminderDismissed(true)}>稍后</Button>
           </Flex>
         </Box>
       </Callout.Root>}
@@ -478,7 +503,10 @@ export function App() {
         <Flex justify="end" mt="3"><Dialog.Close><Button variant="soft" disabled={savingPreference}>关闭</Button></Dialog.Close></Flex>
       </Dialog.Content>
     </Dialog.Root>
-    <ModelContextSettings open={modelContextOpen} onOpenChange={setModelContextOpen} onSaved={() => setRestartReminder("模型上下文")} />
+    <ModelContextSettings open={modelContextOpen} onOpenChange={setModelContextOpen} onSaved={() => {
+      setRestartReminderDismissed(false);
+      window.__TAURI__.core.invoke<LauncherState>("launcher_ui_state").then(acceptState).catch(cause => setError(String(cause)));
+    }} />
     <AlertDialog.Root open={ultrafastChoice !== null} onOpenChange={open => { if (!open && !savingPreference) setUltrafastChoice(null); }}>
       <AlertDialog.Content maxWidth="520px" onOpenAutoFocus={event => { event.preventDefault(); keepDiscoveryButton.current?.focus(); }}>
         <AlertDialog.Title>{ultrafastChoice ? "开启 Ultrafast" : "关闭 Ultrafast"}</AlertDialog.Title>

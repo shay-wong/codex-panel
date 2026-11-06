@@ -5,6 +5,7 @@ mod menu_diagnostics;
 mod macos_exit;
 
 mod update_dialog;
+mod restart_reminder;
 #[cfg(target_os = "macos")]
 mod codex_update;
 
@@ -250,6 +251,7 @@ struct LauncherUiState {
     autostart: bool,
     log_path: String,
     data_directory: String,
+    codex_restart_reminder: Option<String>,
 }
 
 impl Default for LauncherPreferences {
@@ -467,6 +469,7 @@ struct LauncherState {
     lifecycle: Mutex<()>,
     preferences: Mutex<LauncherPreferences>,
     preferences_path: PathBuf,
+    restart_reminder_guard: Mutex<()>,
     recovery_failures: Mutex<VecDeque<Instant>>,
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     panel_listener: Mutex<Option<TcpListener>>,
@@ -527,6 +530,7 @@ impl LauncherState {
             lifecycle: Mutex::new(()),
             preferences: Mutex::new(preferences),
             preferences_path,
+            restart_reminder_guard: Mutex::new(()),
             recovery_failures: Mutex::new(VecDeque::new()),
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             panel_listener: Mutex::new(None),
@@ -1410,6 +1414,7 @@ fn show_main_window(app: &AppHandle) -> Result<(), String> {
         .get_webview_window("main")
         .ok_or_else(|| "Codex Panel 管理窗口不可用".to_string())?;
     window.show().map_err(|error| error.to_string())?;
+    window.emit("launcher-window-opened", ()).map_err(|error| error.to_string())?;
     window.set_focus().map_err(|error| error.to_string())
 }
 
@@ -2751,7 +2756,64 @@ fn open_panel(app: &AppHandle, state: &Arc<LauncherState>) -> Result<(), String>
     }
 }
 
+#[cfg(target_os = "macos")]
+fn codex_process_start(pid: u32) -> Option<(String, u64)> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>();
+    let read = unsafe {
+        libc::proc_pidinfo(pid as i32, libc::PROC_PIDTBSDINFO, 0, info.as_mut_ptr().cast(), size as i32)
+    };
+    if read != size as i32 { return None; }
+    let info = unsafe { info.assume_init() };
+    let micros = info.pbi_start_tvsec.checked_mul(1_000_000)?.checked_add(info.pbi_start_tvusec)?;
+    Some((micros.to_string(), micros / 1_000))
+}
+
+#[cfg(target_os = "windows")]
+fn codex_process_start(pid: u32) -> Option<(String, u64)> {
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    let result = unsafe { GetProcessTimes(process, &mut creation, &mut exit, &mut kernel, &mut user) };
+    let _ = unsafe { CloseHandle(process) };
+    result.ok()?;
+    let ticks = ((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64;
+    Some((ticks.to_string(), ticks.checked_sub(116_444_736_000_000_000)? / 10_000))
+}
+
+#[cfg(target_os = "linux")]
+fn codex_process_start(pid: u32) -> Option<(String, u64)> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let ticks = stat.rsplit_once(')')?.1.split_whitespace().nth(19)?.parse::<u64>().ok()?;
+    let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    if ticks_per_second <= 0 { return None; }
+    let boot = fs::read_to_string("/proc/stat").ok()?.lines()
+        .find_map(|line| line.strip_prefix("btime ").and_then(|value| value.parse::<u64>().ok()))?;
+    let boot_id = fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?;
+    Some((format!("{}:{ticks}", boot_id.trim()), boot.checked_mul(1_000)?.checked_add(ticks.checked_mul(1_000)? / ticks_per_second as u64)?))
+}
+
+fn current_codex_process(app: &AppHandle, state: &LauncherState) -> Option<restart_reminder::CodexProcess> {
+    let configured_path = state.snapshot.lock().unwrap().app_path.clone();
+    let path = configured_path.map(PathBuf::from)
+        .or_else(|| app.path().home_dir().ok().and_then(|home| find_codex_app(&home)))?;
+    let pid = codex_process(&path, &state.data_directory.join("codex-profile"), true).ok()??;
+    let (start, started_at) = codex_process_start(pid)?;
+    Some(restart_reminder::CodexProcess { identity: format!("{}:{pid}:{start}", path.display()), started_at })
+}
+
+fn mark_codex_restart_required(app: &AppHandle, state: &LauncherState, label: &str) -> Result<(), String> {
+    let _guard = state.restart_reminder_guard.lock().unwrap();
+    restart_reminder::mark(&state.data_directory, label, current_codex_process(app, state))
+}
+
 fn current_ui_state(app: &AppHandle, state: &LauncherState) -> Result<LauncherUiState, String> {
+    let codex_restart_reminder = {
+        let _guard = state.restart_reminder_guard.lock().unwrap();
+        restart_reminder::pending(&state.data_directory, || current_codex_process(app, state))?
+    };
     Ok(LauncherUiState {
         snapshot: state.snapshot.lock().unwrap().clone(),
         preferences: *state.preferences.lock().unwrap(),
@@ -2761,6 +2823,7 @@ fn current_ui_state(app: &AppHandle, state: &LauncherState) -> Result<LauncherUi
             .map_err(|error| error.to_string())?,
         log_path: state.log_path.display().to_string(),
         data_directory: state.data_directory.display().to_string(),
+        codex_restart_reminder,
     })
 }
 
@@ -3071,9 +3134,9 @@ async fn set_launcher_preference(
         if key != "customProviderUltrafast" {
             return Err("仅 Ultrafast 开关可修改模型发现配置".into());
         }
-        run_model_configuration(app, if enabled { "enable-discovery" } else { "remove-discovery" }, None, None).await?;
+        run_model_configuration(app.clone(), if enabled { "enable-discovery" } else { "remove-discovery" }, None, None).await?;
     }
-    update_preferences(&state, |preferences| match key.as_str() {
+    let preferences = update_preferences(&state, |preferences| match key.as_str() {
         "autoConnectCodex" => preferences.auto_connect_codex = enabled,
         "autoOpenPanel" => preferences.auto_open_panel = enabled,
         "hideUsageBanner" => preferences.hide_usage_banner = enabled,
@@ -3084,7 +3147,11 @@ async fn set_launcher_preference(
         "customProviderUltrafast" => preferences.custom_provider_ultrafast = enabled,
         "showCustomProviderDot" => preferences.show_custom_provider_dot = enabled,
         _ => unreachable!(),
-    })
+    })?;
+    if key == "customProviderUltrafast" {
+        mark_codex_restart_required(&app, &state, "Ultrafast")?;
+    }
+    Ok(preferences)
 }
 
 #[tauri::command]
@@ -3135,8 +3202,10 @@ async fn set_model_context_windows(
     multi_agent_reasoning_efforts: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let input = serde_json::json!({ "contextWindows": context_windows, "autoCompactTokenLimits": auto_compact_token_limits, "multiAgentReasoningEfforts": multi_agent_reasoning_efforts });
-    let output = run_model_configuration(app, "write-contexts", Some(state.data_directory.clone()), Some(input)).await?;
-    serde_json::from_str(output.trim()).map_err(|error| error.to_string())
+    let output = run_model_configuration(app.clone(), "write-contexts", Some(state.data_directory.clone()), Some(input)).await?;
+    let result = serde_json::from_str(output.trim()).map_err(|error| error.to_string())?;
+    mark_codex_restart_required(&app, &state, "模型上下文")?;
+    Ok(result)
 }
 
 #[tauri::command]
