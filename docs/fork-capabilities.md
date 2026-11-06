@@ -414,3 +414,7 @@ macOS 上，“Codex 更新”卡片常驻，显示当前版本与官方静默�
 The last normal window size is saved on close or exit and restored at startup; fullscreen and maximized sizes do not replace it.
 
 窗口关闭或退出时保存普通尺寸，下次启动恢复；全屏和最大化尺寸不覆盖记录。
+
+Windows UF compatibility: the Rspack reader accepts both singular `__rspack_esm_id` and plural `__rspack_esm_ids` exports. The two supported Ultrafast model IDs also accept case and space variants such as `GPT-6 Astra`; request IDs remain unchanged.
+
+Windows UF 兼容：读取单数及复数 Rspack ID 导出，两个受支持模型兼容 `GPT-6 Astra` 等大小写及空格写法，实际请求模型名保持不变。

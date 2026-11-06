@@ -14,6 +14,7 @@ version = "2.6.0"
 features = []
 
 [dependencies]
+dunce = "1.0.5"
 libc = "0.2"
 reqwest = "0.13"
 serde_json = "1"
@@ -50,4 +51,4 @@ features = [ "std", "NSData", "NSNotification", "NSGeometry", "NSObject", "NSStr
 
 [target."cfg(target_os = \"windows\")".dependencies.windows]
 version = "0.61"
-features = [ "Win32_Foundation", "Win32_System_RestartManager", "Win32_System_Threading" ]
+features = [ "Win32_Foundation", "Win32_System_RestartManager", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging" ]

@@ -6,6 +6,14 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Use the Windows Shell API to open Codex, files, folders and links, avoiding false failures from Explorer exit codes while retaining real Shell errors.
+
+- Include Fast (`priority`) alongside Ultrafast for supported custom-provider models, including native selection and catalog capabilities.
+
+- Fix Windows Rspack chunks exporting `__rspack_esm_id` so Ultrafast modules can load; accept case and space variants of the two supported model IDs without changing request model names.
+
+- Normalize safe Windows verbatim resource paths before passing scripts to Node, fixing startup `EISDIR` errors and model configuration entry points.
+
 - Clarify Ultrafast’s required configuration with separate lines.
 
 - Keep pending Codex restart reminders across Panel relaunches and reinstalls; clear them immediately after a confirmed restart is successfully initiated, or when an external restart is detected. Cancellation and startup failure keep the reminder.

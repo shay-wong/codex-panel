@@ -15,7 +15,8 @@ test('reads current Rspack factories from the installed archive without executin
   const files = {
     'webview/index.html': '<script type="module" src="/assets/123.abc.js"></script>',
     'webview/assets/123.abc.js': 'const load=()=>{};export{load as __webpack_require__};',
-    'webview/assets/async/456.def.js': 'export const __rspack_esm_ids=[456];export const __webpack_modules__={abcd(module){throw Error("must not execute");const marker="model_provider";}};',
+    'webview/assets/async/789.old.js': 'export const __rspack_esm_ids=[789];export const __webpack_modules__={legacy(){throw Error("must not execute");const marker="serviceTierForRequest";}};',
+    'webview/assets/async/456.def.js': 'export const __rspack_esm_id=456;export const __rspack_esm_ids=[456];export const __webpack_modules__={abcd(module){throw Error("must not execute");const marker="model_provider";}};',
   };
   const header = { files: {} }; let offset = 0; const bodies = [];
   for (const [name, source] of Object.entries(files)) {
@@ -29,7 +30,9 @@ test('reads current Rspack factories from the installed archive without executin
   await writeFile(path.join(resources, 'app.asar'), Buffer.concat([prefix, json, ...bodies]));
   const catalog = await readCodexRspack(path.join(root, 'Test.app'));
   assert.equal(catalog.main.urlPath, '/assets/123.abc.js');
-  assert.equal(catalog.factories.size, 1);
+  assert.equal(catalog.factories.size, 2);
+  assert.deepEqual(catalog.unreadableChunks, []);
+  assert.ok(catalog.factories.has('legacy'));
   assert.match(catalog.factories.get('abcd').source, /^function\(module\)/);
   assert.equal(rspackSourceContext(catalog.factories).findModule('model_provider').id, 'abcd');
 });

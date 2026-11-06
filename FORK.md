@@ -607,3 +607,24 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 - 维护者构建配置，长期保留：`src-tauri/Cargo.toml` 的 dev profile 使用 `debug="line-tables-only"`、`incremental=false`，test 继承 dev；保留文件/行号回溯，降低调试符号与增量缓存占用，代价是 Rust 改动后重编较慢。Release、优化与安装签名路径不变，不调整全局 Cargo 或其他仓库。
 - 清理仅通过 Cargo 指定 `--profile dev`，必要时分别指定本机显式 target；先 dry-run 并核对没有正在编译，再执行。保留 Release 构建与其 host build scripts，不接触已安装 App、Panel 数据、配置与凭据。不要定期自动清整个 target，避免每次重装重复编译。
 - 文档：中英文 README 的 Verify/验证；配置验证使用隔离小项目检查 rustc 参数及无 incremental 目录，真实缓存清理后比较占用。内部构建策略无需产品 changelog。来源可用 `git log -S'line-tables-only' -- src-tauri/Cargo.toml` 定位。
+
+### Windows Node 资源路径兼容
+
+- 基于上游 `a7522c2` 修复本地已复现的 Node 22.23.2 入口解析错误。`src-tauri/src/main.rs` 在服务和模型配置入口对资源路径使用依赖树现有 `dunce::simplified`，仅转换可安全简化的 verbatim 路径，不重新 canonicalize、不更改签名或完整性校验。真正的超长路径与设备路径保留库的安全边界。
+- 验证：my-windows 上普通路径语法检查成功，带前缀路径报 EISDIR；本地 Rust 编译检查；新增 Windows 专用路径回归用例，需 Windows Rust 环境执行。未替换远端安装包；上游等价兼容后移除此差异。当前无 fork-doc 技能，手动同步维护记录。
+
+### Windows UF 模块读取与模型名称（2026-11-06）
+
+- 等待上游吸收：Windows Codex 26.1029.7803.0 的 chunk 同时导出 `__rspack_esm_id` 与 `__rspack_esm_ids`；读取器遗漏前者，使所有候选模块报 Unexpected token export。只将该声明纳入已有声明转换，不执行工厂、不修改原生应用文件。
+- UF 设置、模型菜单与目录共用同一受支持名称范围：`gpt-6-astra` / `gpt-6.1-sol` 及大小写、空格写法；不扩展其他模型、不改变实际请求 ID，保留 local/custom provider 边界。涉及 `scripts/codex-rspack-source.mjs`、`scripts/codex-rspack-capabilities.mjs`、`scripts/codex-provider-ultrafast.mjs`、`scripts/codex-provider-ultrafast-catalog.mjs`。
+- 验证：真实 Windows app.asar 只读复放从 0 个模块恢复至 6677 个，UF 两个模块改写及语法检查通过；定向 Node 测试 27 项通过，2 项环境相关测试跳过。未替换已安装 Panel，真实窗口与服务商 UF 请求仍待验证。当前无 fork-doc 技能，手动维护。上游提供等价导出读取及名称兼容后移除此差异；来源可用 `git log -S"Windows UF 模块读取" -- FORK.md` 定位。
+
+### 自定义服务商快速档位
+
+- 等待上游吸收：现有 UF 开关对受支持模型同时补齐 `priority` 与 `ultrafast`，原生菜单选择快速后使用 `priority` 请求档位。旧 ESM、Rspack 权限与模型目录保持一致，已有档位元数据不覆盖、不重复添加。代码位于 `scripts/codex-provider-ultrafast.mjs`、`scripts/codex-rspack-capabilities.mjs`、`scripts/codex-provider-ultrafast-catalog.mjs`。
+- 定向隔离测试验证无原生快速权限及目录时菜单出现快速、选择后请求档位为 priority、关闭开关恢复限制。尚未安装或验证真实服务商请求。上游等价支持后移除此差异；当前无 fork-doc 技能，按契约手工同步。
+
+### Windows 系统打开结果判断
+
+- 等待上游吸收：`src-tauri/src/windows_open.rs` 使用现有 windows 依赖的 ShellExecuteW，替代 `main.rs` 通过 explorer.exe 退出码判断打开成败的实现。大于 32 表示系统接受打开请求；其余保留目标和 Shell 错误码，拒绝内嵌 NUL。共用入口覆盖 Codex、日志、目录及链接，不更改连接、调试端口或启动配置。
+- Windows 真实接口验证：无操作命令打开返回 42，文件不存在返回 2；返回值边界单元测试通过，生产模块及测试代码使用 windows 0.61.3 完成 x86_64-pc-windows-msvc 编译检查。系统接受请求不等于目标应用完成启动，已安装 Panel 按钮效果仍待重新打包后验证。上游等价修复后移除此差异；当前无 fork-doc 技能，按契约手工同步。

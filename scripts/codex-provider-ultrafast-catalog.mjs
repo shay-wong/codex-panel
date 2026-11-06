@@ -39,10 +39,11 @@ export async function setModelDiscovery(client, enabled) {
 export function withUltrafastCatalog(catalog) {
   if (!Array.isArray(catalog?.models)) throw new Error("Invalid Codex model catalog");
   return { ...catalog, models: catalog.models.map(model => {
-    if (!["gpt-6-astra", "gpt-6.1-sol"].includes(model.slug)
-      || model.service_tiers?.some(tier => tier.id === "ultrafast")) return model;
-    return { ...model, service_tiers: [...(model.service_tiers ?? []),
-      { id: "ultrafast", name: "Ultrafast", description: "" }] };
+    // 与窗口权限判断保持一致，保留服务商原始模型 ID，不改写请求模型。
+    if (!/^(?:gpt-6[- ]astra|gpt-6\.1[- ]sol)$/i.test(model.slug)) return model;
+    const missing = [{ id: "priority", name: "Fast", description: "" }, { id: "ultrafast", name: "Ultrafast", description: "" }]
+      .filter(tier => !model.service_tiers?.some(existing => existing.id === tier.id));
+    return missing.length ? { ...model, service_tiers: [...(model.service_tiers ?? []), ...missing] } : model;
   }) };
 }
 

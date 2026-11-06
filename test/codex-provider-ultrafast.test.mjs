@@ -69,10 +69,10 @@ test("switch exposes Ultrafast, native setter saves it, and requests retain it; 
 test("official and unknown providers keep original access and existing catalog tiers are retained", () => {
   const access = {fast: false, ultrafast: false};
   for (const provider of [undefined, null, "", "openai"]) assert.equal(customProviderUltrafastAccess("local", provider, access), access);
-  const model = {serviceTiers: [{id: "ultrafast", name: "Ultrafast", description: "Provider description"}]};
+  const model = {serviceTiers: [{id: "priority", name: "Custom Fast"}, {id: "ultrafast", name: "Ultrafast", description: "Provider description"}]};
   assert.equal(withUltrafastTier(model), model);
   assert.equal(withUltrafastTier(null), null);
-  assert.deepEqual(customProviderUltrafastAccess("local", "custom", access, "gpt-6-astra"), {fast: false, ultrafast: true});
+  assert.deepEqual(customProviderUltrafastAccess("local", "custom", access, "gpt-6-astra"), {fast: true, ultrafast: true});
 });
 
 test("discovers both native modules from an existing import map and rejects unsupported structures", async () => {
@@ -92,7 +92,7 @@ test("discovers both native modules from an existing import map and rejects unsu
 
 
 test("only official Ultrafast models get access, including after changing a selected model", async () => {
-  for (const modelId of ["gpt-6-astra", "gpt-6.1-sol"]) {
+  for (const modelId of ["gpt-6-astra", "gpt-6.1-sol", "GPT-6 Astra", "GPT-6.1 Sol"]) {
     const f = fixture(true, modelId);
     assert.equal(await f.menu().select("ultrafast"), true);
     assert.equal(f.settings().serviceTierSettings.serviceTierForRequest, "ultrafast");
@@ -111,4 +111,15 @@ test("only official Ultrafast models get access, including after changing a sele
   assert.equal(f.menu().options.some(option => option.value === "ultrafast"), false, "stale catalog does not expand the official list");
   assert.equal(await f.menu().select("ultrafast"), false);
   assert.equal(await f.menu().select("priority"), true, "Fast still works");
+});
+
+test("fast is available without native permission or a priority catalog entry", async () => {
+  const f = fixture();
+  f.scope.account = () => ({serviceTierAccess: {fast: false, ultrafast: false}});
+  f.scope.model.serviceTiers = [];
+  assert.deepEqual(Array.from(f.menu().options, item => item.value), [null, "priority", "ultrafast"]);
+  assert.equal(await f.menu().select("priority"), true);
+  assert.equal(f.settings().serviceTierSettings.serviceTierForRequest, "priority");
+  f.runtime.setEnabled(false);
+  assert.equal(await f.menu().select("priority"), false);
 });

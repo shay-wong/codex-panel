@@ -82,8 +82,8 @@ export async function readCodexRspack(appPath) {
       const source = await sourceFor(name);
       if (!source.includes('export const __webpack_modules__=')) continue;
       if (!nativeMarkers.some(marker => source.includes(marker))) continue;
-      // Rspack chunks declare factory objects; evaluating these declarations does not run their modules.
-      const declarations = source.replace(/\bexport const (__rspack_esm_ids|__webpack_modules__|__rspack_esm_runtime)\b/g, 'var $1')
+      // Windows 的 Rspack 同时导出单个 id 和 ids；只读取工厂声明，不执行原生模块。
+      const declarations = source.replace(/\bexport const (__rspack_esm_ids?|__webpack_modules__|__rspack_esm_runtime)\b/g, 'var $1')
         .replaceAll('import.meta.url', JSON.stringify(`app://-/${name.slice('webview/'.length)}`));
       let chunk;
       try { chunk = vm.runInNewContext(`${declarations}\n;({modules:__webpack_modules__,ids:__rspack_esm_ids})`, {}, { timeout: 1000, filename: name }); }

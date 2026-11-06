@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod menu_diagnostics;
+#[cfg(any(target_os = "windows", test))]
+mod windows_open;
 #[cfg(target_os = "macos")]
 mod macos_exit;
 
@@ -661,14 +663,7 @@ fn open_with_system(target: &str) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn open_with_system(target: &str) -> Result<(), String> {
-    let status = StdCommand::new("explorer.exe")
-        .arg(target)
-        .status()
-        .map_err(|error| error.to_string())?;
-    status
-        .success()
-        .then_some(())
-        .ok_or_else(|| format!("无法打开 {target}"))
+    windows_open::open(target)
 }
 
 #[cfg(target_os = "linux")]
@@ -2313,6 +2308,8 @@ fn start_launcher_locked(
         .path()
         .resource_dir()
         .map_err(|error| error.to_string())?;
+    // Node 22 的入口解析不兼容可简化的 Windows verbatim 路径；不重新解析符号链接。
+    let resource_directory = dunce::simplified(&resource_directory);
     let app_root = resource_directory.join("app");
     let injector_path = app_root.join("scripts/codex-injector.mjs");
     let node_path = std::env::current_exe()
@@ -2697,7 +2694,7 @@ fn restart_launcher(
         // 先停自动重连，避免退出 Codex 时 injector 抢先重新启动旧配置的进程。
         stop_managed_child_locked(app, state);
         reset_recovery(state);
-        let result = (|| {
+        let result: Result<LauncherSnapshot, String> = (|| {
             if let Some(pid) = codex_pid {
                 append_log(state, &format!("Requesting explicit Codex restart for PID {pid}"));
                 // Pipe 模式下 Codex 可能已随 injector 的进程组退出。
@@ -3093,6 +3090,8 @@ async fn run_model_configuration(
         let codex_app = find_codex_app(&home).ok_or_else(missing_codex_app_message)?;
         verify_codex_app(&codex_app)?;
         let resources = app.path().resource_dir().map_err(|error| error.to_string())?;
+        // 模型配置入口与服务启动共用相同的 Node 路径约束。
+        let resources = dunce::simplified(&resources);
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
         let node = executable.parent().ok_or("无法定位 App 可执行文件目录")?
             .join(if cfg!(target_os = "windows") { "node.exe" }
@@ -4362,6 +4361,23 @@ mod tests {
         let error = super::reject_runtime_symlinks(&root).unwrap_err();
         assert!(error.contains("拒绝运行符号链接"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn node_resource_path_uses_safe_windows_spelling() {
+        use std::path::Path;
+        let regular = Path::new(r"C:\Users\测试用户\Codex Panel\app");
+        assert_eq!(
+            dunce::simplified(Path::new(r"\\?\C:\Users\测试用户\Codex Panel\app")),
+            regular,
+        );
+        assert_eq!(dunce::simplified(regular), regular);
+        // 不能把真正的网络共享或设备路径当作盘符路径截断。
+        let share = Path::new(r"\\server\share\Codex Panel");
+        assert_eq!(dunce::simplified(share), share);
+        let device = Path::new(r"\\.\pipe\panel");
+        assert_eq!(dunce::simplified(device), device);
     }
 
     #[test]

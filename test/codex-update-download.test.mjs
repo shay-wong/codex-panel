@@ -56,7 +56,7 @@ async function fixture(t, { badSignature = false, downloadError, downloadArchive
     }
     if (command.endsWith('/lipo')) return { stdout: 'arm64\n', stderr: '' };
     if (command.endsWith('/codesign')) {
-      const identifier = args.at(-1).endsWith('/codex') ? 'codex' : 'com.openai.codex';
+      const identifier = path.basename(args.at(-1)) === 'codex' ? 'codex' : 'com.openai.codex';
       return { stdout: '', stderr: `Identifier=${identifier}\nTeamIdentifier=2DC432GLL2\n` };
     }
     throw new Error(`Unexpected command ${command}`);
@@ -114,7 +114,7 @@ test('downloads in the background, verifies signature, stages, restores, and dro
   assert.equal(setup.requests[0].searchParams.get('plan_type'), 'pro');
   assert.equal(setup.requests[0].searchParams.get('beta'), 'false');
   assert.ok(setup.commands.some(([command, args]) => command.endsWith('/codesign') && args.includes('--deep')));
-  assert.ok(setup.commands.some(([command, args]) => command.endsWith('/codesign') && args.at(-1).endsWith('/codex')));
+  assert.ok(setup.commands.some(([command, args]) => command.endsWith('/codesign') && path.basename(args.at(-1)) === 'codex'));
   await assert.rejects(readFile(path.join(staged, 'update.delta')), { code: 'ENOENT' });
   const restarted = createCodexUpdateDownload(setup.options, setup.dependencies);
   await restarted.restore();
