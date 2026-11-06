@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Badge, Box, Button, Dialog, Flex, Text, TextField } from "@radix-ui/themes";
+import { Badge, Box, Button, Dialog, Flex, Select, Text, TextField } from "@radix-ui/themes";
 
 type ModelContextSettings = {
-  models: Array<{ slug: string; displayName: string; contextWindow: number | null; autoCompactTokenLimit: number | null }>;
+  models: Array<{ slug: string; displayName: string; contextWindow: number | null; autoCompactTokenLimit: number | null; multiAgentReasoningEffort: string | null; reasoningEfforts: string[] }>;
   contextWindows: Record<string, number>;
   autoCompactTokenLimits: Record<string, number | string>;
+  multiAgentReasoningEfforts: Record<string, string>;
   globalContextWindow: number | null;
   globalAutoCompactTokenLimit: number | null;
 };
@@ -38,6 +39,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
   const [values, setValues] = useState<Record<string, string>>({});
   const [compactValues, setCompactValues] = useState<Record<string, string>>({});
   const [percentageModes, setPercentageModes] = useState<Record<string, boolean>>({});
+  const [reasoningEfforts, setReasoningEfforts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -52,6 +54,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
       setCompactValues(Object.fromEntries(Object.entries(result.autoCompactTokenLimits).map(([slug, size]) => [slug, String(size).replace(/%$/, "")])));
       setPercentageModes(Object.fromEntries(Object.entries(result.autoCompactTokenLimits).map(([slug, size]) => [slug, typeof size === "string"])));
       setValues(Object.fromEntries(Object.entries(result.contextWindows).map(([slug, size]) => [slug, String(size)])));
+      setReasoningEfforts(result.multiAgentReasoningEfforts);
     }).catch(cause => { if (!cancelled) setError(String(cause)); });
     return () => { cancelled = true; };
   }, [open]);
@@ -68,7 +71,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
         .filter(([, value]) => value.trim())
         .map(([slug, value]) => [slug, percentageModes[slug] ? `${Number(value)}%` : Number(value)]));
       await window.__TAURI__.core.invoke("set_model_context_windows", {
-        contextWindows, autoCompactTokenLimits,
+        contextWindows, autoCompactTokenLimits, multiAgentReasoningEfforts: reasoningEfforts,
       });
       onSaved();
       onOpenChange(false);
@@ -91,10 +94,10 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
   }
 
   return <Dialog.Root open={open} onOpenChange={value => { if (!saving) onOpenChange(value); }}>
-    <Dialog.Content className="model-context-dialog" maxWidth="560px" size="2" style={{ display: "flex", flexDirection: "column", height: "min(680px, calc(100dvh - 24px))", overflow: "hidden" }}>
-      <Dialog.Title mb="1">模型上下文与自动压缩</Dialog.Title>
+    <Dialog.Content className="model-context-dialog" maxWidth="720px" size="2" style={{ display: "flex", flexDirection: "column", height: "min(680px, calc(100dvh - 24px))", overflow: "hidden" }}>
+      <Dialog.Title mb="1">模型上下文与子代理推理</Dialog.Title>
       <Dialog.Description size="1" color="gray">
-        按模型设置，留空使用默认值。保存后重启 Codex 生效。
+        默认值来自当前模型目录。留空或选默认恢复，保存后重启 Codex 生效。
       </Dialog.Description>
       <form onSubmit={save} style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
         {settings && <Box mt="2" style={{ flexShrink: 0 }}>
@@ -120,14 +123,15 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
         </Box>}
         <Box pr="1" style={{ minHeight: 0, flex: 1, overflowY: "auto", scrollbarWidth: "none", overscrollBehavior: "contain" }}>
           {!settings && !error && <Text as="p" size="2" role="status" mt="4">正在读取模型目录…</Text>}
-          {settings && <Box style={{ minWidth: 420 }}>
-            <Box mb="2" style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 128px 128px", gap: 12 }}>
+          {settings && <Box style={{ minWidth: 568 }}>
+            <Box mb="2" style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 128px 128px 136px", gap: 12 }}>
               <Text size="1" color="gray">模型</Text>
               <Text size="1" color="gray">上下文大小</Text>
               <Text size="1" color="gray">自动压缩阈值</Text>
+              <Text size="1" color="gray" title="multi_agent_reasoning_effort">子代理推理强度</Text>
             </Box>
             {settings.models.map(model => <Box key={model.slug} py="1">
-              <Box style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 128px 128px", gap: 12, alignItems: "center" }}>
+              <Box style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 128px 128px 136px", gap: 12, alignItems: "center" }}>
                 <Box tabIndex={0} title={`${model.displayName} (${model.slug})`}
                   style={{ minWidth: 0, overflowX: "auto", whiteSpace: "nowrap", scrollbarWidth: "thin" }}>
                   <Text size="2" weight="medium">{model.displayName}</Text>
@@ -167,6 +171,19 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
                     </Button>
                   </TextField.Slot>
                 </TextField.Root>
+                <Select.Root value={reasoningEfforts[model.slug] ?? "default"} disabled={saving || model.reasoningEfforts.length === 0}
+                  onValueChange={value => setReasoningEfforts(current => {
+                    const next = { ...current };
+                    if (value === "default") delete next[model.slug];
+                    else next[model.slug] = value;
+                    return next;
+                  })}>
+                  <Select.Trigger id={`reasoning-${model.slug}`} aria-label={`${model.displayName} 子代理推理强度`} style={{ width: "100%" }} />
+                  <Select.Content>
+                    <Select.Item value="default">{model.multiAgentReasoningEffort ? `默认（${model.multiAgentReasoningEffort}）` : "默认（未指定）"}</Select.Item>
+                    {model.reasoningEfforts.map(effort => <Select.Item key={effort} value={effort}>{effort}</Select.Item>)}
+                  </Select.Content>
+                </Select.Root>
               </Box>
               {percentageModes[model.slug] && <Text as="p" id={`compact-hint-${model.slug}`} size="1" color="gray" mt="1" align="right">
                 {percentageHint(model, values[model.slug], compactValues[model.slug])}
@@ -176,7 +193,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
         </Box>
         {error && <Text as="p" size="2" color="red" role="alert" mt="3">{error}</Text>}
         <Flex justify="between" gap="3" mt="2" style={{ flexShrink: 0 }}>
-          <Button type="button" variant="ghost" disabled={!settings || saving} onClick={() => { setValues({}); setCompactValues({}); setPercentageModes({}); }}>全部使用默认值</Button>
+          <Button type="button" variant="ghost" disabled={!settings || saving} onClick={() => { setValues({}); setCompactValues({}); setPercentageModes({}); setReasoningEfforts({}); }}>全部使用默认值</Button>
           <Flex gap="3">
             <Dialog.Close><Button type="button" variant="soft" disabled={saving}>取消</Button></Dialog.Close>
             <Button type="submit" disabled={!settings || saving} loading={saving}>保存</Button>

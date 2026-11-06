@@ -388,7 +388,7 @@ export function App() {
               </div>
             </section>
             <section className="preference-section" aria-labelledby="modelContextTitle">
-              <Card><Flex className="preference-row" align="center" justify="between" gap="3"><Box><Heading as="h3" size="2" id="modelContextTitle">模型上下文</Heading><Text as="p" size="1" color="gray" mt="1">按模型设置上下文和自动压缩阈值，留空使用默认值</Text></Box><Button variant="soft" disabled={!state || savingPreference} onClick={() => setModelContextOpen(true)}>配置上下文<LinearIcon name="chevronRight" /></Button></Flex></Card>
+              <Card><Flex className="preference-row" align="center" justify="between" gap="3"><Box><Heading as="h3" size="2" id="modelContextTitle">模型上下文</Heading><Text as="p" size="1" color="gray" mt="1">按模型设置上下文、自动压缩和子代理推理强度</Text></Box><Button variant="soft" disabled={!state || savingPreference} onClick={() => setModelContextOpen(true)}>配置上下文<LinearIcon name="chevronRight" /></Button></Flex></Card>
             </section>
             <section className="preference-section" aria-labelledby="displayTitle">
               <Heading as="h2" size="2" id="displayTitle" mb="2">显示与系统</Heading>

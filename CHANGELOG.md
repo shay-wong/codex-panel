@@ -8,6 +8,8 @@ This file records user-visible changes introduced by the fork.
 
 - Fix empty drafts after **Open in new conversation** on Rspack-based Codex builds by restoring target-project confirmation.
 
+- Configure subagent reasoning effort per model, with choices and default values from its catalog; preserve the setting through Ultrafast changes.
+
 - Fix Rspack startup errors caused by the Dot preference signal and shadowed module loaders in Ultrafast settings and the custom-provider composer.
 
 - Adapt custom-provider sending, Ultrafast, Dot, conversation tabs and update status to Codex’s Rspack modules, including lazy-loaded modules, while retaining existing switches and conversation focus behavior.

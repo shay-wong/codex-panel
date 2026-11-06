@@ -74,10 +74,11 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd },
   }
   if (!Array.isArray(state.catalog?.models)) throw new Error("Codex 模型目录格式无效");
   state.autoCompactTokenLimits ??= {};
+  state.multiAgentReasoningEfforts ??= {};
   return { config, userLayer, origins, state, statePath, catalogPath };
 }
 
-function withModelContextSettings(catalog, { contextWindows, autoCompactTokenLimits = {} }) {
+function withModelContextSettings(catalog, { contextWindows, autoCompactTokenLimits = {}, multiAgentReasoningEfforts = {} }) {
   return { ...catalog, models: catalog.models.map(model => {
     const updated = { ...model,
       ...(Object.hasOwn(contextWindows, model.slug) ? { context_window: contextWindows[model.slug] } : {}),
@@ -94,13 +95,16 @@ function withModelContextSettings(catalog, { contextWindows, autoCompactTokenLim
       if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error(`${model.slug} 的自动压缩阈值必须至少为 1 token`);
       updated.auto_compact_token_limit = limit;
     }
+    if (Object.hasOwn(multiAgentReasoningEfforts, model.slug)) {
+      updated.multi_agent_reasoning_effort = multiAgentReasoningEfforts[model.slug];
+    }
     return updated;
   }) };
 }
 
 export async function modelContextSettings({
   executable, dataDirectory, processEnv = process.env, cwd,
-}, contextWindows, autoCompactTokenLimits) {
+}, contextWindows, autoCompactTokenLimits, multiAgentReasoningEfforts) {
   await mkdir(dataDirectory, { recursive: true });
   dataDirectory = realpathSync(dataDirectory);
   const client = new CodexAppServer({ executable, processEnv, cwd });
@@ -110,6 +114,7 @@ export async function modelContextSettings({
     );
     if (contextWindows !== undefined) {
       autoCompactTokenLimits ??= state.autoCompactTokenLimits;
+      multiAgentReasoningEfforts ??= state.multiAgentReasoningEfforts;
       const slugs = new Set(state.catalog.models.map(model => model.slug));
       for (const [label, values] of [["上下文", contextWindows], ["自动压缩阈值", autoCompactTokenLimits]]) {
         if (!values || typeof values !== "object" || Array.isArray(values)) {
@@ -121,16 +126,28 @@ export async function modelContextSettings({
           if (!Number.isSafeInteger(size) || size <= 0) throw new Error(`${model} 的${label} token 数必须为正整数`);
         }
       }
+      if (!multiAgentReasoningEfforts || typeof multiAgentReasoningEfforts !== "object" || Array.isArray(multiAgentReasoningEfforts)) {
+        throw new Error("子代理推理设置必须是模型 ID 与推理强度的对应表");
+      }
+      for (const [slug, effort] of Object.entries(multiAgentReasoningEfforts)) {
+        const model = state.catalog.models.find(model => model.slug === slug);
+        if (!model) throw new Error(`模型目录中没有 ${slug}`);
+        if (!model.supported_reasoning_levels?.some(level => level.effort === effort)) {
+          throw new Error(`${slug} 不支持子代理推理强度 ${effort}`);
+        }
+      }
       const hasContexts = Object.keys(contextWindows).length > 0;
       const hasCompactLimits = Object.keys(autoCompactTokenLimits).length > 0;
-      const hasOverrides = hasContexts || hasCompactLimits;
+      const hasEfforts = Object.keys(multiAgentReasoningEfforts).length > 0;
       const origin = origins?.model_catalog_json?.name;
       if (origin && !(origin.type === "system"
         || origin.type === "user" && !origin.profile && origin.file === userLayer.name.file)) {
         throw new Error("模型目录由更高优先级配置管理，无法保存上下文设置");
       }
+      const hasOverrides = hasContexts || hasCompactLimits || hasEfforts;
       state.contextWindows = contextWindows;
       state.autoCompactTokenLimits = autoCompactTokenLimits;
+      state.multiAgentReasoningEfforts = multiAgentReasoningEfforts;
       if (hasOverrides) {
         const catalog = withModelContextSettings(state.catalog, state);
         await writeFile(statePath + ".tmp", JSON.stringify(state), { mode: 0o600 });
@@ -152,9 +169,12 @@ export async function modelContextSettings({
         slug: model.slug, displayName: model.display_name ?? model.slug,
         contextWindow: model.context_window ?? model.max_context_window ?? null,
         autoCompactTokenLimit: model.auto_compact_token_limit ?? null,
+        multiAgentReasoningEffort: model.multi_agent_reasoning_effort ?? null,
+        reasoningEfforts: (model.supported_reasoning_levels ?? []).map(level => level.effort),
       })),
       contextWindows: state.contextWindows,
       autoCompactTokenLimits: state.autoCompactTokenLimits,
+      multiAgentReasoningEfforts: state.multiAgentReasoningEfforts,
       globalContextWindow: config.model_context_window ?? null,
       globalAutoCompactTokenLimit: config.model_auto_compact_token_limit ?? null,
     };
@@ -349,7 +369,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
         for await (const chunk of process.stdin) source += chunk;
         input = JSON.parse(source);
       }
-      console.log(JSON.stringify(await modelContextSettings({ executable: codexExecutableInApp(appPath), dataDirectory }, input?.contextWindows, input?.autoCompactTokenLimits)));
+      console.log(JSON.stringify(await modelContextSettings({ executable: codexExecutableInApp(appPath), dataDirectory }, input?.contextWindows, input?.autoCompactTokenLimits, input?.multiAgentReasoningEfforts)));
     } else if (operation === "read-discovery") console.log(JSON.stringify(await readModelDiscovery(client)));
     else await setModelDiscovery(client, operation === "enable-discovery");
   }

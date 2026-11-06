@@ -3132,8 +3132,9 @@ async fn set_model_context_windows(
     state: State<'_, Arc<LauncherState>>,
     context_windows: serde_json::Value,
     auto_compact_token_limits: serde_json::Value,
+    multi_agent_reasoning_efforts: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let input = serde_json::json!({ "contextWindows": context_windows, "autoCompactTokenLimits": auto_compact_token_limits });
+    let input = serde_json::json!({ "contextWindows": context_windows, "autoCompactTokenLimits": auto_compact_token_limits, "multiAgentReasoningEfforts": multi_agent_reasoning_efforts });
     let output = run_model_configuration(app, "write-contexts", Some(state.data_directory.clone()), Some(input)).await?;
     serde_json::from_str(output.trim()).map_err(|error| error.to_string())
 }
