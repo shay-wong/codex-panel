@@ -2694,7 +2694,7 @@ fn restart_launcher(
         // 先停自动重连，避免退出 Codex 时 injector 抢先重新启动旧配置的进程。
         stop_managed_child_locked(app, state);
         reset_recovery(state);
-        let result = (|| {
+        let result: Result<LauncherSnapshot, String> = (|| {
             if let Some(pid) = codex_pid {
                 append_log(state, &format!("Requesting explicit Codex restart for PID {pid}"));
                 // Pipe 模式下 Codex 可能已随 injector 的进程组退出。
