@@ -175,7 +175,7 @@ test("provider catalog preserves an existing endpoint and restores only its own 
   const catalog = await response.json();
   assert.equal(authorization, "Bearer fixture-only");
   assert.equal(catalog.models[0].base_instructions, "custom instructions");
-  assert.equal(catalog.models[0].service_tiers[0].id, "ultrafast");
+  assert.deepEqual(catalog.models[0].service_tiers.map(t => t.id), ["priority", "ultrafast"]);
   await writeFile(preferencesFile, JSON.stringify({ customProviderUltrafast: false }));
   await adapter.sync();
   assert.equal(config.model_providers["probe.dot"].model_catalog_url, originalUrl);
@@ -187,7 +187,7 @@ test("provider catalog preserves an existing endpoint and restores only its own 
   await writeFile(preferencesFile, JSON.stringify({ customProviderUltrafast: true }));
   await adapter.sync();
   assert.equal(config.model_providers["probe.dot"].model_catalog_url, url, "re-enabling reuses the running catalog URL");
-  assert.equal((await (await fetch(url)).json()).models[0].service_tiers[0].id, "ultrafast");
+  assert.deepEqual((await (await fetch(url)).json()).models[0].service_tiers.map(t => t.id), ["priority", "ultrafast"]);
 });
 
 test("restoring a catalog preserves inherited values and rejects higher-priority overrides", async t => {
@@ -330,4 +330,13 @@ stream_max_retries = 0
   assert.equal(removed.features?.api_key_model_discovery, undefined);
   assert.equal(removed.model_provider, "probe");
   assert.equal(removed.model_providers.probe.name, "Local test only");
+});
+
+test("supported catalog models receive both speed tiers without duplicating existing metadata", () => {
+  const fast = {id: "priority", name: "Custom Fast"};
+  const catalog = {models: [{slug: "GPT-6 Astra", service_tiers: []}, {slug: "gpt-6.1-sol", service_tiers: [fast]}]};
+  const result = withUltrafastCatalog(catalog);
+  assert.deepEqual(result.models[0].service_tiers.map(t => t.id), ["priority", "ultrafast"]);
+  assert.equal(result.models[1].service_tiers[0], fast);
+  assert.deepEqual(withUltrafastCatalog(result), result);
 });

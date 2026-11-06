@@ -618,3 +618,8 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 - 等待上游吸收：Windows Codex 26.1029.7803.0 的 chunk 同时导出 `__rspack_esm_id` 与 `__rspack_esm_ids`；读取器遗漏前者，使所有候选模块报 Unexpected token export。只将该声明纳入已有声明转换，不执行工厂、不修改原生应用文件。
 - UF 设置、模型菜单与目录共用同一受支持名称范围：`gpt-6-astra` / `gpt-6.1-sol` 及大小写、空格写法；不扩展其他模型、不改变实际请求 ID，保留 local/custom provider 边界。涉及 `scripts/codex-rspack-source.mjs`、`scripts/codex-rspack-capabilities.mjs`、`scripts/codex-provider-ultrafast.mjs`、`scripts/codex-provider-ultrafast-catalog.mjs`。
 - 验证：真实 Windows app.asar 只读复放从 0 个模块恢复至 6677 个，UF 两个模块改写及语法检查通过；定向 Node 测试 27 项通过，2 项环境相关测试跳过。未替换已安装 Panel，真实窗口与服务商 UF 请求仍待验证。当前无 fork-doc 技能，手动维护。上游提供等价导出读取及名称兼容后移除此差异；来源可用 `git log -S"Windows UF 模块读取" -- FORK.md` 定位。
+
+### 自定义服务商快速档位
+
+- 等待上游吸收：现有 UF 开关对受支持模型同时补齐 `priority` 与 `ultrafast`，原生菜单选择快速后使用 `priority` 请求档位。旧 ESM、Rspack 权限与模型目录保持一致，已有档位元数据不覆盖、不重复添加。代码位于 `scripts/codex-provider-ultrafast.mjs`、`scripts/codex-rspack-capabilities.mjs`、`scripts/codex-provider-ultrafast-catalog.mjs`。
+- 定向隔离测试验证无原生快速权限及目录时菜单出现快速、选择后请求档位为 priority、关闭开关恢复限制。尚未安装或验证真实服务商请求。上游等价支持后移除此差异；当前无 fork-doc 技能，按契约手工同步。

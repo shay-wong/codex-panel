@@ -68,6 +68,8 @@ test('Rspack Ultrafast keeps model/provider boundaries and uses the same access 
   }, { __codexPanelProviderUltrafastV1__: { subscribe() {}, getSnapshot: () => enabled } }).settings;
   for (const model of ['gpt-6-astra', 'gpt-6.1-sol', 'GPT-6 Astra', 'GPT-6.1 Sol']) {
     options.model = model;
+    assert.equal(settings('thread', options).serviceTierAccess.fast, true);
+    assert.equal(settings('thread', options).serviceTierSettings.availableOptions.some(t => t.value === 'priority'), true);
     assert.equal(settings('thread', options).serviceTierAccess.ultrafast, true);
     assert.equal(settings('thread', options).setServiceTier('ultrafast'), true);
     assert.equal(settings('thread', options).serviceTierSettings.availableOptions.some(t => t.value === 'ultrafast'), true);

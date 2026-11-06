@@ -3,15 +3,18 @@ const id = "[A-Za-z_$][\\w$]*";
 const pattern = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export function customProviderUltrafastAccess(hostId, provider, access, model) {
-  // 服务商可能使用显示名称作为 ID；只兼容已支持模型的大小写及空格写法。
+  // 已支持的模型同时开放快速和超快；其他模型保留原生快速权限。
+  const supported = /^(?:gpt-6[- ]astra|gpt-6\.1[- ]sol)$/i.test(model);
   return hostId === "local" && typeof provider === "string" && provider !== "" && provider !== "openai"
-    ? { ...access, ultrafast: /^(?:gpt-6[- ]astra|gpt-6\.1[- ]sol)$/i.test(model) }
+    ? { ...access, fast: supported || access?.fast === true, ultrafast: supported }
     : access;
 }
 
 export function withUltrafastTier(model) {
-  if (!model || model.serviceTiers?.some(tier => tier.id === "ultrafast")) return model;
-  return { ...model, serviceTiers: [...(model.serviceTiers ?? []), { id: "ultrafast", name: "Ultrafast", description: "" }] };
+  if (!model) return model;
+  const missing = [{ id: "priority", name: "Fast", description: "" }, { id: "ultrafast", name: "Ultrafast", description: "" }]
+    .filter(tier => !model.serviceTiers?.some(existing => existing.id === tier.id));
+  return missing.length ? { ...model, serviceTiers: [...(model.serviceTiers ?? []), ...missing] } : model;
 }
 
 function functions(source) {

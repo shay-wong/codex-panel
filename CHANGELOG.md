@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Include Fast (`priority`) alongside Ultrafast for supported custom-provider models, including native selection and catalog capabilities.
+
 - Fix Windows Rspack chunks exporting `__rspack_esm_id` so Ultrafast modules can load; accept case and space variants of the two supported model IDs without changing request model names.
 
 - Normalize safe Windows verbatim resource paths before passing scripts to Node, fixing startup `EISDIR` errors and model configuration entry points.
