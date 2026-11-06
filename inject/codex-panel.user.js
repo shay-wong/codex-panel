@@ -3092,6 +3092,7 @@
     if (!state.usage) return;
     const usage = { ...state.usage, speed: currentUsageSpeed(state) };
     usage.estimated = state.pendingTokens > 0;
+    usage.outputTokens += state.pendingTokens;
     renderUsageLine(state.line, usage, false, state);
   }
 
@@ -3456,6 +3457,12 @@
         : "Output TPS: turn output tokens / total turn seconds, including waiting, reasoning and tools; one decimal place. Cache hit is cached/input tokens within the turn. Missing data is shown as --.";
     if (usage?.estimated) line.title += zh ? " 输出中按文本估算 Token，真实用量到达后校准。" : "Streaming tokens are estimated from text and corrected when actual usage arrives.";
     if (usage?.partial) line.title += zh ? " 日志尾部缺少轮边界，仅显示最近一次调用。" : " Turn boundary unavailable; latest call only.";
+    const end = usage?.inProgress ? Date.now() : usage?.endedAt;
+    if (Number.isFinite(usage?.outputTokens) && Number.isFinite(usage?.startedAt) && Number.isFinite(end) && end >= usage.startedAt) {
+      line.title += zh
+        ? ` 本轮 ${Math.round(usage.outputTokens)} 输出 Token / ${((end - usage.startedAt) / 1000).toFixed(1)} 秒。`
+        : ` This turn: ${Math.round(usage.outputTokens)} output tokens / ${((end - usage.startedAt) / 1000).toFixed(1)} seconds.`;
+    }
     line.title += zh ? " 指针刻度为 0–100 tok/s，超过 100 时保持满格。" : " Needle scale: 0–100 tok/s; higher rates keep the needle at full scale.";
     if (loading && (usage.speed == null || usage.cache == null)) line.title += zh ? " 本轮数据统计中…" : " Calculating this turn’s usage…";
     line.style.opacity = usage?.observedAt && Date.now() - usage.observedAt > 120_000 ? "0.55" : "1";
@@ -3514,7 +3521,7 @@
               if (usage.turnId === state.usage.turnId && (usage.outputTokens < state.usage.outputTokens
                 || (!state.usage.inProgress && usage.inProgress))) continue;
             }
-            if (!usage || usage.turnId !== state.usage?.turnId
+            if (!usage || !usage.inProgress || usage.turnId !== state.usage?.turnId
               || usage.outputTokens > (state.usage?.outputTokens ?? 0)) state.pendingTokens = 0;
             state.usage = usage ?? null;
             if (usage) renderUsageState(state);

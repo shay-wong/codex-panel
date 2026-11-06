@@ -56,6 +56,25 @@ test("reads a bounded local tail through the trusted native thread path", async 
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test("a mid-turn context in a truncated tail cannot replace the real start boundary", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "panel-usage-context-"));
+  try {
+    const text = start("current") + usage(10, 1000, 100, 80)
+      + event("response_item", { text: "x".repeat(2_200_000) }, 20)
+      + event("turn_context", { turn_id: "current" }, 30)
+      + usage(90, 4090, 100, 80, 3090) + end("current", 100);
+    const file = path.join(dir, `rollout-${id}.jsonl`);
+    await writeFile(file, text);
+    const result = await readThreadUsage(id, async () => ({ thread: { id, path: file } }));
+    assert.deepEqual(result.usage, summarizeThreadUsage(text));
+    assert.equal(result.usage.speed, 40.9);
+    const partial = summarizeThreadUsage(event("turn_context", { turn_id: "current" }, 30)
+      + usage(90, 4090, 100, 80, 3090) + end("current", 100));
+    assert.equal(partial.partial, true);
+    assert.equal(partial.speed, null);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test("accepts native continuation filenames while rejecting another thread's log", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "panel-usage-continuation-"));
   const continuationId = "22222222-2222-4222-8222-222222222222";
@@ -100,8 +119,8 @@ test("composer status follows its own thread and removes values on Home", async 
     dom.window.eval(`let destroyed = false; let showThreadUsage = true; let threadUsageAboveComposer = false; let usageDotMatrix = true; let usageAnimationMode = "smooth"; let usageAnimationMinSpeed = 5; let usageAnimationMaxSpeed = 40; const OWNED_ATTRIBUTE = "data-codex-panel-owned";
       const normalizeThreadId = value => value.replace(/^local:/, "");
       const threadIdFromLocation = () => "${id}"; const hasLiveHostBinding = () => true;
-      const requestHost = async () => ({ usage: { speed: 20, outputTokens: 200, inputTokens: 100, cachedInputTokens: 81, cache: 81, totalTokens: 300, turnId: "first", startedAt: Date.now() - 10000, endedAt: Date.now(), observedAt: Date.now(), inProgress: false } });
-      ${block}\nwindow.pollUsage = pollThreadUsage; window.renderUsage = renderUsageLine; window.usageNotification = onUsageNotification; window.usageStates = usageLines; window.tickUsage = () => usageLines.forEach(state => renderUsageState(state));`);
+      const requestHost = async () => window.usageResult ?? ({ usage: { speed: 20, outputTokens: 200, inputTokens: 100, cachedInputTokens: 81, cache: 81, totalTokens: 300, turnId: "first", startedAt: Date.now() - 10000, endedAt: Date.now(), observedAt: Date.now(), inProgress: false } });
+      ${block}\nwindow.pollUsage = () => { usagePolledAt = 0; return pollThreadUsage(); }; window.renderUsage = renderUsageLine; window.usageNotification = onUsageNotification; window.usageStates = usageLines; window.tickUsage = () => usageLines.forEach(state => renderUsageState(state));`);
     await dom.window.pollUsage();
     const line = dom.window.document.querySelector(".codex-panel-usage-line");
     assert.match(line.textContent, /20.0\s*tok\/s.*缓存命中\s*81.0%/);
@@ -149,6 +168,12 @@ test("composer status follows its own thread and removes values on Home", async 
     notify("item/agentMessage/delta", { turnId: "live", delta: "ignored" });
     assert.doesNotMatch(line.title, /估算/);
     notify("turn/started", { turn: { id: "remote" } }, "remote");
+    assert.match(line.textContent, /40.9\s*tok\/s/);
+    const live = [...dom.window.usageStates.values()][0];
+    live.pendingTokens = 900;
+    dom.window.usageResult = { usage: { ...live.usage } };
+    await dom.window.pollUsage();
+    assert.equal(live.pendingTokens, 0);
     assert.match(line.textContent, /40.9\s*tok\/s/);
     notify("turn/started", { turn: { id: "next" } });
     assert.equal(line.querySelectorAll('.codex-panel-usage-dots i').length, 6);

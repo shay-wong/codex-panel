@@ -551,7 +551,8 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 ### 本次用量动画与计数修复
 
 - `usageAnimationMode` 仅选择点阵动画：默认 `smooth` 连续追踪，`morph` 为 500ms 点阵变换（含加载圆点转数字）。普通数字固定 120ms 渐隐 + 180ms 渐显，隐藏动画选择和速度设置；切回点阵恢复上次选择。Launcher → `set_usage_animation_mode` → 偏好原子保存 → injector 心跳 → 注入渲染；无需重启，最低/最高速度仅连续追踪使用。
-- 验证：`test/codex-thread-usage.test.mjs` 覆盖模式/样式切换；隔离实际 Launcher 页面与模拟宿主验证保存、重读及动画。未安装、未核实用户现场视觉效果。来源：`git log -S'usageAnimationMode' -- inject/codex-panel.user.js`。与既有会话用量能力共同维护。
+- 仅 `task_started` / `turn_started` 确认轮起点；`turn_context` 可重复，缺真实起点继续扩读至现有 8 MiB 上限，仍缺时不显示 TPS。完成日志清除残留估算，tooltip 分子包含当前估算。真实日志修复前 9009/443.519=20.3，修复后与完整读取一致为 14087/627.837=22.4 tok/s。
+- 验证：`test/codex-thread-usage.test.mjs` 覆盖截断上下文、完成校准与模式/样式切换；隔离实际 Launcher 页面与模拟宿主验证保存、重读及动画。未安装、未核实用户现场视觉效果。来源：`git log -S'usageAnimationMode' -- inject/codex-panel.user.js`。与既有会话用量能力共同维护。
 
 ## 会话快捷短语（2026-11-05，长期保留）
 

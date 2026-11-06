@@ -7,6 +7,7 @@ This file records user-visible changes introduced by the fork.
 ## Unreleased
 
 - Offer continuous tracking and dot morph for dot-matrix numbers; ordinary numbers use fading. Switching number style preserves the selected dot effect.
+- Correct TPS when truncated logs contain a repeated mid-turn context; clear residual estimates on final log calibration.
 
 ## 0.4.18-fork
 

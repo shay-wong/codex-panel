@@ -30,7 +30,8 @@ export function summarizeThreadUsage(text, now = Date.now()) {
       continue;
     }
     if (record.type === "turn_context" && event.turn_id && event.turn_id !== turnId) {
-      reset(event.turn_id, at);
+      // Context can repeat mid-turn; only a start event establishes elapsed time.
+      reset(event.turn_id, null);
       inProgress = true;
       continue;
     }
@@ -47,7 +48,7 @@ export function summarizeThreadUsage(text, now = Date.now()) {
     if (!last || !total || !Number.isFinite(at)) continue;
     if (previous?.output_tokens === total.output_tokens && previous.total_tokens === total.total_tokens) continue;
     // 缺少轮边界时只能显示最近调用的缓存，不能把会话累计输出当成本轮输出。
-    if (!turnId) reset(null, null);
+    if (startedAt == null) reset(turnId, null);
     if (Number.isFinite(last.output_tokens) && last.output_tokens >= 0) tokens += last.output_tokens;
     if (Number.isFinite(last.input_tokens) && last.input_tokens > 0
       && Number.isFinite(last.cached_input_tokens) && last.cached_input_tokens >= 0) {
