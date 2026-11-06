@@ -21,6 +21,47 @@ const packageJson = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
 );
 
+test("actively closing CDP releases pending work without waiting for a socket close event", async () => {
+  class Socket extends EventEmitter {
+    static OPEN = 1;
+    readyState = Socket.OPEN;
+    closeCalls = 0;
+    addEventListener(event, listener) { this.on(event, listener); }
+    removeEventListener(event, listener) { this.off(event, listener); }
+    send() {}
+    close() { this.readyState = 2; this.closeCalls++; }
+  }
+  const start = source.indexOf("class CdpConnection {");
+  const end = source.indexOf("async function codexTargets(", start);
+  const CdpConnection = vm.runInNewContext(`${source.slice(start, end)}; CdpConnection`, {
+    WebSocket: Socket, console, setTimeout: () => 1, clearTimeout() {},
+  });
+  const connection = new CdpConnection("ws://isolated.invalid");
+  const opening = connection.open();
+  connection.socket.emit("open");
+  await opening;
+  let requestError, waiterError;
+  const request = connection.send("Page.getFrameTree").catch(error => { requestError = error; });
+  const waiter = connection.waitFor("Page.loadEventFired", 1000).catch(error => { waiterError = error; });
+  connection.on("Runtime.bindingCalled", () => {});
+  try {
+    connection.close();
+    assert.equal(connection.closed, true);
+    await Promise.resolve();
+    assert.match(requestError?.message ?? "", /closed/);
+    assert.match(waiterError?.message ?? "", /closed/);
+    assert.equal(connection.pending.size, 0);
+    assert.equal(connection.eventWaiters.size, 0);
+    assert.equal(connection.eventHandlers.size, 0);
+    assert.doesNotThrow(() => connection.close());
+    assert.equal(connection.socket.closeCalls, 1);
+    await assert.rejects(connection.send("Page.getFrameTree"), /closed/);
+  } finally {
+    connection.socket.emit("close");
+    await Promise.all([request, waiter]);
+  }
+});
+
 test("Windows Store cache includes companion executables and refreshes changed files", async () => {
   const directory = String.raw`C:\Program Files\WindowsApps\Codex\bin`;
   const files = new Map([

@@ -3561,6 +3561,8 @@
           if (state.threadId === threadId && usageComposerThread(card) === threadId) {
             if (state.revision !== revisions.get(state)) continue;
             const usage = result?.usage;
+            // 一次回读失败不能丢失正在接收增量的轮次身份和统计。
+            if (!usage && state.usage) continue;
             if (usage && state.usage) {
               if (usage.turnId !== state.usage.turnId && state.usage.startedAt > (usage.startedAt ?? 0)) continue;
               if (usage.turnId === state.usage.turnId && (usage.outputTokens < state.usage.outputTokens

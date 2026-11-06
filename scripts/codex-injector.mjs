@@ -562,15 +562,7 @@ class CdpConnection {
       if (message.error) pending.reject(new Error(message.error.message));
       else pending.resolve(message.result);
     });
-    this.socket.addEventListener("close", () => {
-      this.closed = true;
-      const error = new Error("CDP WebSocket closed");
-      this.pending.forEach((pending) => pending.reject(error));
-      this.pending.clear();
-      this.eventWaiters.forEach((waiters) => waiters.forEach((waiter) => waiter.reject(error)));
-      this.eventWaiters.clear();
-      this.eventHandlers.clear();
-    });
+    this.socket.addEventListener("close", () => this.close());
   }
 
   send(method, params = {}) {
@@ -598,7 +590,7 @@ class CdpConnection {
         clearTimeout(timeout);
         resolve(value);
       };
-      waiters.push({ resolve: wrappedResolve, reject });
+      waiters.push({ resolve: wrappedResolve, reject: (error) => { clearTimeout(timeout); reject(error); } });
       this.eventWaiters.set(method, waiters);
     });
   }
@@ -616,6 +608,14 @@ class CdpConnection {
   }
 
   close() {
+    if (this.closed) return;
+    this.closed = true;
+    const error = new Error("CDP WebSocket closed");
+    this.pending.forEach((pending) => pending.reject(error));
+    this.pending.clear();
+    this.eventWaiters.forEach((waiters) => waiters.forEach((waiter) => waiter.reject(error)));
+    this.eventWaiters.clear();
+    this.eventHandlers.clear();
     this.socket.close();
   }
 }

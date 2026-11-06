@@ -119,7 +119,10 @@ test("composer status follows its own thread and removes values on Home", async 
     dom.window.eval(`let destroyed = false; let showThreadUsage = true; let threadUsageAboveComposer = false; let usageDotMatrix = true; let usageAnimationMode = "smooth"; let usageAnimationMinSpeed = 5; let usageAnimationMaxSpeed = 40; const OWNED_ATTRIBUTE = "data-codex-panel-owned";
       const normalizeThreadId = value => value.replace(/^local:/, "");
       const threadIdFromLocation = () => "${id}"; const hasLiveHostBinding = () => true;
-      const requestHost = async () => window.usageResult ?? ({ usage: { speed: 20, outputTokens: 200, inputTokens: 100, cachedInputTokens: 81, cache: 81, totalTokens: 300, turnId: "first", startedAt: Date.now() - 10000, endedAt: Date.now(), observedAt: Date.now(), inProgress: false } });
+      const requestHost = async () => {
+        if (window.usageFailure) throw new Error("Read timed out");
+        return window.usageResult ?? ({ usage: { speed: 20, outputTokens: 200, inputTokens: 100, cachedInputTokens: 81, cache: 81, totalTokens: 300, turnId: "first", startedAt: Date.now() - 10000, endedAt: Date.now(), observedAt: Date.now(), inProgress: false } });
+      };
       ${block}\nwindow.pollUsage = () => { usagePolledAt = 0; return pollThreadUsage(); }; window.renderUsage = renderUsageLine; window.usageNotification = onUsageNotification; window.usageStates = usageLines; window.tickUsage = () => usageLines.forEach(state => renderUsageState(state));`);
     await dom.window.pollUsage();
     const line = dom.window.document.querySelector(".codex-panel-usage-line");
@@ -154,6 +157,17 @@ test("composer status follows its own thread and removes values on Home", async 
     now += 10_000;
     dom.window.tickUsage();
     assert.match(line.textContent, /5.0\s*tok\/s/);
+    dom.window.usageFailure = true;
+    await dom.window.pollUsage();
+    assert.match(line.textContent, /5.0\s*tok\/s/);
+    assert.equal([...dom.window.usageStates.values()][0].usage.turnId, "live");
+    dom.window.usageFailure = false;
+    dom.window.usageResult = { usage: null };
+    await dom.window.pollUsage();
+    assert.match(line.textContent, /5.0\s*tok\/s/);
+    notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
+    assert.match(line.textContent, /10.0\s*tok\/s/);
+    delete dom.window.usageResult;
     const actual = { turnId: "live", tokenUsage: { last: { outputTokens: 4090, inputTokens: 100, cachedInputTokens: 80 }, total: { totalTokens: 4490 } } };
     now = epoch + 100_000;
     notify("thread/tokenUsage/updated", actual);

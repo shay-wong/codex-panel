@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Recover Panel connections after heartbeat timeouts without waiting for a WebSocket close response; preserve current usage statistics through failed or empty reads.
+
 ## 0.5.0-fork
 
 - Use the Windows Shell API to open Codex, files, folders and links, avoiding false failures from Explorer exit codes while retaining real Shell errors.
