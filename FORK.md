@@ -587,3 +587,10 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 - 文档：中英文 README/CHANGELOG、`docs/fork-capabilities.md#rspack-based-codex-builds`。本次未提交来源可用 `git log -S'createCodexRspackRuntime' -- scripts/codex-rspack.mjs` 定位。合并时保留 factory 执行时序、原始源核对及 provider/安全策略边界；上游提供等价公开扩展API后再移除此适配。
 
 - Rspack 运行时修复：Dot 偏好使用标量 signal 的单参数 get；Ultrafast 与额度适配在 factory 作用域捕获 require，避免被内层 service tier 参数或组件局部变量遮蔽。这三处错误只有执行时出现，语法通过不能证明可渲染。`test/codex-rspack-runtime-regressions.test.mjs` 与能力测试覆盖真实 getter 契约及变量遮蔽，真实原生 getter 隔离复现错误并验证修复。
+
+
+### 本地 Rust 构建占用
+
+- 维护者构建配置，长期保留：`src-tauri/Cargo.toml` 的 dev profile 使用 `debug="line-tables-only"`、`incremental=false`，test 继承 dev；保留文件/行号回溯，降低调试符号与增量缓存占用，代价是 Rust 改动后重编较慢。Release、优化与安装签名路径不变，不调整全局 Cargo 或其他仓库。
+- 清理仅通过 Cargo 指定 `--profile dev`，必要时分别指定本机显式 target；先 dry-run 并核对没有正在编译，再执行。保留 Release 构建与其 host build scripts，不接触已安装 App、Panel 数据、配置与凭据。不要定期自动清整个 target，避免每次重装重复编译。
+- 文档：中英文 README 的 Verify/验证；配置验证使用隔离小项目检查 rustc 参数及无 incremental 目录，真实缓存清理后比较占用。内部构建策略无需产品 changelog。来源可用 `git log -S'line-tables-only' -- src-tauri/Cargo.toml` 定位。

@@ -347,6 +347,15 @@ Issue 描述和评论支持 GFM，包括表格和任务列表。任务列表中�
 
 ## 验证
 
+本地 Rust Debug 编译仅保留文件/行号信息，并关闭增量编译以减少磁盘占用；测试继承相同设置，Release 构建不变。可清理旧 Debug 产物，保留 Release 和重装缓存：
+
+```bash
+cargo clean --manifest-path src-tauri/Cargo.toml --profile dev
+cargo clean --manifest-path src-tauri/Cargo.toml --profile dev --target-dir src-tauri/target/aarch64-apple-darwin
+```
+
+第二条清理显式 Apple Silicon 目标（如有）。Debug 产物按需重新生成，下次 Debug 编译会更慢；已安装应用和 Panel 数据不受影响。
+
 ```bash
 npm run check
 ```

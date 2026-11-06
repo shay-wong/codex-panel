@@ -350,6 +350,15 @@ Issue descriptions and comments support GFM, including tables and task lists. Ta
 
 ## Verify
 
+Local Rust debug builds retain file/line information without full debug data and disable incremental compilation to limit disk use; tests inherit these settings. Release builds are unchanged. To remove old debug artifacts while retaining release/install caches:
+
+```bash
+cargo clean --manifest-path src-tauri/Cargo.toml --profile dev
+cargo clean --manifest-path src-tauri/Cargo.toml --profile dev --target-dir src-tauri/target/aarch64-apple-darwin
+```
+
+The second command clears the explicit Apple Silicon target when present. Debug artifacts regenerate on demand; the next debug build takes longer. Installed apps and Panel data are unaffected.
+
 ```bash
 npm run check
 ```
