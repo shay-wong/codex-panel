@@ -25,6 +25,7 @@ function runNpm(args, extraEnvironment = {}) {
   const command = process.platform === "win32" ? "npm.cmd" : "npm";
   const result = spawnSync(command, args, {
     env: { ...process.env, ...extraEnvironment },
+    shell: process.platform === "win32",
     stdio: "inherit",
   });
   if (result.error) throw result.error;
