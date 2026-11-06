@@ -47,7 +47,7 @@ const initialSnapshot: LauncherSnapshot = {
 };
 
 function Setting({ id, title, detail, checked, disabled, onChange }: {
-  id: string; title: string; detail: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void;
+  id: string; title: string; detail: ReactNode; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void;
 }) {
   return <Flex className={`preference-row${disabled ? " is-disabled" : ""}`} align="center" justify="between" gap="4">
     <Box><Text as="label" htmlFor={id} size="2" weight="medium">{title}</Text><Text as="p" size="1" color="gray" mt="1" id={`${id}Detail`}>{detail}</Text></Box>
@@ -432,7 +432,11 @@ export function App() {
                 <Separator size="4" />
                 <Setting id="customProviderQuotaFix" title="移除账号额度不足时 API 发送限制" detail="仅限自定义 API；首次安装适配时重载一次，之后开关即时生效" checked={preferences?.customProviderQuotaFix ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("customProviderQuotaFix", enabled)} />
                 <Separator size="4" />
-                <Setting id="customProviderUltrafast" title="显示自定义 API 的 Ultrafast 选项" detail="仅限本地自定义 API 的 GPT-6 Astra、GPT-6.1 Sol；开启时若模型发现未开启，会询问是否添加配置；关闭时若配置存在，会询问是否删除。更改后请重启 Codex，使用时保持 Panel 运行。" checked={preferences?.customProviderUltrafast ?? false} disabled={!state || savingPreference} onChange={enabled => void changeUltrafast(enabled)} />
+                <Setting id="customProviderUltrafast" title="显示自定义 API 的 Ultrafast 选项" detail={<>
+                  <span style={{ display: "block" }}>适用于本地自定义 API 的 GPT-6 Astra / GPT-6.1 Sol。</span>
+                  <span style={{ display: "block" }}>需启用 <code>features.api_key_model_discovery = true</code>。</span>
+                  <span style={{ display: "block" }}>保存后重启 Codex，使用时保持 Panel 运行。</span>
+                </>} checked={preferences?.customProviderUltrafast ?? false} disabled={!state || savingPreference} onChange={enabled => void changeUltrafast(enabled)} />
                 <Separator size="4" />
                 <Setting id="showCustomProviderDot" title="恢复 Dot 入口" detail="跳过 Dot 的客户端账号权限与 Provider 限制；连接 Panel 时生效，实际使用仍可能被服务端拒绝" checked={preferences?.showCustomProviderDot ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("showCustomProviderDot", enabled)} />
                 <Separator size="4" />

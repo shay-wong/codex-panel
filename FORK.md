@@ -92,6 +92,8 @@ Sol 默认上下文修正（本次修复，等待上游吸收）：`withCurrentM
 
 重启提醒持久化（本次修复，长期保留）：模型配置/Ultrafast 保存成功 → 原生后端 `restart_reminder::mark` → Panel 数据目录 `restart-required.json`，记录标签、保存时间及真实 Codex 主进程身份。`current_ui_state` 返回 `codexRestartReminder`；仅进程身份不同且启动时间晚于保存时清除，无进程、检测失败、取消重启或仅重装 Panel 均保留。macOS 使用 proc_pidinfo 微秒启动时间，Windows GetProcessTimes，Linux /proc starttime+boot_id；不使用 injector PID 判定。文件操作串行、临时文件原子替换；前端稍后只隐藏当前挂载，重开恢复，连接回到running时读一次状态核实。针对性原生模块自检、Launcher重开/稍后/新Codex清除，以及隔离实际页面恢复验证；不为验证重启真实用户App。此前已丢失的内存提醒无法自动找回；来源 `git log -S'codex_restart_reminder' -- src-tauri/src/main.rs`。
 
+Ultrafast 设置说明：`launcher/src/App.tsx` 将适用模型、必需的 `features.api_key_model_discovery = true`、重启及保持 Panel 运行的要求分三行展示，省去开关操作流程的重复描述。隔离 Launcher 暗色页面确认三行独立排列。
+
 重启提醒按钮样式（本次修复）：`launcher/src/App.tsx` 的保存后提醒操作区使用等高 size=2 按钮，主操作 soft、稍后 outline；Flex 居中并保留固定 8px 间隔，移除 ghost 负边距导致的挤压和上下错位，窄窗可换行。隔离真实 Launcher 暗色页面量测按钮同Y、正文/按钮同X、间隔8px；不改变重启与稍后行为。
 
 按模型子代理推理（本次新增，长期保留）：沿用“偏好设置 → 模型上下文 → 配置上下文”，为每个模型新增 `multi_agent_reasoning_effort` 下拉选择；选项来自源目录的 `supported_reasoning_levels`，默认项展示源值，不硬编码模型档位。`ModelContextSettings.tsx` → `set_model_context_windows` → `modelContextSettings` → `model-context.json` 的 `multiAgentReasoningEfforts` → 完整目录对应字段；只改推理也保留目录，恢复默认移除覆盖，全部默认同时清除上下文、压缩和推理。Ultrafast 组合保留三类值，不写全局子代理设置、不修改单次派发参数。保存后重启生效；界面默认值使用源目录与上述原生 Sol 修正，显式保存的覆盖值分别显示。直接验证使用全新隔离 HOME/CODEX_HOME/Panel 数据及工作区，执行单独推理、组合保存、回读和恢复；真实子代理请求另行验证。中英文 README/CHANGELOG 与 `docs/fork-capabilities.md#per-model-context-windows` 同步；来源 `git log -S'multiAgentReasoningEfforts' -- scripts/codex-provider-ultrafast-catalog.mjs`；上游支持等价按模型编辑后重新评估。
