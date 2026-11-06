@@ -18,7 +18,8 @@ async function fixture(t) {
   return root;
 }
 
-test('delta preflight matches Sparkle size, permissions and every required locale', async t => {
+// Windows chmod 无法设置 POSIX 执行位；此用例验证的是 macOS 更新所需的文件权限。
+test('delta preflight matches Sparkle size, permissions and every required locale', { skip: process.platform === 'win32' }, async t => {
   const root = await fixture(t);
   const appPath = path.join(root, 'ChatGPT.app');
   const framework = path.join(appPath, 'Contents/Frameworks/Sparkle.framework');
