@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Remove the quick-phrase card’s empty status-row space and animate message expansion and collapse without abrupt jumps.
+
 - Reset GPT-6.1 Sol to its official 500000-token default when the native catalog still contains the old 272000 value, preserving explicit settings and external catalogs.
 
 - Fix empty drafts after **Open in new conversation** on Rspack-based Codex builds by restoring target-project confirmation.

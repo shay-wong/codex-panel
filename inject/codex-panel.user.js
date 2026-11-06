@@ -268,6 +268,8 @@
       .codex-panel-phrase svg { width: 14px; height: 14px; flex: none; color: var(--color-token-text-secondary, GrayText); }
       .codex-panel-phrase:disabled { opacity: .5; }
       .codex-panel-phrases-status { min-height: 18px; margin: 10px 0 0; color: var(--color-token-text-secondary, GrayText); font-size: 12px; overflow-wrap: anywhere; }
+      #${QUICK_PHRASES_ID} .codex-panel-phrases-status { min-height: 0; overflow: hidden; }
+      #${QUICK_PHRASES_ID} .codex-panel-phrases-status:empty { display: none; }
       .codex-panel-phrases-dialog { width: min(440px, calc(100vw - 32px)); margin: auto; padding: 24px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 18px; background: var(--color-token-main-surface-primary, Canvas); -webkit-app-region: no-drag; }
       .codex-panel-phrases-dialog::backdrop { background: rgb(0 0 0 / .3); }
       .codex-panel-phrases-dialog h2 { margin: 0 0 6px; font-size: 18px; font-weight: 500; }
@@ -2957,6 +2959,22 @@
     quickPhrasesDialog.showModal();
   }
 
+  function setQuickPhraseStatus(status, message) {
+    if (!message && !status.textContent) return;
+    const visible = status.textContent !== "";
+    const style = getComputedStyle(status);
+    const from = { height: `${status.getBoundingClientRect().height}px`, marginTop: visible ? style.marginTop : "0px", opacity: visible ? style.opacity : 0 };
+    status.getAnimations().forEach(animation => animation.cancel());
+    if (message) status.textContent = message;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { status.textContent = message; return; }
+    const to = { height: message ? `${status.scrollHeight}px` : "0px", marginTop: message ? "10px" : "0px", opacity: message ? 1 : 0 };
+    const animation = status.animate([from, to], { duration: 180, easing: "ease-out", fill: "forwards" });
+    animation.onfinish = () => {
+      status.textContent = message;
+      animation.cancel();
+    };
+  }
+
   async function sendQuickPhrase(phrase) {
     if (quickPhraseSending) return;
     const status = quickPhrasesPanel.querySelector('[role="status"]');
@@ -2979,7 +2997,7 @@
       }
       quickPhraseSending = true;
       renderQuickPhrases();
-      status.textContent = "";
+      setQuickPhraseStatus(status, "");
       controller.setText(phrase);
       await new Promise(resolve => window.requestAnimationFrame(resolve));
       if (quickPhraseComposer() !== root) throw new Error(hostText("会话已切换，短语保留在原输入框中", "The conversation changed. The phrase remains in the original composer."));
@@ -2988,7 +3006,7 @@
       if (!send) throw new Error(hostText("当前无法发送，短语已填入输入框", "Sending is unavailable. The phrase is in the composer."));
       send.click();
     } catch (error) {
-      status.textContent = error.message;
+      setQuickPhraseStatus(status, error.message);
     } finally {
       quickPhraseSending = false;
       renderQuickPhrases();

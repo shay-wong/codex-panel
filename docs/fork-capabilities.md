@@ -35,6 +35,8 @@ While connected to Panel, open a new Codex chat or an existing conversation. **Q
 
 The list shares the summary’s animation container when available; when the summary is hidden or absent, independent placement remains available. 短语优先复用摘要动画容器，摘要隐藏或缺失时保留独立位置。
 
+The card keeps 16px bottom padding when there is no status message; empty status rows take no space. Messages expand and fade in over 180ms; clearing them collapses and fades out before removing the text. Reduced-motion settings switch immediately. 无状态消息时卡片底部保留 16px 内边距，空状态行不占空间；提示用 180ms 展开淡入、收起淡出，收起完成才清空文字，减少动态效果时直接切换。
+
 Phrases are saved in local storage for the current Codex profile and shared by its conversations; they are not synchronized between devices or profiles. An existing draft or attachment must be sent or cleared first. If native sending is unavailable, the phrase stays in the composer for manual handling. Pages without a visible Codex composer do not show the list.
 
 The real injection script was verified in an isolated browser with a local native-composer fixture: saving, reload persistence, click-to-send, independent display after hiding the summary, and new-chat display and first-message submission passed. Focused regression checks cover a hidden or absent summary and sending from both new-chat and existing-conversation composers. The installed client's summary and composer structure were inspected read-only. Sending through the installed Codex app and Windows/Linux behavior remain unverified.
