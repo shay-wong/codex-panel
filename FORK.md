@@ -607,3 +607,8 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 - 维护者构建配置，长期保留：`src-tauri/Cargo.toml` 的 dev profile 使用 `debug="line-tables-only"`、`incremental=false`，test 继承 dev；保留文件/行号回溯，降低调试符号与增量缓存占用，代价是 Rust 改动后重编较慢。Release、优化与安装签名路径不变，不调整全局 Cargo 或其他仓库。
 - 清理仅通过 Cargo 指定 `--profile dev`，必要时分别指定本机显式 target；先 dry-run 并核对没有正在编译，再执行。保留 Release 构建与其 host build scripts，不接触已安装 App、Panel 数据、配置与凭据。不要定期自动清整个 target，避免每次重装重复编译。
 - 文档：中英文 README 的 Verify/验证；配置验证使用隔离小项目检查 rustc 参数及无 incremental 目录，真实缓存清理后比较占用。内部构建策略无需产品 changelog。来源可用 `git log -S'line-tables-only' -- src-tauri/Cargo.toml` 定位。
+
+### Windows Node 资源路径兼容
+
+- 基于上游 `a7522c2` 修复本地已复现的 Node 22.23.2 入口解析错误。`src-tauri/src/main.rs` 在服务和模型配置入口对资源路径使用依赖树现有 `dunce::simplified`，仅转换可安全简化的 verbatim 路径，不重新 canonicalize、不更改签名或完整性校验。真正的超长路径与设备路径保留库的安全边界。
+- 验证：my-windows 上普通路径语法检查成功，带前缀路径报 EISDIR；本地 Rust 编译检查；新增 Windows 专用路径回归用例，需 Windows Rust 环境执行。未替换远端安装包；上游等价兼容后移除此差异。当前无 fork-doc 技能，手动同步维护记录。

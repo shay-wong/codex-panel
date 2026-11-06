@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Normalize safe Windows verbatim resource paths before passing scripts to Node, fixing startup `EISDIR` errors and model configuration entry points.
+
 - Clarify Ultrafast’s required configuration with separate lines.
 
 - Keep pending Codex restart reminders across Panel relaunches and reinstalls; clear them immediately after a confirmed restart is successfully initiated, or when an external restart is detected. Cancellation and startup failure keep the reminder.
