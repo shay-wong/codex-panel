@@ -6,6 +6,20 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Allow collapsing the quick-phrase card to its heading while keeping configuration accessible.
+
+- Hide quick phrases while the right file or preview sidebar is open and restore them when it closes.
+
+- Prevent usage numbers and the TPS needle from drifting away when a new target reverses their direction.
+
+- Let TPS reach its latest data target before decaying between samples; new data redirects the animation immediately.
+
+- Style quick phrases as a native floating card matching the project summary's background, rounded corners and shadow.
+
+- Show quick phrases in new Codex chats and allow sending the first message from a phrase.
+
+- Keep quick phrases visible and usable when the conversation's project summary is hidden or absent.
+
 - Allow explicitly authorized task takeover from a new conversation, retaining the previous conversation in activity history and preserving the task’s Spec and development context.
 
 ## 0.4.17-fork

@@ -250,9 +250,11 @@
       #${QUICK_PHRASES_ID}, .codex-panel-phrases-dialog {
         color: var(--color-token-foreground, CanvasText); font: inherit; font-size: 14px; line-height: 1.5;
       }
-      #${QUICK_PHRASES_ID} { position: fixed; z-index: 30; overflow: auto; padding: 0 6px 6px; box-sizing: border-box; -webkit-app-region: no-drag; }
+      #${QUICK_PHRASES_ID} { position: fixed; z-index: 30; overflow: auto; padding: 16px; box-sizing: border-box; -webkit-app-region: no-drag; }
       #${QUICK_PHRASES_ID}[hidden] { display: none; }
-      .codex-panel-phrases-heading { display: flex; align-items: center; gap: 7px; }
+      .codex-panel-phrases-heading { display: flex; align-items: center; gap: 7px; list-style: none; }
+      .codex-panel-phrases-heading::-webkit-details-marker { display: none; }
+      #${QUICK_PHRASES_ID}[open] .codex-panel-phrases-chevron { transform: rotate(90deg); }
       .codex-panel-phrases-heading h2 { margin: 0; font-size: 14px; font-weight: 500; }
       .codex-panel-phrases-heading svg { width: 16px; height: 16px; flex: none; }
       .codex-panel-phrases-config { margin-left: auto; padding: 4px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--color-token-text-secondary, GrayText); font: inherit; font-size: 12px; }
@@ -2885,10 +2887,12 @@
 
   function quickPhraseComposer() {
     const threadId = threadIdFromLocation();
-    return Array.from(document.querySelectorAll('[data-codex-composer-root][data-composer-placement="thread"]'))
+    return Array.from(document.querySelectorAll('[data-codex-composer-root][data-composer-placement="home"], [data-codex-composer-root][data-composer-placement="thread"]'))
       .find(root => root.getClientRects().length > 0
-        && normalizeThreadId(root.querySelector('[data-above-composer-conversation-id]')
-          ?.getAttribute('data-above-composer-conversation-id')) === threadId);
+        && !root.closest('[inert], [hidden]')
+        && (root.getAttribute('data-composer-placement') === "home"
+          || normalizeThreadId(root.querySelector('[data-above-composer-conversation-id]')
+            ?.getAttribute('data-above-composer-conversation-id')) === threadId));
   }
 
   function renderQuickPhrases() {
@@ -2984,29 +2988,38 @@
   }
 
   function syncQuickPhrases() {
-    const summary = Array.from(document.querySelectorAll('[data-summary-panel-variant]'))
-      .find(panel => panel.getClientRects().length > 0 && !panel.closest('[inert], [hidden]'));
-    if (active || !summary || !quickPhraseComposer()) {
+    const rightPanelOpen = Array.from(document.querySelectorAll('aside[data-app-shell-focus-area="right-panel"]'))
+      .some(panel => panel.getBoundingClientRect().width > 0
+        && panel.getClientRects().length > 0 && !panel.closest('[inert], [hidden], [aria-hidden="true"]'));
+    if (active || rightPanelOpen || !quickPhraseComposer()) {
       quickPhrasesPanel?.toggleAttribute("hidden", true);
       quickPhrasesDialog?.close();
       return;
     }
     if (!quickPhrasesPanel) {
       installStyles();
-      quickPhrasesPanel = document.createElement("section");
+      quickPhrasesPanel = document.createElement("details");
       quickPhrasesPanel.id = QUICK_PHRASES_ID;
+      quickPhrasesPanel.open = true;
+      quickPhrasesPanel.className = "rounded-2xl bg-surface-elevated-secondary electron:elevation-prominent";
       quickPhrasesPanel.setAttribute(OWNED_ATTRIBUTE, "true");
       quickPhrasesPanel.setAttribute("aria-label", hostText("快捷短语", "Quick phrases"));
-      quickPhrasesPanel.innerHTML = '<div class="codex-panel-phrases-heading"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 10-12h-7z"/></svg><h2></h2><button type="button" class="codex-panel-phrases-config cursor-interaction"></button></div><p class="codex-panel-phrases-hint"></p><div class="codex-panel-phrases-list"></div><p role="status" class="codex-panel-phrases-status"></p>';
+      quickPhrasesPanel.innerHTML = '<summary class="codex-panel-phrases-heading cursor-interaction"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 10-12h-7z"/></svg><h2></h2><button type="button" class="codex-panel-phrases-config cursor-interaction"></button><svg class="codex-panel-phrases-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></summary><p class="codex-panel-phrases-hint"></p><div class="codex-panel-phrases-list"></div><p role="status" class="codex-panel-phrases-status"></p>';
       quickPhrasesPanel.querySelector("h2").textContent = hostText("快捷短语", "Quick phrases");
       const configure = quickPhrasesPanel.querySelector("button");
       configure.textContent = hostText("配置", "Configure");
-      configure.addEventListener("click", configureQuickPhrases);
+      configure.addEventListener("click", event => {
+        event.preventDefault();
+        configureQuickPhrases();
+      });
       quickPhrasesPanel.querySelector(".codex-panel-phrases-hint").textContent = hostText("点击短语，直接发送", "Click a phrase to send it");
       document.body.append(quickPhrasesPanel);
       renderQuickPhrases();
     }
-    const rect = summary.getBoundingClientRect();
+    const summary = Array.from(document.querySelectorAll('[data-summary-panel-variant]'))
+      .find(panel => panel.getClientRects().length > 0 && !panel.closest('[inert], [hidden]'));
+    const width = Math.min(300, window.innerWidth - 32);
+    const rect = summary?.getBoundingClientRect() ?? { left: window.innerWidth - width - 16, bottom: 52, width };
     const top = rect.bottom + 20;
     quickPhrasesPanel.toggleAttribute("hidden", rect.width < 180 || top >= window.innerHeight - 80);
     quickPhrasesPanel.style.left = `${rect.left}px`;
@@ -3107,11 +3120,10 @@
         const usage = state.usage;
         if (delta) {
           if (!usage.inProgress || typeof params.delta !== "string" || !params.delta) continue;
-          const hadOutput = usage.outputTokens > 0 || state.pendingTokens > 0;
           // shortcut: ASCII 约 4 字符/token，其他字符约 1；若原生提供逐 token 用量则替换估算。
           for (const character of params.delta) state.pendingTokens += character.codePointAt(0) < 128 ? 0.25 : 1;
           state.revision++;
-          if (!hadOutput) renderUsageState(state);
+          renderUsageState(state);
           continue;
         }
         if (method === "thread/tokenUsage/updated") {
@@ -3238,19 +3250,28 @@
       odometer.append(createUsageGlyph("."));
       const accessible = document.createElement("span");
       accessible.className = "codex-panel-usage-number-text";
-      state = { value: state?.value ?? target, velocity: state?.velocity ?? 0, target, dotMatrix: usageDotMatrix, prefix, suffix, odometer, accessible,
+      state = { value: state?.value ?? target, velocity: state?.velocity ?? 0, target: state?.target ?? target,
+        sample: state?.sample, chasing: state?.chasing, dotMatrix: usageDotMatrix, prefix, suffix, odometer, accessible,
         needle: label.previousElementSibling?.querySelector("[data-usage-needle]"), columns: [], frame: 0 };
       replaceUsageLabel(label, [odometer, accessible], prefix, suffix);
       usageValueAnimations.set(label, state);
     }
-    state.target = target;
     state.liveState = liveState;
+    const live = liveState?.usage?.inProgress === true;
+    const sample = live ? `${liveState.usage.turnId}:${liveState.usage.outputTokens}:${liveState.pendingTokens}` : null;
+    // 无新数据时先到达本次目标，再允许耗时增长拉低 TPS。
+    if (!live || state.sample !== sample) {
+      state.target = target;
+      state.sample = sample;
+      state.chasing = live;
+    }
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     if (reducedMotion) {
       window.cancelAnimationFrame(state.frame);
       state.frame = 0;
-      state.value = target;
+      state.value = state.target = target;
       state.velocity = 0;
+      state.chasing = false;
     }
     drawUsageNumber(state);
     if (reducedMotion || state.frame || (state.value === state.target && !liveState?.usage?.inProgress)) return;
@@ -3260,7 +3281,7 @@
       const dt = (now - state.updatedAt) / 1000;
       state.updatedAt = now;
       const live = state.liveState?.usage?.inProgress === true;
-      if (live) {
+      if (live && !state.chasing) {
         const latest = currentUsageSpeed(state.liveState);
         if (latest != null) state.target = latest;
       }
@@ -3268,12 +3289,14 @@
       const distance = Math.abs(difference);
       const speed = Math.min(usageAnimationMaxSpeed, Math.max(usageAnimationMinSpeed, distance * 2));
       const desiredVelocity = Math.sign(difference) * speed;
+      if (state.velocity * difference < 0) state.velocity = 0;
       state.velocity += (desiredVelocity - state.velocity) * (1 - Math.exp(-dt / 0.12));
       state.velocity = Math.max(-usageAnimationMaxSpeed, Math.min(usageAnimationMaxSpeed, state.velocity));
       const next = state.value + state.velocity * dt;
       if (difference === 0 || (difference > 0 && next >= state.target) || (difference < 0 && next <= state.target)) {
         state.value = state.target;
-        if (!live) state.velocity = 0;
+        if (!live || state.chasing) state.velocity = 0;
+        state.chasing = false;
       } else {
         state.value = Math.max(0, next);
         if (next < 0) state.velocity = 0;

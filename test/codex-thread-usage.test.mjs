@@ -101,7 +101,7 @@ test("composer status follows its own thread and removes values on Home", async 
       const normalizeThreadId = value => value.replace(/^local:/, "");
       const threadIdFromLocation = () => "${id}"; const hasLiveHostBinding = () => true;
       const requestHost = async () => ({ usage: { speed: 20, outputTokens: 200, inputTokens: 100, cachedInputTokens: 81, cache: 81, totalTokens: 300, turnId: "first", startedAt: Date.now() - 10000, endedAt: Date.now(), observedAt: Date.now(), inProgress: false } });
-      ${block}\nwindow.pollUsage = pollThreadUsage; window.renderUsage = renderUsageLine; window.usageNotification = onUsageNotification; window.usageStates = usageLines; window.tickUsage = () => usageLines.forEach(renderUsageState);`);
+      ${block}\nwindow.pollUsage = pollThreadUsage; window.renderUsage = renderUsageLine; window.usageNotification = onUsageNotification; window.usageStates = usageLines; window.tickUsage = () => usageLines.forEach(state => renderUsageState(state));`);
     await dom.window.pollUsage();
     const line = dom.window.document.querySelector(".codex-panel-usage-line");
     assert.match(line.textContent, /20.0\s*tok\/s.*缓存命中\s*81.0%/);
@@ -198,13 +198,14 @@ test("usage retargeting changes velocity gradually while keeping the current val
     assert.equal(value(), beforeReverse);
     const reversing = step();
     assert.ok(reversing < forwardVelocity);
-    assert.ok(reversing > -20 + 1e-6, "direction changes must decelerate instead of jumping to reverse maximum");
+    assert.ok(reversing < 0, "a lower target must not carry the value farther upward");
+    assert.ok(reversing > -20 + 1e-6, "direction changes must accelerate from rest instead of jumping to reverse maximum");
     for (let frame = 0; frame < 40; frame++) step();
     assert.ok(value() < beforeReverse, "the latest target must take over without waiting for the old one");
   } finally { dom.window.close(); }
 });
 
-test("active turn TPS keeps updating between host samples and stops after completion", async () => {
+test("active TPS reaches the latest sample before decaying and stops after completion", async () => {
   const source = await readFile(new URL("../inject/codex-panel.user.js", import.meta.url), "utf8");
   const block = source.slice(source.indexOf("  const usageLines = new Map();"), source.indexOf("  function mount() {"));
   const dom = new JSDOM('<div id="line"><svg><path data-usage-needle></path></svg><span data-usage-speed></span><span data-usage-cache></span></div>', { runScripts: "outside-only", pretendToBeVisual: true });
@@ -217,11 +218,13 @@ test("active turn TPS keeps updating between host samples and stops after comple
     dom.window.Date.now = () => time;
     dom.window.requestAnimationFrame = callback => { frames.set(++sequence, callback); return sequence; };
     dom.window.cancelAnimationFrame = frame => frames.delete(frame);
-    dom.window.eval(`let usageDotMatrix = false; let usageAnimationMinSpeed = 20; let usageAnimationMaxSpeed = 20;
+    dom.window.eval(`let usageDotMatrix = false; let usageAnimationMinSpeed = 0.5; let usageAnimationMaxSpeed = 50;
       ${block}\nwindow.liveUsage = { line: document.getElementById("line"), pendingTokens: 0,
         usage: { startedAt: 0, inProgress: true, outputTokens: 400, cache: 80 } };
-      window.drawLiveUsage = () => renderUsageState(window.liveUsage); window.drawLiveUsage();`);
-    const value = () => Number(dom.window.document.querySelector(".codex-panel-usage-number-text").textContent);
+      window.drawLiveUsage = () => renderUsageState(window.liveUsage);
+      window.animation = () => usageValueAnimations.get(document.querySelector('[data-usage-speed]'));
+      window.drawLiveUsage();`);
+    const value = () => dom.window.animation().value;
     const step = () => {
       time += 20;
       const callbacks = [...frames.values()];
@@ -229,18 +232,45 @@ test("active turn TPS keeps updating between host samples and stops after comple
       callbacks.forEach(callback => callback(time));
     };
     assert.equal(value(), 40);
+    dom.window.liveUsage.usage.outputTokens = 800;
+    dom.window.drawLiveUsage();
+    let reached = false;
+    for (let frame = 0; frame < 400; frame++) {
+      const before = value();
+      if (frame % 50 === 0) dom.window.drawLiveUsage();
+      assert.equal(dom.window.animation().target, 80, "duplicate samples must not lower a pending target");
+      step();
+      assert.ok(value() >= before, "TPS must not fall before reaching the sample target");
+      if (value() === 80) { reached = true; break; }
+    }
+    assert.ok(reached, "TPS must reach 80 before decaying");
     for (let frame = 0; frame < 50; frame++) step();
-    assert.ok(value() < 40, "elapsed time must update the target without another host response");
-    assert.ok(frames.size > 0, "an active turn must keep tracking its live target");
+    assert.ok(value() < 80, "TPS can decay after reaching the target without new data");
+    assert.ok(frames.size > 0);
     const shown = (Number(dom.window.document.querySelector("[data-usage-needle]").getAttribute("transform").match(/rotate\(([^ ]+)/)[1]) + 90) / 1.8;
     const fraction = dom.window.document.querySelector(".codex-panel-usage-odometer").lastElementChild.querySelector(".codex-panel-usage-track");
     assert.ok(Math.abs(Number(fraction.style.getPropertyValue("--usage-offset")) - (1 + (shown * 10 % 10 + 10) % 10)) < 1e-8,
       "live targets must retain the fractional wheel position between displayed decimal values");
+    const beforeRisingTarget = value();
+    assert.ok(dom.window.animation().velocity < 0);
+    dom.window.liveUsage.pendingTokens = (beforeRisingTarget + 0.08) * (time / 1000) - 800;
+    dom.window.drawLiveUsage();
+    step();
+    assert.ok(value() >= beforeRisingTarget, "a new higher TPS target must not inherit the previous downward motion");
+    dom.window.liveUsage.usage.outputTokens = 1200;
+    dom.window.liveUsage.pendingTokens = 0;
+    dom.window.drawLiveUsage();
+    const replacedTarget = dom.window.animation().target;
+    for (let frame = 0; frame < 5; frame++) step();
+    assert.ok(value() < replacedTarget);
+    dom.window.liveUsage.usage.outputTokens = 600;
+    dom.window.drawLiveUsage();
+    assert.ok(dom.window.animation().target < replacedTarget, "new data must replace an unreached target");
     dom.window.liveUsage.usage.inProgress = false;
     dom.window.liveUsage.usage.endedAt = time;
     dom.window.drawLiveUsage();
     for (let frame = 0; frame < 600 && frames.size; frame++) step();
     assert.equal(frames.size, 0);
-    assert.equal(value(), Number((400 / 11).toFixed(1)));
+    assert.ok(Math.abs(value() - 600 / (dom.window.liveUsage.usage.endedAt / 1000)) < 1e-8);
   } finally { dom.window.close(); }
 });
