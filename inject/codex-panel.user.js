@@ -690,6 +690,10 @@
   async function nativeDesktopServices() {
     if (!nativeDesktopServicesPromise) {
       nativeDesktopServicesPromise = (async () => {
+        const runtime = window.__codexPanelRspack__;
+        const module = runtime?.findModule(["setAppHost", "setAppServices", "appServices:"]);
+        const services = module && runtime.require(module.id).appServices;
+        if (services?.projectCatalog) return services;
         const urls = new Set([
           ...performance.getEntriesByType("resource").map((entry) => entry.name),
           ...Array.from(document.querySelectorAll('script[src],link[rel="modulepreload"][href]'))

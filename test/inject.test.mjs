@@ -1975,6 +1975,45 @@ test("Panel replaces a cloned pet avatar with its own board icon", async () => {
   }
 });
 
+test("native project reads use Rspack services without legacy asset names", async () => {
+  let selection = { type: "local", projectId: "before" };
+  const services = {
+    projectCatalog: {
+      readSelection: async () => selection,
+      readLocalProjects: async () => ({ fixture: { rootPaths: ["/disposable/project"] } }),
+      readRemoteProjects: async () => [],
+    },
+  };
+  const start = source.indexOf("  let nativeDesktopServicesPromise;");
+  const code = source.slice(start, source.indexOf("  async function readCodexProjectMetadata(", start));
+  const roots = source.slice(source.indexOf("  async function activeNativeWorkspaceRoots("), source.indexOf("  function readCodexProjects("));
+  const wait = source.slice(source.indexOf("  async function waitForNativeProject("), source.indexOf("  async function selectNativeWorktree("));
+  const api = vm.runInNewContext(`(() => {
+    ${code}
+    ${roots}
+    ${wait}
+    return { requestNativeFetch, selectedNativeProjectId, waitForNativeProject };
+  })()`, {
+    window: {
+      __codexPanelRspack__: {
+        findModule(markers) {
+          assert.deepEqual([...markers], ["setAppHost", "setAppServices", "appServices:"]);
+          return { id: "native-services" };
+        },
+        require(id) {
+          assert.equal(id, "native-services");
+          return { appServices: services };
+        },
+      },
+    },
+  });
+  assert.equal(await api.selectedNativeProjectId(), "before");
+  selection = { type: "local", projectId: "fixture" };
+  assert.equal(await api.selectedNativeProjectId(), "fixture");
+  assert.deepEqual((await api.requestNativeFetch("active-workspace-roots", {})).roots, ["/disposable/project"]);
+  assert.equal(await api.waitForNativeProject("/disposable/project", "fixture"), "fixture");
+});
+
 test("native project reads use the live catalog when legacy fetch handlers were removed", async () => {
   const projects = { fixture: { rootPaths: ["/disposable/project"] } };
   let selection = { type: "local", projectId: "before" };
