@@ -548,6 +548,11 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 - 原生依据：ChatGPT 26.1027.61615 的 `sparkle.node` 支持 `willInstallUpdateOnQuit`；官方 Sparkle 的同名委托文档明确正常退出也会安装。此能力依赖 Codex 后台下载；不控制下载策略，不绕过更新策略，不更改官方更新按钮。当前限定 macOS TCP；两分钟内未确认安装则不启动，不通过二次重启掩盖失败。
 - 两份 runtime 清单包含新模块。更新模块定位在资源记录清空时沿当前页面入口及 app-main/app-runtime 引用查找；`test/codex-update.test.mjs` 覆盖有记录和空记录两条路径，真实 Codex 主窗口缓存状态已只读核验。验证：隔离真实 Launcher 页面检查新按钮与未下载/已下载的模拟响应；当前原生资源订阅解析、自检中的下载状态校验、模拟 bundle 替换及签名完成等待通过；TypeScript、Launcher 构建和 macOS Rust check 通过。真实 Sparkle 安装升级尚未执行。用户入口同步中英文 README/CHANGELOG 及 `docs/fork-capabilities.md#codex-updates-through-panel`。上游原生更新支持保留 Panel 连接参数或等价重启交接后重新评估。
 
+### 本次用量动画与计数修复
+
+- `usageAnimationMode` 仅选择点阵动画：默认 `smooth` 连续追踪，`morph` 为 500ms 点阵变换（含加载圆点转数字）。普通数字固定 120ms 渐隐 + 180ms 渐显，隐藏动画选择和速度设置；切回点阵恢复上次选择。Launcher → `set_usage_animation_mode` → 偏好原子保存 → injector 心跳 → 注入渲染；无需重启，最低/最高速度仅连续追踪使用。
+- 验证：`test/codex-thread-usage.test.mjs` 覆盖模式/样式切换；隔离实际 Launcher 页面与模拟宿主验证保存、重读及动画。未安装、未核实用户现场视觉效果。来源：`git log -S'usageAnimationMode' -- inject/codex-panel.user.js`。与既有会话用量能力共同维护。
+
 ## 会话快捷短语（2026-11-05，长期保留）
 
 - 目的：实现用户确认的“轻量列表” demo，在会话右侧项目摘要下方直接发送常用短语。

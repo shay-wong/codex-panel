@@ -2325,6 +2325,7 @@ function installPanelHostBinding(
           let showThreadUsage = true;
           let threadUsageAboveComposer = false;
           let usageDotMatrix = true;
+          let usageAnimationMode = "smooth";
           let usageAnimationMinSpeed = 5;
           let usageAnimationMaxSpeed = 40;
           let customProviderQuotaFix = false;
@@ -2338,6 +2339,7 @@ function installPanelHostBinding(
               showThreadUsage = preferences.showThreadUsage !== false;
               threadUsageAboveComposer = preferences.threadUsageAboveComposer === true;
               usageDotMatrix = preferences.usageDotMatrix !== false;
+              usageAnimationMode = preferences.usageAnimationMode === "morph" ? "morph" : "smooth";
               usageAnimationMinSpeed = preferences.usageAnimationMinSpeed ?? 5;
               usageAnimationMaxSpeed = preferences.usageAnimationMaxSpeed ?? 40;
               customProviderQuotaFix = preferences.customProviderQuotaFix === true;
@@ -2355,6 +2357,7 @@ function installPanelHostBinding(
               showThreadUsage: ${JSON.stringify(showThreadUsage)},
               threadUsageAboveComposer: ${JSON.stringify(threadUsageAboveComposer)},
               usageDotMatrix: ${JSON.stringify(usageDotMatrix)},
+              usageAnimationMode: ${JSON.stringify(usageAnimationMode)},
               usageAnimationMinSpeed: ${JSON.stringify(usageAnimationMinSpeed)},
               usageAnimationMaxSpeed: ${JSON.stringify(usageAnimationMaxSpeed)},
               customProviderQuotaFix: ${JSON.stringify(customProviderQuotaFix)},

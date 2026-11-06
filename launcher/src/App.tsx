@@ -20,7 +20,7 @@ export type LauncherSnapshot = {
   codexUpdateChecking: boolean;
   appPath: string | null;
 };
-export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean };
+export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean };
 export type LauncherState = {
   snapshot: LauncherSnapshot;
   preferences: LauncherPreferences;
@@ -60,6 +60,7 @@ export function App() {
   const [savingPreference, setSavingPreference] = useState(false);
   const [usageMinimum, setUsageMinimum] = useState("5");
   const [usageMaximum, setUsageMaximum] = useState("40");
+  const [usageAnimationMode, setUsageAnimationMode] = useState<"smooth" | "morph">("smooth");
   const [ultrafastChoice, setUltrafastChoice] = useState<boolean | null>(null);
   const [restartReminder, setRestartReminder] = useState("");
   const [modelContextOpen, setModelContextOpen] = useState(false);
@@ -76,7 +77,8 @@ export function App() {
   useEffect(() => {
     setUsageMinimum(String(preferences?.usageAnimationMinSpeed ?? 5));
     setUsageMaximum(String(preferences?.usageAnimationMaxSpeed ?? 40));
-  }, [preferences?.usageAnimationMinSpeed, preferences?.usageAnimationMaxSpeed]);
+    setUsageAnimationMode(preferences?.usageAnimationMode ?? "smooth");
+  }, [preferences?.usageAnimationMinSpeed, preferences?.usageAnimationMaxSpeed, preferences?.usageAnimationMode]);
   const hasProcess = snapshot.childPid !== null && snapshot.childPid !== undefined;
   const ready = snapshot.phase === "running";
   const needsRestart = snapshot.phase === "restart_required";
@@ -209,6 +211,20 @@ export function App() {
       setState(current => current && ({ ...current, preferences: next }));
     } catch (cause) { setError(String(cause)); }
     finally { setSavingPreference(false); }
+  }
+
+  async function saveUsageAnimationMode(mode: "smooth" | "morph") {
+    const previous = usageAnimationMode;
+    setUsageAnimationMode(mode);
+    setError("");
+    setSavingPreference(true);
+    try {
+      const next = await window.__TAURI__.core.invoke<LauncherPreferences>("set_usage_animation_mode", { mode });
+      setState(current => current && ({ ...current, preferences: next }));
+    } catch (cause) {
+      setUsageAnimationMode(previous);
+      setError(String(cause));
+    } finally { setSavingPreference(false); }
   }
 
   async function changeUltrafast(enabled: boolean) {
@@ -424,17 +440,27 @@ export function App() {
             </Select.Root>
           </Flex>
           <Separator size="4" />
-          <Setting id="usageDotMatrix" title="使用点阵数字" detail="关闭后显示普通数字，统计方式不变；无需重启" checked={preferences?.usageDotMatrix ?? true} disabled={!state || savingPreference} onChange={enabled => void savePreference("usageDotMatrix", enabled)} />
+          <Setting id="usageDotMatrix" title="使用点阵数字" detail="关闭后使用普通数字，变化时渐隐渐显；无需重启" checked={preferences?.usageDotMatrix ?? true} disabled={!state || savingPreference} onChange={enabled => void savePreference("usageDotMatrix", enabled)} />
+          {(preferences?.usageDotMatrix ?? true) && <>
           <Separator size="4" />
           <Box className="preference-row">
-            <Text as="div" size="2" weight="medium">数字变化速度</Text>
-            <Text as="p" id="usageSpeedDetail" size="1" color="gray" mt="1">离目标越远越快，越近越慢；起停与换向平滑过渡。单位：刻度/秒，TPS 与缓存命中率共用</Text>
-            <Flex gap="3" align="end" wrap="wrap" mt="3">
+            <Text as="div" size="2" weight="medium">点阵动画</Text>
+            <Text as="p" id="usageSpeedDetail" size="1" color="gray" mt="1">连续追踪平滑滚动；点阵变换用 500ms 重组为新数字。</Text>
+            <Flex align="center" gap="3" mt="3">
+              <Text as="label" htmlFor="usageAnimationMode" size="1">动画效果</Text>
+              <Select.Root value={usageAnimationMode} disabled={!state || savingPreference} onValueChange={value => void saveUsageAnimationMode(value as "smooth" | "morph")}>
+                <Select.Trigger id="usageAnimationMode" aria-describedby="usageSpeedDetail" />
+                <Select.Content><Select.Item value="smooth">连续追踪</Select.Item><Select.Item value="morph">点阵变换</Select.Item></Select.Content>
+              </Select.Root>
+            </Flex>
+            {usageAnimationMode === "smooth" && <><Text as="p" size="1" color="gray" mt="3">数字变化速度 · 刻度/秒，TPS 与缓存命中率共用</Text>
+            <Flex gap="3" align="end" wrap="wrap" mt="2">
               <Box><Text as="label" htmlFor="usageMinimumSpeed" size="1">最低速度</Text><TextField.Root id="usageMinimumSpeed" type="number" min="0.1" step="0.1" value={usageMinimum} onChange={event => setUsageMinimum(event.target.value)} disabled={!state || savingPreference} aria-describedby="usageSpeedDetail" style={{ width: 100 }} /></Box>
               <Box><Text as="label" htmlFor="usageMaximumSpeed" size="1">最高速度</Text><TextField.Root id="usageMaximumSpeed" type="number" min="0.1" step="0.1" value={usageMaximum} onChange={event => setUsageMaximum(event.target.value)} disabled={!state || savingPreference} aria-describedby="usageSpeedDetail" style={{ width: 100 }} /></Box>
               <Button variant="soft" disabled={!state || savingPreference} onClick={() => void saveUsageAnimationSpeeds()}>保存速度</Button>
-            </Flex>
+            </Flex></>}
           </Box>
+          </>}
         </div>
         {error && <Text as="p" size="2" color="red" role="alert" mt="3">{error}</Text>}
         <Flex justify="end" mt="3"><Dialog.Close><Button variant="soft" disabled={savingPreference}>关闭</Button></Dialog.Close></Flex>

@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Offer continuous tracking and dot morph for dot-matrix numbers; ordinary numbers use fading. Switching number style preserves the selected dot effect.
+
 ## 0.4.18-fork
 
 - Allow collapsing the quick-phrase card to its heading while keeping configuration accessible.

@@ -181,6 +181,13 @@ struct LauncherPidRecord {
 }
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum UsageAnimationMode {
+    Smooth,
+    Morph,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
 struct LauncherWindowSize {
     width: f64,
     height: f64,
@@ -205,6 +212,8 @@ struct LauncherPreferences {
     thread_usage_above_composer: bool,
     #[serde(default = "enabled_by_default")]
     usage_dot_matrix: bool,
+    #[serde(default = "default_usage_animation_mode")]
+    usage_animation_mode: UsageAnimationMode,
     #[serde(default = "default_usage_animation_min_speed")]
     usage_animation_min_speed: f64,
     #[serde(default = "default_usage_animation_max_speed")]
@@ -238,6 +247,7 @@ impl Default for LauncherPreferences {
             show_thread_usage: true,
             thread_usage_above_composer: false,
             usage_dot_matrix: true,
+            usage_animation_mode: default_usage_animation_mode(),
             usage_animation_min_speed: default_usage_animation_min_speed(),
             usage_animation_max_speed: default_usage_animation_max_speed(),
             custom_provider_quota_fix: false,
@@ -258,6 +268,10 @@ fn default_usage_animation_min_speed() -> f64 {
 
 fn default_usage_animation_max_speed() -> f64 {
     40.0
+}
+
+fn default_usage_animation_mode() -> UsageAnimationMode {
+    UsageAnimationMode::Smooth
 }
 
 #[derive(Deserialize)]
@@ -2960,6 +2974,21 @@ fn set_usage_animation_speeds(
 }
 
 #[tauri::command]
+fn set_usage_animation_mode(
+    state: State<'_, Arc<LauncherState>>,
+    mode: String,
+) -> Result<LauncherPreferences, String> {
+    let mode = match mode.as_str() {
+        "smooth" => UsageAnimationMode::Smooth,
+        "morph" => UsageAnimationMode::Morph,
+        _ => return Err("未知的数字动画效果".into()),
+    };
+    update_preferences(&state, |preferences| {
+        preferences.usage_animation_mode = mode;
+    })
+}
+
+#[tauri::command]
 async fn read_model_context_settings(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
@@ -3337,6 +3366,7 @@ fn main() {
             set_model_context_windows,
             set_launcher_preference,
             set_usage_animation_speeds,
+            set_usage_animation_mode,
             set_autostart,
             check_for_updates,
             open_available_release,

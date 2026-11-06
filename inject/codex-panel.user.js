@@ -106,6 +106,7 @@
   let showThreadUsage = false;
   let threadUsageAboveComposer = false;
   let usageDotMatrix = true;
+  let usageAnimationMode = "smooth";
   let usageAnimationMinSpeed = 5;
   let usageAnimationMaxSpeed = 40;
   let quickPhrasesPanel = null;
@@ -2578,6 +2579,7 @@
       hostHeartbeatAt = Number(message.at) || 0;
       hideUsageBanner = message.hideUsageBanner === true;
       setUsageDotMatrix(message.usageDotMatrix !== false);
+      setUsageAnimationMode(message.usageAnimationMode);
       setUsageAnimationSpeeds(message.usageAnimationMinSpeed, message.usageAnimationMaxSpeed);
       setThreadUsageAboveComposer(message.threadUsageAboveComposer === true);
       setThreadUsageVisible(message.showThreadUsage !== false);
@@ -3070,6 +3072,13 @@
     usageAnimationMaxSpeed = maximum;
   }
 
+  function setUsageAnimationMode(mode) {
+    const next = mode === "morph" ? "morph" : "smooth";
+    if (usageAnimationMode === next) return;
+    usageAnimationMode = next;
+    for (const state of usageLines.values()) renderUsageState(state);
+  }
+
   function currentUsageSpeed(state) {
     const usage = state.usage;
     if (!usage) return null;
@@ -3238,11 +3247,111 @@
     state.needle?.setAttribute("transform", `rotate(${Math.min(state.value, 100) / 100 * 180 - 90} 12 15)`);
   }
 
+  function cancelUsageAnimations(state) {
+    if (state?.frame) window.cancelAnimationFrame(state.frame);
+    state?.animations?.forEach(animation => animation.cancel());
+  }
+
+  function renderUsagePlainMorph(label, number, prefix, suffix) {
+    const text = prefix + number + suffix;
+    const previous = usageValueAnimations.get(label);
+    let node = label.querySelector(".codex-panel-usage-plain-number");
+    if (node && previous?.mode === "morph" && previous.text === text) return;
+    const animate = Boolean(node && previous?.mode === "morph" && node.textContent !== String(number)
+      && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+    cancelUsageAnimations(previous);
+    if (!node) {
+      node = document.createElement("span");
+      node.className = "codex-panel-usage-plain-number";
+    }
+    replaceUsageLabel(label, [node], prefix, suffix);
+    const state = { mode: "morph", text, animations: [] };
+    usageValueAnimations.set(label, state);
+    if (!animate) { node.textContent = String(number); return; }
+    const fadeOut = node.animate([{ opacity: getComputedStyle(node).opacity }, { opacity: 0 }], { duration: 120, easing: "ease-in", fill: "forwards" });
+    state.animations.push(fadeOut);
+    fadeOut.onfinish = () => {
+      if (usageValueAnimations.get(label) !== state) return;
+      fadeOut.cancel();
+      node.textContent = String(number);
+      state.animations = [node.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease-out" })];
+    };
+  }
+
+  function renderUsageDotMorph(label, number, prefix, suffix) {
+    const text = prefix + number + suffix;
+    let previous = usageValueAnimations.get(label);
+    if (previous?.mode === "morph" && previous.points && previous.text === text) return;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const loadingDots = !reducedMotion && label.querySelector(".codex-panel-usage-dots");
+    const loadingPoints = loadingDots && [...loadingDots.children].map(dot => dot.getBoundingClientRect());
+    const loadingWidth = loadingDots && loadingDots.offsetWidth + 4;
+    const shape = usageNumberShape(String(number));
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("height", "12");
+    svg.setAttribute("width", String(shape.width));
+    svg.style.cssText = "display:inline-block;vertical-align:-1px;fill:currentColor;overflow:visible;";
+    const accessible = document.createElement("span");
+    accessible.className = "codex-panel-usage-number-text";
+    accessible.textContent = String(number);
+    replaceUsageLabel(label, [svg, accessible], prefix, suffix);
+    if (loadingPoints) {
+      const width = loadingWidth - parseFloat(getComputedStyle(svg).marginRight || "0");
+      svg.style.width = `${width}px`;
+      const bounds = svg.getBoundingClientRect();
+      const scale = bounds.width / width;
+      previous = { points: loadingPoints.map(point => ({
+        x: (point.left + point.width / 2 - bounds.left) / scale,
+        y: (point.top + point.height / 2 - bounds.top) / scale,
+        radius: point.width / 2 / scale,
+      })), width };
+    }
+    cancelUsageAnimations(usageValueAnimations.get(label));
+    const state = { ...shape, mode: "morph", text, animations: [] };
+    usageValueAnimations.set(label, state);
+    const animate = previous?.points && !reducedMotion;
+    const remaining = animate ? [...previous.points] : [];
+    const motion = { duration: 500, easing: "cubic-bezier(0.4, 0, 0.2, 1)" };
+    const distance = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+    const nearest = (points, target) => points.reduce((best, point, index) => distance(point, target) < distance(points[best], target) ? index : best, 0);
+    const addPoint = (target, from, entering = false, leaving = false) => {
+      const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      circle.setAttribute("cx", String(target.x));
+      circle.setAttribute("cy", String(target.y));
+      circle.setAttribute("r", "0.65");
+      svg.append(circle);
+      if (!animate || (!entering && !leaving && from.x === target.x && from.y === target.y)) return;
+      const animation = circle.animate([
+        { transform: `translate(${from.x - target.x}px, ${from.y - target.y}px)`, opacity: entering ? 0 : 1, r: `${from.radius ?? 0.65}px` },
+        { transform: "translate(0, 0)", opacity: leaving ? 0 : 1, r: "0.65px" },
+      ], motion);
+      if (leaving) animation.onfinish = () => circle.remove();
+      state.animations.push(animation);
+    };
+    for (const target of shape.points) {
+      const from = remaining.length ? remaining.splice(nearest(remaining, target), 1)[0] : null;
+      addPoint(target, from ?? (animate ? previous.points[nearest(previous.points, target)] : target), !from);
+    }
+    if (animate) {
+      for (const from of remaining) addPoint(shape.points[nearest(shape.points, from)], from, false, true);
+      state.animations.push(svg.animate([{ width: `${previous.width}px` }, { width: `${shape.width}px` }], motion));
+    }
+    svg.style.removeProperty("width");
+  }
+
   function renderUsageNumber(label, number, prefix, suffix, liveState) {
+    if (!usageDotMatrix || usageAnimationMode === "morph") {
+      if (usageDotMatrix) renderUsageDotMorph(label, Number(number).toFixed(1), prefix, suffix);
+      else renderUsagePlainMorph(label, Number(number).toFixed(1), prefix, suffix);
+      label.previousElementSibling?.querySelector("[data-usage-needle]")
+        ?.setAttribute("transform", `rotate(${Math.min(number, 100) / 100 * 180 - 90} 12 15)`);
+      return;
+    }
     let state = usageValueAnimations.get(label);
     const target = Number(number);
-    if (!state || state.dotMatrix !== usageDotMatrix || state.prefix !== prefix || state.suffix !== suffix) {
-      if (state?.frame) window.cancelAnimationFrame(state.frame);
+    if (!state || state.mode !== "smooth" || state.dotMatrix !== usageDotMatrix || state.prefix !== prefix || state.suffix !== suffix) {
+      cancelUsageAnimations(state);
       const odometer = document.createElement("span");
       odometer.className = "codex-panel-usage-odometer";
       odometer.dataset.dotMatrix = String(usageDotMatrix);
@@ -3250,7 +3359,7 @@
       odometer.append(createUsageGlyph("."));
       const accessible = document.createElement("span");
       accessible.className = "codex-panel-usage-number-text";
-      state = { value: state?.value ?? target, velocity: state?.velocity ?? 0, target: state?.target ?? target,
+      state = { mode: "smooth", value: state?.value ?? target, velocity: state?.velocity ?? 0, target: state?.target ?? target,
         sample: state?.sample, chasing: state?.chasing, dotMatrix: usageDotMatrix, prefix, suffix, odometer, accessible,
         needle: label.previousElementSibling?.querySelector("[data-usage-needle]"), columns: [], frame: 0 };
       replaceUsageLabel(label, [odometer, accessible], prefix, suffix);
@@ -3309,7 +3418,7 @@
 
   function renderUsageValue(label, number, prefix, suffix, loading, liveState) {
     if (number == null && loading) {
-      window.cancelAnimationFrame(usageValueAnimations.get(label)?.frame);
+      cancelUsageAnimations(usageValueAnimations.get(label));
       usageValueAnimations.delete(label);
       if (label.getAttribute("aria-busy") !== "true") {
         label.innerHTML = '<span class="codex-panel-usage-dots" aria-hidden="true"><i></i><i></i><i></i></span>';
@@ -3324,7 +3433,7 @@
       label.removeAttribute("aria-label");
     }
     if (number == null) {
-      window.cancelAnimationFrame(usageValueAnimations.get(label)?.frame);
+      cancelUsageAnimations(usageValueAnimations.get(label));
       usageValueAnimations.delete(label);
       const value = number ?? "--";
       const text = prefix.trimEnd() + value + suffix.trimStart();

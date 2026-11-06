@@ -21,7 +21,7 @@ it("keeps launcher feedback, live status and global preferences working through 
       updateMessage: "尚未检查更新。", updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateMessage: "", codexUpdateChecking: false,
       appPath: "/disposable/Codex.app",
     },
-    preferences: { autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false },
+    preferences: { autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false },
     autostart: true, dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
   };
   let statusListener!: (event: { payload: LauncherSnapshot }) => void;
@@ -46,6 +46,10 @@ it("keeps launcher feedback, live status and global preferences working through 
       if (args?.updateModelDiscovery) discovery = args.enabled ? true : null;
       current.preferences = { ...current.preferences, [args?.key as keyof LauncherPreferences]: args?.enabled };
       return { ...current.preferences };
+    }
+    if (command === "set_usage_animation_mode") {
+      current.preferences = { ...current.preferences, usageAnimationMode: args?.mode as "smooth" | "morph" };
+      return current.preferences;
     }
     if (command === "set_usage_animation_speeds") {
       current.preferences = { ...current.preferences, usageAnimationMinSpeed: args?.minimum as number, usageAnimationMaxSpeed: args?.maximum as number };
@@ -183,7 +187,7 @@ it("keeps launcher feedback, live status and global preferences working through 
   await click(autoConnect);
   expect(autoOpen.disabled).toBe(false);
   await click(screen.getByRole("switch", { name: "隐藏额度耗尽提示" }));
-  expect(current.preferences).toEqual({ autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false });
+  expect(current.preferences).toEqual({ autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false });
   const quotaFix = screen.getByRole("switch", { name: "移除账号额度不足时 API 发送限制" });
   const restartCount = invoke.mock.calls.filter(([command]) => command === "reconnect_codex").length;
   await click(quotaFix);
