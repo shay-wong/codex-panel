@@ -612,3 +612,9 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 
 - 基于上游 `a7522c2` 修复本地已复现的 Node 22.23.2 入口解析错误。`src-tauri/src/main.rs` 在服务和模型配置入口对资源路径使用依赖树现有 `dunce::simplified`，仅转换可安全简化的 verbatim 路径，不重新 canonicalize、不更改签名或完整性校验。真正的超长路径与设备路径保留库的安全边界。
 - 验证：my-windows 上普通路径语法检查成功，带前缀路径报 EISDIR；本地 Rust 编译检查；新增 Windows 专用路径回归用例，需 Windows Rust 环境执行。未替换远端安装包；上游等价兼容后移除此差异。当前无 fork-doc 技能，手动同步维护记录。
+
+### Windows UF 模块读取与模型名称（2026-11-06）
+
+- 等待上游吸收：Windows Codex 26.1029.7803.0 的 chunk 同时导出 `__rspack_esm_id` 与 `__rspack_esm_ids`；读取器遗漏前者，使所有候选模块报 Unexpected token export。只将该声明纳入已有声明转换，不执行工厂、不修改原生应用文件。
+- UF 设置、模型菜单与目录共用同一受支持名称范围：`gpt-6-astra` / `gpt-6.1-sol` 及大小写、空格写法；不扩展其他模型、不改变实际请求 ID，保留 local/custom provider 边界。涉及 `scripts/codex-rspack-source.mjs`、`scripts/codex-rspack-capabilities.mjs`、`scripts/codex-provider-ultrafast.mjs`、`scripts/codex-provider-ultrafast-catalog.mjs`。
+- 验证：真实 Windows app.asar 只读复放从 0 个模块恢复至 6677 个，UF 两个模块改写及语法检查通过；定向 Node 测试 27 项通过，2 项环境相关测试跳过。未替换已安装 Panel，真实窗口与服务商 UF 请求仍待验证。当前无 fork-doc 技能，手动维护。上游提供等价导出读取及名称兼容后移除此差异；来源可用 `git log -S"Windows UF 模块读取" -- FORK.md` 定位。

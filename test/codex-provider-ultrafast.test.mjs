@@ -92,7 +92,7 @@ test("discovers both native modules from an existing import map and rejects unsu
 
 
 test("only official Ultrafast models get access, including after changing a selected model", async () => {
-  for (const modelId of ["gpt-6-astra", "gpt-6.1-sol"]) {
+  for (const modelId of ["gpt-6-astra", "gpt-6.1-sol", "GPT-6 Astra", "GPT-6.1 Sol"]) {
     const f = fixture(true, modelId);
     assert.equal(await f.menu().select("ultrafast"), true);
     assert.equal(f.settings().serviceTierSettings.serviceTierForRequest, "ultrafast");

@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fix Windows Rspack chunks exporting `__rspack_esm_id` so Ultrafast modules can load; accept case and space variants of the two supported model IDs without changing request model names.
+
 - Normalize safe Windows verbatim resource paths before passing scripts to Node, fixing startup `EISDIR` errors and model configuration entry points.
 
 - Clarify Ultrafast’s required configuration with separate lines.

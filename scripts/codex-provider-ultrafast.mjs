@@ -3,8 +3,9 @@ const id = "[A-Za-z_$][\\w$]*";
 const pattern = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export function customProviderUltrafastAccess(hostId, provider, access, model) {
+  // 服务商可能使用显示名称作为 ID；只兼容已支持模型的大小写及空格写法。
   return hostId === "local" && typeof provider === "string" && provider !== "" && provider !== "openai"
-    ? { ...access, ultrafast: model === "gpt-6-astra" || model === "gpt-6.1-sol" }
+    ? { ...access, ultrafast: /^(?:gpt-6[- ]astra|gpt-6\.1[- ]sol)$/i.test(model) }
     : access;
 }
 
