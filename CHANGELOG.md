@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.4.18-fork
+
 - Allow collapsing the quick-phrase card to its heading while keeping configuration accessible.
 
 - Hide quick phrases while the right file or preview sidebar is open and restore them when it closes.
