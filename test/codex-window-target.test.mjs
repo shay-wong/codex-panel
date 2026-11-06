@@ -29,14 +29,16 @@ test("standalone and prewarmed Page windows are excluded without excluding main-
 });
 
 test("unmounted entries never report successful injection", async () => {
-  const start = source.indexOf("async function injectTarget(");
+  const start = source.indexOf("async function prepareNativeAdapters(");
   const end = source.indexOf("async function injectAll(", start);
   for (const attachExisting of [true, false]) {
     let closed = false;
     const cdp = {send:async () => ({}),on(){},close(){closed=true;}};
     const inject = vm.runInNewContext(`${source.slice(start,end)}; injectTarget`, {
       installPanelHostBinding:()=>({install:async()=>{},publishHeartbeat:async()=>{}}),
+      prepareCodexRspack:async()=>null,
       waitForRendererReady:async()=>{},prepareCodexProviderQuotaFix:async()=>"",panelEnvironment:()=>null,
+      prepareNativeAdapters:async()=>({source:"",threadTabsPrepared:false}),
       prepareCodexProviderUltrafast:async()=>[],
       prepareCodexDotEntry:async(_cdp,modules)=>({modules,prepared:false}),
       prepareCodexThreadTabs:async(_cdp,modules)=>modules,
@@ -75,7 +77,7 @@ test("an unavailable secondary window cannot hide a connected main window", asyn
 
 test("quota preparation recovering on a mount retry reloads once before reusing the document", async () => {
   const { reconcileInjectionRuntime } = await import("../scripts/codex-injector-runtime.mjs");
-  const start = source.indexOf("async function injectTarget(");
+  const start = source.indexOf("async function prepareNativeAdapters(");
   const end = source.indexOf("async function injectAll(", start);
   const page = { window: {} };
   let reloads = 0;
@@ -85,6 +87,7 @@ test("quota preparation recovering on a mount retry reloads once before reusing 
   const cdp = { send: async () => ({}), on() {}, close() {} };
   const inject = vm.runInNewContext(`${source.slice(start, end)}; injectTarget`, {
     installPanelHostBinding: () => ({ install: async () => {}, publishHeartbeat: async () => {} }),
+    prepareCodexRspack: async () => null,
     waitForRendererReady: async () => {}, panelEnvironment: () => "fixture",
     prepareCodexProviderQuotaFix: async () => preparations.shift(),
     prepareCodexProviderUltrafast: async () => [],
@@ -105,7 +108,7 @@ test("quota preparation recovering on a mount retry reloads once before reusing 
 
 test("a connected window retries missing tabs and applies the recovered menu once", async () => {
   const { reconcileInjectionRuntime } = await import("../scripts/codex-injector-runtime.mjs");
-  const start = source.indexOf("async function injectTarget(");
+  const start = source.indexOf("async function prepareNativeAdapters(");
   const end = source.indexOf("async function currentInjectionSource(", start);
   let now = 0, attempts = 0, reloads = 0, registeredSource = "", registration = 0;
   const events = new Map();
@@ -115,6 +118,7 @@ test("a connected window retries missing tabs and applies the recovered menu onc
   const { injectAll } = vm.runInNewContext(`${source.slice(start, end)}; ({injectAll})`, {
     Date: { now: () => now }, URL, console: { error() {} },
     installPanelHostBinding: () => ({ install: async () => {}, publishHeartbeat: async () => {} }),
+    prepareCodexRspack: async () => null,
     waitForRendererReady: async () => {}, panelEnvironment: () => "fixture",
     prepareCodexProviderUltrafast: async () => [],
     prepareCodexDotEntry: async (_cdp, modules) => ({ modules, prepared: false }),

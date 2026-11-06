@@ -41,6 +41,7 @@ import { prepareCodexThreadTabs } from "./codex-thread-tabs.mjs";
 import { prepareCodexProviderUltrafast } from "./codex-provider-ultrafast.mjs";
 import { createUltrafastCatalogAdapter } from "./codex-provider-ultrafast-catalog.mjs";
 import { prepareCodexProviderQuotaFix, watchCodexProviderQuotaPreferences } from "./codex-provider-quota.mjs";
+import { prepareCodexRspack } from "./codex-rspack.mjs";
 import { createPanelSupervisor } from "./panel-supervisor.mjs";
 import {
   CdpPipeBrowser,
@@ -2522,6 +2523,27 @@ async function registerInjectionSource(cdp, source) {
   return registration.identifier;
 }
 
+async function prepareNativeAdapters(cdp, appPath, reportThreadTabs) {
+  const preferences = panelEnvironment("PREFERENCES_FILE");
+  try {
+    const rspack = await prepareCodexRspack(cdp, appPath, preferences);
+    if (rspack) {
+      if (!rspack.prepared.tabs) reportThreadTabs(`Panel conversation tabs unavailable: ${rspack.errors.tabs}`);
+      return { source: rspack.source, threadTabsPrepared: rspack.prepared.tabs,
+        ultrafastPrepared: rspack.prepared.ultrafast, dotPrepared: rspack.prepared.dot };
+    }
+  } catch (error) {
+    reportThreadTabs(`Panel conversation tabs unavailable: ${error.message}`);
+    return { source: "", threadTabsPrepared: false };
+  }
+  const ultrafast = await prepareCodexProviderUltrafast(cdp);
+  const dot = await prepareCodexDotEntry(cdp, ultrafast);
+  const modules = await prepareCodexThreadTabs(cdp, dot.modules, reportThreadTabs);
+  const source = await prepareCodexProviderQuotaFix(cdp, preferences, console.error, modules, dot.prepared, ultrafast.length === 2);
+  return { source, threadTabsPrepared: modules !== dot.modules && Boolean(source),
+    ultrafastPrepared: ultrafast.length === 2, dotPrepared: dot.prepared };
+}
+
 async function injectTarget(
   runtime,
   target,
@@ -2536,6 +2558,7 @@ async function injectTarget(
   onCodexAppServerNotification,
   onCodexAppServerReady,
   onCodexAppServerUnavailable,
+  appPath,
 ) {
   const cdp = await runtime.connect(target);
   let retained = false;
@@ -2556,30 +2579,24 @@ async function injectTarget(
     await cdp.send("Runtime.enable");
     if (keepAlive) await hostBridge.install();
     await waitForRendererReady(cdp, 15_000);
-    const ultrafastModules = keepAlive ? await prepareCodexProviderUltrafast(cdp) : [];
-    const dot = keepAlive ? await prepareCodexDotEntry(cdp, ultrafastModules) : { modules: [], prepared: false };
     const reportThreadTabs = message => {
       console.error(message);
       if (message.startsWith("Panel conversation tabs unavailable:")) cdp.threadTabsError = message.slice(message.indexOf(":") + 1).trim();
     };
-    const threadModules = keepAlive ? await prepareCodexThreadTabs(cdp, dot.modules, reportThreadTabs) : dot.modules;
-    const quotaSource = keepAlive
-      ? await prepareCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"), console.error, threadModules, dot.prepared, ultrafastModules.length === 2)
-      : "";
+    const adapters = keepAlive ? await prepareNativeAdapters(cdp, appPath, reportThreadTabs) : { source: "", threadTabsPrepared: false };
+    const quotaSource = adapters.source;
     if (quotaSource) source = `${quotaSource}\n${source}`;
     // 已连接不等于菜单加载成功；失败留给后台巡检重试，只有准备成功才重载应用。
-    cdp.threadTabsPhase = threadModules !== dot.modules && quotaSource ? "prepared" : "failed";
+    cdp.threadTabsPhase = adapters.threadTabsPrepared ? "prepared" : "failed";
     cdp.threadTabsError ||= cdp.threadTabsPhase === "failed" ? "会话菜单尚未准备成功" : "";
     const retryThreadTabs = keepAlive ? async () => {
       cdp.threadTabsPhase = "loading";
       cdp.threadTabsError = "";
       void cdp.onThreadTabsStatus?.();
       // 手动重试和后台重试都读取当前模块，不能沿用首次失败时的空快照。
-      const freshUltrafast = await prepareCodexProviderUltrafast(cdp);
-      const freshDot = await prepareCodexDotEntry(cdp, freshUltrafast);
-      const modules = await prepareCodexThreadTabs(cdp, freshDot.modules, reportThreadTabs);
-      if (modules === freshDot.modules) { cdp.threadTabsPhase = "failed"; return false; }
-      const bootstrap = await prepareCodexProviderQuotaFix(cdp, panelEnvironment("PREFERENCES_FILE"), console.error, modules, freshDot.prepared, freshUltrafast.length === 2);
+      const refreshed = await prepareNativeAdapters(cdp, appPath, reportThreadTabs);
+      if (!refreshed.threadTabsPrepared) { cdp.threadTabsPhase = "failed"; return false; }
+      const bootstrap = refreshed.source;
       if (!bootstrap) { cdp.threadTabsPhase = "failed"; cdp.threadTabsError = "菜单注入脚本未准备成功"; return false; }
       const currentStatus = await readInjectionStatus(cdp);
       const reconciled = await reconcileInjectionRuntime({
@@ -2608,8 +2625,8 @@ async function injectTarget(
         source,
         sourceHash,
         reloadRequired: Boolean(quotaSource) && (currentStatus.providerModulesPrepared !== true
-          || ultrafastModules.length === 2 && currentStatus.ultrafastBootstrapPrepared !== true
-          || dot.prepared && currentStatus.dotBootstrapPrepared !== true),
+          || adapters.ultrafastPrepared && currentStatus.ultrafastBootstrapPrepared !== true
+          || adapters.dotPrepared && currentStatus.dotBootstrapPrepared !== true),
         shouldOpen,
         removeRegisteredSource: (identifier) => cdp.send(
           "Page.removeScriptToEvaluateOnNewDocument",
@@ -2731,6 +2748,7 @@ async function injectAll(
   onCodexAppServerNotification,
   onCodexAppServerReady,
   onCodexAppServerUnavailable,
+  appPath,
 ) {
   const targets = await runtime.targets();
 
@@ -2788,6 +2806,7 @@ async function injectAll(
         onCodexAppServerNotification,
         onCodexAppServerReady,
         onCodexAppServerUnavailable,
+        appPath,
       );
       if (connection) injectedTargets.set(target.id, connection);
       results.push({ targetId: target.id, title: target.title, url: target.url, ...result });
@@ -2809,12 +2828,15 @@ async function currentInjectionSource() {
   const providerUltrafast = await readFile(new URL("./codex-provider-ultrafast.mjs", import.meta.url), "utf8");
   const dotEntry = await readFile(new URL("./codex-dot-entry.mjs", import.meta.url), "utf8");
   const threadTabs = await readFile(new URL("./codex-thread-tabs.mjs", import.meta.url), "utf8");
+  const rspack = await Promise.all(["codex-rspack.mjs", "codex-rspack-source.mjs", "codex-rspack-quota.mjs", "codex-rspack-tabs.mjs", "codex-rspack-capabilities.mjs"]
+    .map(file => readFile(new URL(file, import.meta.url), "utf8")));
   const sourceHash = createHash("sha256").update(JSON.stringify({
     userScript,
     providerQuotaFix,
     providerUltrafast,
     dotEntry,
     threadTabs,
+    rspack,
   })).digest("hex");
   const runtimeSource = `window.__CODEX_PANEL_MANAGED_ORIGIN__ = ${JSON.stringify(panelOrigin)};
 window.__CODEX_PANEL_HOST_CAPABILITY__ = ${JSON.stringify(hostCapability)};
@@ -3468,6 +3490,7 @@ async function main() {
         forwardCodexAppServerNotification,
         registerRoutableCodexConnection,
         unregisterRoutableCodexConnection,
+        options.appPath,
       );
     } catch (error) {
       if (!options.watch) throw error;
@@ -3587,6 +3610,7 @@ async function main() {
           forwardCodexAppServerNotification,
           registerRoutableCodexConnection,
           unregisterRoutableCodexConnection,
+          options.appPath,
         );
         if (results.length > 0) {
           console.log(JSON.stringify({ injected: results }, null, 2));

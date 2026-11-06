@@ -12,7 +12,7 @@ Open **Preferences → 模型上下文 → 配置上下文** to set a separate c
 
 Open a conversation, then right-click another Codex conversation in the sidebar to choose **Open in new tab** or **Open side by side** in the same window. Existing chats reuse one view; sidebar clicks focus the matching input and highlight that conversation without changing the layout. **Restore as standalone page** removes the tab and returns to the full conversation page. See [conversation tabs and split view](docs/fork-capabilities.md#conversation-tabs-and-split-view).
 
-Newer Codex compatibility also covers the separate worktree switch, native workspace and legacy automation services, and the split composer quota adapter. See [fork capabilities](docs/fork-capabilities.md).
+Codex builds using Rspack numeric modules are supported for the custom-provider send-limit switch, Ultrafast, Dot, conversation tabs and update status. Adapters follow native module structure and retain existing settings, including the current Dot signal and Ultrafast settings call conventions. The separate worktree switch, native workspace and legacy automation services remain supported. See [Rspack compatibility](docs/fork-capabilities.md#rspack-based-codex-builds).
 
 The injected entry follows the Codex language. Windows Panel opens bring the launched Codex window forward while preserving maximization. See [sidebar language and Windows activation](docs/fork-capabilities.md#sidebar-language-and-windows-window-activation).
 

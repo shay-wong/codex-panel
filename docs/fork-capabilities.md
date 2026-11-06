@@ -1,5 +1,16 @@
 # Fork capabilities
 
+## Rspack-based Codex builds
+
+The native adapters also support Codex builds using Rspack numeric modules. Existing switches still control custom-provider sending, Ultrafast and Dot; conversation tabs keep their split, restore, focus and highlight behavior. Update status uses the native updater services. Dot preference reads use the current scalar signal API; Ultrafast and custom-provider sending retain their outer module loaders so native parameters and local variables cannot shadow them. Installing this adapter uses the existing single renderer reload; subsequent preference changes keep their normal immediate behavior.
+
+The adapter was checked against desktop **26.1103.31037 / build 25241**. It reads the installed app’s module declarations without running them, identifies the required native code by its structure, and rewrites the in-memory entry response before native factories execute. Lazy modules are adapted when loaded. Unsupported structures retain native behavior and log an unavailable adapter. Original application files, provider configuration and credentials are unchanged. Verification covers the actual module source and an isolated browser startup/lazy-load path; real sending and installed-app interaction remain separate validation steps.
+
+原生适配同时支持采用 Rspack 数字模块的 Codex。自定义 API 发送限制、Ultrafast 和 Dot 沿用原有开关；会话标签保留并排、恢复独立页面、焦点及高亮行为，更新状态继续读取原生更新服务。 Dot 偏好按当前标量状态 API 读取，Ultrafast 与自定义 API 发送保留外层模块加载函数，避免与原生设置参数或局部变量同名导致页面报错。首次安装适配沿用一次界面重载，之后修改偏好仍按原方式即时生效。
+
+已核对桌面版 **26.1103.31037 / build 25241**。适配器只读解析安装包中的模块声明，按代码结构定位，在原生模块执行前替换内存中的入口响应；延迟模块在加载时应用适配。结构不支持时保留原生行为并记录错误，不改写应用文件、Provider 配置或凭据。已验证真实模块源码和隔离浏览器的启动、延迟加载路径；真实发送与已安装应用交互仍需单独验证。
+
+
 On macOS, Panel detects Codex restarts that lost connection arguments, offers **重启 Codex 并连接**, and requires confirmation before restarting Codex. See [update recovery](codex-compatibility.md#recovery-after-desktop-updates).
 
 For the 2026-09-30 desktop/CLI compatibility target, packaged macOS executable layout, new model options, and validation limits, see [Codex compatibility](codex-compatibility.md).

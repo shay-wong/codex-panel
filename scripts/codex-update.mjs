@@ -1,5 +1,51 @@
 const updateModules = new WeakMap();
 
+// Rspack exposes its existing module registry from the already loaded main entry.
+export async function findCodexRspackRequire() {
+  const existing = globalThis.__codexPanelRspack__?.require ?? globalThis.__codexPanelUpdateRequire__;
+  if (existing?.m) return existing;
+  const scripts = [...document.querySelectorAll('script[type="module"][src]')].map(script => script.src);
+  for (const url of scripts) {
+    if (!/\/\d+\.[\w-]+\.js$/.test(new URL(url, location.href).pathname)) continue;
+    const response = await fetch(url);
+    if (!response.ok) continue;
+    const source = await response.text();
+    if (!/export\s*\{[^}]*\b__webpack_require__\b/.test(source)) continue;
+    const load = (await import(url)).__webpack_require__;
+    if (typeof load !== "function" || !load.m) throw Error("Codex 原生模块注册表不可用");
+    globalThis.__codexPanelUpdateRequire__ = load;
+    return load;
+  }
+  return null;
+}
+
+function rspackUpdateModule(load, markers) {
+  const runtime = globalThis.__codexPanelRspack__;
+  if (runtime?.require === load && runtime.findModule) return runtime.findModule(markers);
+  const matches = Object.entries(load.m).filter(([, factory]) => markers.every(marker => factory.toString().includes(marker)));
+  return matches.length === 1 ? { id: matches[0][0], source: matches[0][1].toString() } : null;
+}
+
+function rspackUpdateSubscription(load) {
+  const cached = globalThis.__codexPanelUpdateSubscription__;
+  if (cached?.load === load) return cached.subscribe;
+  const module = rspackUpdateModule(load, ["getRestartBlockers", "stateChanged(", "new Set"]);
+  if (!module) throw Error("无法识别 Codex 原生更新状态模块");
+  const subscriptions = Object.values(load(module.id)).filter(value => typeof value === "function"
+    && /\.add\(([\w$]+)\).*\.delete\(\1\)/.test(value.toString().replace(/\s+/g, "")));
+  if (subscriptions.length !== 1) throw Error("无法识别 Codex 原生更新状态订阅");
+  const subscribe = subscriptions[0];
+  globalThis.__codexPanelUpdateSubscription__ = { load, subscribe };
+  return subscribe;
+}
+
+function rspackAppUpdates(load) {
+  const module = rspackUpdateModule(load, ["setAppHost", "setAppServices", "appServices:"]);
+  const updates = module && load(module.id).appServices?.appUpdates;
+  if (!updates) throw Error("Codex 更新检查接口尚未就绪");
+  return updates;
+}
+
 // Resolve the cached native update subscription without starting a check or download.
 export function updateSubscriptionExport(source) {
   const match = source.match(/function ([\w$]+)\(([\w$]+)\)\{return ([\w$]+)\.add\(\2\),([\w$]+)!=null&&\2\(\4\),\(\)=>\{\3\.delete\(\2\)\}\}/);
@@ -14,6 +60,16 @@ export function updateSubscriptionExport(source) {
 export async function readCodexUpdateState(cdp) {
   const response = await cdp.send("Runtime.evaluate", {
     expression: `(async () => {
+      const load = await (${findCodexRspackRequire})();
+      if (load) {
+        const rspackUpdateModule = ${rspackUpdateModule};
+        let state;
+        const unsubscribe = (${rspackUpdateSubscription})(load)(value => { state = value; });
+        unsubscribe();
+        if (!state) throw Error("Codex 尚未提供更新状态，请稍后重试");
+        return { isUpdateReady: state.isUpdateReady, lifecycleState: state.lifecycleState,
+          downloadProgressPercent: state.downloadProgressPercent, downloadedUpdateAppBrand: state.downloadedUpdateAppBrand };
+      }
       let { url, name } = ${JSON.stringify(updateModules.get(cdp) ?? {})};
       if (!url) {
         const urls = [...performance.getEntriesByType("resource").map(entry => entry.name),
@@ -88,6 +144,11 @@ export async function readCodexUpdateStatus(cdp, { force = false, download } = {
     // The native quiet check can take 30 seconds; keep connection heartbeats responsive.
     void cdp.send("Runtime.evaluate", {
       expression: `(async () => {
+        const load = await (${findCodexRspackRequire})();
+        if (load) {
+          const rspackUpdateModule = ${rspackUpdateModule};
+          return await (${rspackAppUpdates})(load).checkForUpdateInformation();
+        }
         const url = [...document.querySelectorAll('script[src],link[rel="modulepreload"][href]')]
           .map(entry => entry.src || entry.href).find(url => /app-shared-[\\w-]+\\.js$/.test(new URL(url, location.href).pathname));
         if (!url) throw Error("Codex 更新检查接口尚未就绪");

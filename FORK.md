@@ -8,7 +8,7 @@ macOS 原生弹窗恢复（本次修复，等待上游吸收）：`src-tauri/src
 
 macOS 启动语言：`scripts/codex-injector.mjs` 的 `launchCodex` 在调用系统 open 前去掉终端 LANG、LANGUAGE、LC_*，避免终端英文环境覆盖系统或应用语言；不修改用户偏好，不影响 Windows/Linux 或其他子进程。`test/codex-window-target.test.mjs` 验证传递边界，尚未安装；不将此修改视为已解决 Statsig 配置超时造成的英文回退。
 
-Dot 启动修复：原生 signal family 读取必须显式传入 undefined key；单参数读取会把布尔返回值当作 atom，引发 `n.read is not a function`。`test/codex-dot-entry.test.mjs` 覆盖此调用约定；Dot 模块加入注入源码摘要，更新后重连触发界面重载。两个安装清单均包含该模块。
+Dot 启动修复：旧版 ESM 的原生 signal family 读取必须显式传入 undefined key；单参数读取会把布尔返回值当作 atom，引发 `n.read is not a function`。新版 Rspack 使用标量 signal，必须单参数读取；错误传入 undefined key 会触发 `o[E.ak] is not a function`，两种 API 不可混用。`test/codex-dot-entry.test.mjs` 覆盖此调用约定；Dot 模块加入注入源码摘要，更新后重连触发界面重载。两个安装清单均包含该模块。
 
 自定义 API 的 Dot 入口（本次新增，等待上游吸收）：启动器“偏好设置 → 显示与系统 → 恢复 Dot 入口”以 `showCustomProviderDot` 独立持久化，默认关闭，旧偏好文件缺字段时也为 false。沿用 Launcher 偏好保存与可信心跳，仅在连接 Panel 时将原生 `orbit` 及新版独立的 `orbit.navigation` 客户端能力返回为可用，跳过该能力的账号与 Provider 门槛，其他能力原样判断；关闭时恢复原始门槛，服务端授权不变且可能拒绝实际操作；不修改模型发现配置。原生响应式状态接收开关，适配已加载后切换无需重启，首次安装或适配更新沿用原有一次界面重载。源码核对版本 ChatGPT 26.1016.62342 与 26.1021.31345；后者把导航与功能拆为父子能力，适配须同时覆盖两者。适配按运行时已存在的能力名判断，不匹配 Dot 配置的完整文本、字段顺序、引号或父子层级；保留唯一能力函数、相同状态作用域和 Provider 判断结构校验。不创建原生缺失的能力，不按 `orbit.*` 扩大范围。实际新版模块改写及语法检查通过，测试覆盖新旧结构、字段换序与不同引号、原生能力缺失、开启关闭和其他能力保留；新版安装后的真实账号 Dot 访问尚未验证。入口与持久化代码：`launcher/src/App.tsx`、`src-tauri/src/main.rs`；适配代码：`scripts/codex-dot-entry.mjs`、`scripts/codex-provider-quota.mjs`、`scripts/codex-injector.mjs`、`inject/codex-panel.user.js`；新版额度模块不匹配时仍安装 Dot 独立模块。验证：`test/codex-dot-entry.test.mjs`、`launcher/src/App.spec.tsx`；用户说明：中英文 README/CHANGELOG 与 `docs/fork-capabilities.md#custom-provider-dot-entry`。来源定位 `git log -S'showCustomProviderDot' -- launcher/src/App.tsx`；上游原生支持自定义 Provider 的等价 Dot 入口后移除该适配。
 
@@ -576,3 +576,14 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 ### 显式跨会话接手（本次修复，等待上游吸收）
 
 用户明确要求在当前会话实现或接手任务时，Manage Panel 使用 `conversation bind ISSUE_ID --replace-thread-id OLD_ID`；API 核对旧 ID 与最新绑定相同才更新，默认绑定仍拒绝覆盖。新身份复用宿主解析；同一数据库事务保存带旧完整绑定的交接评论，使旧会话继续出现在活动区。状态、Spec、分支和工作树不变，不自动启动或停止任何会话；接手后重读并沿用既有开发上下文。代码：`cli/panelctl.mjs`、`server/app.mjs`、`server/database.mjs`、`skills/manage-panel/`；针对性验证：`test/server.test.mjs`、`test/cli.test.mjs`、`test/manage-panel-skill.test.mjs`。用户说明：中英文 README、CHANGELOG 和 `docs/fork-capabilities.md#configurable-ai-workflows`。来源定位：`git log -S replaceThreadId -- server/app.mjs`。上游具备等价显式转交与历史保留后移除；合并不得恢复技能的无条件禁止接手规则。
+
+
+### Codex Rspack 模块兼容
+
+- 等待上游吸收：适配 26.1103.31037 / build 25241 从命名 ESM 切换到 Rspack 数字 chunk 后失效的自定义 API 发送限制、Ultrafast、Dot、会话标签和更新状态。既有开关、官方模型名单、local/custom 限定、安全策略、会话唯一位置与焦点行为保持。
+- 路径：`prepareNativeAdapters` → 只读解析当前 `app.asar` 的模块声明 → 按语义及 require/export 关系准备 factory 改写 → CDP Fetch 仅替换该版本主入口成功响应 → new-document runtime 在原生执行前代理模块注册表 → 初始或延迟加载时替换已验证的 factory。无 bootstrap 时主入口保留原生执行；源码不匹配时不替换。原生应用文件不写入，不在准备阶段执行模块，不按 chunk hash 或模块 ID 建版本表。
+- 代码：`scripts/codex-rspack-source.mjs`、`scripts/codex-rspack.mjs`、`scripts/codex-rspack-quota.mjs`、`scripts/codex-rspack-capabilities.mjs`、`scripts/codex-rspack-tabs.mjs`、`scripts/codex-update.mjs`、`scripts/codex-injector.mjs`。两个安装清单必须包含这些 runtime 模块。旧 ESM 路径继续保留；Rspack 菜单与侧栏都真正执行后才报告 ready。
+- 验证：`test/codex-rspack*.test.mjs`、`test/codex-update.test.mjs`、`test/codex-window-target.test.mjs`；当前源码离线改写、原生依赖映射和隔离 Chromium 的入口/延迟加载路径通过。真实用户发送、当前App交互和安装验证分开报告，不把源码匹配视为用户验收。
+- 文档：中英文 README/CHANGELOG、`docs/fork-capabilities.md#rspack-based-codex-builds`。本次未提交来源可用 `git log -S'createCodexRspackRuntime' -- scripts/codex-rspack.mjs` 定位。合并时保留 factory 执行时序、原始源核对及 provider/安全策略边界；上游提供等价公开扩展API后再移除此适配。
+
+- Rspack 运行时修复：Dot 偏好使用标量 signal 的单参数 get；Ultrafast 与额度适配在 factory 作用域捕获 require，避免被内层 service tier 参数或组件局部变量遮蔽。这三处错误只有执行时出现，语法通过不能证明可渲染。`test/codex-rspack-runtime-regressions.test.mjs` 与能力测试覆盖真实 getter 契约及变量遮蔽，真实原生 getter 隔离复现错误并验证修复。

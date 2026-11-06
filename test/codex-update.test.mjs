@@ -160,3 +160,72 @@ test('a stalled check times out and a late reply cannot replace the retry result
   await new Promise(resolve => setImmediate(resolve));
   assert.equal((await readCodexUpdateStatus(cdp)).available, true);
 });
+
+async function rspackFixture(t) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'panel-rspack-updates-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = path.join(directory, '84120.fixture.js');
+  const source = `
+    export let checks = 0;
+    export let nativeState = {isUpdateReady:false,lifecycleState:'idle',downloadedUpdateAppBrand:null,downloadProgressPercent:null};
+    const factories = {
+      changedState(module, exports) {
+        const listeners = new Set(); let state = nativeState;
+        const bridge = {async getRestartBlockers(){return []}, stateChanged(value){state=value; for(const listener of listeners)listener(value)}};
+        Object.assign(exports, {N:function(callback){return listeners.add(callback),state!=null&&callback(state),()=>{listeners.delete(callback)}}, bridge});
+      },
+      changedHost(module, exports) {
+        const appServices = {appUpdates:{async checkForUpdateInformation(){checks++;return {status:'available',installedVersion:'26.old',availableVersion:'26.new',availableBuildVersion:'43'}}}};
+        Object.assign(exports,{appServices:appServices,setAppHost(value){},setAppServices(value){}});
+      }
+    };
+    const cache = {};
+    function load(id){if(!cache[id]){const module={exports:{}};factories[id](module,module.exports,load);cache[id]=module.exports;}return cache[id];}
+    load.m=factories;
+    export {load as __webpack_require__};
+  `;
+  await writeFile(path.join(directory, 'package.json'), '{"type":"module"}');
+  await writeFile(file, source);
+  const entry = pathToFileURL(file).href;
+  const native = await import(entry);
+  const page = {};
+  const reads = [];
+  const cdp = { send: async (_method, params) => {
+    const evaluate = new Function('performance', 'document', 'fetch', 'location', 'globalThis', `return ${params.expression}`);
+    const value = await evaluate(
+      {getEntriesByType:()=>[]},
+      {querySelectorAll:()=>[{src:entry}]},
+      async url => { reads.push(url); assert.equal(url,entry); return {ok:true,text:async()=>source}; },
+      {href:entry},page,
+    );
+    return {result:{value}};
+  } };
+  return {native,page,cdp,reads};
+}
+
+test('Rspack reads native update state without a check and reuses the current document registry', async t => {
+  const fixture = await rspackFixture(t);
+  assert.deepEqual(await readCodexUpdateState(fixture.cdp), {ready:false,downloading:false,progress:null});
+  assert.equal(fixture.native.checks,0);
+  fixture.native.__webpack_require__('changedState').bridge.stateChanged({isUpdateReady:true,lifecycleState:'downloading',downloadedUpdateAppBrand:null,downloadProgressPercent:42});
+  assert.deepEqual(await readCodexUpdateState(fixture.cdp), {ready:false,downloading:true,progress:42});
+  fixture.native.__webpack_require__('changedState').bridge.stateChanged({isUpdateReady:true,lifecycleState:'ready',downloadedUpdateAppBrand:'codex',downloadProgressPercent:100});
+  assert.deepEqual(await readCodexUpdateState(fixture.cdp), {ready:true,downloading:false,progress:100});
+  assert.equal(fixture.reads.length,1);
+});
+
+test('Rspack quiet checks use the native app services without opening the update window', async t => {
+  const fixture = await rspackFixture(t);
+  const load = fixture.native.__webpack_require__;
+  fixture.page.__codexPanelRspack__ = {require:load,findModule(markers){
+    const matches = Object.entries(load.m).filter(([,factory])=>markers.every(marker=>factory.toString().includes(marker)));
+    return matches.length===1 ? {id:matches[0][0],source:matches[0][1].toString()} : null;
+  }};
+  assert.equal((await readCodexUpdateStatus(fixture.cdp)).checking,true);
+  await new Promise(resolve=>setImmediate(resolve));
+  const state = await readCodexUpdateStatus(fixture.cdp);
+  assert.equal(state.available,true);
+  assert.match(state.message,/26.new/);
+  assert.equal(fixture.native.checks,1);
+  assert.equal(fixture.reads.length,0);
+});
