@@ -112,6 +112,7 @@
   let quickPhrasesPanel = null;
   let quickPhrasesDialog = null;
   let quickPhraseSending = false;
+  let quickPhrasesSyncFrame = 0;
 
   function isExhaustedUsageBanner(banner) {
     const fiberKey = Object.keys(banner).find((key) => key.startsWith("__reactFiber$"));
@@ -251,7 +252,7 @@
       #${QUICK_PHRASES_ID}, .codex-panel-phrases-dialog {
         color: var(--color-token-foreground, CanvasText); font: inherit; font-size: 14px; line-height: 1.5;
       }
-      #${QUICK_PHRASES_ID} { position: fixed; z-index: 30; overflow: auto; padding: 16px; box-sizing: border-box; -webkit-app-region: no-drag; }
+      #${QUICK_PHRASES_ID} { overflow: auto; min-height: 0; flex: 0 1 auto; padding: 16px; box-sizing: border-box; -webkit-app-region: no-drag; }
       #${QUICK_PHRASES_ID}[hidden] { display: none; }
       .codex-panel-phrases-heading { display: flex; align-items: center; gap: 7px; list-style: none; }
       .codex-panel-phrases-heading::-webkit-details-marker { display: none; }
@@ -2855,6 +2856,7 @@
   function scheduleRefresh() {
     if (destroyed) return;
     syncUsageBannerVisibility();
+    syncQuickPhrases();
     if (reattachTimer !== null) return;
     reattachTimer = window.setTimeout(() => {
       reattachTimer = null;
@@ -2989,7 +2991,12 @@
     }
   }
 
-  function syncQuickPhrases() {
+  function syncQuickPhrasesNow() {
+    if (destroyed) return;
+    const summaries = Array.from(document.querySelectorAll('[data-summary-panel-variant]'))
+      .filter(panel => panel.getClientRects().length > 0 && !panel.closest('[hidden]'));
+    const summary = summaries.find(panel => !panel.closest("[inert]")) ?? summaries[0];
+    const container = summary?.parentElement?.closest(".flex.flex-col.gap-3");
     const rightPanelOpen = Array.from(document.querySelectorAll('aside[data-app-shell-focus-area="right-panel"]'))
       .some(panel => panel.getBoundingClientRect().width > 0
         && panel.getClientRects().length > 0 && !panel.closest('[inert], [hidden], [aria-hidden="true"]'));
@@ -3015,19 +3022,35 @@
         configureQuickPhrases();
       });
       quickPhrasesPanel.querySelector(".codex-panel-phrases-hint").textContent = hostText("点击短语，直接发送", "Click a phrase to send it");
-      document.body.append(quickPhrasesPanel);
       renderQuickPhrases();
     }
-    const summary = Array.from(document.querySelectorAll('[data-summary-panel-variant]'))
-      .find(panel => panel.getClientRects().length > 0 && !panel.closest('[inert], [hidden]'));
-    const width = Math.min(300, window.innerWidth - 32);
-    const rect = summary?.getBoundingClientRect() ?? { left: window.innerWidth - width - 16, bottom: 52, width };
-    const top = rect.bottom + 20;
-    quickPhrasesPanel.toggleAttribute("hidden", rect.width < 180 || top >= window.innerHeight - 80);
-    quickPhrasesPanel.style.left = `${rect.left}px`;
-    quickPhrasesPanel.style.top = `${top}px`;
-    quickPhrasesPanel.style.width = `${rect.width}px`;
-    quickPhrasesPanel.style.maxHeight = `${Math.max(0, window.innerHeight - top - 20)}px`;
+    // Share the summary animation when available; keep independent placement otherwise.
+    if (container) {
+      if (quickPhrasesPanel.parentElement !== container) container.append(quickPhrasesPanel);
+      quickPhrasesPanel.removeAttribute("style");
+      quickPhrasesPanel.toggleAttribute("hidden", false);
+    } else {
+      if (quickPhrasesPanel.parentElement !== document.body) document.body.append(quickPhrasesPanel);
+      quickPhrasesPanel.style.position = "fixed";
+      quickPhrasesPanel.style.zIndex = "30";
+      const width = Math.min(300, window.innerWidth - 32);
+      const rect = summary?.getBoundingClientRect() ?? { left: window.innerWidth - width - 16, bottom: 52, width };
+      const top = rect.bottom + 20;
+      quickPhrasesPanel.toggleAttribute("hidden", rect.width < 180 || top >= window.innerHeight - 80);
+      quickPhrasesPanel.style.left = `${rect.left}px`;
+      quickPhrasesPanel.style.top = `${top}px`;
+      quickPhrasesPanel.style.width = `${rect.width}px`;
+      quickPhrasesPanel.style.maxHeight = `${Math.max(0, window.innerHeight - top - 20)}px`;
+    }
+  }
+
+  function syncQuickPhrases() {
+    if (quickPhrasesSyncFrame) return;
+    const schedule = window.requestAnimationFrame ?? (callback => window.setTimeout(callback, 0));
+    quickPhrasesSyncFrame = schedule(() => {
+      quickPhrasesSyncFrame = 0;
+      syncQuickPhrasesNow();
+    });
   }
 
   const usageLines = new Map();

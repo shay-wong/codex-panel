@@ -557,13 +557,14 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 ## 会话快捷短语（2026-11-05，长期保留）
 
 - 目的：实现用户确认的“轻量列表” demo，在会话右侧项目摘要下方直接发送常用短语。
-- 路径：`inject/codex-panel.user.js` 的 `syncQuickPhrases` 在当前会话中独立显示列表；可见 `[data-summary-panel-variant]` 仅用于避让上方浮窗，隐藏或缺失时使用独立的右上方位置；配置窗口按行写入当前 Codex profile 的 `localStorage`（`codex-panel.quick-phrases.v1`）；`sendQuickPhrase` 查找当前会话编辑器的原生 `composerController`，调用 `setText` 后点击原生 Send。没有新增 host API、数据库结构或 Launcher 配置。
+- 路径：`inject/codex-panel.user.js` 的 `syncQuickPhrases` 在当前会话中独立显示列表；摘要可用时挂到其动画父容器，隐藏或缺失时使用独立的右上方位置；配置窗口按行写入当前 Codex profile 的 `localStorage`（`codex-panel.quick-phrases.v1`）；`sendQuickPhrase` 查找当前会话编辑器的原生 `composerController`，调用 `setText` 后点击原生 Send。没有新增 host API、数据库结构或 Launcher 配置。
 - 不变量：短语跨当前 profile 内的会话共用，空行忽略；沿用当前输入框模型和权限，不覆盖草稿或附件；没有可用发送按钮时保留已填入短语并提示。新会话 `home` 和已有会话 `thread` 均显示列表；无可见 Codex 输入框的页面、已打开的 Panel 及可见的原生右侧内容栏不显示列表；上方浮窗隐藏不控制快捷短语的显示。仅修改 DOM 注入，不修改官方 App 包。
 - 独立显示修复：用户报告浮窗隐藏导致快捷短语消失，移除 `!summary` 隐藏条件，为摘要缺失设置独立位置。`test/inject-quick-phrases.test.mjs` 先复现失败，再验证摘要隐藏、显示、移除后的列表可见与点击发送；使用临时数据和工作区，在隔离浏览器中验证隐藏浮窗后仍可点击发送。按此前安装授权同步到当前安装，保留本机短语配置；未创建新版本 tag。
 - 新会话修复：原选择器仅匹配 `data-composer-placement="thread"`，导致尚无会话 ID 的首页不显示列表；`quickPhraseComposer` 同时识别可见的 `home` 输入框，显示与原生发送共用该选择。上述针对性检查扩展到 `home`，先失败后通过，并保留已有会话用例；隔离浏览器确认新会话显示和首条短语发送，安装后仍由用户确认真实 App 的发送效果。
 - 浮窗样式：快捷短语容器复用原生 island 浮层的 `rounded-2xl bg-surface-elevated-secondary electron:elevation-prominent`，仅调整容器留白为 16px。独立挂载、新会话、保存与发送逻辑不变；隔离浏览器使用当前安装包 CSS，确认与项目浮窗的背景、圆角和阴影一致，并验证上方浮窗隐藏后仍可点击发送。纯样式变更未新增测试。
 - 右侧内容栏避让：`syncQuickPhrases` 检查可见的 `aside[data-app-shell-focus-area="right-panel"]`，文件或预览栏打开时隐藏快捷短语及其配置窗口，关闭后恢复。此标记来自当前原生 `GLt` 内容栏组件；不改变左侧项目导航。`test/inject-quick-phrases.test.mjs` 为 home/thread 两种输入框复现打开后仍显示的问题，修复后两项通过；隔离浏览器验证打开隐藏、关闭恢复及恢复后发送。
 - 收起：快捷短语根容器使用原生 `details` / `summary`，默认展开；点击标题或键盘 Enter 切换，收起仅保留标题、配置入口和方向箭头。配置按钮取消 summary 的默认切换动作，关闭配置后保留原折叠状态。复用已有 DOM，在会话切换和右侧栏暂时隐藏期间保留状态，页面重载后恢复默认展开，不增加持久化字段。隔离浏览器验证收起、收起时配置、键盘展开与展开后发送；两项既有快捷短语检查通过，未新增测试。
+- 动画同步：摘要可用时共用原生动画父容器，不再延迟追踪屏幕坐标；缺少摘要时保留独立定位。节点发现合并到下一帧，保留新会话、折叠卡片及右侧栏避让。
 - 弹窗居中修复：原生 CSS 的 `*,:after,:before,::backdrop{margin:0}` 清除了浏览器 dialog 的自动外边距；`.codex-panel-phrases-dialog` 明确设置 `margin:auto`。使用当前安装包 CSS 和实际注入脚本在隔离浏览器复现 `(0,0)` 偏位，修复后 1280×720 视窗内横纵中心偏差均为 0px；不改变配置和发送逻辑。
 - 验证：实际注入脚本的语法检查，以及隔离临时数据、工作区和独立 origin 中的配置 → 保存 → 刷新 → 点击发送路径。已只读核实当前安装版的摘要节点和 ProseMirror 编辑器父级 React controller；未向真实会话发送消息，未新增回归测试。按用户随后授权，已安装到 `~/Applications/Codex Panel.app`，更新资源清单并通过深度严格签名校验；保留现有 Launcher/Node 二进制，通过现有安装流程重连原 Codex 实例。运行控制通道确认 ready，实际加载的组合 source hash 与已安装源码一致。工具安全限制禁止直接访问 Codex 窗口，真实界面点击发送、Windows/Linux 仍待确认。
 - 用户入口：中英文 README；详细说明及索引：`docs/fork-capabilities.md#quick-phrases`；更新日志：中英文 CHANGELOG。

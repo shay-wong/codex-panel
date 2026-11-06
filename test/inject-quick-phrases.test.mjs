@@ -9,7 +9,7 @@ const threadId = "11111111-1111-4111-8111-111111111111";
 for (const placement of ["thread", "home"]) {
 test(`quick phrases stay available and send from ${placement} without a project summary`, async () => {
   const dom = new JSDOM(`<html lang="zh-CN"><body>
-    <aside data-summary-panel-variant="summary" hidden></aside>
+    <div class="flex flex-col gap-3"><aside data-summary-panel-variant="summary" hidden></aside></div>
     <div data-codex-composer-root data-composer-placement="${placement}">
       <span data-above-composer-conversation-id="${placement === "thread" ? threadId : ""}"></span>
       <div><div data-codex-composer="true" contenteditable="true"></div></div>
@@ -19,7 +19,9 @@ test(`quick phrases stay available and send from ${placement} without a project 
   const { window } = dom;
   try {
     window.setTimeout = () => 1;
-    window.requestAnimationFrame = callback => { callback(); return 1; };
+    let frames = [];
+    window.requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
+    const flushFrames = () => { const pending = frames; frames = []; pending.forEach(callback => callback(0)); };
     window.Element.prototype.getClientRects = function () {
       return this.closest("[hidden]") ? [] : [this.getBoundingClientRect()];
     };
@@ -35,24 +37,31 @@ test(`quick phrases stay available and send from ${placement} without a project 
     send.addEventListener("click", () => { submitted.push(editor.textContent); editor.textContent = ""; send.disabled = true; });
     window.__CODEX_PANEL_SOURCE_HASH__ = "independent-quick-phrases-test";
     window.eval(source);
+    flushFrames();
     const panel = window.document.getElementById("codex-panel-quick-phrases");
     assert.ok(panel && !panel.hidden, "quick phrases must mount without a visible summary");
 
     const summary = window.document.querySelector("aside");
     summary.hidden = false;
     window.__codexPanelInjection__.refresh();
+    flushFrames();
     assert.equal(panel.hidden, false);
-    assert.ok(Number.parseFloat(panel.style.top) > summary.getBoundingClientRect().bottom);
+    assert.equal(panel.parentElement, summary.parentElement, "visible summary and phrases share the native animation container");
+    assert.equal(panel.style.position, "");
     summary.hidden = true;
     window.__codexPanelInjection__.refresh();
+    flushFrames();
     assert.equal(panel.hidden, false);
+    assert.equal(panel.parentElement, window.document.body, "hidden summary restores independent placement");
     summary.remove();
     window.__codexPanelInjection__.refresh();
+    flushFrames();
     assert.equal(panel.hidden, false);
     assert.ok(Number.parseFloat(panel.style.left) >= 0);
     assert.ok(Number.parseFloat(panel.style.left) + Number.parseFloat(panel.style.width) <= window.innerWidth);
 
     panel.querySelector(".codex-panel-phrase").click();
+    flushFrames();
     await Promise.resolve();
     assert.deepEqual(submitted, ["继续"]);
 
@@ -60,9 +69,11 @@ test(`quick phrases stay available and send from ${placement} without a project 
     sidebar.setAttribute("data-app-shell-focus-area", "right-panel");
     window.document.body.append(sidebar);
     window.__codexPanelInjection__.refresh();
+    flushFrames();
     assert.equal(panel.hidden, true, "quick phrases must not cover an open right sidebar");
     sidebar.remove();
     window.__codexPanelInjection__.refresh();
+    flushFrames();
     assert.equal(panel.hidden, false, "closing the right sidebar restores quick phrases");
   } finally {
     window.__codexPanelInjection__?.destroy();
