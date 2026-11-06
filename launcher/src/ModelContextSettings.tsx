@@ -97,7 +97,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
     <Dialog.Content className="model-context-dialog" maxWidth="720px" size="2" style={{ display: "flex", flexDirection: "column", height: "min(680px, calc(100dvh - 24px))", overflow: "hidden" }}>
       <Dialog.Title mb="1">模型上下文与子代理推理</Dialog.Title>
       <Dialog.Description size="1" color="gray">
-        默认值来自当前模型目录。留空或选默认恢复，保存后重启 Codex 生效。
+        留空或选默认恢复。Sol 原生旧目录默认修正为 500000，保存后重启 Codex 生效。
       </Dialog.Description>
       <form onSubmit={save} style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
         {settings && <Box mt="2" style={{ flexShrink: 0 }}>

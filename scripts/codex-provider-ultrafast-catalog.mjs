@@ -46,17 +46,26 @@ export function withUltrafastCatalog(catalog) {
   }) };
 }
 
+function withCurrentModelDefaults(catalog) {
+  // https://learn.chatgpt.com/docs/models#gpt-61-sol: replace only the known stale native default.
+  return { ...catalog, models: catalog.models.map(model => model.slug === "gpt-6.1-sol"
+    && model.context_window === 272000 && model.max_context_window === 872000
+    ? { ...model, context_window: 500000 } : model) };
+}
+
 async function modelContextState({ executable, dataDirectory, processEnv, cwd }, client) {
   const { config, layers, origins } = await client.request("config/read", { includeLayers: true });
   const userLayer = layers?.find(layer => layer.name?.type === "user" && !layer.name.profile);
   if (!userLayer?.name.file || !userLayer.version) throw new Error("无法定位 Codex 用户配置");
   const statePath = path.join(dataDirectory, "model-context.json");
   const catalogPath = path.join(dataDirectory, "model-context-catalog.json");
+  const provider = config.model_provider ?? "openai";
+  const providerUrl = config.model_providers?.[provider]?.model_catalog_url;
+  const ultrafast = (await readJson(path.join(dataDirectory, "ultrafast-catalog.json"), null))?.providers?.[provider];
+  const sourceUrl = ultrafast && ultrafast.url === providerUrl ? ultrafast.originalUrl : providerUrl;
   let state = await readJson(statePath, null);
   if (!state || config.model_catalog_json !== catalogPath) {
     const args = ["debug", "models"];
-    const provider = config.model_provider ?? "openai";
-    const ultrafast = (await readJson(path.join(dataDirectory, "ultrafast-catalog.json"), null))?.providers?.[provider];
     if (!config.model_catalog_json && ultrafast && ultrafast.url === config.model_providers?.[provider]?.model_catalog_url) {
       // Keep the source catalog independent of the Ultrafast preference.
       if (ultrafast.originalUrl) args.push("-c", `model_providers.${JSON.stringify(provider)}.model_catalog_url=${JSON.stringify(ultrafast.originalUrl)}`);
@@ -70,15 +79,23 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd },
     state = {
       catalog: JSON.parse(stdout), contextWindows: {},
       originalCatalog: userLayer.config?.model_catalog_json ?? null,
+      catalogSource: config.model_catalog_json || sourceUrl ? "external" : "native",
     };
   }
   if (!Array.isArray(state.catalog?.models)) throw new Error("Codex 模型目录格式无效");
+  if (!state.catalogSource && !state.originalCatalog && !sourceUrl) {
+    // Refresh unclassified legacy defaults from the current native source, retaining saved overrides.
+    state.catalog = await readBundledModelCatalog(executable);
+    state.catalogSource = "native";
+  }
   state.autoCompactTokenLimits ??= {};
   state.multiAgentReasoningEfforts ??= {};
+  state.useOfficialContextDefaults = state.catalogSource === "native";
   return { config, userLayer, origins, state, statePath, catalogPath };
 }
 
-function withModelContextSettings(catalog, { contextWindows, autoCompactTokenLimits = {}, multiAgentReasoningEfforts = {} }) {
+function withModelContextSettings(catalog, { contextWindows, autoCompactTokenLimits = {}, multiAgentReasoningEfforts = {}, useOfficialContextDefaults = false }) {
+  if (useOfficialContextDefaults) catalog = withCurrentModelDefaults(catalog);
   return { ...catalog, models: catalog.models.map(model => {
     const updated = { ...model,
       ...(Object.hasOwn(contextWindows, model.slug) ? { context_window: contextWindows[model.slug] } : {}),
@@ -112,6 +129,7 @@ export async function modelContextSettings({
     const { config, userLayer, origins, state, statePath, catalogPath } = await modelContextState(
       { executable, dataDirectory, processEnv, cwd }, client,
     );
+    const defaults = state.useOfficialContextDefaults ? withCurrentModelDefaults(state.catalog) : state.catalog;
     if (contextWindows !== undefined) {
       autoCompactTokenLimits ??= state.autoCompactTokenLimits;
       multiAgentReasoningEfforts ??= state.multiAgentReasoningEfforts;
@@ -144,7 +162,8 @@ export async function modelContextSettings({
         || origin.type === "user" && !origin.profile && origin.file === userLayer.name.file)) {
         throw new Error("模型目录由更高优先级配置管理，无法保存上下文设置");
       }
-      const hasOverrides = hasContexts || hasCompactLimits || hasEfforts;
+      const hasDefaultCorrection = defaults.models.some((model, index) => model !== state.catalog.models[index]);
+      const hasOverrides = hasContexts || hasCompactLimits || hasEfforts || hasDefaultCorrection;
       state.contextWindows = contextWindows;
       state.autoCompactTokenLimits = autoCompactTokenLimits;
       state.multiAgentReasoningEfforts = multiAgentReasoningEfforts;
@@ -165,7 +184,7 @@ export async function modelContextSettings({
       }
     }
     return {
-      models: state.catalog.models.map(model => ({
+      models: defaults.models.map(model => ({
         slug: model.slug, displayName: model.display_name ?? model.slug,
         contextWindow: model.context_window ?? model.max_context_window ?? null,
         autoCompactTokenLimit: model.auto_compact_token_limit ?? null,

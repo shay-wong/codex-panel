@@ -1,13 +1,103 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { parse } from "smol-toml";
 import { CodexAppServer } from "../server/codex-app-server.mjs";
-import { createUltrafastCatalogAdapter, readBundledModelCatalog, readModelDiscovery, setModelDiscovery, withUltrafastCatalog } from "../scripts/codex-provider-ultrafast-catalog.mjs";
+import { createUltrafastCatalogAdapter, modelContextSettings, readBundledModelCatalog, readModelDiscovery, setModelDiscovery, withUltrafastCatalog } from "../scripts/codex-provider-ultrafast-catalog.mjs";
+
+test("resetting a native Sol catalog uses 500K and keeps the corrected catalog active", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-context-default-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const catalogPath = path.join(root, "model-context-catalog.json");
+  const model = { slug: "gpt-6.1-sol", context_window: 272000, max_context_window: 872000, base_instructions: "preserved" };
+  await writeFile(path.join(root, "model-context.json"), JSON.stringify({
+    catalog: { models: [model] }, contextWindows: { "gpt-6.1-sol": 600000 }, originalCatalog: null, catalogSource: "native",
+  }));
+  let config = { model_catalog_json: catalogPath, model_provider: "probe", model_providers: { probe: { name: "Probe" } } };
+  t.mock.method(CodexAppServer.prototype, "request", async (method, params) => {
+    if (method === "config/read") return { config, layers: [{ name: { type: "user", file: path.join(root, "config.toml") }, version: "v1", config }] };
+    assert.equal(method, "config/batchWrite");
+    config.model_catalog_json = params.edits[0].value;
+    return { status: "ok" };
+  });
+  const options = { executable: "/unused", dataDirectory: root };
+  assert.equal((await modelContextSettings(options)).models[0].contextWindow, 500000);
+  const reset = await modelContextSettings(options, {}, {}, {});
+  assert.deepEqual(reset.contextWindows, {});
+  assert.equal(config.model_catalog_json, catalogPath);
+  const generated = JSON.parse(await readFile(catalogPath));
+  assert.deepEqual(generated.models[0], { ...model, context_window: 500000 });
+  assert.equal((await modelContextSettings(options)).models[0].contextWindow, 500000);
+  const preferencesFile = path.join(root, "preferences.json");
+  await writeFile(preferencesFile, JSON.stringify({ customProviderUltrafast: true }));
+  const adapter = createUltrafastCatalogAdapter({ ...options, preferencesFile,
+    createClient: () => new CodexAppServer({ executable: "/unused" }), report() {},
+  });
+  t.after(() => adapter.close());
+  await adapter.sync();
+  assert.equal(JSON.parse(await readFile(catalogPath)).models[0].context_window, 500000);
+  assert.ok(JSON.parse(await readFile(catalogPath)).models[0].service_tiers.some(tier => tier.id === "ultrafast"));
+  await modelContextSettings(options, { "gpt-6.1-sol": 400000 }, {}, {});
+  assert.equal(JSON.parse(await readFile(catalogPath)).models[0].context_window, 400000);
+});
+
+test("legacy native defaults refresh on read while explicit Sol overrides stay intact", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-context-legacy-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const catalogPath = path.join(root, "model-context-catalog.json");
+  const native = { models: [{ slug: "gpt-6-astra" }, { slug: "gpt-6.1-sol", context_window: 272000, max_context_window: 872000 }] };
+  const executable = path.join(root, "codex");
+  await writeFile(executable, JSON.stringify(native));
+  await writeFile(path.join(root, "model-context.json"), JSON.stringify({
+    catalog: native, contextWindows: { "gpt-6.1-sol": 600000 }, originalCatalog: null,
+  }));
+  t.mock.method(CodexAppServer.prototype, "request", async method => {
+    assert.equal(method, "config/read", "opening settings must not write Codex configuration");
+    const config = { model_catalog_json: catalogPath };
+    return { config, layers: [{ name: { type: "user", file: path.join(root, "config.toml") }, version: "v1", config }] };
+  });
+  const result = await modelContextSettings({ executable, dataDirectory: root });
+  assert.equal(result.models.find(model => model.slug === "gpt-6.1-sol").contextWindow, 500000);
+  assert.equal(result.contextWindows["gpt-6.1-sol"], 600000);
+  assert.equal(JSON.parse(await readFile(path.join(root, "model-context.json"))).catalogSource, undefined);
+});
+
+test("Sol default correction preserves external catalogs and newer native values", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-context-source-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const catalogPath = path.join(root, "model-context-catalog.json");
+  let config = { model_catalog_json: catalogPath, model_provider: "probe", model_providers: {} };
+  t.mock.method(CodexAppServer.prototype, "request", async (method, params) => {
+    if (method === "config/read") return { config, layers: [{ name: { type: "user", file: path.join(root, "config.toml") }, version: "v1", config }] };
+    assert.equal(method, "config/batchWrite");
+    config.model_catalog_json = params.edits[0].value;
+    return { status: "ok" };
+  });
+  for (const source of ["file", "url", "native-new"]) {
+    config = { model_catalog_json: catalogPath, model_provider: "probe", model_providers: source === "url" ? { probe: { model_catalog_url: "http://127.0.0.1:9/unused" } } : {} };
+    const contextWindow = source === "native-new" ? 544000 : 272000;
+    const originalCatalog = source === "file" ? path.join(root, "external.json") : null;
+    await writeFile(path.join(root, "model-context.json"), JSON.stringify({
+    catalog: { models: [{ slug: "gpt-6.1-sol", context_window: contextWindow, max_context_window: 872000 }] }, contextWindows: {}, originalCatalog, catalogSource: source === "native-new" ? "native" : "external",
+    }));
+    const reset = await modelContextSettings({ executable: "/unused", dataDirectory: root }, {}, {}, {});
+    assert.equal(reset.models[0].contextWindow, contextWindow);
+    assert.equal(config.model_catalog_json, originalCatalog);
+  }
+  config = { model_catalog_json: catalogPath, model_provider: "changed-provider", model_providers: {} };
+  await writeFile(path.join(root, "model-context.json"), JSON.stringify({
+    catalog: { models: [{ slug: "gpt-6.1-sol", context_window: 272000, max_context_window: 872000 }] },
+    contextWindows: {}, originalCatalog: null, catalogSource: "external",
+  }));
+  const afterProviderChange = await modelContextSettings({ executable: "/unused", dataDirectory: root });
+  assert.equal(afterProviderChange.models[0].contextWindow, 272000);
+  await modelContextSettings({ executable: "/unused", dataDirectory: root }, { "gpt-6.1-sol": 400000 }, {}, {});
+  assert.equal(JSON.parse(await readFile(catalogPath)).models[0].context_window, 400000);
+});
 
 test("model discovery reads only the persisted user setting and propagates read failures", async () => {
   for (const value of [undefined, false, true]) {
