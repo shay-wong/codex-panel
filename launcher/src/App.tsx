@@ -300,9 +300,9 @@ export function App() {
         <Callout.Icon><LinearIcon name="alert" /></Callout.Icon>
         <Box>
           <Callout.Text>{restartReminder} 设置已保存。请重启 Codex，使核心模型能力和配置完整生效；重启会中断正在运行的任务。</Callout.Text>
-          <Flex gap="3" mt="3">
-            <Button size="1" variant="soft" {...actionProps("restart_codex", savingPreference)}>立即重启 Codex</Button>
-            <Button size="1" variant="ghost" onClick={() => setRestartReminder("")}>稍后</Button>
+          <Flex align="center" wrap="wrap" mt="3" style={{ gap: 8 }}>
+            <Button size="2" variant="soft" {...actionProps("restart_codex", savingPreference)}>立即重启 Codex</Button>
+            <Button size="2" variant="outline" onClick={() => setRestartReminder("")}>稍后</Button>
           </Flex>
         </Box>
       </Callout.Root>}
