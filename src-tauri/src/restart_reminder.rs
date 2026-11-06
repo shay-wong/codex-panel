@@ -58,10 +58,9 @@ pub(super) fn pending(
     process: impl FnOnce() -> Option<CodexProcess>,
 ) -> Result<Option<String>, String> {
     let path = data_directory.join("restart-required.json");
-    let reminder: Reminder = match fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| error.to_string())?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.to_string()),
+    let reminder: Reminder = match read(data_directory)? {
+        Some(bytes) => serde_json::from_slice(&bytes).map_err(|error| error.to_string())?,
+        None => return Ok(None),
     };
     if process().is_some_and(|current| {
         current.started_at > reminder.saved_at
@@ -71,6 +70,22 @@ pub(super) fn pending(
         return Ok(None);
     }
     Ok(Some(reminder.label))
+}
+
+pub(super) fn read(data_directory: &Path) -> Result<Option<Vec<u8>>, String> {
+    match fs::read(data_directory.join("restart-required.json")) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+pub(super) fn clear_if_unchanged(data_directory: &Path, expected: &[u8]) -> Result<(), String> {
+    if read(data_directory)?.as_deref() == Some(expected) {
+        fs::remove_file(data_directory.join("restart-required.json"))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -129,6 +144,26 @@ mod tests {
             None
         );
         assert!(!root.join("restart-required.json").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn confirmed_restart_clears_only_the_reminder_it_started_with() {
+        let root = std::env::temp_dir().join(format!(
+            "panel-restart-ack-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        mark(&root, "模型上下文", None).unwrap();
+        let original = read(&root).unwrap().unwrap();
+        assert_eq!(pending(&root, || None).unwrap().as_deref(), Some("模型上下文"));
+        clear_if_unchanged(&root, &original).unwrap();
+        assert_eq!(pending(&root, || None).unwrap(), None);
+        clear_if_unchanged(&root, &original).unwrap();
+
+        mark(&root, "Ultrafast", None).unwrap();
+        clear_if_unchanged(&root, &original).unwrap();
+        assert_eq!(pending(&root, || None).unwrap().as_deref(), Some("Ultrafast"));
         fs::remove_dir_all(root).unwrap();
     }
 }

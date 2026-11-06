@@ -2690,6 +2690,10 @@ fn restart_launcher(
                 return Err("Codex 正在下载更新，请下载完成后重试，尚未退出 Codex".into());
             }
         }
+        let restart_reminder = if target != RestartTarget::Service {
+            let _guard = state.restart_reminder_guard.lock().unwrap();
+            restart_reminder::read(&state.data_directory)?
+        } else { None };
         // 先停自动重连，避免退出 Codex 时 injector 抢先重新启动旧配置的进程。
         stop_managed_child_locked(app, state);
         reset_recovery(state);
@@ -2713,7 +2717,15 @@ fn restart_launcher(
                     codex_update::wait_for_installation(&codex_app, &original_info, Duration::from_secs(120), verify_codex_app)?;
                 }
             }
-            start_launcher_locked(app, state, should_open)
+            let snapshot = start_launcher_locked(app, state, should_open)?;
+            if snapshot.child_pid.is_some() {
+                if let Some(reminder) = restart_reminder {
+                    let _guard = state.restart_reminder_guard.lock().unwrap();
+                    restart_reminder::clear_if_unchanged(&state.data_directory, &reminder)
+                        .map_err(|error| format!("Codex 重启已发起，但无法清除重启提醒：{error}"))?;
+                }
+            }
+            Ok(snapshot)
         })();
         if result.is_err() {
             state.intentional_stop.store(false, Ordering::SeqCst);

@@ -8,7 +8,7 @@ This file records user-visible changes introduced by the fork.
 
 - Clarify Ultrafast’s required configuration with separate lines.
 
-- Keep pending Codex restart reminders across Panel relaunches and reinstalls until Codex has actually restarted.
+- Keep pending Codex restart reminders across Panel relaunches and reinstalls; clear them immediately after a confirmed restart is successfully initiated, or when an external restart is detected. Cancellation and startup failure keep the reminder.
 
 - Remove the quick-phrase card’s empty status-row space and animate message expansion and collapse without abrupt jumps.
 

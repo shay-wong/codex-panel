@@ -313,14 +313,25 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(unlisten).toHaveBeenCalledOnce();
 }, 15_000);
 
-it("restores pending Codex restart reminders after reopening Panel and keeps Later local", async () => {
+it("keeps restart reminders until a confirmed restart starts, including after reopening Panel", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   let reminder: string | null = "模型上下文";
+  let restart: "cancelled" | "failed" | "started" = "cancelled";
   let windowOpened!: () => void;
   let statusListener!: (event: { payload: LauncherSnapshot }) => void;
   const snapshot = { phase: "running", version: "test", childPid: 123, appPath: "/disposable/Codex.app" } as LauncherSnapshot;
-  const invoke = vi.fn(async () => ({ snapshot, preferences: {}, codexRestartReminder: reminder, autostart: false }));
+  const invoke = vi.fn(async (command: string) => {
+    if (command === "restart_codex") {
+      if (restart === "failed") throw new Error("启动失败");
+      if (restart === "started") {
+        reminder = null;
+        snapshot.phase = "starting";
+      }
+    }
+    return { snapshot: { ...snapshot }, preferences: {}, codexRestartReminder: reminder, autostart: false };
+  });
   vi.stubGlobal("__TAURI__", {
     core: { invoke },
     event: { listen: async (event: string, listener: typeof statusListener) => {
@@ -330,7 +341,8 @@ it("restores pending Codex restart reminders after reopening Panel and keeps Lat
     } },
   });
   let view = render(<Theme><App /></Theme>);
-  expect(await screen.findByText(/模型上下文 设置已保存/)).toBeTruthy();
+  await act(async () => {});
+  expect(screen.getByText(/模型上下文 设置已保存/)).toBeTruthy();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "稍后" })); });
   expect(screen.queryByText(/模型上下文 设置已保存/)).toBeNull();
   await act(async () => { windowOpened(); });
@@ -338,11 +350,28 @@ it("restores pending Codex restart reminders after reopening Panel and keeps Lat
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "稍后" })); });
   view.unmount();
   view = render(<Theme><App /></Theme>);
-  expect(await screen.findByText(/模型上下文 设置已保存/)).toBeTruthy();
+  await act(async () => {});
+  expect(screen.getByText(/模型上下文 设置已保存/)).toBeTruthy();
   await act(async () => { statusListener({ payload: { ...snapshot, phase: "waiting" } }); });
   expect(screen.getByText(/模型上下文 设置已保存/)).toBeTruthy();
-  reminder = null; // The native layer confirmed a newer Codex process.
-  await act(async () => { statusListener({ payload: snapshot }); });
+
+  for (const outcome of ["cancelled", "failed", "started"] as const) {
+    restart = outcome;
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "立即重启 Codex" })); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    if (outcome !== "started") expect(screen.getByText(/模型上下文 设置已保存/)).toBeTruthy();
+    else expect(screen.queryByText(/模型上下文 设置已保存/)).toBeNull();
+  }
+  await act(async () => { windowOpened(); });
   expect(screen.queryByText(/模型上下文 设置已保存/)).toBeNull();
+
+  reminder = "Ultrafast";
+  snapshot.phase = "running";
+  await act(async () => { windowOpened(); });
+  expect(screen.getByText(/Ultrafast 设置已保存/)).toBeTruthy();
+  await act(async () => { statusListener({ payload: { ...snapshot, phase: "waiting" } }); });
+  reminder = null; // An external Codex restart is still detected by the native layer.
+  await act(async () => { statusListener({ payload: snapshot }); });
+  expect(screen.queryByText(/Ultrafast 设置已保存/)).toBeNull();
   view.unmount();
 });
