@@ -34,6 +34,9 @@ const ICONS = {
   download: {
     content: <path d="M8 2v8m-3-3 3 3 3-3M3 11v2a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />,
   },
+  package: {
+    content: <path d="M8 1.5 14 4.75v6.5L8 14.5 2 11.25v-6.5ZM2 4.75 8 8l6-3.25M8 8v6.5M5 3.125l6 3.25" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />,
+  },
   dragHandle: {
     content: <><circle cx="5" cy="4" r="1" /><circle cx="11" cy="4" r="1" /><circle cx="5" cy="8" r="1" /><circle cx="11" cy="8" r="1" /><circle cx="5" cy="12" r="1" /><circle cx="11" cy="12" r="1" /></>,
   },

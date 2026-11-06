@@ -23,6 +23,8 @@ import {
   stopManagedInjector,
 } from "./codex-injector-control.mjs";
 import { managedInjectorCommandMatches } from "./codex-injector-runtime.mjs";
+import { ensureCodexDeltaTool } from "./prepare-codex-delta.mjs";
+import { ensureCodexTransport } from "./prepare-codex-transport.mjs";
 import {
   installManagedDirectory,
   installManagedFile,
@@ -64,6 +66,9 @@ const runtimeScriptNames = [
   "codex-rate-limits.mjs",
   "codex-thread-usage.mjs",
   "codex-update.mjs",
+  "codex-update-download.mjs",
+  "codex-update-delta.mjs",
+  "codex-update-transport.mjs",
   "codex-provider-quota.mjs",
   "codex-provider-ultrafast.mjs",
   "codex-provider-ultrafast-catalog.mjs",
@@ -185,6 +190,17 @@ async function stageRuntimePayload(sourceRoot, stagedRuntime) {
   await mkdir(scriptsDirectory, { recursive: true });
   for (const filename of runtimeScriptNames) {
     await copyFile(path.join(sourceRoot, "scripts", filename), path.join(scriptsDirectory, filename));
+  }
+  if (process.platform === "darwin") {
+    const tool = await ensureCodexDeltaTool({ projectRoot: sourceRoot });
+    const toolsDirectory = path.join(stagedRuntime, "tools");
+    await mkdir(toolsDirectory, { recursive: true });
+    await copyFile(tool.binaryPath, path.join(toolsDirectory, "BinaryDelta"));
+    await chmod(path.join(toolsDirectory, "BinaryDelta"), 0o755);
+    await copyFile(tool.licensePath, path.join(toolsDirectory, "Sparkle-LICENSE"));
+    const transport = await ensureCodexTransport({ projectRoot: sourceRoot });
+    await copyFile(transport.binaryPath, path.join(toolsDirectory, "CodexTransport"));
+    await chmod(path.join(toolsDirectory, "CodexTransport"), 0o755);
   }
 }
 

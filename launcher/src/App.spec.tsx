@@ -18,7 +18,7 @@ it("keeps launcher feedback, live status and global preferences working through 
       phase: "waiting", message: "Panel 服务已启动，正在等待 Codex 连接。", version: "0.1.0",
       childPid: 123, openRequestPending: false, embeddedVisible: false,
       threadTabsPhase: "waiting", threadTabsMessage: "",
-      updateMessage: "尚未检查更新。", updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateMessage: "", codexUpdateChecking: false,
+      updateMessage: "尚未检查更新。", updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false,
       appPath: "/disposable/Codex.app",
     },
     preferences: { autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false },
@@ -80,7 +80,7 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(document.getElementById("installCodexUpdate")).toBeNull();
   await publish({ phase: "running", codexUpdateReady: true });
   expect(button("installCodexUpdate")).toBeTruthy();
-  await publish({ phase: "running", codexUpdateReady: false, codexUpdateMessage: "当前已是最新版 · 26.1027.61615" });
+  await publish({ phase: "running", codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "当前已是最新版 · 26.1027.61615" });
   expect(screen.getByText("当前已是最新版 · 26.1027.61615")).toBeTruthy();
   await click(button("checkCodexUpdates"));
   await advance(300);
@@ -89,6 +89,38 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(button("checkCodexUpdates").disabled).toBe(true);
   expect(button("checkCodexUpdates").getAttribute("aria-label")).toContain("正在检查");
   await publish({ codexUpdateChecking: false });
+  await publish({ codexUpdateAvailable: true, codexUpdateMessage: "发现新版本 26.new" });
+  expect(document.getElementById("checkCodexUpdates")).toBeNull();
+  expect(button("downloadCodexUpdate").getAttribute("aria-label")).toBe("下载更新");
+  await click(button("downloadCodexUpdate"));
+  await advance(300);
+  expect(invoke).toHaveBeenCalledWith("download_codex_update");
+  await publish({ codexUpdateDownloading: true, codexUpdateMessage: "正在下载更新 · 42%" });
+  expect(button("downloadCodexUpdate").disabled).toBe(true);
+  expect(document.getElementById("installCodexUpdate")).toBeNull();
+  await publish({ codexUpdatePhase: "downloading" });
+  expect(document.getElementById("downloadCodexUpdate")).toBeNull();
+  await click(button("pauseCodexUpdate"));
+  await advance(300);
+  expect(invoke).toHaveBeenCalledWith("control_codex_update_download", { action: "pause" });
+  await publish({ codexUpdatePhase: "paused", codexUpdateDownloading: false });
+  expect(document.getElementById("pauseCodexUpdate")).toBeNull();
+  await click(button("resumeCodexUpdate"));
+  await advance(300);
+  expect(invoke).toHaveBeenCalledWith("control_codex_update_download", { action: "resume" });
+  await publish({ codexUpdatePhase: "verifying", codexUpdateDownloading: true });
+  expect(document.getElementById("pauseCodexUpdate")).toBeNull();
+  expect(document.getElementById("resumeCodexUpdate")).toBeNull();
+  await click(button("cancelCodexUpdate"));
+  await advance(300);
+  expect(invoke).toHaveBeenCalledWith("control_codex_update_download", { action: "cancel" });
+  await publish({ codexUpdatePhase: "cancelled", codexUpdateDownloading: false });
+  expect(button("downloadCodexUpdate")).toBeTruthy();
+  await publish({ codexUpdateReady: true, codexUpdateDownloading: false, codexUpdatePhase: "ready" });
+  expect(document.getElementById("downloadCodexUpdate")).toBeNull();
+  expect(button("installCodexUpdate")).toBeTruthy();
+  await publish({ codexUpdateReady: false, codexUpdateAvailable: false });
+
 
   await publish({ phase: "waiting", codexUpdateReady: false });
   expect(document.getElementById("codexUpdateComponent")).toBeTruthy();

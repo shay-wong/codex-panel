@@ -16,6 +16,9 @@ export type LauncherSnapshot = {
   updateAvailable: boolean;
   updateReady: boolean;
   codexUpdateReady: boolean;
+  codexUpdateAvailable: boolean;
+  codexUpdateDownloading: boolean;
+  codexUpdatePhase: string;
   codexUpdateMessage: string;
   codexUpdateChecking: boolean;
   appPath: string | null;
@@ -39,7 +42,7 @@ const titles: Record<string, string> = { running: "Panel 已就绪", waiting: "�
 const initialSnapshot: LauncherSnapshot = {
   phase: "starting", version: "—", message: "正在读取服务状态…", childPid: null,
   embeddedVisible: false, threadTabsPhase: "waiting", threadTabsMessage: "", openRequestPending: false, updateMessage: "尚未检查更新。",
-  updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateMessage: "", codexUpdateChecking: false, appPath: null,
+  updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false, appPath: null,
 };
 
 function Setting({ id, title, detail, checked, disabled, onChange }: {
@@ -148,10 +151,11 @@ export function App() {
     return () => window.removeEventListener("message", onMessage);
   }, [workflowUrl]);
 
-  async function run(action: string) {
+  async function run(action: string, args?: Record<string, unknown>) {
+    const actionKey = args?.action ? `${action}:${args.action}` : action;
     if (busyRef.current) return;
     busyRef.current = true;
-    setBusyAction(action);
+    setBusyAction(actionKey);
     setError("");
     const started = performance.now();
     let succeeded = false;
@@ -160,7 +164,9 @@ export function App() {
       if (action === "workflow_settings_url") {
         setWorkflowUrl(await window.__TAURI__.core.invoke<string>(action));
       } else {
-        const result = await window.__TAURI__.core.invoke<LauncherState | undefined>(action);
+        const result = await (args
+          ? window.__TAURI__.core.invoke<LauncherState | undefined>(action, args)
+          : window.__TAURI__.core.invoke<LauncherState | undefined>(action));
         acceptState(result?.snapshot ? result : await window.__TAURI__.core.invoke<LauncherState>("launcher_ui_state"));
       }
       succeeded = true;
@@ -171,11 +177,11 @@ export function App() {
       busyRef.current = false;
       setBusyAction("");
       if (!succeeded) setError(String(failure));
-      clearTimeout(feedbackTimers.current.get(action));
-      setFeedback(current => ({ ...current, [action]: succeeded ? "success" : "failed" }));
-      feedbackTimers.current.set(action, setTimeout(() => {
-        setFeedback(current => { const next = { ...current }; delete next[action]; return next; });
-        feedbackTimers.current.delete(action);
+      clearTimeout(feedbackTimers.current.get(actionKey));
+      setFeedback(current => ({ ...current, [actionKey]: succeeded ? "success" : "failed" }));
+      feedbackTimers.current.set(actionKey, setTimeout(() => {
+        setFeedback(current => { const next = { ...current }; delete next[actionKey]; return next; });
+        feedbackTimers.current.delete(actionKey);
       }, 900));
     }
   }
@@ -238,14 +244,15 @@ export function App() {
     finally { setSavingPreference(false); }
   }
 
-  function actionProps(action: string, disabled = false) {
+  function actionProps(action: string, disabled = false, args?: Record<string, unknown>) {
+    const actionKey = args?.action ? `${action}:${args.action}` : action;
     return {
       "data-action": action,
       disabled: busy || disabled,
-      loading: busyAction === action,
-      "aria-busy": busyAction === action || undefined,
-      className: busyAction === action ? "is-busy" : feedback[action] ? `is-${feedback[action]}` : undefined,
-      onClick: () => { void run(action); },
+      loading: busyAction === actionKey,
+      "aria-busy": busyAction === actionKey || undefined,
+      className: busyAction === actionKey ? "is-busy" : feedback[actionKey] ? `is-${feedback[actionKey]}` : undefined,
+      onClick: () => { void run(action, args); },
     };
   }
   function iconAction(id: string, action: string, title: string, icon: ReactNode, disabled = false) {
@@ -342,8 +349,13 @@ export function App() {
                 </div>
                 {snapshot.appPath?.endsWith(".app") && <div className="maintenance-card" id="codexUpdateComponent">
                   <div className="status-row-copy"><Text size="2" weight="medium">Codex 更新</Text><Text as="p" size="1" color="gray" mt="1">{!ready ? "连接 Codex 后读取更新状态" : snapshot.codexUpdateMessage || "正在读取更新状态…"}</Text></div>
-                  <Flex className="card-actions">
-                    {ready && snapshot.codexUpdateReady ? cardAction("installCodexUpdate", "install_codex_update", "安装 Codex 更新并重启", <LinearIcon name="download" />)
+                  <Flex className="card-actions" gap="2">
+                    {ready && ["preparing", "downloading", "paused", "verifying"].includes(snapshot.codexUpdatePhase) ? <>
+                      {snapshot.codexUpdatePhase === "downloading" && <Tooltip content="暂停下载"><IconButton id="pauseCodexUpdate" aria-label="暂停下载" size="2" variant="soft" {...actionProps("control_codex_update_download", false, { action: "pause" })}><LinearIcon name="pause" /></IconButton></Tooltip>}
+                      {snapshot.codexUpdatePhase === "paused" && <Tooltip content="继续下载"><IconButton id="resumeCodexUpdate" aria-label="继续下载" size="2" variant="soft" {...actionProps("control_codex_update_download", false, { action: "resume" })}><LinearIcon name="play" /></IconButton></Tooltip>}
+                      <Tooltip content="取消下载"><IconButton id="cancelCodexUpdate" aria-label="取消下载" size="2" variant="soft" {...actionProps("control_codex_update_download", false, { action: "cancel" })}><LinearIcon name="close" /></IconButton></Tooltip>
+                    </> : ready && snapshot.codexUpdateReady ? cardAction("installCodexUpdate", "install_codex_update", "安装 Codex 更新并重启", <LinearIcon name="package" />)
+                      : ready && (snapshot.codexUpdateAvailable || snapshot.codexUpdateDownloading) ? <Tooltip content={snapshot.codexUpdateDownloading ? "正在下载并验证官方更新包" : "直接下载更新，完成后可安装并重启"}><IconButton id="downloadCodexUpdate" aria-label={snapshot.codexUpdateDownloading ? "正在下载更新…" : "下载更新"} size="2" variant="soft" {...actionProps("download_codex_update", snapshot.codexUpdateDownloading)} loading={busyAction === "download_codex_update" || snapshot.codexUpdateDownloading}><LinearIcon name="download" /></IconButton></Tooltip>
                       : <Tooltip content={snapshot.codexUpdateChecking ? "正在检查更新…" : "检查更新"}><IconButton id="checkCodexUpdates" aria-label={snapshot.codexUpdateChecking ? "正在检查更新…" : "检查更新"} size="2" variant="soft" {...actionProps("check_codex_updates", !ready || snapshot.codexUpdateChecking)} loading={busyAction === "check_codex_updates" || snapshot.codexUpdateChecking}><span className="action-icon" aria-hidden="true">↻</span></IconButton></Tooltip>}
                   </Flex>
                 </div>}

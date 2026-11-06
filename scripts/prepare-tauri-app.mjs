@@ -19,6 +19,8 @@ import {
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { discoverRuntimePackages } from "./runtime-packages.mjs";
+import { ensureCodexDeltaTool } from "./prepare-codex-delta.mjs";
+import { ensureCodexTransport } from "./prepare-codex-transport.mjs";
 
 const nodeVersion = "22.23.2";
 const nodeArchitectures = ["arm64", "x64"];
@@ -331,6 +333,9 @@ async function copyApplicationResources() {
     "codex-rate-limits.mjs",
     "codex-thread-usage.mjs",
     "codex-update.mjs",
+    "codex-update-download.mjs",
+    "codex-update-delta.mjs",
+    "codex-update-transport.mjs",
     "codex-provider-quota.mjs",
     "codex-provider-ultrafast.mjs",
     "codex-provider-ultrafast-catalog.mjs",
@@ -341,6 +346,17 @@ async function copyApplicationResources() {
       path.join(projectRoot, "scripts", fileName),
       path.join(appResources, "scripts", fileName),
     );
+  }
+  if (target !== windowsTarget && target !== linuxTarget) {
+    const tool = await ensureCodexDeltaTool({ projectRoot });
+    const toolsDirectory = path.join(appResources, "tools");
+    await mkdir(toolsDirectory, { recursive: true });
+    await copyFile(tool.binaryPath, path.join(toolsDirectory, "BinaryDelta"));
+    await chmod(path.join(toolsDirectory, "BinaryDelta"), 0o755);
+    await copyFile(tool.licensePath, path.join(toolsDirectory, "Sparkle-LICENSE"));
+    const transport = await ensureCodexTransport({ projectRoot });
+    await copyFile(transport.binaryPath, path.join(toolsDirectory, "CodexTransport"));
+    await chmod(path.join(toolsDirectory, "CodexTransport"), 0o755);
   }
   await mkdir(path.join(appResources, "inject"), { recursive: true });
   await copyFile(

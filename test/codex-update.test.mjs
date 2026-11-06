@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
-import { readCodexUpdateState, readCodexUpdateStatus } from '../scripts/codex-update.mjs';
+import { downloadCodexUpdate, readCodexUpdateState, readCodexUpdateStatus } from '../scripts/codex-update.mjs';
 
 test('reads cached update state when resource timings have been cleared', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'panel-update-state-'));
@@ -28,10 +28,10 @@ test('reads cached update state when resource timings have been cleared', async 
         );
         return { result: { value } };
       } };
-      assert.deepEqual(await readCodexUpdateState(cdp), { ready: true });
+      assert.deepEqual(await readCodexUpdateState(cdp), { ready: true, downloading: false, progress: null });
       assert.deepEqual(reads, resources.length ? [url] : [entry, runtime, url]);
       reads.length = 0;
-      assert.deepEqual(await readCodexUpdateState(cdp), { ready: true });
+      assert.deepEqual(await readCodexUpdateState(cdp), { ready: true, downloading: false, progress: null });
       assert.deepEqual(reads, []);
     }
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -42,7 +42,7 @@ test('does not offer installation for idle, offered-only or downloading updates'
     { isUpdateReady: false, lifecycleState: 'idle', downloadedUpdateAppBrand: null },
     { isUpdateReady: true, lifecycleState: 'ready', downloadedUpdateAppBrand: null },
     { isUpdateReady: true, lifecycleState: 'downloading', downloadedUpdateAppBrand: 'codex' },
-  ]) assert.deepEqual(await readCodexUpdateState({ send: async () => ({ result: { value } }) }), { ready: false });
+  ]) assert.deepEqual(await readCodexUpdateState({ send: async () => ({ result: { value } }) }), { ready: false, downloading: value.lifecycleState === 'downloading', progress: null });
 });
 
 test('reports latest only after the official quiet check succeeds without blocking readiness', async () => {
@@ -56,11 +56,11 @@ test('reports latest only after the official quiet check succeeds without blocki
       }
       return { result: { value: { isUpdateReady: false, lifecycleState: 'idle', downloadedUpdateAppBrand: null } } };
     } };
-    assert.deepEqual(await readCodexUpdateStatus(cdp), { ready: false, message: '正在检查更新…', checking: true });
+    assert.deepEqual(await readCodexUpdateStatus(cdp), { ready: false, available: false, downloading: false, message: '正在检查更新…', checking: true });
     finishCheck({ result: { value: { status, installedVersion: '26.1027.61615' } } });
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(await readCodexUpdateStatus(cdp), {
-      ready: false, checking: false,
+      ready: false, available: false, downloading: false, checking: false,
       message: `${status === 'up_to_date' ? '当前已是最新版' : '暂时无法检查更新'} · 26.1027.61615`,
     });
     assert.equal(checks, 1);
@@ -71,4 +71,92 @@ test('reports latest only after the official quiet check succeeds without blocki
     finishCheck({ result: { value: { status: 'up_to_date' } } });
 
   }
+});
+
+test('available update downloads in the background without opening native confirmation', async () => {
+  const cdp = { send: async (_method, params) => {
+    assert.ok(!params.expression.includes('host.appUpdates.checkForUpdates()'));
+    if (params.expression.includes('checkForUpdateInformation')) return { result: { value: {
+      status: 'available', availableVersion: '26.new', availableBuildVersion: '42', installedVersion: '26.old',
+    } } };
+    return { result: { value: { isUpdateReady: false, lifecycleState: 'idle', downloadedUpdateAppBrand: null } } };
+  } };
+  await readCodexUpdateStatus(cdp);
+  await new Promise(resolve => setImmediate(resolve));
+  let state = null;
+  let starts = 0;
+  const getPlanType = async () => 'plus';
+  const download = {
+    status: () => state,
+    start(result) {
+      starts++;
+      assert.equal(result.availableVersion, '26.new');
+      assert.equal(result.availableBuildVersion, '42');
+      assert.equal(result.getPlanType, getPlanType);
+      state = { ready: false, available: true, downloading: true, message: '正在下载更新 · 0%', checking: false };
+    },
+  };
+  assert.equal((await downloadCodexUpdate(cdp, download, { getPlanType })).downloading, true);
+  assert.equal((await downloadCodexUpdate(cdp, download)).downloading, true);
+  assert.equal(starts, 1);
+  state = { ...state, message: '正在下载更新 · 42%' };
+  assert.match((await readCodexUpdateStatus(cdp, { download })).message, /42%/);
+  state = { ...state, ready: true, downloading: false, message: '更新已下载并验证，可安装并重启' };
+  assert.equal((await readCodexUpdateStatus(cdp, { download })).ready, true);
+});
+
+test('retry after reconnect refreshes the offer when the old check is no longer available', async () => {
+  let state = { ready: false, available: true, downloading: false, checking: false, message: '上次下载失败' };
+  const download = { status: () => state, clearFailure() { state = null; }, start() { assert.fail('must check before downloading'); } };
+  const cdp = { send: async (_method, params) => ({ result: { value: params.expression.includes('checkForUpdateInformation')
+    ? { status: 'available', availableVersion: '26.new', availableBuildVersion: '42' }
+    : { isUpdateReady: false, lifecycleState: 'idle' } } }) };
+  assert.equal((await downloadCodexUpdate(cdp, download)).checking, true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await readCodexUpdateStatus(cdp, { download })).available, true);
+});
+
+test('busy native updater stays retryable without starting another check on each poll', async () => {
+  let checks = 0;
+  let nativeStatus = 'busy';
+  const cdp = { send: async (_method, params) => {
+    if (params.expression.includes('checkForUpdateInformation')) {
+      checks++;
+      return { result: { value: { status: nativeStatus, installedVersion: '26.1027.61615' } } };
+    }
+    return { result: { value: { isUpdateReady: false, lifecycleState: 'idle' } } };
+  } };
+  await readCodexUpdateStatus(cdp);
+  await new Promise(resolve => setImmediate(resolve));
+  for (let index = 0; index < 5; index++) {
+    const status = await readCodexUpdateStatus(cdp);
+    assert.equal(status.checking, false);
+    assert.match(status.message, /更新器正忙，请稍后重试/);
+  }
+  assert.equal(checks, 1);
+  nativeStatus = 'up_to_date';
+  assert.equal((await readCodexUpdateStatus(cdp, { force: true })).checking, true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match((await readCodexUpdateStatus(cdp)).message, /当前已是最新版/);
+  assert.equal(checks, 2);
+});
+
+test('a stalled check times out and a late reply cannot replace the retry result', async t => {
+  let now = 0;
+  t.mock.method(Date, 'now', () => now);
+  const replies = [];
+  const cdp = { send: async (_method, params) => {
+    if (params.expression.includes('checkForUpdateInformation')) return new Promise(resolve => replies.push(resolve));
+    return { result: { value: { isUpdateReady: false, lifecycleState: 'idle' } } };
+  } };
+  assert.equal((await readCodexUpdateStatus(cdp)).checking, true);
+  now = 35_000;
+  assert.equal((await readCodexUpdateStatus(cdp)).checking, false);
+  assert.match((await readCodexUpdateStatus(cdp)).message, /超时，请重试/);
+  assert.equal(replies.length, 1);
+  assert.equal((await readCodexUpdateStatus(cdp, { force: true })).checking, true);
+  replies[1]({ result: { value: { status: 'available', availableVersion: '26.new' } } });
+  replies[0]({ result: { value: { status: 'up_to_date' } } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await readCodexUpdateStatus(cdp)).available, true);
 });

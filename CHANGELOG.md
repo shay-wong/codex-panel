@@ -6,6 +6,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Download matching official Codex delta updates through macOS system networking from Panel with spaced pause, resume, and cancel controls and distinct download and install/restart icons, then verify and stage the updated app for installation and managed restart without another download confirmation. Busy checks no longer retry on every status poll; stalled checks time out and allow manual retry.
 - Offer continuous tracking and dot morph for dot-matrix numbers; ordinary numbers use fading. Switching number style preserves the selected dot effect.
 - Move quick phrases with the native summary animation instead of lagging behind its position.
 - Correct TPS when truncated logs contain a repeated mid-turn context; clear residual estimates on final log calibration.

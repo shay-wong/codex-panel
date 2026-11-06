@@ -47,6 +47,7 @@ export async function readCodexUpdateState(cdp) {
       unsubscribe();
       if (!state) throw Error("Codex 尚未提供更新状态，请稍后重试");
       return { isUpdateReady: state.isUpdateReady, lifecycleState: state.lifecycleState,
+        downloadProgressPercent: state.downloadProgressPercent,
         downloadedUpdateAppBrand: state.downloadedUpdateAppBrand, module: { url, name } };
     })()`,
     awaitPromise: true, returnByValue: true,
@@ -56,14 +57,31 @@ export async function readCodexUpdateState(cdp) {
   if (state?.module) updateModules.set(cdp, state.module);
   // “ready” also means an offer exists; a downloaded brand confirms the payload arrived.
   return { ready: state?.isUpdateReady === true && state.lifecycleState === "ready"
-    && ["chatgpt", "codex"].includes(state.downloadedUpdateAppBrand) };
+    && ["chatgpt", "codex"].includes(state.downloadedUpdateAppBrand),
+    downloading: state?.lifecycleState === "downloading",
+    progress: Number.isFinite(state?.downloadProgressPercent) ? state.downloadProgressPercent : null };
 }
 
 const updateChecks = new WeakMap();
 
-export async function readCodexUpdateStatus(cdp, { force = false } = {}) {
+export async function downloadCodexUpdate(cdp, download, { getPlanType } = {}) {
+  const current = download.status();
+  if (current?.ready || current?.downloading) return current;
+  const result = updateChecks.get(cdp)?.result;
+  if (result?.status !== "available") return readCodexUpdateStatus(cdp, { force: true, download });
+  download.start({ ...result, getPlanType });
+  return download.status();
+}
+
+export async function readCodexUpdateStatus(cdp, { force = false, download } = {}) {
+  if (force) download?.clearFailure();
+  const direct = download?.status();
+  if (direct) return direct;
   const state = await readCodexUpdateState(cdp);
   let check = updateChecks.get(cdp);
+  if (check && !check.result && Date.now() - check.startedAt >= 35_000) {
+    check.result = { status: "timeout" };
+  }
   if (!check || (force && check.result) || Date.now() - check.startedAt >= 15 * 60_000) {
     check = { startedAt: Date.now(), result: null };
     updateChecks.set(cdp, check);
@@ -80,21 +98,21 @@ export async function readCodexUpdateStatus(cdp, { force = false } = {}) {
       })()`,
       awaitPromise: true, returnByValue: true,
     }).then(response => {
-      check.result = response.exceptionDetails ? { status: "error" } : response.result?.value ?? { status: "error" };
-    }).catch(() => { check.result = { status: "error" }; });
+      check.result ??= response.exceptionDetails ? { status: "error" } : response.result?.value ?? { status: "error" };
+    }).catch(() => { check.result ??= { status: "error" }; });
   }
   const result = check.result;
   const version = typeof result?.installedVersion === "string" ? ` · ${result.installedVersion}` : "";
   let message;
   if (state.ready) message = `更新已下载，可安装并重新连接${version}`;
+  else if (state.downloading) message = `正在下载更新${state.progress == null ? "…" : ` · ${Math.round(state.progress)}%`}`;
   else if (!result) message = `正在检查更新…${version}`;
-  else if (result.status === "busy") {
-    message = `Codex 正在执行其他更新操作${version}`;
-    updateChecks.delete(cdp);
-  }
+  else if (result.status === "busy") message = `Codex 更新器正忙，请稍后重试${version}`;
+  else if (result.status === "timeout") message = "检查更新超时，请重试";
   else if (result.status === "up_to_date") message = `当前已是最新版${version}`;
   else if (result.status === "available") message = result.availableVersion ? `发现新版本 ${result.availableVersion}${version}` : `发现新版本，尚未下载完成${version}`;
   else if (result.status === "restart_required") message = `更新需要重启后生效${version}`;
   else message = `暂时无法检查更新${version}`;
-  return { ready: state.ready, message, checking: !result };
+  return { ready: state.ready, available: result?.status === "available", downloading: state.downloading,
+    message, checking: !result && !state.ready && !state.downloading };
 }

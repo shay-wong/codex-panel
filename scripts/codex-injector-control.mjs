@@ -14,7 +14,7 @@ import path from "node:path";
 
 import { managedInjectorCommandMatches } from "./codex-injector-runtime.mjs";
 
-const allowedActions = new Set(["status", "open", "retry-thread-tabs", "codex-update-status", "check-codex-updates", "interrupt-thread", "shutdown"]);
+const allowedActions = new Set(["status", "open", "retry-thread-tabs", "codex-update-status", "check-codex-updates", "download-codex-update", "pause-codex-update", "resume-codex-update", "cancel-codex-update", "interrupt-thread", "shutdown"]);
 const maximumMessageBytes = 64 * 1024;
 const requestTimeoutMs = 3_000;
 
