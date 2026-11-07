@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Configure the default subagent model and reasoning effort, plus each personal role’s model and reasoning effort, in the model context dialog; restore inheritance per field or reset all settings together.
+
 - Recover Panel connections after heartbeat timeouts without waiting for a WebSocket close response; preserve current usage statistics through failed or empty reads.
 
 ## 0.5.0-fork

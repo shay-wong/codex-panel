@@ -3211,8 +3211,24 @@ async fn set_model_context_windows(
     context_windows: serde_json::Value,
     auto_compact_token_limits: serde_json::Value,
     multi_agent_reasoning_efforts: serde_json::Value,
+    default_subagent_model: Option<String>,
+    agent_models: Option<serde_json::Value>,
+    default_subagent_reasoning_effort: Option<String>,
+    agent_reasoning_efforts: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
-    let input = serde_json::json!({ "contextWindows": context_windows, "autoCompactTokenLimits": auto_compact_token_limits, "multiAgentReasoningEfforts": multi_agent_reasoning_efforts });
+    let mut input = serde_json::json!({ "contextWindows": context_windows, "autoCompactTokenLimits": auto_compact_token_limits, "multiAgentReasoningEfforts": multi_agent_reasoning_efforts });
+    if let Some(model) = default_subagent_model {
+        input["defaultSubagentModel"] = serde_json::json!(model);
+    }
+    if let Some(models) = agent_models {
+        input["agentModels"] = models;
+    }
+    if let Some(effort) = default_subagent_reasoning_effort {
+        input["defaultSubagentReasoningEffort"] = serde_json::json!(effort);
+    }
+    if let Some(efforts) = agent_reasoning_efforts {
+        input["agentReasoningEfforts"] = efforts;
+    }
     let output = run_model_configuration(app.clone(), "write-contexts", Some(state.data_directory.clone()), Some(input)).await?;
     let result = serde_json::from_str(output.trim()).map_err(|error| error.to_string())?;
     mark_codex_restart_required(&app, &state, "模型上下文")?;

@@ -9,6 +9,96 @@ import { parse } from "smol-toml";
 import { CodexAppServer } from "../server/codex-app-server.mjs";
 import { createUltrafastCatalogAdapter, modelContextSettings, readBundledModelCatalog, readModelDiscovery, setModelDiscovery, withUltrafastCatalog } from "../scripts/codex-provider-ultrafast-catalog.mjs";
 
+test("role models and reasoning update registered and standalone files without changing instructions", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-role-model-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const catalogPath = path.join(root, "model-context-catalog.json");
+  const contexts = { "parent-model": 96000 };
+  const configFile = path.join(root, "config.toml");
+  const directory = path.join(root, "agents");
+  await mkdir(directory);
+  const reviewer = 'model = "parent-model" # keep model comment\r\nmodel_reasoning_effort = "high"\r\ndeveloper_instructions = "Review carefully"\r\n';
+  const explorer = 'name = "explorer"\ndescription = "Explore"\ndeveloper_instructions = """\nmodel = "instruction-example"\nmodel_reasoning_effort = "instruction-example"\nKeep this text.\n"""\nmodel_reasoning_effort = "low" # keep effort comment\n[features]\nshell_tool = false\n';
+  await writeFile(path.join(directory, "reviewer.toml"), reviewer);
+  await writeFile(path.join(directory, "explorer.toml"), explorer);
+  await writeFile(configFile, '[agents.reviewer]\ndescription = "Review"\nconfig_file = "agents/reviewer.toml"\n');
+  const originalConfig = await readFile(configFile, "utf8");
+  await writeFile(path.join(root, "model-context.json"), JSON.stringify({
+    catalog: { models: [{ slug: "parent-model", context_window: 128000 }, { slug: "child-model", context_window: 64000,
+      supported_reasoning_levels: [{ effort: "medium" }, { effort: "max" }] }] },
+    contextWindows: contexts, originalCatalog: null, catalogSource: "external",
+  }));
+  t.mock.method(CodexAppServer.prototype, "request", async method => {
+    assert.equal(method, "config/read", "role-only updates must not rewrite the global config");
+    return { config: { model_catalog_json: catalogPath }, layers: [{ name: { type: "user", file: configFile }, version: "v1", config: {} }] };
+  });
+  const options = { executable: "/unused", dataDirectory: root };
+  const before = await modelContextSettings(options);
+  assert.deepEqual(before.agents.map(agent => [agent.name, agent.model]), [["explorer", null], ["reviewer", "parent-model"]]);
+  await modelContextSettings(options, contexts, {}, {}, undefined, { reviewer: "child-model", explorer: "child-model" });
+  assert.equal(await readFile(path.join(directory, "reviewer.toml"), "utf8"), reviewer.replace('model = "parent-model"', 'model = "child-model"'));
+  assert.equal(await readFile(path.join(directory, "explorer.toml"), "utf8"), 'model = "child-model"\n' + explorer);
+  assert.deepEqual((await modelContextSettings(options)).agents.map(agent => agent.model), ["child-model", "child-model"]);
+  await modelContextSettings(options, contexts, {}, {}, undefined, undefined, undefined, { reviewer: "max", explorer: "medium" });
+  assert.equal(await readFile(path.join(directory, "reviewer.toml"), "utf8"), reviewer.replace('model = "parent-model"', 'model = "child-model"').replace('model_reasoning_effort = "high"', 'model_reasoning_effort = "max"'));
+  assert.equal(await readFile(path.join(directory, "explorer.toml"), "utf8"), 'model = "child-model"\n' + explorer.replace('model_reasoning_effort = "low"', 'model_reasoning_effort = "medium"'));
+  assert.deepEqual((await modelContextSettings(options)).agents.map(agent => agent.reasoningEffort), ["medium", "max"]);
+  await modelContextSettings(options, contexts, {}, {}, undefined, { reviewer: "", explorer: "" }, undefined, { reviewer: "", explorer: "" });
+  assert.equal(await readFile(path.join(directory, "explorer.toml"), "utf8"), '\n' + explorer.replace('model_reasoning_effort = "low" ', ''));
+  assert.equal(await readFile(path.join(directory, "reviewer.toml"), "utf8"), reviewer.replace('model = "parent-model" ', '').replace('model_reasoning_effort = "high"', ''));
+  assert.deepEqual((await modelContextSettings(options)).agents.map(agent => [agent.model, agent.reasoningEffort]), [[null, null], [null, null]]);
+  assert.equal(await readFile(configFile, "utf8"), originalConfig);
+});
+
+test("subagent model and reasoning defaults read, save and reset without changing model overrides", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-subagent-model-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const catalogPath = path.join(root, "model-context-catalog.json");
+  const contexts = { "parent-model": 96000 };
+  await writeFile(path.join(root, "model-context.json"), JSON.stringify({
+    catalog: { models: [{ slug: "parent-model", context_window: 128000 }, { slug: "child-model", context_window: 64000,
+      supported_reasoning_levels: [{ effort: "high" }] }] },
+    contextWindows: contexts, originalCatalog: null, catalogSource: "external",
+  }));
+  const config = { model: "parent-model", model_catalog_json: catalogPath, agents: { max_threads: 4 } };
+  const writes = [];
+  t.mock.method(CodexAppServer.prototype, "request", async (method, params) => {
+    if (method === "config/read") return { config, layers: [{ name: { type: "user", file: path.join(root, "config.toml") }, version: "v1", config }] };
+    assert.equal(method, "config/batchWrite");
+    assert.equal(params.expectedVersion, "v1");
+    assert.equal(params.reloadUserConfig, true);
+    writes.push(params.edits);
+    for (const edit of params.edits) {
+      assert.ok(["agents.default_subagent_model", "agents.default_subagent_reasoning_effort"].includes(edit.keyPath));
+      const key = edit.keyPath.slice("agents.".length);
+      if (edit.value === null) delete config.agents[key];
+      else config.agents[key] = edit.value;
+    }
+    return { status: "ok" };
+  });
+  const options = { executable: "/unused", dataDirectory: root };
+  assert.equal((await modelContextSettings(options)).defaultSubagentModel, null);
+  assert.equal((await modelContextSettings(options)).defaultSubagentReasoningEffort, null);
+  const saved = await modelContextSettings(options, contexts, {}, {}, "child-model", undefined, "high");
+  assert.equal(saved.defaultSubagentModel, "child-model");
+  assert.equal(saved.defaultSubagentReasoningEffort, "high");
+  assert.equal((await modelContextSettings(options)).defaultSubagentModel, "child-model");
+  assert.equal((await modelContextSettings(options, contexts, {}, {})).defaultSubagentReasoningEffort, "high");
+  const reset = await modelContextSettings(options, contexts, {}, {}, "", undefined, "");
+  assert.equal(reset.defaultSubagentModel, null);
+  assert.equal(reset.defaultSubagentReasoningEffort, null);
+  assert.equal((await modelContextSettings(options)).defaultSubagentModel, null);
+  assert.equal(config.model, "parent-model");
+  assert.equal(config.agents.max_threads, 4);
+  assert.deepEqual(JSON.parse(await readFile(catalogPath)).models.map(model => model.context_window), [96000, 64000]);
+  assert.deepEqual(writes, [[{ keyPath: "agents.default_subagent_model", value: "child-model", mergeStrategy: "replace" },
+    { keyPath: "agents.default_subagent_reasoning_effort", value: "high", mergeStrategy: "replace" }],
+    [{ keyPath: "agents.default_subagent_model", value: null, mergeStrategy: "replace" },
+      { keyPath: "agents.default_subagent_reasoning_effort", value: null, mergeStrategy: "replace" }]]);
+  await assert.rejects(modelContextSettings(options, contexts, {}, {}, "unknown-model"), /不在当前模型目录/);
+  assert.equal(writes.length, 2);
+});
+
 test("resetting a native Sol catalog uses 500K and keeps the corrected catalog active", async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-context-default-")));
   t.after(() => rm(root, { recursive: true, force: true }));

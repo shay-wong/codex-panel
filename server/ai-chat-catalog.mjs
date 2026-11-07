@@ -257,7 +257,7 @@ async function loadAgentLayer({ configDirectory, configFile, agentsDirectory }) 
   return { agents: [...layerAgents.values()], available };
 }
 
-async function listConfiguredAgents({ codexHome, agentsDirectory, workspacePath }) {
+export async function listConfiguredAgents({ codexHome, agentsDirectory, workspacePath }) {
   const projectFolders = await projectConfigFolders(workspacePath);
   const layers = [{
     configDirectory: codexHome,

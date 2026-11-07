@@ -2,11 +2,13 @@ import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { parse as parseToml } from "smol-toml";
 import { CodexAppServer } from "../server/codex-app-server.mjs";
+import { listConfiguredAgents } from "../server/ai-chat-catalog.mjs";
 import { codexExecutableInApp } from "../shared/codex-executable.mjs";
 import { executableCommand } from "../shared/executable-command.mjs";
 import { withoutPanelLauncherEnvironment } from "../shared/codex-environment.mjs";
@@ -120,9 +122,53 @@ function withModelContextSettings(catalog, { contextWindows, autoCompactTokenLim
   }) };
 }
 
+async function configuredAgentModels(userLayer) {
+  const codexHome = path.dirname(userLayer.name.file);
+  const { agents } = await listConfiguredAgents({ codexHome, agentsDirectory: path.join(codexHome, "agents") });
+  return Promise.all(agents.filter(agent => agent.sourcePath !== userLayer.name.file).map(async agent => {
+    const config = parseToml(await readFile(agent.sourcePath, "utf8"));
+    return { name: agent.name, filePath: agent.sourcePath,
+      model: config.model ?? null, reasoningEffort: config.model_reasoning_effort ?? null };
+  }));
+}
+
+function agentSettingSource(source, key, value) {
+  const current = parseToml(source)[key];
+  if ((current ?? null) === value) return source;
+  const newline = source.includes("\r\n") ? "\r\n" : "\n";
+  if (current === undefined) return `${key} = ${JSON.stringify(value)}${newline}${source}`;
+  // These settings are single-line strings; parse the prefix to exclude instructions and nested tables.
+  const lines = new RegExp(`^([\\t ]*(?:${key}|"${key}"|'${key}')[\\t ]*=[\\t ]*)("(?:[^"\\\\\\r\\n]|\\\\.)*"|'[^'\\r\\n]*')([\\t ]*(?:#[^\\r\\n]*)?)(\\r?)(?=\\n|$)`, "gm");
+  for (const match of source.matchAll(lines)) {
+    const prefix = source.slice(0, match.index);
+    try {
+      if (Object.hasOwn(parseToml(prefix), key)
+        || parseToml(prefix + `${key} = "__panel_scope__"\n`)[key] !== "__panel_scope__") continue;
+    } catch { continue; }
+    const replacement = value === null ? match[3].trimStart() + match[4]
+      : match[1] + JSON.stringify(value) + match[3] + match[4];
+    return prefix + replacement + source.slice(match.index + match[0].length);
+  }
+  throw new Error(`请将子代理的 ${key} 写成单行字符串后再修改`);
+}
+
+async function writeAgentSettings(agent, settings) {
+  const file = await realpath(agent.filePath);
+  const source = await readFile(file, "utf8");
+  let updated = source;
+  for (const [key, value] of Object.entries(settings)) updated = agentSettingSource(updated, key, value);
+  if (updated === source) return;
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, updated, { mode: (await stat(file)).mode & 0o777 });
+    await rename(temporary, file);
+  } finally { await rm(temporary, { force: true }); }
+}
+
 export async function modelContextSettings({
   executable, dataDirectory, processEnv = process.env, cwd,
-}, contextWindows, autoCompactTokenLimits, multiAgentReasoningEfforts) {
+}, contextWindows, autoCompactTokenLimits, multiAgentReasoningEfforts, defaultSubagentModel, agentModels,
+defaultSubagentReasoningEffort, agentReasoningEfforts) {
   await mkdir(dataDirectory, { recursive: true });
   dataDirectory = realpathSync(dataDirectory);
   const client = new CodexAppServer({ executable, processEnv, cwd });
@@ -131,10 +177,14 @@ export async function modelContextSettings({
       { executable, dataDirectory, processEnv, cwd }, client,
     );
     const defaults = state.useOfficialContextDefaults ? withCurrentModelDefaults(state.catalog) : state.catalog;
+    const agents = await configuredAgentModels(userLayer);
+    let subagentModel = config.agents?.default_subagent_model ?? null;
+    let subagentReasoningEffort = config.agents?.default_subagent_reasoning_effort ?? null;
     if (contextWindows !== undefined) {
       autoCompactTokenLimits ??= state.autoCompactTokenLimits;
       multiAgentReasoningEfforts ??= state.multiAgentReasoningEfforts;
       const slugs = new Set(state.catalog.models.map(model => model.slug));
+      const efforts = new Set(state.catalog.models.flatMap(model => (model.supported_reasoning_levels ?? []).map(level => level.effort)));
       for (const [label, values] of [["上下文", contextWindows], ["自动压缩阈值", autoCompactTokenLimits]]) {
         if (!values || typeof values !== "object" || Array.isArray(values)) {
           throw new Error(`${label}设置必须是模型 ID 与 token 数的对应表`);
@@ -153,6 +203,43 @@ export async function modelContextSettings({
         if (!model) throw new Error(`模型目录中没有 ${slug}`);
         if (!model.supported_reasoning_levels?.some(level => level.effort === effort)) {
           throw new Error(`${slug} 不支持子代理推理强度 ${effort}`);
+        }
+      }
+      const edits = [];
+      const agentEdits = new Map();
+      for (const [values, key, field, allowed, label] of [
+        [agentModels, "model", "model", slugs, "模型"],
+        [agentReasoningEfforts, "model_reasoning_effort", "reasoningEffort", efforts, "推理强度"],
+      ]) {
+        if (values === undefined) continue;
+        if (!values || typeof values !== "object" || Array.isArray(values)) throw new Error(`子代理${label}设置必须是名称与值的对应表`);
+        for (const [name, value] of Object.entries(values)) {
+          const agent = agents.find(agent => agent.name === name);
+          if (!agent) throw new Error(`未找到子代理 ${name}`);
+          if (typeof value !== "string") throw new Error(`${name} 的${label}必须是字符串`);
+          const setting = value.trim() || null;
+          if (setting === agent[field]) continue;
+          if (setting && !allowed.has(setting)) throw new Error(`${name} 的${label}不在当前模型目录中：${setting}`);
+          agentEdits.set(agent, { ...agentEdits.get(agent), [key]: setting });
+        }
+      }
+      for (const [value, current, key, allowed, label] of [
+        [defaultSubagentModel, subagentModel, "agents.default_subagent_model", slugs, "模型"],
+        [defaultSubagentReasoningEffort, subagentReasoningEffort, "agents.default_subagent_reasoning_effort", efforts, "推理强度"],
+      ]) {
+        if (value === undefined) continue;
+        if (value !== null && typeof value !== "string") {
+          throw new Error(`子代理默认${label}必须是字符串`);
+        }
+        const setting = value?.trim() || null;
+        if (setting !== current) {
+          if (setting && !allowed.has(setting)) throw new Error(`子代理默认${label}不在当前模型目录中：${setting}`);
+          const origin = origins?.[key]?.name;
+          if (origin && !(origin.type === "system"
+            || origin.type === "user" && !origin.profile && origin.file === userLayer.name.file)) {
+            throw new Error(`子代理默认${label}由更高优先级配置管理，请修改对应配置`);
+          }
+          edits.push({ keyPath: key, value: setting, mergeStrategy: "replace" });
         }
       }
       const hasContexts = Object.keys(contextWindows).length > 0;
@@ -177,11 +264,21 @@ export async function modelContextSettings({
       }
       const value = hasOverrides ? catalogPath : state.originalCatalog;
       if ((config.model_catalog_json ?? null) !== value) {
+        edits.push({ keyPath: "model_catalog_json", value, mergeStrategy: "replace" });
+      }
+      if (edits.length) {
         const result = await client.request("config/batchWrite", {
-          edits: [{ keyPath: "model_catalog_json", value, mergeStrategy: "replace" }],
+          edits,
           filePath: userLayer.name.file, expectedVersion: userLayer.version, reloadUserConfig: true,
         });
-        if (result.status !== "ok") throw new Error("上下文配置被更高优先级设置覆盖");
+        if (result.status !== "ok") throw new Error("模型配置被更高优先级设置覆盖");
+      }
+      if (defaultSubagentModel !== undefined) subagentModel = defaultSubagentModel?.trim() || null;
+      if (defaultSubagentReasoningEffort !== undefined) subagentReasoningEffort = defaultSubagentReasoningEffort?.trim() || null;
+      for (const [agent, settings] of agentEdits) {
+        await writeAgentSettings(agent, settings);
+        if (Object.hasOwn(settings, "model")) agent.model = settings.model;
+        if (Object.hasOwn(settings, "model_reasoning_effort")) agent.reasoningEffort = settings.model_reasoning_effort;
       }
     }
     return {
@@ -195,6 +292,9 @@ export async function modelContextSettings({
       contextWindows: state.contextWindows,
       autoCompactTokenLimits: state.autoCompactTokenLimits,
       multiAgentReasoningEfforts: state.multiAgentReasoningEfforts,
+      defaultSubagentModel: subagentModel,
+      defaultSubagentReasoningEffort: subagentReasoningEffort,
+      agents,
       globalContextWindow: config.model_context_window ?? null,
       globalAutoCompactTokenLimit: config.model_auto_compact_token_limit ?? null,
     };
@@ -389,7 +489,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
         for await (const chunk of process.stdin) source += chunk;
         input = JSON.parse(source);
       }
-      console.log(JSON.stringify(await modelContextSettings({ executable: codexExecutableInApp(appPath), dataDirectory }, input?.contextWindows, input?.autoCompactTokenLimits, input?.multiAgentReasoningEfforts)));
+      console.log(JSON.stringify(await modelContextSettings({ executable: codexExecutableInApp(appPath), dataDirectory }, input?.contextWindows, input?.autoCompactTokenLimits, input?.multiAgentReasoningEfforts, input?.defaultSubagentModel, input?.agentModels, input?.defaultSubagentReasoningEffort, input?.agentReasoningEfforts)));
     } else if (operation === "read-discovery") console.log(JSON.stringify(await readModelDiscovery(client)));
     else await setModelDiscovery(client, operation === "enable-discovery");
   }
