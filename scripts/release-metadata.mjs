@@ -27,7 +27,7 @@ export function windowsReleaseMetadata(packageVersion, releaseTag) {
     || releaseTag !== `v${packageVersion}`) {
     throw new Error("Release tag must match the X.Y.Z-fork package version");
   }
-  const archive = `Codex.Panel_${packageVersion}_x86_64.nsis.zip`;
+  const archive = `Codex.Panel_${packageVersion}_x86_64-setup.exe`;
   return {
     archive,
     signature: `${archive}.sig`,

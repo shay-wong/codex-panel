@@ -15,9 +15,9 @@ test("fork updater metadata stays on the fork and advertises only bundled archit
 
 test("Windows updater metadata uses the signed NSIS archive", () => {
   assert.deepEqual(windowsReleaseMetadata("0.0.1-fork", "v0.0.1-fork"), {
-    archive: "Codex.Panel_0.0.1-fork_x86_64.nsis.zip",
-    signature: "Codex.Panel_0.0.1-fork_x86_64.nsis.zip.sig",
+    archive: "Codex.Panel_0.0.1-fork_x86_64-setup.exe",
+    signature: "Codex.Panel_0.0.1-fork_x86_64-setup.exe.sig",
     platform: "windows-x86_64",
-    url: "https://github.com/shay-wong/codex-panel/releases/download/v0.0.1-fork/Codex.Panel_0.0.1-fork_x86_64.nsis.zip",
+    url: "https://github.com/shay-wong/codex-panel/releases/download/v0.0.1-fork/Codex.Panel_0.0.1-fork_x86_64-setup.exe",
   });
 });
