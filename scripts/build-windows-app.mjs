@@ -51,6 +51,7 @@ runNpm([
   "--config",
   JSON.stringify({
     bundle: {
+      createUpdaterArtifacts: process.env.CODEX_PANEL_CREATE_UPDATER_ARTIFACTS === "1",
       windows: {
         certificateThumbprint: thumbprint,
         digestAlgorithm: "sha256",

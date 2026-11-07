@@ -159,6 +159,99 @@ jobs:
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,tagName
 
+  release-windows:
+    if: github.repository == 'shay-wong/codex-panel'
+    needs: release
+    runs-on: windows-2025
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      CODEX_PANEL_UPDATER_PUBLIC_KEY: ${{ vars.CODEX_PANEL_UPDATER_PUBLIC_KEY }}
+      CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT: ${{ vars.CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Validate Windows signing configuration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:WINDOWS_CERTIFICATE_PFX_BASE64 -notmatch '\S' -or $env:WINDOWS_CERTIFICATE_PASSWORD -eq $null) {
+            throw '缺少 WINDOWS_CERTIFICATE_PFX_BASE64 或 WINDOWS_CERTIFICATE_PASSWORD'
+          }
+          if ($env:CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT -notmatch '^[A-Fa-f0-9]{40}$') {
+            throw 'CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT 必须是 40 位证书指纹'
+          }
+          if ($env:CODEX_PANEL_UPDATER_PUBLIC_KEY -notmatch '^dW50cnVzdGVkIGNvbW1lbnQ6') {
+            throw '缺少 CODEX_PANEL_UPDATER_PUBLIC_KEY'
+          }
+          if ($env:TAURI_SIGNING_PRIVATE_KEY -notmatch '^dW50cnVzdGVkIGNvbW1lbnQ6') {
+            throw '缺少 TAURI_SIGNING_PRIVATE_KEY'
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'codex-panel-signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX_BASE64))
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password | Out-Null
+          $certificate = Get-ChildItem Cert:\CurrentUser\My | Where-Object Thumbprint -eq $env:CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT
+          if (-not $certificate) { throw '导入的 Windows 签名证书指纹不匹配' }
+      - run: npm ci
+      - name: Prepare release version
+        shell: bash
+        run: node scripts/prepare-fork-release.mjs "$RELEASE_TAG" "$RUNNER_TEMP/release-notes.md"
+      - name: Build signed Windows updater package
+        shell: pwsh
+        env:
+          CODEX_PANEL_CREATE_UPDATER_ARTIFACTS: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run app:build:windows
+          $archive = Get-ChildItem 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.nsis.zip' | Select-Object -First 1
+          if (-not $archive) { throw '未找到 Windows updater NSIS 压缩包' }
+          $signature = Get-Item "$($archive.FullName).sig"
+          $version = node -p "require('./package.json').version"
+          $output = Join-Path $env:RUNNER_TEMP "Codex.Panel_${version}_x86_64.nsis.zip"
+          Copy-Item $archive.FullName $output
+          Copy-Item $signature.FullName "$output.sig"
+          $publicKey = Join-Path $env:RUNNER_TEMP 'updater-public-key.txt'
+          Set-Content -Path $publicKey -Value $env:CODEX_PANEL_UPDATER_PUBLIC_KEY -NoNewline
+          node scripts/verify-updater-signature.mjs $publicKey $output "$output.sig"
+          "WINDOWS_ARCHIVE=$output" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Add Windows updater metadata
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = Join-Path $env:RUNNER_TEMP 'release-assets'
+          New-Item -ItemType Directory -Force $assets | Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern latest.json --dir $assets
+          $version = node -p "require('./package.json').version"
+          $signature = Get-Content -Raw -LiteralPath "$env:WINDOWS_ARCHIVE.sig"
+          node scripts/merge-windows-updater.mjs (Join-Path $assets 'latest.json') $version $env:RELEASE_TAG $signature
+          "WINDOWS_RELEASE_ASSETS=$assets" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Upload Windows package and updater metadata
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release upload $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --clobber $env:WINDOWS_ARCHIVE "$env:WINDOWS_ARCHIVE.sig" "$env:WINDOWS_RELEASE_ASSETS/latest.json"
+
       # Send Telegram notification
       - name: Send Telegram Notification
         env:

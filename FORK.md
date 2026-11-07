@@ -311,12 +311,12 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 - 发布规范和 Actions 配置集中在本节；用户文档只说明下载、安装、更新及其限制，不承载 Agent 授权规则或维护操作。
 - 发布校验只核对资产集合、上传状态及签名，不限制显示或上传顺序；DMG 使用正常文件名，不添加排序前缀。
 - 首次生成并安全备份 Tauri 更新密钥（`npm run tauri -- signer generate --help`）；后续版本沿用同一密钥，私钥不得入库。
-- GitHub Actions 仓库 Variable `CODEX_PANEL_UPDATER_PUBLIC_KEY` 填公钥文件内容；Secret `TAURI_SIGNING_PRIVATE_KEY` 填私钥文件内容；可选 Secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 填私钥密码。公钥编译进 App，私钥仅用于更新包签名；缺少密钥时发布构建失败。
+- GitHub Actions 仓库 Variable `CODEX_PANEL_UPDATER_PUBLIC_KEY` 填公钥文件内容；Secret `TAURI_SIGNING_PRIVATE_KEY` 填私钥文件内容；可选 Secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 填私钥密码。Windows 还需配置 Secret `WINDOWS_CERTIFICATE_PFX_BASE64`、`WINDOWS_CERTIFICATE_PASSWORD` 和 Variable `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT`，供 Windows runner 导入 Authenticode 证书。公钥编译进 App，私钥仅用于更新包签名；缺少密钥时发布构建失败。
 - 日常改动维护中英文更新日志的 `Unreleased` / `未发布`。发布标签仍为版本来源，`scripts/prepare-fork-release.mjs` 自动同步构建目录的 5 个版本文件，保留 Cargo 注释与格式；发布说明继续按最近其他可达 Fork 标签去重提取双语条目。
 - 发布成功后，`release-macos.yml` 的 `sync-version` job 从最新 main 检出，用同一脚本更新 package.json、package-lock.json、Cargo.toml、Cargo.lock、tauri.conf.json，同时按发布标签快照将中英文日志的已发布条目归档到版本标题下；历史积压按最早包含该条目的可达 Fork 标签归档，标签创建后 main 新增条目继续保留在未发布段。仅提交 5 个版本文件和两份 CHANGELOG，并以 GitHub Actions bot 自动提交回 main，提交包含 `[skip ci]`，不重复打包。各版本回写串行，旧发布重跑不降级，已一致不重复提交；并发 main 推进导致普通 push 拒绝时报告失败，不强推。使用工作流自带 GITHUB_TOKEN，不额外配置密钥；分支保护必须允许该回写，否则需维护者处理权限。
 - 版本回写测试的子进程必须将 `GITHUB_ENV` 指向隔离临时文件，不能继承真实 Actions 环境输出路径；否则模拟版本会覆盖后续打包使用的产物名称。`test/prepare-fork-release.test.mjs` 核验模拟环境输出，并在带外层发布环境文件的隔离验证中确认外层内容不变。
 - 该版本同步约定长期保留，不再要求手动版本提交；拉取包含自动回写提交的 main 后，本地编译和重装获得发布版本。发布标签和其源代码快照不改写；回写失败不撤销已发布资产。验证：版本准备测试、隔离 Git 仓库执行实际回写脚本、工作流语法检查。来源定位 `git log -S'sync-version:' -- .github/workflows/release-macos.yml`。
-- 按 Git 授权规则推送产品提交和 `vX.Y.Z-fork` 标签，触发 Release macOS；保留 main 祖先检查、签名验证与资产完整性检查。此工作流只发布 macOS 通用版。
+- 按 Git 授权规则推送产品提交和 `vX.Y.Z-fork` 标签，触发 Release macOS；保留 main 祖先检查、签名验证与资产完整性检查。此工作流发布 macOS 通用版和 Windows x64 NSIS/updater 包。
 - 完成后核实标签目标、工作流结果、DMG，以及 `.app.tar.gz`、`.sig` 和 `latest.json`；在隔离环境验证安装，不覆盖用户已安装 App。上传失败可能留下 Draft Release，先核实失败原因和已有资产，不强制移动已发布标签。
 
 
@@ -324,7 +324,7 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 
 - 生命周期：`长期保留`。
 - 原始目的：采用上游下载、验签、用户确认安装与重启流程，同时只更新 Fork 自身。
-- 行为不变量：版本发现继续使用 Fork Release 和规范 `vX.Y.Z-fork`；每个候选从精确 tag 下读取 `latest.json`，包地址属于相同 Fork Release。Tauri 插件验签成功前不得安装；官方构建使用仓库内 Fork 公钥，发布流水线可用 `CODEX_PANEL_UPDATER_PUBLIC_KEY` 覆盖，禁止使用上游公钥。自动检查可下载准备，但安装必须确认；下载或验签失败会移除安装动作并保留发布页入口；macOS 使用原生确认弹窗并置于前台，其他平台保留 Tauri 对话框。仅停止自有服务，失败尝试恢复，成功重启；Windows 按上游仍不支持自动安装。更新不迁移/覆盖用户数据目录。
+- 行为不变量：版本发现继续使用 Fork Release 和规范 `vX.Y.Z-fork`；每个候选从精确 tag 下读取 `latest.json`，包地址属于相同 Fork Release。Tauri 插件验签成功前不得安装；官方构建使用仓库内 Fork 公钥，发布流水线可用 `CODEX_PANEL_UPDATER_PUBLIC_KEY` 覆盖，禁止使用上游公钥。自动检查可下载准备，但安装必须确认；下载或验签失败会移除安装动作并保留发布页入口；macOS 使用原生确认弹窗并置于前台，其他平台保留 Tauri 对话框。仅停止自有服务，失败尝试恢复，成功重启；Windows 使用签名 NSIS updater 包执行同一套应用内更新流程。更新不迁移/覆盖用户数据目录。
 - 代码及验证：`src-tauri/src/main.rs`、`src-tauri/src/update_dialog.rs`、`src-tauri/build.rs`、`src-tauri/Cargo.toml`、`launcher/src/App.tsx`、`launcher/src/launcher.css`、`scripts/create-macos-updater.mjs`、`scripts/release-metadata.mjs`、`scripts/verify-updater-signature.mjs`；`test/launcher-ui.test.mjs`、`test/release-metadata.test.mjs`、`test/updater-signature.test.mjs` 及 `cargo check --manifest-path src-tauri/Cargo.toml`。
 - 用户文档：`README.md`、`README.zh-CN.md`、`docs/fork-capabilities.md#signed-in-app-updates`；来源为当前行为调整，可用 `git log -S'prepare_update' -- src-tauri/src/main.rs` 定位。
 - 合并指引：沿用上游 updater 下载/验签/install API，保留 Fork 身份、公钥和下载链限定；不重写验证器到产品运行路径。发布脚本检测实际 macOS 架构，先验证 App 再签名归档、验证 updater 签名后生成元数据。资产顺序不作为发布条件；私钥只在发布环境中使用。

@@ -3277,9 +3277,6 @@ async fn prepare_update(
     state: &Arc<LauncherState>,
     tag: &str,
 ) -> Result<(), String> {
-    if cfg!(target_os = "windows") {
-        return Err("Windows 暂不支持应用内更新，请从 Release 页面下载安装。".into());
-    }
     let public_key = option_env!("CODEX_PANEL_UPDATER_PUBLIC_KEY")
         .filter(|key| !key.trim().is_empty())
         .unwrap_or(FORK_UPDATER_PUBLIC_KEY);
