@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Windows: build signed x64 NSIS installers in the release workflow, combine macOS/Windows update metadata, and enable confirmed in-app updates. Older test builds require one manual installation; release builds require a Windows signing certificate.
+
 - Recover Panel connections after heartbeat timeouts without waiting for a WebSocket close response; preserve current usage statistics through failed or empty reads.
 
 ## 0.5.0-fork
