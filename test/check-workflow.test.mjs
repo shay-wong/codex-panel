@@ -22,7 +22,7 @@ function scope(event, paths, fail = false) {
       throw Error(name);
     },
   });
-  return { native: output.trim() === 'run_native=true', args: args && Array.from(args) };
+  return { native: output.split('\n').includes('run_native=true'), args: args && Array.from(args) };
 }
 
 test('main pushes run types and tests without builds while PR and manual runs retain full checks', () => {

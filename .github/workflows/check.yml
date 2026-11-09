@@ -55,6 +55,7 @@ jobs:
           const { appendFileSync } = require('node:fs');
           const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
           let runNative = true;
+          let runE2e = true;
           try {
             if (process.env.CHECK_EVENT === 'pull_request') {
               const paths = git('diff', '--name-only', '--no-renames', '-z', 'HEAD^1', 'HEAD').split('\0').filter(Boolean);
@@ -63,11 +64,14 @@ jobs:
                 (path.startsWith('web/public/') && path !== 'web/public/codex-app-icon.png') ||
                 path.startsWith('docs/') ||
                 /^(?:README(?:\.[^/]+)?\.md|CHANGELOG(?:\.[^/]+)?\.md|FORK\.md|AGENTS\.md|LICENSE(?:\.[^/]+)?)$/.test(path));
+              runE2e = !paths.every(path =>
+                path.startsWith('docs/') ||
+                /^(?:README(?:\.[^/]+)?\.md|CHANGELOG(?:\.[^/]+)?\.md|FORK\.md|AGENTS\.md|LICENSE(?:\.[^/]+)?)$/.test(path));
             }
           } catch (error) {
-            console.log(`Cannot determine changed paths; run native checks: ${error.message}`);
+            console.log(`Cannot determine changed paths; run native and E2E checks: ${error.message}`);
           }
-          appendFileSync(process.env.GITHUB_OUTPUT, `run_native=${runNative}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `run_native=${runNative}\nrun_e2e=${runE2e}\n`);
           console.log(runNative ? 'Native/runtime/build inputs changed or range unknown: run Rust checks.' : 'Web/docs-only change: run the ordinary Check, skip native compilation.');
           NODE
 
@@ -90,7 +94,7 @@ jobs:
   e2e:
     name: E2E web suite
     needs: main-check-scope
-    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && (github.event_name != 'pull_request' || needs['main-check-scope'].outputs.run_e2e != 'false') }}
+    if: ${{ !cancelled() && github.event_name != 'push' && needs['main-check-scope'].outputs.run_e2e != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

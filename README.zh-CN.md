@@ -366,4 +366,14 @@ npm run check
 
 该命令会运行 TypeScript 检查、生产前端构建、组件测试，以及服务器、CLI 和注入脚本测试套件。
 
+浏览器端到端测试单独运行：
+
+```bash
+npx --yes playwright@1.64.0 install chromium
+npm run build:web
+E2E_TELEMETRY_DISABLED=1 npm run test:e2e
+```
+
+测试会通过随机回环端口启动本地 Panel，使用一次性数据、工作区和技能目录，禁用 Codex 执行及 Jira/云端请求。CI 在代码 PR 和手动检查中运行此套件，失败产物保留 14 天。
+
 管理窗口重启后恢复上次普通尺寸；全屏和最大化尺寸不覆盖记录。

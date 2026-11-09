@@ -369,6 +369,16 @@ npm run check
 
 This runs TypeScript checking, a production frontend build, the component tests, and the server/CLI/injection test suite.
 
+Run the browser E2E suite separately:
+
+```bash
+npx --yes playwright@1.64.0 install chromium
+npm run build:web
+E2E_TELEMETRY_DISABLED=1 npm run test:e2e
+```
+
+The suite starts a local Panel on a random loopback port with disposable data, workspace, and skill directories. Codex execution and Jira/cloud requests are disabled. CI runs it for code PRs and manual checks, and retains failure artifacts for 14 days.
+
 ## Task Markdown
 
 Task descriptions and comments support GFM, including tables and task lists. Fenced `mermaid` blocks are rendered as read-only diagrams after the viewer loads; the diagram source remains available when rendering fails. Markdown HTML comments, such as `<!-- trace-analysis:v1 ... -->`, are hidden from the rendered document. Raw HTML is not enabled.

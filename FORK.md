@@ -134,6 +134,7 @@ Ultrafast 设置说明：`launcher/src/App.tsx` 将适用模型、必需的 `fea
 
 本轮同步上游 E2E 与 CI 提交，新增项目、议题、附件、关联关系和视图的真实浏览器验证，以及属性保存完成后的同步等待；不改变产品行为或 Fork 发布版本。Fork 服务入口、隔离环境与 CI 规则的适配保留在紧随合并的独立提交中。
 
+
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
 本次上游合并在 `1.1.22` 基线上吸收 Windows Store Codex 激活、Windows profile 路径匹配、随机 TCP CDP 和 injector 无控制台启动。Fork 保留 Jira 活动与正式会话、Panel 稳定剪贴板引用、桌面端签名与运行时完整性校验、停止 Panel 时不关闭 Codex，以及持久化自动认领队列；上游远程 Scheduled Task 自动化不重新成为 Fork 的执行入口。桌面端产品名仍为 `Codex Panel`，私有实例鉴权、bundle ID、包名和当前 `0.1.0` 应用版本保持不变。
@@ -164,7 +165,7 @@ Ultrafast 设置说明：`launcher/src/App.tsx` 将适用模型、必需的 `fea
 
 - 权威上游版本来源：精确合并基线中的 `package.json`
 - 发布版本来源：规范 `vX.Y.Z-fork` 标签。Actions 在构建目录同步 `package.json`、`package-lock.json` 根包条目、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock` 的 launcher 条目；main 中的字段仅作本地开发构建版本，不代表最新 Release。
-- 精确基线的上游版本：`1.1.27-beta.1`（正式标签 `v1.1.27` 指向相同提交）（本次同步代码基线，不改变 Fork 发布版本）
+- 精确基线的上游版本：`1.1.27-beta.1`（沿用上游版本字段；本次合并仅增加 E2E/CI，不改变 Fork 发布版本）
 - 最近已核实发布：`v0.0.3-fork`。后续发布以 GitHub 标签与 Release 为准，无需逐版修改此台账。
 
 Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标签为 `vX.Y.Z-fork`；后续按 Fork 自身变更递增。上游版本只记录合并基线，不决定、重置或覆盖 Fork 版本。此决定替代旧的 `<upstream-version>-fork.<N>` 策略，后续应用 fork-doc 时以本仓库约定为准。
@@ -172,6 +173,15 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 生命周期：长期保留。版本生成与更新筛选同步接受规范 `vX.Y.Z-fork`，仍只信任 `shay-wong/codex-panel` Release 和 Fork 签名。代码：`scripts/release-metadata.mjs`、`src-tauri/src/main.rs`；验证：`node --test test/release-metadata.test.mjs` 与 Rust 更新器版本/来源检查。用户文档：中英文 README 的更新说明和 `docs/fork-capabilities.md#signed-in-app-updates`。来源定位：`git log -S'is_release_tag' -- src-tauri/src/main.rs`。合并时保留独立版本；仅在维护者明确改变版本策略时移除。
 
 已有本地 `0.1.0` 开发版高于新的 `0.0.1-fork`，需手动安装一次独立版本；更新器不增加降级例外，之后按版本递增更新。
+
+## 浏览器端到端验证隔离
+
+- 生命周期：长期保留；仅面向维护者，不新增产品更新日志。
+- 目的与不变量：复用上游 8 条真实页面测试，以随机回环端口启动 Fork 的 `createPanelServer`；数据、Codex 状态、技能与工作目录使用新的临时目录，启动前校验规范路径与实际默认配置不重叠；禁用 Codex 执行和 Jira/云端请求，不读取日常用户配置。
+- 代码：`tests/server.mjs`、`tests/helpers.ts`、`e2e.config.ts`、`.github/workflows/check.yml`。项目创建测试填写 Fork 必需的唯一项目 Key；属性编辑继续等待保存完成。
+- CI：保留 main push 仅类型检查和普通测试的策略，E2E 仅在 PR/manual 运行，纯文档 PR 跳过；固定 Playwright Chromium 1.64.0，禁用遥测，失败产物保留 14 天。
+- 验证与说明：中英文 README 的验证章节；`npm run typecheck`、`node --test test/check-workflow.test.mjs`、`npm run build:web`、`E2E_TELEMETRY_DISABLED=1 npm run test:e2e`。
+- 来源：本次合并后的独立适配提交，`git log -S'canonicalPath(value)' -- tests/server.mjs` 可定位。上游提供等价隔离与 Fork CI 策略后可移除重复适配；不得恢复对真实用户数据和外部服务的访问。
 
 ## 活跃 Fork 能力
 

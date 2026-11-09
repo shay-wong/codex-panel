@@ -15,6 +15,7 @@ export async function createProject(screen: Screen, name: string) {
   await expect(menu).toBeVisible();
   await screen.getByRole('menuitem', 'Create project').tap();
   await screen.getByLabel('Project name').fill(name);
+  await screen.getByLabel('Project Key').fill(name.replace(/[^a-z0-9]/gi, '').toUpperCase());
   await screen.getByRole('button', 'Create').tap();
   await expect(screen.getByRole('button', 'Switch project')).toContainText(name);
 }
