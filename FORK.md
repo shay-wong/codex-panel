@@ -616,6 +616,8 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 
 - Rspack 运行时修复：Dot 偏好使用标量 signal 的单参数 get；Ultrafast 与额度适配在 factory 作用域捕获 require，避免被内层 service tier 参数或组件局部变量遮蔽。这三处错误只有执行时出现，语法通过不能证明可渲染。`test/codex-rspack-runtime-regressions.test.mjs` 与能力测试覆盖真实 getter 契约及变量遮蔽，真实原生 getter 隔离复现错误并验证修复。
 
+- 26.1103.60933 / build 25894 的发送判断改为 `submitDisabledReasons`；`rewriteRspackQuota` 沿用 provider 与 host 识别，只在开关启用且有效服务为本地非 OpenAI 时，条件生成 `reserve-limit`、`usage-limit` 两项原因。改写发生在原生 memo 比较前，保证开关或 provider 改变后缓存同步更新；保留所有其他原因及旧版布尔路径。`test/codex-rspack-quota.test.mjs` 复现旧实现失败，并验证原因缓存、切换、有效 provider 与非额度限制；两个真实 composer 变体改写及语法通过。真实客户端发送与安装另行验证。来源定位：`git log -S'reasonQuotas' -- scripts/codex-rspack-quota.mjs`；沿用本条生命周期与移除条件。
+
 
 ### 本地 Rust 构建占用
 

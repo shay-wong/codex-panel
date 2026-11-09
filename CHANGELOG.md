@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Restore custom-provider sending on Codex 26.1103.60933 after native submission checks switched to a list of blocking reasons, preserving all non-quota blockers.
+
 - Check Codex releases directly from the official feed, so skipping a version in the native dialog no longer hides it in Panel; manual checks refresh the result.
 
 - Configure the default subagent model and reasoning effort, plus each personal role’s model and reasoning effort, in the model context dialog; restore inheritance per field or reset all settings together.
