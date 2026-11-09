@@ -1,13 +1,21 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 import { createCodexUpdateDownload, selectCodexUpdateArchive } from '../scripts/codex-update-download.mjs';
 import { downloadCodexUpdate, readCodexUpdateStatus } from '../scripts/codex-update.mjs';
 
 const target = { availableVersion: '26.1029.61003', availableBuildVersion: '24614' };
+const execute = promisify(execFile);
+const appcast = `<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel>
+  <item><sparkle:version>24614</sparkle:version><sparkle:shortVersionString>26.1029.61003</sparkle:shortVersionString><sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements><sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion></item>
+  <item><sparkle:version>99999</sparkle:version><sparkle:shortVersionString>26.1105.10000</sparkle:shortVersionString><sparkle:hardwareRequirements>x64</sparkle:hardwareRequirements></item>
+  <item><sparkle:version>99998</sparkle:version><sparkle:shortVersionString>26.1105.10000</sparkle:shortVersionString><sparkle:minimumSystemVersion>99.0</sparkle:minimumSystemVersion></item>
+</channel></rss>`;
 
 test('selects the exact target delta from the installed build without falling back to a complete ZIP', { skip: process.platform !== 'darwin' }, async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'panel-appcast-'));
@@ -32,7 +40,7 @@ test('selects the exact target delta from the installed build without falling ba
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-async function fixture(t, { badSignature = false, downloadError, downloadArchive } = {}) {
+async function fixture(t, { badSignature = false, downloadError, downloadArchive, feed = '<rss><channel/></rss>' } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'panel-direct-update-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const appPath = path.join(directory, 'installed/ChatGPT.app');
@@ -49,6 +57,7 @@ async function fixture(t, { badSignature = false, downloadError, downloadArchive
   const run = async (command, args) => {
     commands.push([command, args]);
     if (command.endsWith('/sw_vers')) return { stdout: '26.1\n', stderr: '' };
+    if (command.endsWith('/xmllint')) return execute(command, args);
     if (command.endsWith('/plutil')) {
       const installed = args.at(-1).startsWith(appPath);
       return { stdout: JSON.stringify({ CFBundleShortVersionString: installed ? '26.1027.61615' : target.availableVersion,
@@ -65,7 +74,7 @@ async function fixture(t, { badSignature = false, downloadError, downloadArchive
     requests.push(new URL(url));
     if (new URL(url).pathname.endsWith('/appcast')) {
       assert.equal(expectedLength, null);
-      await writeFile(destination, '<rss><channel/></rss>', { signal });
+      await writeFile(destination, feed, { signal });
       return;
     }
     assert.equal(expectedLength, archive.length);
@@ -93,6 +102,44 @@ async function fixture(t, { badSignature = false, downloadError, downloadArchive
     } };
   return { options, dependencies, commands, requests, applied, archive, installedBuild: value => { installedBuild = value; } };
 }
+
+test('checks the official feed despite a skipped native update and preserves the selected channel', { skip: process.platform !== 'darwin' }, async t => {
+  const setup = await fixture(t, { feed: appcast });
+  const download = createCodexUpdateDownload({ ...setup.options, getPlanType: async () => 'pro' }, setup.dependencies);
+  const cdp = { send: async (_method, params) => {
+    assert.ok(!params.expression.includes('checkForUpdateInformation'), 'never ask the updater to filter skipped versions');
+    return { result: { value: params.expression.includes('appBetaPreferencesByAccountId')
+      ? { beta: true } : { isUpdateReady: false, lifecycleState: 'idle' } } };
+  } };
+  assert.equal((await readCodexUpdateStatus(cdp, { download })).checking, true);
+  await waitFor(async () => !(await readCodexUpdateStatus(cdp, { download })).checking);
+  const result = await readCodexUpdateStatus(cdp, { download });
+  assert.equal(result.available, true);
+  assert.match(result.message, /26.1029.61003/);
+  assert.equal(setup.requests[0].searchParams.get('beta'), 'true');
+  assert.equal(setup.requests[0].searchParams.get('plan_type'), 'pro');
+  assert.equal(setup.requests.length, 1);
+  assert.equal(setup.applied.length, 0);
+  setup.installedBuild(target.availableBuildVersion);
+  assert.equal((await readCodexUpdateStatus(cdp, { download, force: true })).checking, true);
+  await waitFor(async () => !(await readCodexUpdateStatus(cdp, { download })).checking);
+  assert.match((await readCodexUpdateStatus(cdp, { download })).message, /当前已是最新版/);
+  assert.equal(setup.requests.length, 2);
+  assert.deepEqual(await readdir(path.join(setup.options.dataDirectory, 'codex-update')), []);
+});
+
+test('an invalid official feed reports an error rather than the latest version', { skip: process.platform !== 'darwin' }, async t => {
+  const setup = await fixture(t, { feed: '' });
+  const download = createCodexUpdateDownload(setup.options, setup.dependencies);
+  const cdp = { send: async (_method, params) => ({ result: { value: params.expression.includes('appBetaPreferencesByAccountId')
+    ? { beta: false } : { isUpdateReady: false, lifecycleState: 'idle' } } }) };
+  await readCodexUpdateStatus(cdp, { download });
+  await waitFor(async () => !(await readCodexUpdateStatus(cdp, { download })).checking);
+  const result = await readCodexUpdateStatus(cdp, { download });
+  assert.equal(result.available, false);
+  assert.match(result.message, /暂时无法检查更新/);
+  assert.doesNotMatch(result.message, /当前已是最新版/);
+});
 
 test('downloads in the background, verifies signature, stages, restores, and drops an installed update', async t => {
   const setup = await fixture(t);
@@ -242,14 +289,12 @@ test('cancels a partial download, cleans it after abort settles, and retries aft
   await download.wait();
   assert.equal(await partialFile(setup), undefined);
   assert.equal(setup.applied.length, 0);
-  let checks = 0;
   const cdp = { send: async (_method, params) => {
-    if (params.expression.includes('checkForUpdateInformation')) {
-      checks++;
-      return { result: { value: { status: 'available', ...target } } };
-    }
+    if (params.expression.includes('appBetaPreferencesByAccountId')) return { result: { value: { beta: false } } };
     return { result: { value: { isUpdateReady: false, lifecycleState: 'idle' } } };
   } };
+  let checks = 0;
+  download.check = async () => { checks++; return { status: 'available', ...target }; };
   assert.equal((await downloadCodexUpdate(cdp, download)).checking, true);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal((await readCodexUpdateStatus(cdp, { download })).available, true);

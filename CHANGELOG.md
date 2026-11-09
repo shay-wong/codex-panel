@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Check Codex releases directly from the official feed, so skipping a version in the native dialog no longer hides it in Panel; manual checks refresh the result.
+
 - Configure the default subagent model and reasoning effort, plus each personal role’s model and reasoning effort, in the model context dialog; restore inheritance per field or reset all settings together.
 
 - Recover Panel connections after heartbeat timeouts without waiting for a WebSocket close response; preserve current usage statistics through failed or empty reads.

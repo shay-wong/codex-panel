@@ -2996,7 +2996,14 @@ async function main() {
     ? validatedCodexExecutablePath(options.appExecutable)
     : codexExecutablePath(options.appPath);
   process.env.CODEX_EXECUTABLE = await resolveRunnableCodexExecutable(options.appPath);
-  const codexUpdateDownload = createCodexUpdateDownload({ appPath: options.appPath, dataDirectory: panelDataDirectory });
+  const codexUpdateDownload = createCodexUpdateDownload({ appPath: options.appPath, dataDirectory: panelDataDirectory,
+    getPlanType: async () => {
+      const connection = [...injectedTargets.values()].find(cdp => !cdp.closed);
+      if (!connection) throw new Error("请先通过 Panel 连接 Codex");
+      const result = await requestCodexAppServerViaCdp(connection, "local", "account/read", { refreshToken: false });
+      return result?.account?.planType ?? "unknown";
+    },
+  });
   if (process.platform === "darwin") await codexUpdateDownload.restore();
   const ultrafastCatalog = createUltrafastCatalogAdapter({
     executable: process.env.CODEX_EXECUTABLE,

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
-import { downloadCodexUpdate, readCodexUpdateState, readCodexUpdateStatus } from '../scripts/codex-update.mjs';
+import { downloadCodexUpdate, readCodexUpdateChannel, readCodexUpdateState, readCodexUpdateStatus } from '../scripts/codex-update.mjs';
 
 test('reads cached update state when resource timings have been cleared', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'panel-update-state-'));
@@ -45,48 +45,50 @@ test('does not offer installation for idle, offered-only or downloading updates'
   ]) assert.deepEqual(await readCodexUpdateState({ send: async () => ({ result: { value } }) }), { ready: false, downloading: value.lifecycleState === 'downloading', progress: null });
 });
 
-test('reports latest only after the official quiet check succeeds without blocking readiness', async () => {
+function idleCdp() {
+  return { send: async (_method, params) => ({ result: { value: params.expression.includes('appBetaPreferencesByAccountId')
+    ? { beta: false } : { isUpdateReady: false, lifecycleState: 'idle', downloadedUpdateAppBrand: null } } }) };
+}
+
+function updateChecker(check) {
+  return { status: () => null, clearFailure() {}, check };
+}
+
+test('reports latest only after the official feed check succeeds without blocking readiness', async () => {
   for (const status of ['up_to_date', 'error', 'unavailable']) {
     let finishCheck;
     let checks = 0;
-    const cdp = { send: async (_method, params) => {
-      if (params.expression.includes('checkForUpdateInformation')) {
-        checks++;
-        return new Promise(resolve => { finishCheck = resolve; });
-      }
-      return { result: { value: { isUpdateReady: false, lifecycleState: 'idle', downloadedUpdateAppBrand: null } } };
-    } };
-    assert.deepEqual(await readCodexUpdateStatus(cdp), { ready: false, available: false, downloading: false, message: '正在检查更新…', checking: true });
-    finishCheck({ result: { value: { status, installedVersion: '26.1027.61615' } } });
+    const cdp = idleCdp();
+    const download = updateChecker(async ({ beta }) => {
+      assert.equal(beta, false);
+      checks++;
+      return new Promise(resolve => { finishCheck = resolve; });
+    });
+    assert.deepEqual(await readCodexUpdateStatus(cdp, { download }), { ready: false, available: false, downloading: false, message: '正在检查更新…', checking: true });
     await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(await readCodexUpdateStatus(cdp), {
+    finishCheck({ status, installedVersion: '26.1027.61615' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(await readCodexUpdateStatus(cdp, { download }), {
       ready: false, available: false, downloading: false, checking: false,
       message: `${status === 'up_to_date' ? '当前已是最新版' : '暂时无法检查更新'} · 26.1027.61615`,
     });
     assert.equal(checks, 1);
-    assert.equal((await readCodexUpdateStatus(cdp, { force: true })).checking, true);
+    assert.equal((await readCodexUpdateStatus(cdp, { force: true, download })).checking, true);
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(checks, 2);
-    await readCodexUpdateStatus(cdp, { force: true });
+    await readCodexUpdateStatus(cdp, { force: true, download });
     assert.equal(checks, 2);
-    finishCheck({ result: { value: { status: 'up_to_date' } } });
-
+    finishCheck({ status: 'up_to_date' });
   }
 });
 
 test('available update downloads in the background without opening native confirmation', async () => {
-  const cdp = { send: async (_method, params) => {
-    assert.ok(!params.expression.includes('host.appUpdates.checkForUpdates()'));
-    if (params.expression.includes('checkForUpdateInformation')) return { result: { value: {
-      status: 'available', availableVersion: '26.new', availableBuildVersion: '42', installedVersion: '26.old',
-    } } };
-    return { result: { value: { isUpdateReady: false, lifecycleState: 'idle', downloadedUpdateAppBrand: null } } };
-  } };
-  await readCodexUpdateStatus(cdp);
-  await new Promise(resolve => setImmediate(resolve));
+  const cdp = idleCdp();
   let state = null;
   let starts = 0;
   const getPlanType = async () => 'plus';
   const download = {
+    ...updateChecker(async () => ({ status: 'available', availableVersion: '26.new', availableBuildVersion: '42', installedVersion: '26.old' })),
     status: () => state,
     start(result) {
       starts++;
@@ -96,6 +98,8 @@ test('available update downloads in the background without opening native confir
       state = { ready: false, available: true, downloading: true, message: '正在下载更新 · 0%', checking: false };
     },
   };
+  await readCodexUpdateStatus(cdp, { download });
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal((await downloadCodexUpdate(cdp, download, { getPlanType })).downloading, true);
   assert.equal((await downloadCodexUpdate(cdp, download)).downloading, true);
   assert.equal(starts, 1);
@@ -107,37 +111,31 @@ test('available update downloads in the background without opening native confir
 
 test('retry after reconnect refreshes the offer when the old check is no longer available', async () => {
   let state = { ready: false, available: true, downloading: false, checking: false, message: '上次下载失败' };
-  const download = { status: () => state, clearFailure() { state = null; }, start() { assert.fail('must check before downloading'); } };
-  const cdp = { send: async (_method, params) => ({ result: { value: params.expression.includes('checkForUpdateInformation')
-    ? { status: 'available', availableVersion: '26.new', availableBuildVersion: '42' }
-    : { isUpdateReady: false, lifecycleState: 'idle' } } }) };
+  const download = { ...updateChecker(async () => ({ status: 'available', availableVersion: '26.new', availableBuildVersion: '42' })),
+    status: () => state, clearFailure() { state = null; }, start() { assert.fail('must check before downloading'); } };
+  const cdp = idleCdp();
   assert.equal((await downloadCodexUpdate(cdp, download)).checking, true);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal((await readCodexUpdateStatus(cdp, { download })).available, true);
 });
 
-test('busy native updater stays retryable without starting another check on each poll', async () => {
+test('manual checking refreshes a cached result without repeating checks on every poll', async () => {
   let checks = 0;
-  let nativeStatus = 'busy';
-  const cdp = { send: async (_method, params) => {
-    if (params.expression.includes('checkForUpdateInformation')) {
-      checks++;
-      return { result: { value: { status: nativeStatus, installedVersion: '26.1027.61615' } } };
-    }
-    return { result: { value: { isUpdateReady: false, lifecycleState: 'idle' } } };
-  } };
-  await readCodexUpdateStatus(cdp);
+  let result = { status: 'up_to_date', installedVersion: '26.1027.61615' };
+  const cdp = idleCdp();
+  const download = updateChecker(async () => { checks++; return result; });
+  await readCodexUpdateStatus(cdp, { download });
   await new Promise(resolve => setImmediate(resolve));
   for (let index = 0; index < 5; index++) {
-    const status = await readCodexUpdateStatus(cdp);
+    const status = await readCodexUpdateStatus(cdp, { download });
     assert.equal(status.checking, false);
-    assert.match(status.message, /更新器正忙，请稍后重试/);
+    assert.match(status.message, /当前已是最新版/);
   }
   assert.equal(checks, 1);
-  nativeStatus = 'up_to_date';
-  assert.equal((await readCodexUpdateStatus(cdp, { force: true })).checking, true);
+  result = { status: 'available', availableVersion: '26.new', availableBuildVersion: '42' };
+  assert.equal((await readCodexUpdateStatus(cdp, { force: true, download })).checking, true);
   await new Promise(resolve => setImmediate(resolve));
-  assert.match((await readCodexUpdateStatus(cdp)).message, /当前已是最新版/);
+  assert.equal((await readCodexUpdateStatus(cdp, { download })).available, true);
   assert.equal(checks, 2);
 });
 
@@ -145,20 +143,20 @@ test('a stalled check times out and a late reply cannot replace the retry result
   let now = 0;
   t.mock.method(Date, 'now', () => now);
   const replies = [];
-  const cdp = { send: async (_method, params) => {
-    if (params.expression.includes('checkForUpdateInformation')) return new Promise(resolve => replies.push(resolve));
-    return { result: { value: { isUpdateReady: false, lifecycleState: 'idle' } } };
-  } };
-  assert.equal((await readCodexUpdateStatus(cdp)).checking, true);
-  now = 35_000;
-  assert.equal((await readCodexUpdateStatus(cdp)).checking, false);
-  assert.match((await readCodexUpdateStatus(cdp)).message, /超时，请重试/);
-  assert.equal(replies.length, 1);
-  assert.equal((await readCodexUpdateStatus(cdp, { force: true })).checking, true);
-  replies[1]({ result: { value: { status: 'available', availableVersion: '26.new' } } });
-  replies[0]({ result: { value: { status: 'up_to_date' } } });
+  const cdp = idleCdp();
+  const download = updateChecker(() => new Promise(resolve => replies.push(resolve)));
+  assert.equal((await readCodexUpdateStatus(cdp, { download })).checking, true);
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal((await readCodexUpdateStatus(cdp)).available, true);
+  now = 35_000;
+  assert.equal((await readCodexUpdateStatus(cdp, { download })).checking, false);
+  assert.match((await readCodexUpdateStatus(cdp, { download })).message, /超时，请重试/);
+  assert.equal(replies.length, 1);
+  assert.equal((await readCodexUpdateStatus(cdp, { force: true, download })).checking, true);
+  await new Promise(resolve => setImmediate(resolve));
+  replies[1]({ status: 'available', availableVersion: '26.new' });
+  replies[0]({ status: 'up_to_date' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await readCodexUpdateStatus(cdp, { download })).available, true);
 });
 
 async function rspackFixture(t) {
@@ -166,7 +164,8 @@ async function rspackFixture(t) {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = path.join(directory, '84120.fixture.js');
   const source = `
-    export let checks = 0;
+    export let channelState = {enabled: false, isLoading: false};
+    export function setChannel(value) { channelState = value; }
     export let nativeState = {isUpdateReady:false,lifecycleState:'idle',downloadedUpdateAppBrand:null,downloadProgressPercent:null};
     const factories = {
       changedState(module, exports) {
@@ -174,9 +173,9 @@ async function rspackFixture(t) {
         const bridge = {async getRestartBlockers(){return []}, stateChanged(value){state=value; for(const listener of listeners)listener(value)}};
         Object.assign(exports, {N:function(callback){return listeners.add(callback),state!=null&&callback(state),()=>{listeners.delete(callback)}}, bridge});
       },
-      changedHost(module, exports) {
-        const appServices = {appUpdates:{async checkForUpdateInformation(){checks++;return {status:'available',installedVersion:'26.old',availableVersion:'26.new',availableBuildVersion:'43'}}}};
-        Object.assign(exports,{appServices:appServices,setAppHost(value){},setAppServices(value){}});
+      betaSettings(module, exports) {
+        void 'appBetaPreferencesByAccountId desktop_app_beta_policy';
+        Object.assign(exports, {H: {scope: {__scopeBrand: 'AppScope', id: Symbol()}, resolve() { return 'beta'; }}});
       }
     };
     const cache = {};
@@ -189,12 +188,15 @@ async function rspackFixture(t) {
   const entry = pathToFileURL(file).href;
   const native = await import(entry);
   const page = {};
+  const setting = native.__webpack_require__('betaSettings').H;
+  const node = {token: setting.scope, store: {get: () => native.channelState}};
+  const anchor = {__reactFiber$fixture: {return: {memoizedProps: {value: new Map([[setting.scope.id, node]])}}}};
   const reads = [];
   const cdp = { send: async (_method, params) => {
     const evaluate = new Function('performance', 'document', 'fetch', 'location', 'globalThis', `return ${params.expression}`);
     const value = await evaluate(
       {getEntriesByType:()=>[]},
-      {querySelectorAll:()=>[{src:entry}]},
+      {querySelectorAll:selector=>selector.startsWith('nav[')?[anchor]:[{src:entry}]},
       async url => { reads.push(url); assert.equal(url,entry); return {ok:true,text:async()=>source}; },
       {href:entry},page,
     );
@@ -206,7 +208,6 @@ async function rspackFixture(t) {
 test('Rspack reads native update state without a check and reuses the current document registry', async t => {
   const fixture = await rspackFixture(t);
   assert.deepEqual(await readCodexUpdateState(fixture.cdp), {ready:false,downloading:false,progress:null});
-  assert.equal(fixture.native.checks,0);
   fixture.native.__webpack_require__('changedState').bridge.stateChanged({isUpdateReady:true,lifecycleState:'downloading',downloadedUpdateAppBrand:null,downloadProgressPercent:42});
   assert.deepEqual(await readCodexUpdateState(fixture.cdp), {ready:false,downloading:true,progress:42});
   fixture.native.__webpack_require__('changedState').bridge.stateChanged({isUpdateReady:true,lifecycleState:'ready',downloadedUpdateAppBrand:'codex',downloadProgressPercent:100});
@@ -214,18 +215,17 @@ test('Rspack reads native update state without a check and reuses the current do
   assert.equal(fixture.reads.length,1);
 });
 
-test('Rspack quiet checks use the native app services without opening the update window', async t => {
+test('reads the effective native update channel without invoking the updater', async t => {
   const fixture = await rspackFixture(t);
   const load = fixture.native.__webpack_require__;
   fixture.page.__codexPanelRspack__ = {require:load,findModule(markers){
     const matches = Object.entries(load.m).filter(([,factory])=>markers.every(marker=>factory.toString().includes(marker)));
     return matches.length===1 ? {id:matches[0][0],source:matches[0][1].toString()} : null;
   }};
-  assert.equal((await readCodexUpdateStatus(fixture.cdp)).checking,true);
-  await new Promise(resolve=>setImmediate(resolve));
-  const state = await readCodexUpdateStatus(fixture.cdp);
-  assert.equal(state.available,true);
-  assert.match(state.message,/26.new/);
-  assert.equal(fixture.native.checks,1);
+  assert.deepEqual(await readCodexUpdateChannel(fixture.cdp), {beta:false});
+  fixture.native.setChannel({enabled:true,isLoading:false,policy:'required'});
+  assert.deepEqual(await readCodexUpdateChannel(fixture.cdp), {beta:true});
+  fixture.native.setChannel({enabled:false,isLoading:true});
+  await assert.rejects(readCodexUpdateChannel(fixture.cdp), /尚未就绪/);
   assert.equal(fixture.reads.length,0);
 });

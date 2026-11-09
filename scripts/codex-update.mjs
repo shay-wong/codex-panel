@@ -39,11 +39,34 @@ function rspackUpdateSubscription(load) {
   return subscribe;
 }
 
-function rspackAppUpdates(load) {
-  const module = rspackUpdateModule(load, ["setAppHost", "setAppServices", "appServices:"]);
-  const updates = module && load(module.id).appServices?.appUpdates;
-  if (!updates) throw Error("Codex 更新检查接口尚未就绪");
-  return updates;
+export async function readCodexUpdateChannel(cdp) {
+  const response = await cdp.send("Runtime.evaluate", {
+    expression: `(async () => {
+      const load = await (${findCodexRspackRequire})();
+      if (!load) throw Error("无法读取当前 Codex 更新频道");
+      const module = (${rspackUpdateModule})(load, ["appBetaPreferencesByAccountId", "desktop_app_beta_policy"]);
+      const settings = Object.values(module ? load(module.id) : {}).filter(value =>
+        value?.scope?.__scopeBrand === "AppScope" && typeof value.resolve === "function");
+      if (settings.length !== 1) throw Error("无法识别当前 Codex 更新频道");
+      const setting = settings[0];
+      for (const anchor of document.querySelectorAll('nav[data-app-navigation-rail], [data-codex-composer-root]')) {
+        const key = Object.keys(anchor).find(key => key.startsWith("__reactFiber$"));
+        for (let fiber = anchor[key]; fiber; fiber = fiber.return) {
+          const chain = fiber.memoizedProps?.value;
+          const node = chain instanceof Map ? chain.get(setting.scope.id) : null;
+          if (node?.token !== setting.scope || !node.store?.get) continue;
+          const state = node.store.get(setting.resolve(node, chain));
+          if (state.isLoading || typeof state.enabled !== "boolean") throw Error("Codex 更新频道尚未就绪");
+          return { beta: state.enabled };
+        }
+      }
+      throw Error("Codex 更新频道尚未就绪");
+    })()`,
+    awaitPromise: true, returnByValue: true,
+  });
+  if (response.exceptionDetails) throw new Error(response.exceptionDetails.exception?.description ?? "无法读取 Codex 更新频道");
+  if (typeof response.result?.value?.beta !== "boolean") throw new Error("无法读取 Codex 更新频道");
+  return response.result.value;
 }
 
 // Resolve the cached native update subscription without starting a check or download.
@@ -133,7 +156,7 @@ export async function readCodexUpdateStatus(cdp, { force = false, download } = {
   if (force) download?.clearFailure();
   const direct = download?.status();
   if (direct) return direct;
-  const state = await readCodexUpdateState(cdp);
+  const state = await readCodexUpdateState(cdp).catch(() => ({ ready: false, downloading: false, progress: null }));
   let check = updateChecks.get(cdp);
   if (check && !check.result && Date.now() - check.startedAt >= 35_000) {
     check.result = { status: "timeout" };
@@ -141,26 +164,10 @@ export async function readCodexUpdateStatus(cdp, { force = false, download } = {
   if (!check || (force && check.result) || Date.now() - check.startedAt >= 15 * 60_000) {
     check = { startedAt: Date.now(), result: null };
     updateChecks.set(cdp, check);
-    // The native quiet check can take 30 seconds; keep connection heartbeats responsive.
-    void cdp.send("Runtime.evaluate", {
-      expression: `(async () => {
-        const load = await (${findCodexRspackRequire})();
-        if (load) {
-          const rspackUpdateModule = ${rspackUpdateModule};
-          return await (${rspackAppUpdates})(load).checkForUpdateInformation();
-        }
-        const url = [...document.querySelectorAll('script[src],link[rel="modulepreload"][href]')]
-          .map(entry => entry.src || entry.href).find(url => /app-shared-[\\w-]+\\.js$/.test(new URL(url, location.href).pathname));
-        if (!url) throw Error("Codex 更新检查接口尚未就绪");
-        const module = await import(url);
-        const host = Object.values(module).find(value => value && Object.hasOwn(value, "appUpdates"));
-        if (!host) throw Error("Codex 更新检查接口不可用");
-        return await host.appUpdates.checkForUpdateInformation();
-      })()`,
-      awaitPromise: true, returnByValue: true,
-    }).then(response => {
-      check.result ??= response.exceptionDetails ? { status: "error" } : response.result?.value ?? { status: "error" };
-    }).catch(() => { check.result ??= { status: "error" }; });
+    // Query the official feed independently of Sparkle's skipped-version state.
+    void readCodexUpdateChannel(cdp).then(channel => download.check(channel)).then(result => {
+      check.result ??= result;
+    }).catch(error => { check.result ??= { status: "error", error: error.message }; });
   }
   const result = check.result;
   const version = typeof result?.installedVersion === "string" ? ` · ${result.installedVersion}` : "";
@@ -173,7 +180,7 @@ export async function readCodexUpdateStatus(cdp, { force = false, download } = {
   else if (result.status === "up_to_date") message = `当前已是最新版${version}`;
   else if (result.status === "available") message = result.availableVersion ? `发现新版本 ${result.availableVersion}${version}` : `发现新版本，尚未下载完成${version}`;
   else if (result.status === "restart_required") message = `更新需要重启后生效${version}`;
-  else message = `暂时无法检查更新${version}`;
+  else message = `暂时无法检查更新${result.error ? `：${result.error}` : version}`;
   return { ready: state.ready, available: result?.status === "available", downloading: state.downloading,
     message, checking: !result && !state.ready && !state.downloading };
 }

@@ -4,7 +4,7 @@ Codex 新会话页和已有会话右侧均以原生浮窗卡片独立显示**快
 
 任务支持在明确授权后由新会话接手：`panelctl conversation bind ISSUE_ID --replace-thread-id OLD_ID` 替换刚读取的旧绑定，旧会话保留在活动记录中，Spec、状态、分支和工作树不变。详见[会话工作流](docs/fork-capabilities.md#configurable-ai-workflows)。
 
-macOS 上，Codex 更新卡片常驻：发现新版时提供“下载更新”，点击通过 macOS 系统网络直接下载匹配当前版本的官方增量包，不再弹下载确认框；支持暂停、继续和取消，验证及合成新版后切换为安装按钮；在 **运行概览 → 功能与维护 → 安装 Codex 更新并重启** 中完成更新。确认安装后，Panel 正常退出 Codex，替换已验证的新版应用后再启动连接，省去手动二次重启；忙碌或检查超时后可手动重试。详见[通过 Panel 完成 Codex 更新](docs/fork-capabilities.md#codex-updates-through-panel)。
+macOS 上，Codex 更新卡片直接查询官方清单，不受原生更新弹窗及“跳过这个版本”影响，手动检查会重新查询。卡片常驻：发现新版时提供“下载更新”，点击通过 macOS 系统网络直接下载匹配当前版本的官方增量包，不再弹下载确认框；支持暂停、继续和取消，验证及合成新版后切换为安装按钮；在 **运行概览 → 功能与维护 → 安装 Codex 更新并重启** 中完成更新。确认安装后，Panel 正常退出 Codex，替换已验证的新版应用后再启动连接，省去手动二次重启；忙碌或检查超时后可手动重试。详见[通过 Panel 完成 Codex 更新](docs/fork-capabilities.md#codex-updates-through-panel)。
 
 macOS 管理窗口的输入框支持系统编辑快捷键：`⌘C` 复制、`⌘V` 粘贴、`⌘X` 剪切、`⌘A` 全选。
 
