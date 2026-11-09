@@ -4,9 +4,13 @@
 
 The native adapters also support Codex builds using Rspack numeric modules. Existing switches still control custom-provider sending, Ultrafast and Dot; conversation tabs keep their split, restore, focus and highlight behavior. Update status uses the native updater services. Dot preference reads use the current scalar signal API; Ultrafast and custom-provider sending retain their outer module loaders so native parameters and local variables cannot shadow them. Installing this adapter uses the existing single renderer reload; subsequent preference changes keep their normal immediate behavior.
 
+If native queued messages initially appear empty while Codex settings load after an update, their display refreshes when those settings become available. No chat switch or Codex restart is needed. This uses Codex's existing queue and leaves its send, pause and delete behavior intact.
+
 The adapter was checked against desktop **26.1103.31037 / build 25241** and **26.1103.60933 / build 25894**. The latter uses a list of send-blocking reasons: when enabled for a local custom provider, Panel excludes only the reserve and usage quota reasons before native memoization, preserving other blockers and updating the cached list when the switch changes. It reads the installed app’s module declarations without running them, identifies the required native code by its structure, and rewrites the in-memory entry response before native factories execute. Lazy modules are adapted when loaded. Unsupported structures retain native behavior and log an unavailable adapter. Original application files, provider configuration and credentials are unchanged. Verification covers the actual module source and an isolated browser startup/lazy-load path; real sending and installed-app interaction remain separate validation steps.
 
 原生适配同时支持采用 Rspack 数字模块的 Codex。自定义 API 发送限制、Ultrafast 和 Dot 沿用原有开关；会话标签保留并排、恢复独立页面、焦点及高亮行为，更新状态继续读取原生更新服务。 Dot 偏好按当前标量状态 API 读取，Ultrafast 与自定义 API 发送保留外层模块加载函数，避免与原生设置参数或局部变量同名导致页面报错。首次安装适配沿用一次界面重载，之后修改偏好仍按原方式即时生效。
+
+更新后若 Codex 设置尚未加载，原生排队消息可能暂时显示为空；设置就绪后自动重新读取并显示，无需切换会话或重启 Codex。继续使用原生队列，发送、暂停和删除行为保持不变。
 
 已核对桌面版 **26.1103.31037 / build 25241** 和 **26.1103.60933 / build 25894**。后者改用发送禁用原因列表：为本地自定义服务开启开关时，Panel 在原生缓存计算前仅排除 reserve、usage 两项额度原因，保留其他限制，切换开关时缓存同步更新。适配器只读解析安装包中的模块声明，按代码结构定位，在原生模块执行前替换内存中的入口响应；延迟模块在加载时应用适配。结构不支持时保留原生行为并记录错误，不改写应用文件、Provider 配置或凭据。已验证真实模块源码和隔离浏览器的启动、延迟加载路径；真实发送与已安装应用交互仍需单独验证。
 

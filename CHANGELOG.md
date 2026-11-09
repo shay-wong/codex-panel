@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Refresh native queued-message visibility when Codex settings finish loading after a Panel update, without switching chats or restarting Codex.
+
 ## 0.5.1-fork
 
 - Build macOS and Windows packages in parallel, wait for both results, and publish the successful platforms even when the other build fails.

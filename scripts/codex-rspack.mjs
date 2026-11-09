@@ -6,8 +6,28 @@ import { rewriteRspackQuota } from './codex-rspack-quota.mjs';
 import { rewriteRspackDot, rewriteRspackUltrafast } from './codex-rspack-capabilities.mjs';
 import { createRspackThreadTabsRuntime, rewriteRspackThreadTabs } from './codex-rspack-tabs.mjs';
 
-const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltrafast, dot: rewriteRspackDot, tabs: rewriteRspackThreadTabs };
+const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltrafast, dot: rewriteRspackDot, tabs: rewriteRspackThreadTabs, queue: rewriteRspackQueue };
 const responsePatches = new WeakMap();
+
+export function rewriteRspackQueue(source, context) {
+  if (!source.includes('field:"queuedMessages"') || !source.includes('messages:void 0') || source.includes('panelQueueRequire')) return null;
+  const id = '[A-Za-z_$][\\w$]*';
+  const require = source.match(new RegExp(`^function\\s*[^\\(]*\\(${id},${id},(${id})\\)`))?.[1];
+  const beforeQueue = source.slice(0, source.indexOf('field:"queuedMessages"'));
+  const subscriptions = [...beforeQueue.matchAll(new RegExp(`\\(0,(${id})\\.(${id})\\)\\(${id},${id},\\(`, 'g'))];
+  const publication = context.findModule(['statsigEvaluations', 'hasEvaluations', 'onMount:']);
+  const signal = publication?.source.match(new RegExp(`let ${id}=${id}\\((${id})\\);if\\(${id}\\?\\.hasEvaluations`))?.[1];
+  const exported = signal && publication.source.slice(publication.source.lastIndexOf('.d('))
+    .match(new RegExp(`(${id}):(?:\\(\\)=>)?${signal.replaceAll('$', '\\$')}(?=[,}])`))?.[1];
+  if (!require || subscriptions.length !== 1 || !publication || !exported) {
+    throw new Error('Native queued-follow-up subscription is unsupported');
+  }
+  const subscription = `(0,${subscriptions[0][1]}.${subscriptions[0][2]})`;
+  // A restored rollout must reload the server queue after an empty startup snapshot.
+  const reactive = `((...panelQueueArgs)=>panelQueueArgs[0].watch(({get:panelQueueGet})=>{panelQueueGet(panelQueueRequire(${JSON.stringify(publication.id)}).${exported});return ${subscription}(...panelQueueArgs)}))`;
+  return source.replace(/^(function\s*[^\(]*\([^)]*\)\{)/, `$1const panelQueueRequire=${require};`)
+    .replace(subscription, reactive);
+}
 
 export async function installRspackResponse(cdp, url, source, report = console.error) {
   let patch = responsePatches.get(cdp);
