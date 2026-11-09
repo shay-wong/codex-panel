@@ -279,6 +279,8 @@ For related requirements, open a Jira detail with no existing plan and choose **
 
 Local planning and execution drafts use the visible Codex composer, ignoring hidden composers retained by other chats. Once the launcher confirms the Skills and prompt, Panel does not require the sent content to remain in the composer. Sending immediately after prefill still proceeds through conversation confirmation and linking; actual prefill failures remain visible.
 
+If navigation replaces the composer or an unsent draft is restored, Enter and Send locate the current editor and verify the issue identifier before recovering the pending association. The existing host confirmation then names and links the conversation. A different issue draft does not acquire the pending association.
+
 After an explicit request, `panelctl conversation bind JIRA_KEY` binds the current Codex conversation and initializes a missing planning record, including when the conversation was already bound. Read `jira planning get` again for `plan.version` before saving the Spec and publishing tickets. An existing plan, its Spec, and its planning conversation remain unchanged; binding does not send a prompt, start execution, or change Jira status.
 
 Conversation registration and chat model selection read Codex's paginated model metadata. They do not export full model prompts, so oversized debug model catalogs no longer block Jira binding, planning initialization, or chat creation and sending. Workflow Skill reads remain independent of model discovery.

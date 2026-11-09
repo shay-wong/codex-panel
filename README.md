@@ -51,6 +51,7 @@ Jira conversation binding, planning initialization, and chat model selection use
 Continue planning recognizes the active native conversation even when the window URL remains unchanged. During manual execution, the detail action follows the board's conversation activity and opens the existing conversation. Tasks with an existing conversation hide the new-conversation shortcut.
 Planning and manual execution recognize the visible Codex run-location label, so hidden responsive text no longer blocks composer prefill.
 Local task drafts use the visible composer and retain conversation linking when sent immediately after prefill, without reporting a missing Skill after successful submission.
+If navigation rebuilds the composer or an unsent draft is restored, Enter and Send recover the matching issue association and continue normal conversation naming and confirmation.
 
 The project model picker includes **6 Astra** (`gpt-6-astra`), with reasoning levels through `max` and `ultra`.
 

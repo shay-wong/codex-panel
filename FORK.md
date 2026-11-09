@@ -191,6 +191,8 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 
 - 原生对话预填诊断（维护用途）：`scripts/codex-injector.mjs` 记录 `panel.app-server.request` 的方法、请求 ID、host、会话 ID、实际超时、耗时及响应匹配计数；`panel.composer.prepare` 区分读取上一轮与预填，`panel.composer.prefill` 定位编辑器、Skill、文本插入及确认阶段。日志进入启动器 stderr，不记录提示词、消息正文、凭据或 Skill 路径。不调整超时或重试语义。验证：`node --test test/injector.test.mjs`；来源定位：`git log -S'panel.app-server.request' -- scripts/codex-injector.mjs`。待真实复现定位根因后重新评估日志保留范围。
 
+- 输入框重建与草稿恢复后的会话命名（本次修复，等待上游吸收）：`markPendingThreadAssociationSubmitted` 从实际 Enter 目标或发送按钮所属输入框重新定位节点；节点变化或恢复状态没有 DOM 引用时，先核对完整议题编号，避免将其他议题或编号前缀相同的草稿误关联，再记录发送。沿用 host 对会话、工作区与首条消息的确认、命名及回读，不增加自动发送。代码 `inject/codex-panel.user.js`；`test/inject-composer-preparation.test.mjs` 覆盖节点替换、未发送状态恢复、Enter/点击和不同议题，`test/inject.test.mjs` 保留原有发送边界。隔离 Chrome 验证四种节点替换/恢复与发送组合，经真实确认函数完成一次命名并回读；原生 RPC 使用本地替身，已安装 App 和真实消息未操作。用户说明同步中英文 README/CHANGELOG 与 `docs/fork-capabilities.md#link-jira-requirements-to-repository-issues`。来源定位 `git log -S'event.target?.closest?.(selector)' -- inject/codex-panel.user.js`；上游提供等价恢复后移除。
+
 ### 全局可定制 AI 工作流
 
 - 原生导航历史（本次变更）：Panel 在 Codex MemoryRouter 中以同路径、独立 state 标记创建历史记录；返回和前进统一控制原生页面与 Panel 的显示。删除按钮标题、命令菜单、通知及会话变更关闭分支，不包装 window.history。连接通过 React 祖先 props 找到 navigator，只观察 push/replace/go，不占用 React 唯一 listen，卸载恢复原方法。沿用原生嵌入能力生命周期及用户文档；定位：`git log -S'PANEL_ROUTE_STATE' -- inject/codex-panel.user.js`。

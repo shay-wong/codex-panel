@@ -1243,29 +1243,28 @@
   function markPendingThreadAssociationSubmitted(event) {
     const pending = pendingThreadAssociation;
     if (!pending || pending.submitted || Date.now() > pending.expiresAt) return;
-    const editor = pending.composer;
-    if (!editor?.isConnected) return;
-    if (
-      event.type === "keydown"
-      && event.target === editor
-      && event.key === "Enter"
+    const enter = event.type === "keydown" && event.key === "Enter"
       && !event.shiftKey
-      && !event.isComposing
-    ) {
-      pending.submitted = true;
-      persistPendingThreadAssociation();
-      return;
+      && !event.isComposing;
+    const button = event.type === "click" ? event.target?.closest?.("button") : null;
+    if (!enter && (!button || !SEND_LABELS.includes(normalizedLabel(button.getAttribute("aria-label"))))) return;
+    const selector = '[data-codex-composer="true"][contenteditable="true"]';
+    let editor = pending.composer;
+    if (enter && event.target !== editor) {
+      editor = event.target?.closest?.(selector);
+    } else if (button && (!editor?.isConnected || !editor.closest?.("[data-codex-composer-root]")?.contains(button))) {
+      editor = Array.from(button.closest("[data-codex-composer-root]")?.querySelectorAll(selector) ?? [])
+        .find(candidate => candidate.getClientRects().length > 0);
     }
-    const button = event.target?.closest?.("button");
-    if (
-      event.type === "click"
-      && button
-      && editor.closest("[data-codex-composer-root]")?.contains(button)
-      && SEND_LABELS.includes(normalizedLabel(button.getAttribute("aria-label")))
-    ) {
-      pending.submitted = true;
-      persistPendingThreadAssociation();
+    if (!editor?.isConnected) return;
+    if (editor !== pending.composer) {
+      // Native navigation can replace the editor; restored drafts have no DOM reference.
+      const identifier = normalizedLabel(pending.identifier).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (!identifier || !new RegExp(`(^|[^a-z0-9_.-])${identifier}($|[^a-z0-9_.-])`, "i").test(editor.textContent || "")) return;
+      pending.composer = editor;
     }
+    pending.submitted = true;
+    persistPendingThreadAssociation();
   }
 
   async function publishPendingThreadAssociation() {

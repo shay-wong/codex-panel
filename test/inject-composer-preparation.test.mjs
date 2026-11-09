@@ -27,11 +27,18 @@ function composerHarness(t, { hiddenFirst = false, sharedPlanning = false, bound
   const created = Promise.withResolvers();
   let threadId = bound ? "existing-thread" : "";
   let now = Date.now();
+  const submit = (target = editor, method = "enter") => {
+    if (method === "click") target.closest("[data-codex-composer-root]").querySelector("button").click();
+    else target.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    target.textContent = "";
+    threadId = bound ? "existing-thread" : "created-thread";
+  };
   let api;
   api = vm.runInNewContext(`(() => {
     let pendingThreadCreation = null, pendingThreadAssociation = null;
     let lastNativeThreadId = "", lastNativeProjectId = "";
     ${functionsBetween("  function persistPendingThreadAssociation()", "  function restorePendingThreadAssociation()")}
+    ${functionsBetween("  function restorePendingThreadAssociation()", "  restorePendingThreadAssociation();")}
     ${functionsBetween("  function markPendingThreadAssociationSubmitted(event)", "  function dispatchHostMessage(message)")}
     ${functionsBetween("  async function waitForPreparedComposer(", "  async function waitForNativeProject(")}
     ${functionsBetween("  async function createThreadForTask(payload)", "  function buildAutomationHostPayload(payload)")}
@@ -39,6 +46,7 @@ function composerHarness(t, { hiddenFirst = false, sharedPlanning = false, bound
       prepare: createThreadForTask,
       publish: publishPendingThreadAssociation,
       submitted: markPendingThreadAssociationSubmitted,
+      restore: restorePendingThreadAssociation,
       pending: () => pendingThreadAssociation,
     };
   })()`, {
@@ -88,11 +96,7 @@ function composerHarness(t, { hiddenFirst = false, sharedPlanning = false, bound
         editor.append(mention);
       }
       editor.append(instruction);
-      await onPrefill({ api, editor, submit: () => {
-        editor.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-        editor.textContent = "";
-        threadId = bound ? "existing-thread" : "created-thread";
-      } });
+      await onPrefill({ api, editor, submit });
       return { previousTurnId: "previous-turn" };
     },
     requestHost: async (action, payload) => {
@@ -105,8 +109,9 @@ function composerHarness(t, { hiddenFirst = false, sharedPlanning = false, bound
     },
   });
   document.addEventListener("keydown", api.submitted, true);
+  document.addEventListener("click", api.submitted, true);
   return {
-    ...api, editor, messages, requests, navigation, created: created.promise,
+    ...api, editor, submit, messages, requests, navigation, created: created.promise,
     stored: () => JSON.parse(dom.window.localStorage.getItem("fixture-pending")),
     run: () => api.prepare({
       taskId: "fixture-task", identifier: "LOCAL-42", title: "Plan fixture task",
@@ -178,6 +183,53 @@ test("a draft sent before host prefill returns is named and confirmed even witho
     await harness.created;
     assert.deepEqual(harness.messages.map(({ type }) => type), ["panel:thread-prepared", "panel:thread-created"]);
     assert.equal(harness.pending(), null);
+  }
+});
+
+test("a composer replaced during prefill still confirms the issue after Enter or clicking Send", async (t) => {
+  for (const method of ["enter", "click"]) {
+    let replacement;
+    const harness = composerHarness(t, { onPrefill: async ({ editor }) => {
+      replacement = editor.cloneNode(true);
+      replacement.getClientRects = () => [{ width: 300, height: 80 }];
+      editor.replaceWith(replacement);
+    } });
+    await harness.run();
+    assert.equal(harness.editor.isConnected, false);
+    harness.submit(replacement, method);
+    await harness.publish();
+    await harness.publish();
+    assert.equal(harness.requests.length, 1, method);
+    assert.equal(harness.requests[0].action, "confirm-task-conversation");
+    assert.equal(harness.requests[0].payload.identifier, "LOCAL-42");
+  }
+});
+
+test("an unsent draft restored from storage confirms the issue after Enter or clicking Send", async (t) => {
+  for (const method of ["enter", "click"]) {
+    const harness = composerHarness(t);
+    await harness.run();
+    harness.restore();
+    assert.equal(harness.pending().composer, null);
+    harness.submit(harness.editor, method);
+    await harness.publish();
+    await harness.publish();
+    assert.equal(harness.requests.length, 1, method);
+    assert.equal(harness.requests[0].action, "confirm-task-conversation");
+    assert.equal(harness.requests[0].payload.identifier, "LOCAL-42");
+  }
+});
+
+test("a restored pending issue does not claim a different issue draft", async (t) => {
+  for (const method of ["enter", "click"]) {
+    const harness = composerHarness(t);
+    await harness.run();
+    harness.restore();
+    harness.editor.textContent = "Read LOCAL-420 and prepare its plan";
+    harness.submit(harness.editor, method);
+    await harness.publish();
+    assert.equal(harness.requests.length, 0, method);
+    assert.equal(harness.pending().submitted, false);
   }
 });
 
