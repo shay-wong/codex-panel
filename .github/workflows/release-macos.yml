@@ -1,4 +1,4 @@
-name: Release macOS
+name: Release macOS and Windows
 
 on:
   push:
@@ -65,6 +65,7 @@ jobs:
 
   release:
     if: github.repository == 'shay-wong/codex-panel'
+    needs: release-windows
     runs-on: macos-latest
     timeout-minutes: 90
     env:
@@ -131,11 +132,24 @@ jobs:
           name: macos-release-${{ github.sha }}
           path: ${{ runner.temp }}/release-assets
           if-no-files-found: error
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-release-${{ github.sha }}
+          path: ${{ runner.temp }}/release-assets
+      - name: Verify and merge Windows updater
+        run: |
+          set -euo pipefail
+          VERSION=${RELEASE_TAG#v}
+          export RELEASE_WINDOWS="Codex.Panel_${VERSION}_x86_64-setup.exe"
+          echo "RELEASE_WINDOWS=$RELEASE_WINDOWS" >> "$GITHUB_ENV"
+          node scripts/merge-windows-updater.mjs "$RUNNER_TEMP/release-assets/latest.json" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS" "$RELEASE_TAG"
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat >> "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+
+          Windows x64 安装器带 Authenticode 签名，支持通过 Tauri 更新密钥验证的应用内更新。旧测试版需先手动安装一次。
 
           macOS 通用版，支持 Apple Silicon 与 Intel。此版本使用临时签名，未经 Apple 公证；首次打开可能需要在“系统设置 → 隐私与安全性”中允许打开。更新包使用 Codex Panel 独立密钥签名验证。
 
@@ -146,14 +160,14 @@ jobs:
           Local 0.1.0 development builds require a one-time manual installation to switch to the independent fork version line.
           NOTES
           printf '\n[中文更新日志](https://github.com/%s/blob/%s/CHANGELOG.zh-CN.md) · [Changelog](https://github.com/%s/blob/%s/CHANGELOG.md)\n' "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$GITHUB_REPOSITORY" "$RELEASE_TAG" >> "$RUNNER_TEMP/release-notes.md"
-          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --draft --title "Codex Panel $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/release-assets/$RELEASE_DMG" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE.sig" "$RUNNER_TEMP/release-assets/latest.json"
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --draft --title "Codex Panel $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/release-assets/$RELEASE_DMG" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE.sig" "$RUNNER_TEMP/release-assets/latest.json" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS.sig"
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[]' | jq -s --arg tag "$RELEASE_TAG" 'map(select(.tag_name == $tag and .draft == true)) | if length == 1 then .[0] else error("Expected one draft release") end' > "$RUNNER_TEMP/uploaded-assets.json"
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
           import fs from 'node:fs';
           const { assets } = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/uploaded-assets.json`, 'utf8'));
           const names = new Set(assets.map((asset) => asset.name));
-          for (const name of [process.env.RELEASE_DMG, process.env.RELEASE_ARCHIVE, `${process.env.RELEASE_ARCHIVE}.sig`, 'latest.json']) assert.ok(names.has(name), `Missing release asset: ${name}`);
+          for (const name of [process.env.RELEASE_DMG, process.env.RELEASE_ARCHIVE, `${process.env.RELEASE_ARCHIVE}.sig`, process.env.RELEASE_WINDOWS, `${process.env.RELEASE_WINDOWS}.sig`, 'latest.json']) assert.ok(names.has(name), `Missing release asset: ${name}`);
           assert.ok(assets.every((asset) => asset.state === 'uploaded' && asset.size > 0));
           NODE
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
@@ -222,3 +236,87 @@ jobs:
                 disable_web_page_preview: true
               }')" \
             | jq -e '.ok == true' >/dev/null
+
+  release-windows:
+    if: github.repository == 'shay-wong/codex-panel'
+    runs-on: windows-2025
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      CODEX_PANEL_UPDATER_PUBLIC_KEY: ${{ vars.CODEX_PANEL_UPDATER_PUBLIC_KEY }}
+      CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT: ${{ vars.CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Validate Windows signing configuration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:WINDOWS_CERTIFICATE_PFX_BASE64 -notmatch '\S' -or $env:WINDOWS_CERTIFICATE_PASSWORD -eq $null) {
+            throw '缺少 WINDOWS_CERTIFICATE_PFX_BASE64 或 WINDOWS_CERTIFICATE_PASSWORD'
+          }
+          if ($env:CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT -notmatch '^[A-Fa-f0-9]{40}$') {
+            throw 'CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT 必须是 40 位证书指纹'
+          }
+          if ($env:CODEX_PANEL_UPDATER_PUBLIC_KEY -notmatch '^dW50cnVzdGVkIGNvbW1lbnQ6') {
+            throw '缺少 CODEX_PANEL_UPDATER_PUBLIC_KEY'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw '缺少 TAURI_SIGNING_PRIVATE_KEY'
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'codex-panel-signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX_BASE64))
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password | Out-Null
+          $certificate = Get-ChildItem Cert:\CurrentUser\My | Where-Object Thumbprint -eq $env:CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT
+          if (-not $certificate -or -not $certificate.HasPrivateKey) { throw '导入的 Windows 签名证书或私钥不匹配' }
+          Remove-Item -LiteralPath $pfx
+      - run: npm ci
+      - name: Prepare release version
+        shell: bash
+        run: node scripts/prepare-fork-release.mjs "$RELEASE_TAG" "$RUNNER_TEMP/release-notes.md"
+      - name: Build signed Windows updater package
+        shell: pwsh
+        env:
+          CODEX_PANEL_CREATE_UPDATER_ARTIFACTS: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run app:build:windows
+          if ($LASTEXITCODE -ne 0) { throw 'Windows 构建失败' }
+          $archives = @(Get-ChildItem 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe')
+          if ($archives.Count -ne 1) { throw '必须恰好生成一个 NSIS 安装器' }
+          $archive = $archives[0]
+          $authenticode = Get-AuthenticodeSignature $archive.FullName
+          if ($authenticode.Status -ne 'Valid' -or $authenticode.SignerCertificate.Thumbprint -ne $env:CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT) { throw '安装器 Authenticode 验证失败' }
+          $signature = Get-Item "$($archive.FullName).sig"
+          $version = node -p "require('./package.json').version"
+          $outputDir = Join-Path $env:RUNNER_TEMP 'windows-release'
+          New-Item -ItemType Directory -Force $outputDir | Out-Null
+          $output = Join-Path $outputDir "Codex.Panel_${version}_x86_64-setup.exe"
+          Copy-Item $archive.FullName $output
+          Copy-Item $signature.FullName "$output.sig"
+          $publicKey = Join-Path $env:RUNNER_TEMP 'updater-public-key.txt'
+          Set-Content -Path $publicKey -Value $env:CODEX_PANEL_UPDATER_PUBLIC_KEY -NoNewline
+          node scripts/verify-updater-signature.mjs $publicKey $output "$output.sig"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows 更新签名验证失败' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-release-${{ github.sha }}
+          path: ${{ runner.temp }}/windows-release/*
+          if-no-files-found: error

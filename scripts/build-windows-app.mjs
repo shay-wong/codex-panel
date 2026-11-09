@@ -22,8 +22,11 @@ if (!new Set(["http:", "https:"]).has(timestampUrl.protocol)
 }
 
 function runNpm(args, extraEnvironment = {}) {
-  const command = process.platform === "win32" ? "npm.cmd" : "npm";
-  const result = spawnSync(command, args, {
+  // 用 Node 执行 npm CLI，避免 Windows 无法直接 spawn .cmd 以及 shell 引号问题。
+  const command = process.execPath;
+  const npmCli = process.env.npm_execpath;
+  if (!npmCli) throw new Error("Run this script with npm run app:build:windows");
+  const result = spawnSync(command, [npmCli, ...args], {
     env: { ...process.env, ...extraEnvironment },
     stdio: "inherit",
   });
@@ -49,8 +52,12 @@ runNpm([
   "nsis",
   "--ci",
   "--config",
+  "src-tauri/tauri.windows.conf.json",
+  "--config",
   JSON.stringify({
+    plugins: { updater: { pubkey: process.env.CODEX_PANEL_UPDATER_PUBLIC_KEY || "" } },
     bundle: {
+      createUpdaterArtifacts: process.env.CODEX_PANEL_CREATE_UPDATER_ARTIFACTS === "1",
       windows: {
         certificateThumbprint: thumbprint,
         digestAlgorithm: "sha256",

@@ -292,7 +292,7 @@ npm run app:build:windows
 
 在 WSL 中运行 `panelctl` 时，它会自动查找 `%LOCALAPPDATA%\Codex Panel\data` 下的 Windows launcher descriptor，并通过 Windows `curl.exe` 请求正在运行的 Windows 桌面端。只有需要显式覆盖 descriptor 时，才设置指向 WSL 路径的 `CODEX_PANEL_WSL_RUNTIME_FILE`。
 
-Windows 构建不支持自动更新。正式安装包必须配置 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT`，并通过前述 Authenticode 与打包 runtime 校验；未配置证书的正式构建会直接失败，不会发布未签名安装包。隐私说明见[隐私策略](PRIVACY.md)，保留数据的行为见 [Windows 卸载说明](docs/windows-uninstall.md)。
+Windows 正式安装包由 GitHub Actions 打包，使用 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` 对 NSIS 安装器进行 Authenticode 签名，并同时生成 Tauri updater 签名包；应用内更新会下载、验签并安装对应 Release 的 Windows 包。未配置证书的正式构建会直接失败，不会发布未签名安装包。隐私说明见[隐私策略](PRIVACY.md)，保留数据的行为见 [Windows 卸载说明](docs/windows-uninstall.md)。
 
 Codex 26.715.52143 的渲染器 CSP 会阻止任意 HTTP iframe。因此，启动器会启用 CDP CSP 绕过，重新加载该渲染器一次，安装文档启动脚本，并等待 Panel OOPIF 实际加载。同一台机器上的其他进程访问 CDP 时不需要身份验证，因此启动器运行时只能运行受信任的本地代码。
 

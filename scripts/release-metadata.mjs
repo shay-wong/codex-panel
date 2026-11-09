@@ -21,3 +21,17 @@ export function releaseMetadata(packageVersion, releaseTag, architectures) {
     }),
   };
 }
+
+export function windowsReleaseMetadata(packageVersion, releaseTag) {
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-fork$/.test(packageVersion)
+    || releaseTag !== `v${packageVersion}`) {
+    throw new Error("Release tag must match the X.Y.Z-fork package version");
+  }
+  const archive = `Codex.Panel_${packageVersion}_x86_64-setup.exe`;
+  return {
+    archive,
+    signature: `${archive}.sig`,
+    platform: "windows-x86_64",
+    url: `https://github.com/shay-wong/codex-panel/releases/download/${releaseTag}/${archive}`,
+  };
+}

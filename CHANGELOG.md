@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Windows: build signed x64 NSIS installers in the release workflow, combine macOS/Windows update metadata, and enable confirmed in-app updates. Older test builds require one manual installation; release builds require a Windows signing certificate.
+
 - Prefer Lark CLI for linked document content, ask before requesting authorization, and require an explicit choice before switching to a browser.
 
 - Restore automatic issue-conversation naming and linking after the native composer is rebuilt or an unsent draft is restored, for both Enter and Send.
