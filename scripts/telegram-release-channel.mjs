@@ -1,6 +1,6 @@
 import { readFile, appendFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { releaseMetadata } from "./release-metadata.mjs";
+import { releaseMetadata, windowsReleaseMetadata } from "./release-metadata.mjs";
 
 const escapeHtml = (text) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 
@@ -9,14 +9,32 @@ export function channelMessage(release, tag) {
   if (release.isDraft || release.tagName !== tag) throw new Error("Release 尚未发布或标签不匹配");
   const releaseUrl = `https://github.com/shay-wong/codex-panel/releases/tag/${tag}`;
   if (release.url !== releaseUrl) throw new Error("Release 地址不匹配");
-  const dmgName = metadata.assetNames[0];
-  const dmgUrl = `https://github.com/shay-wong/codex-panel/releases/download/${tag}/${dmgName}`;
-  const dmg = release.assets.find((asset) => asset.name === dmgName);
-  if (!dmg || dmg.size <= 0 || dmg.state !== "uploaded" || dmg.url !== dmgUrl) {
-    throw new Error("macOS 安装包缺失或上传未完成");
-  }
-  const header = `Codex Panel 新版本发布\n\n版本：${metadata.version}\n平台：macOS 通用版（Apple Silicon / Intel）\n`;
-  const footer = `\n安装：打开 DMG，将 App 拖入 Applications。\n临时签名，未经 Apple 公证；首次打开可能需在“隐私与安全性”中允许。\n\n<a href="${escapeHtml(dmgUrl)}">下载安装包</a> · <a href="${escapeHtml(releaseUrl)}">完整版本说明</a>\n\n#CodexPanel #Release #${tag.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+  const windows = windowsReleaseMetadata(metadata.version, tag);
+  const installers = [
+    {
+      name: metadata.assetNames[0],
+      platform: "macOS 通用版（Apple Silicon / Intel）",
+      url: `https://github.com/shay-wong/codex-panel/releases/download/${tag}/${metadata.assetNames[0]}`,
+      instructions: "macOS：打开 DMG，将 App 拖入 Applications。临时签名，未经 Apple 公证；首次打开可能需在“隐私与安全性”中允许。",
+    },
+    {
+      name: windows.archive,
+      platform: "Windows x64",
+      url: windows.url,
+      instructions: "Windows：运行安装器。未签名构建可能出现系统安全提示，签名状态见完整版本说明。",
+    },
+  ].filter((installer) => {
+    const asset = release.assets.find((candidate) => candidate.name === installer.name);
+    if (!asset) return false;
+    if (!(asset.size > 0) || asset.state !== "uploaded" || asset.url !== installer.url) {
+      throw new Error(`${installer.platform} 安装包上传未完成或地址不匹配`);
+    }
+    return true;
+  });
+  if (!installers.length) throw new Error("Release 缺少可下载的安装包");
+  const header = `Codex Panel 新版本发布\n\n版本：${metadata.version}\n平台：${installers.map((installer) => installer.platform).join("、")}\n`;
+  const links = installers.map((installer) => `<a href="${escapeHtml(installer.url)}">${installer.platform} 安装包</a>`);
+  const footer = `\n${installers.map((installer) => installer.instructions).join("\n")}\n\n${links.join(" · ")} · <a href="${escapeHtml(releaseUrl)}">完整版本说明</a>\n\n#CodexPanel #Release #${tag.replace(/[^a-zA-Z0-9_]/g, "_")}`;
   const summary = (release.body ?? "").split(/^## Changes\s*$/m)[0]
     .split("\n").filter((line) => /^- /.test(line))
     .map((line) => line.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/[`*]/g, ""))

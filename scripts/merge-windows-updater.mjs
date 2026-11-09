@@ -8,11 +8,17 @@ const [latestPath, installerPath, tag] = process.argv.slice(2);
 if (!latestPath || !installerPath || !tag) {
   throw new Error("Usage: merge-windows-updater.mjs <latest.json> <installer.exe> <tag>");
 }
-const latest = JSON.parse(await readFile(latestPath, "utf8"));
+let latest;
+try {
+  latest = JSON.parse(await readFile(latestPath, "utf8"));
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+  latest = { version: tag.replace(/^v/, ""), platforms: {} };
+}
 const metadata = windowsReleaseMetadata(latest.version, tag);
 if (path.basename(installerPath) !== metadata.archive || !latest.platforms
-  || !latest.platforms["darwin-aarch64"] || !latest.platforms["darwin-x86_64"]) {
-  throw new Error("Windows 安装器名称或 macOS 更新清单不匹配");
+  || typeof latest.platforms !== "object" || Array.isArray(latest.platforms)) {
+  throw new Error("Windows 安装器名称或更新清单不匹配");
 }
 const signature = (await readFile(`${installerPath}.sig`, "utf8")).trim();
 // 发布前再次验签；跨 job 传递的安装器必须与写入清单的签名一致。

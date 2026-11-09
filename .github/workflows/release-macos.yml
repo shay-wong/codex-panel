@@ -9,13 +9,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-macos-${{ github.ref_name }}
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   sync-version:
     needs: release
-    if: github.repository == 'shay-wong/codex-panel'
+    if: ${{ !cancelled() && needs.release.result == 'success' && github.repository == 'shay-wong/codex-panel' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
@@ -56,6 +56,7 @@ jobs:
 
   announce-channel:
     needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' && github.repository == 'shay-wong/codex-panel' }}
     uses: ./.github/workflows/telegram-release-channel.yml
     with:
       release_tag: ${{ github.ref_name }}
@@ -63,9 +64,8 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_PACKAGE_CHAT_ID: ${{ secrets.TELEGRAM_PACKAGE_CHAT_ID }}
 
-  release:
+  build-macos:
     if: github.repository == 'shay-wong/codex-panel'
-    needs: release-windows
     runs-on: macos-latest
     timeout-minutes: 90
     env:
@@ -132,42 +132,98 @@ jobs:
           name: macos-release-${{ github.sha }}
           path: ${{ runner.temp }}/release-assets
           if-no-files-found: error
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+
+  release:
+    needs: [build-macos, build-windows]
+    if: ${{ always() && !cancelled() && github.repository == 'shay-wong/codex-panel' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      CODEX_PANEL_UPDATER_PUBLIC_KEY: ${{ vars.CODEX_PANEL_UPDATER_PUBLIC_KEY }}
+      MACOS_RESULT: ${{ needs.build-macos.result }}
+      WINDOWS_RESULT: ${{ needs.build-windows.result }}
+      WINDOWS_SIGNED: ${{ needs.build-windows.outputs.authenticode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: windows-release-${{ github.sha }}
-          path: ${{ runner.temp }}/release-assets
-      - name: Verify and merge Windows updater
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Prepare release notes
         run: |
           set -euo pipefail
-          VERSION=${RELEASE_TAG#v}
-          export RELEASE_WINDOWS="Codex.Panel_${VERSION}_x86_64-setup.exe"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          node scripts/prepare-fork-release.mjs "$RELEASE_TAG" "$RUNNER_TEMP/release-notes.md"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.build-macos.result == 'success'
+        with:
+          name: macos-release-${{ github.sha }}
+          path: ${{ runner.temp }}/platform-assets/macos
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.build-windows.result == 'success'
+        with:
+          name: windows-release-${{ github.sha }}
+          path: ${{ runner.temp }}/platform-assets/windows
+      - name: Prepare available release assets
+        run: |
+          set -euo pipefail
+          printf 'macOS build: %s\nWindows build: %s\n' "$MACOS_RESULT" "$WINDOWS_RESULT" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$MACOS_RESULT" != success ] && [ "$WINDOWS_RESULT" != success ]; then
+            echo 'Neither platform produced release assets.' >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/release-assets"
+          if [ "$MACOS_RESULT" = success ]; then
+            cp "$RUNNER_TEMP/platform-assets/macos/"* "$RUNNER_TEMP/release-assets/"
+          fi
+          RELEASE_WINDOWS="Codex.Panel_${RELEASE_TAG#v}_x86_64-setup.exe"
           echo "RELEASE_WINDOWS=$RELEASE_WINDOWS" >> "$GITHUB_ENV"
-          node scripts/merge-windows-updater.mjs "$RUNNER_TEMP/release-assets/latest.json" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS" "$RELEASE_TAG"
+          if [ "$WINDOWS_RESULT" = success ]; then
+            cp "$RUNNER_TEMP/platform-assets/windows/"* "$RUNNER_TEMP/release-assets/"
+            node scripts/merge-windows-updater.mjs "$RUNNER_TEMP/release-assets/latest.json" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS" "$RELEASE_TAG"
+          fi
+          test -s "$RUNNER_TEMP/release-assets/latest.json"
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cat >> "$RUNNER_TEMP/release-notes.md" <<'NOTES'
-
-          Windows x64 安装器带 Authenticode 签名，支持通过 Tauri 更新密钥验证的应用内更新。旧测试版需先手动安装一次。
-
-          macOS 通用版，支持 Apple Silicon 与 Intel。此版本使用临时签名，未经 Apple 公证；首次打开可能需要在“系统设置 → 隐私与安全性”中允许打开。更新包使用 Codex Panel 独立密钥签名验证。
-
-          已有本地 0.1.0 开发版需手动安装一次，以切换到独立 Fork 版本线。
-
-          Universal macOS build for Apple Silicon and Intel. Ad-hoc signed, not Apple-notarized; first launch may require allowing the app in System Settings → Privacy & Security. Update archives are signed with the Codex Panel updater key.
-
-          Local 0.1.0 development builds require a one-time manual installation to switch to the independent fork version line.
-          NOTES
+          set -euo pipefail
+          assets=("$RUNNER_TEMP/release-assets/latest.json")
+          if [ "$MACOS_RESULT" = success ]; then
+            assets+=("$RUNNER_TEMP/release-assets/$RELEASE_DMG" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE.sig")
+            printf '\nmacOS 通用版，支持 Apple Silicon 与 Intel。使用临时签名，未经 Apple 公证；首次打开可能需要在“隐私与安全性”中允许。\nUniversal macOS build for Apple Silicon and Intel. Ad-hoc signed, not Apple-notarized.\n' >> "$RUNNER_TEMP/release-notes.md"
+          else
+            printf '\n本次 macOS 构建未成功，未提供 macOS 安装包或更新。No macOS package or updater is available in this release.\n' >> "$RUNNER_TEMP/release-notes.md"
+          fi
+          if [ "$WINDOWS_RESULT" = success ]; then
+            assets+=("$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS.sig")
+            if [ "$WINDOWS_SIGNED" = true ]; then
+              printf '\nWindows x64 安装器带 Authenticode 签名。The Windows x64 installer is Authenticode-signed.\n' >> "$RUNNER_TEMP/release-notes.md"
+            else
+              printf '\nWindows x64 安装器未进行 Authenticode 签名，系统可能提示未知发布者或阻止运行。The Windows x64 installer is not Authenticode-signed; Windows may warn or block it.\n' >> "$RUNNER_TEMP/release-notes.md"
+            fi
+            printf '\nWindows 与 macOS 更新包均使用 Codex Panel 更新密钥验签。旧 Windows 测试版需先手动安装一次。Update packages use the Codex Panel verification key. Older Windows test builds require one manual installation.\n' >> "$RUNNER_TEMP/release-notes.md"
+          else
+            printf '\n本次 Windows 构建未成功，未提供 Windows 安装包或更新。No Windows package or updater is available in this release.\n' >> "$RUNNER_TEMP/release-notes.md"
+          fi
+          printf '\n已有本地 0.1.0 开发版需手动安装一次，以切换到独立 Fork 版本线。Local 0.1.0 development builds require a one-time manual installation.\n' >> "$RUNNER_TEMP/release-notes.md"
           printf '\n[中文更新日志](https://github.com/%s/blob/%s/CHANGELOG.zh-CN.md) · [Changelog](https://github.com/%s/blob/%s/CHANGELOG.md)\n' "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$GITHUB_REPOSITORY" "$RELEASE_TAG" >> "$RUNNER_TEMP/release-notes.md"
-          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --draft --title "Codex Panel $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/release-assets/$RELEASE_DMG" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE.sig" "$RUNNER_TEMP/release-assets/latest.json" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS.sig"
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --draft --title "Codex Panel $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" "${assets[@]}"
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[]' | jq -s --arg tag "$RELEASE_TAG" 'map(select(.tag_name == $tag and .draft == true)) | if length == 1 then .[0] else error("Expected one draft release") end' > "$RUNNER_TEMP/uploaded-assets.json"
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
           import fs from 'node:fs';
           const { assets } = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/uploaded-assets.json`, 'utf8'));
           const names = new Set(assets.map((asset) => asset.name));
-          for (const name of [process.env.RELEASE_DMG, process.env.RELEASE_ARCHIVE, `${process.env.RELEASE_ARCHIVE}.sig`, process.env.RELEASE_WINDOWS, `${process.env.RELEASE_WINDOWS}.sig`, 'latest.json']) assert.ok(names.has(name), `Missing release asset: ${name}`);
+          const required = ['latest.json'];
+          if (process.env.MACOS_RESULT === 'success') required.push(process.env.RELEASE_DMG, process.env.RELEASE_ARCHIVE, `${process.env.RELEASE_ARCHIVE}.sig`);
+          if (process.env.WINDOWS_RESULT === 'success') required.push(process.env.RELEASE_WINDOWS, `${process.env.RELEASE_WINDOWS}.sig`);
+          for (const name of required) assert.ok(names.has(name), `Missing release asset: ${name}`);
           assert.ok(assets.every((asset) => asset.state === 'uploaded' && asset.size > 0));
           NODE
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
@@ -219,7 +275,13 @@ jobs:
 
           MESSAGE+="🔗 *相关链接:*"$'\n'
           MESSAGE+="• [GitHub Release](https://github.com/${REPO}/releases/tag/${TAG_NAME})"$'\n'
-          MESSAGE+="• [macOS 通用版下载](https://github.com/${REPO}/releases/download/${TAG_NAME}/${RELEASE_DMG})"$'\n'$'\n'
+          if [ "$MACOS_RESULT" = success ]; then
+            MESSAGE+="• [macOS 通用版下载](https://github.com/${REPO}/releases/download/${TAG_NAME}/${RELEASE_DMG})"$'\n'
+          fi
+          if [ "$WINDOWS_RESULT" = success ]; then
+            MESSAGE+="• [Windows x64 下载](https://github.com/${REPO}/releases/download/${TAG_NAME}/${RELEASE_WINDOWS})"$'\n'
+          fi
+          MESSAGE+=$'\n'
           MESSAGE+="#CodexPanel #Release #${TAG_HASHTAG}"
 
           # 发送消息
@@ -237,12 +299,14 @@ jobs:
               }')" \
             | jq -e '.ok == true' >/dev/null
 
-  release-windows:
+  build-windows:
     if: github.repository == 'shay-wong/codex-panel'
     runs-on: windows-2025
     timeout-minutes: 90
     permissions:
       contents: write
+    outputs:
+      authenticode: ${{ steps.signing.outputs.enabled }}
     env:
       RELEASE_TAG: ${{ github.ref_name }}
       CODEX_PANEL_UPDATER_PUBLIC_KEY: ${{ vars.CODEX_PANEL_UPDATER_PUBLIC_KEY }}
@@ -264,21 +328,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
         with:
           targets: x86_64-pc-windows-msvc
-      - name: Validate Windows signing configuration
+      - name: Resolve Windows signing configuration
+        id: signing
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:WINDOWS_CERTIFICATE_PFX_BASE64 -notmatch '\S' -or $env:WINDOWS_CERTIFICATE_PASSWORD -eq $null) {
-            throw '缺少 WINDOWS_CERTIFICATE_PFX_BASE64 或 WINDOWS_CERTIFICATE_PASSWORD'
-          }
-          if ($env:CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT -notmatch '^[A-Fa-f0-9]{40}$') {
-            throw 'CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT 必须是 40 位证书指纹'
-          }
           if ($env:CODEX_PANEL_UPDATER_PUBLIC_KEY -notmatch '^dW50cnVzdGVkIGNvbW1lbnQ6') {
             throw '缺少 CODEX_PANEL_UPDATER_PUBLIC_KEY'
           }
           if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
             throw '缺少 TAURI_SIGNING_PRIVATE_KEY'
+          }
+          $hasPfx = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PFX_BASE64)
+          $hasThumbprint = -not [string]::IsNullOrWhiteSpace($env:CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)
+          if (-not $hasPfx -and -not $hasThumbprint -and -not $hasPassword) {
+            'enabled=false' >> $env:GITHUB_OUTPUT
+            'Windows: no Authenticode certificate configured; building an unsigned installer with a signed updater.' >> $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
+          if (-not $hasPfx -or $env:CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT -notmatch '^[A-Fa-f0-9]{40}$') {
+            throw 'Windows 签名配置不完整：需要 PFX 和 40 位证书指纹'
           }
           $pfx = Join-Path $env:RUNNER_TEMP 'codex-panel-signing.pfx'
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX_BASE64))
@@ -287,14 +357,16 @@ jobs:
           $certificate = Get-ChildItem Cert:\CurrentUser\My | Where-Object Thumbprint -eq $env:CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT
           if (-not $certificate -or -not $certificate.HasPrivateKey) { throw '导入的 Windows 签名证书或私钥不匹配' }
           Remove-Item -LiteralPath $pfx
+          'enabled=true' >> $env:GITHUB_OUTPUT
       - run: npm ci
       - name: Prepare release version
         shell: bash
         run: node scripts/prepare-fork-release.mjs "$RELEASE_TAG" "$RUNNER_TEMP/release-notes.md"
-      - name: Build signed Windows updater package
+      - name: Build Windows updater package
         shell: pwsh
         env:
           CODEX_PANEL_CREATE_UPDATER_ARTIFACTS: '1'
+          AUTHENTICODE_SIGNED: ${{ steps.signing.outputs.enabled }}
         run: |
           $ErrorActionPreference = 'Stop'
           npm run app:build:windows
@@ -302,8 +374,10 @@ jobs:
           $archives = @(Get-ChildItem 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe')
           if ($archives.Count -ne 1) { throw '必须恰好生成一个 NSIS 安装器' }
           $archive = $archives[0]
-          $authenticode = Get-AuthenticodeSignature $archive.FullName
-          if ($authenticode.Status -ne 'Valid' -or $authenticode.SignerCertificate.Thumbprint -ne $env:CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT) { throw '安装器 Authenticode 验证失败' }
+          if ($env:AUTHENTICODE_SIGNED -eq 'true') {
+            $authenticode = Get-AuthenticodeSignature $archive.FullName
+            if ($authenticode.Status -ne 'Valid' -or $authenticode.SignerCertificate.Thumbprint -ne $env:CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT) { throw '安装器 Authenticode 验证失败' }
+          }
           $signature = Get-Item "$($archive.FullName).sig"
           $version = node -p "require('./package.json').version"
           $outputDir = Join-Path $env:RUNNER_TEMP 'windows-release'

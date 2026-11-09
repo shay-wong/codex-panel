@@ -6,7 +6,9 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
-- Windows: build signed x64 NSIS installers in the release workflow, combine macOS/Windows update metadata, and enable confirmed in-app updates. Older test builds require one manual installation; release builds require a Windows signing certificate.
+- Build macOS and Windows packages in parallel, wait for both results, and publish the successful platforms even when the other build fails.
+
+- Windows: publish x64 NSIS installers with optional Authenticode signing and verified in-app updates. Builds without a certificate can run; older test builds require one manual installation. Initial Windows release support by @InTheManXG.
 
 - Prefer Lark CLI for linked document content, ask before requesting authorization, and require an explicit choice before switching to a browser.
 

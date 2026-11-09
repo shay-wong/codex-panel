@@ -9,6 +9,10 @@ const release = {
   body: '## 更新内容\n\n- 修复 & <标题> "引号" 😀\n- 感谢 [贡献者](https://example.com)\n\n## Changes\n- English',
   assets: [{ name: "Codex.Panel_0.4.7-fork_universal.dmg", size: 110069328, state: "uploaded", url: `https://github.com/shay-wong/codex-panel/releases/download/${tag}/Codex.Panel_0.4.7-fork_universal.dmg` }],
 };
+const windows = {
+  name: "Codex.Panel_0.4.7-fork_x86_64-setup.exe", size: 1000, state: "uploaded",
+  url: `https://github.com/shay-wong/codex-panel/releases/download/${tag}/Codex.Panel_0.4.7-fork_x86_64-setup.exe`,
+};
 
 test("channel announcement validates the published DMG and escapes bounded Chinese release notes", () => {
   const text = channelMessage(release, tag);
@@ -24,6 +28,35 @@ test("channel announcement validates the published DMG and escapes bounded Chine
   assert.ok(rendered.length <= 4096);
   assert.ok(rendered.isWellFormed());
   assert.doesNotMatch(channelMessage({ ...release, body: "" }, tag), /更新内容/);
+});
+
+test("channel announcement follows the published Windows-only or combined installers", () => {
+  const windowsOnly = channelMessage({ ...release, assets: [windows] }, tag);
+  assert.match(windowsOnly, /平台：Windows x64/);
+  assert.match(windowsOnly, /Windows：运行安装器/);
+  assert.ok(windowsOnly.includes(windows.url));
+  assert.doesNotMatch(windowsOnly, /macOS|\.dmg|Applications/);
+
+  const combined = channelMessage({ ...release, assets: [...release.assets, windows] }, tag);
+  assert.match(combined, /平台：macOS 通用版（Apple Silicon \/ Intel）、Windows x64/);
+  assert.ok(combined.includes(release.assets[0].url));
+  assert.ok(combined.includes(windows.url));
+  const long = channelMessage({ ...release, assets: [...release.assets, windows], body: `- ${'😀<&'.repeat(5000)}` }, tag);
+  const rendered = long.replace(/<[^>]*>/g, "").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&amp;", "&");
+  assert.ok(rendered.length <= 4096);
+  assert.ok(rendered.isWellFormed());
+});
+
+test("channel announcement rejects invalid installers even when another platform is valid", () => {
+  for (const invalid of [
+    { ...windows, url: "https://example.invalid/installer.exe" },
+    { ...windows, size: 0 },
+    { ...windows, state: "new" },
+  ]) {
+    assert.throws(() => channelMessage({ ...release, assets: [...release.assets, invalid] }, tag));
+  }
+  assert.throws(() => channelMessage({ ...release, assets: [{ ...release.assets[0], url: windows.url }] }, tag));
+  assert.throws(() => channelMessage({ ...release, assets: [] }, tag));
 });
 
 test("channel delivery requires API confirmation and never retries an unknown delivery", async () => {

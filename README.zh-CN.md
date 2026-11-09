@@ -211,9 +211,9 @@ Fork 从 `0.0.1-fork`（标签 `v0.0.1-fork`）开始独立版本，不再随上
 
 Panel 每次启动时检查 Fork 的 GitHub Releases；有效的成功结果缓存 24 小时，临时失败缓存 5 分钟，匿名 API 限流缓存到 GitHub 返回的重置时间，缓存会在下次启动时再次判断。手动检查始终绕过缓存。检查会优先使用本机已登录的 `gh` CLI，无法使用时才回退到匿名 GitHub API，并分别提示额度耗尽、网络失败、暂无 Release、已是最新版本或发现新版本。只有规范化的 `vX.Y.Z-fork` 标签会成为更新候选，发现新版本后会在应用内下载并验证签名，只有用户确认后才安装并重启 Panel。macOS 使用原生前台确认弹窗，其他平台继续使用 Tauri 对话框。官方 Fork 构建内置更新公钥，自定义构建可用 `CODEX_PANEL_UPDATER_PUBLIC_KEY` 覆盖。详见[更新包配置](docs/fork-capabilities.md#signed-in-app-updates)。
 
-App bundle 内包含 Panel runtime、`panelctl`、两个 Panel Skills，以及用于运行它们的官方签名 Node.js runtime。macOS 安装器优先使用 `CODEX_PANEL_CODESIGN_IDENTITY`，其次使用可复用的本机 Apple Development 身份；两者都不可用时回退到 ad-hoc 签名。Windows 正式发行要求配置 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT`，并生成带 Authenticode 签名的 NSIS 安装包。
+App bundle 内包含 Panel runtime、`panelctl`、两个 Panel Skills，以及用于运行它们的官方签名 Node.js runtime。macOS 安装器优先使用 `CODEX_PANEL_CODESIGN_IDENTITY`，其次使用可复用的本机 Apple Development 身份；两者都不可用时回退到 ad-hoc 签名。Windows 的 Authenticode 签名可选：配置证书与 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` 时签名，全部留空时生成未签名的 NSIS 安装包；两种模式都保留 Tauri 更新包签名。macOS 与 Windows 并行打包，等待两边结束后统一发布成功平台的产物。
 
-连接前，应用会先校验自身 App 签名和打包 runtime，再按 OpenAI 的 Identifier 和 Team ID 校验官方 `ChatGPT.app` 及其内置 Codex 可执行文件，拒绝符号链接，并从子进程环境中移除 Node、shell 和动态加载器注入变量。Windows 还会在执行前校验 launcher 的 Authenticode 证书，以及编译进签名 launcher、覆盖 Node 和全部 Panel runtime 文件的 SHA-256 清单。Panel 服务通过启动器持有的监听器和私有实例 token 仅绑定回环地址。如果正在运行的 Codex 已暴露有效 CDP，包括旧 Swift 启动器留下的端口，新 injector 会接管真实端口；否则通过 macOS LaunchServices 使用随机私有 CDP 端口启动官方应用。已经在无 CDP 模式下运行的 Codex 仍需完全退出后才能重新以 CDP 启动。运行状态、打开和停止请求在 macOS 使用受启动 token 保护且仅当前用户可访问的 Unix socket，在 Windows 使用启动器持有的子进程控制管道；Windows 上的 Panel 生命周期操作通过受启动 token 认证的 named pipe 中断 native Codex turn。停止或退出 Tauri 只会等待自己负责的 injector 和 Panel 服务退出，官方 ChatGPT/Codex 应用继续运行。应用不会修改 `ChatGPT.app` 或 `app.asar`。
+连接前，应用会先校验自身 App 签名和打包 runtime，再按 OpenAI 的 Identifier 和 Team ID 校验官方 `ChatGPT.app` 及其内置 Codex 可执行文件，拒绝符号链接，并从子进程环境中移除 Node、shell 和动态加载器注入变量。Windows 始终在执行前校验编译进 launcher、覆盖 Node 和全部 Panel runtime 文件的 SHA-256 清单；配置了 Authenticode 证书的构建还会校验 launcher 的签名者。Panel 服务通过启动器持有的监听器和私有实例 token 仅绑定回环地址。如果正在运行的 Codex 已暴露有效 CDP，包括旧 Swift 启动器留下的端口，新 injector 会接管真实端口；否则通过 macOS LaunchServices 使用随机私有 CDP 端口启动官方应用。已经在无 CDP 模式下运行的 Codex 仍需完全退出后才能重新以 CDP 启动。运行状态、打开和停止请求在 macOS 使用受启动 token 保护且仅当前用户可访问的 Unix socket，在 Windows 使用启动器持有的子进程控制管道；Windows 上的 Panel 生命周期操作通过受启动 token 认证的 named pipe 中断 native Codex turn。停止或退出 Tauri 只会等待自己负责的 injector 和 Panel 服务退出，官方 ChatGPT/Codex 应用继续运行。应用不会修改 `ChatGPT.app` 或 `app.asar`。
 
 启动器持有的 Panel 监听器优先使用 `127.0.0.1:47823`，端口不可用时回退到私有随机端口。Codex CDP 继续使用独立的随机端口。
 
@@ -292,7 +292,7 @@ npm run app:build:windows
 
 在 WSL 中运行 `panelctl` 时，它会自动查找 `%LOCALAPPDATA%\Codex Panel\data` 下的 Windows launcher descriptor，并通过 Windows `curl.exe` 请求正在运行的 Windows 桌面端。只有需要显式覆盖 descriptor 时，才设置指向 WSL 路径的 `CODEX_PANEL_WSL_RUNTIME_FILE`。
 
-Windows 正式安装包由 GitHub Actions 打包，使用 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` 对 NSIS 安装器进行 Authenticode 签名，并同时生成 Tauri updater 签名包；应用内更新会下载、验签并安装对应 Release 的 Windows 包。未配置证书的正式构建会直接失败，不会发布未签名安装包。隐私说明见[隐私策略](PRIVACY.md)，保留数据的行为见 [Windows 卸载说明](docs/windows-uninstall.md)。
+Windows 安装包由 GitHub Actions 打包，不要求 Authenticode 证书。全部不配置时发布未签名 NSIS，Windows 可能提示未知发布者或按系统安全策略阻止运行；配置证书与 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` 时签名，配置不完整或格式错误会报错。`npm run app:build:windows:unsigned` 可显式选择未签名构建。Tauri 更新包签名和 runtime 完整性检查继续保留；应用内更新会验签后安装对应 Release 的包。隐私说明见[隐私策略](PRIVACY.md)，保留数据的行为见 [Windows 卸载说明](docs/windows-uninstall.md)。
 
 Codex 26.715.52143 的渲染器 CSP 会阻止任意 HTTP iframe。因此，启动器会启用 CDP CSP 绕过，重新加载该渲染器一次，安装文档启动脚本，并等待 Panel OOPIF 实际加载。同一台机器上的其他进程访问 CDP 时不需要身份验证，因此启动器运行时只能运行受信任的本地代码。
 
@@ -330,7 +330,7 @@ npm run codex:inject -- --port 9229 --open
 | `CODEX_PANEL_URL` | `http://127.0.0.1:47823` | CLI API 地址 |
 | `CODEX_PANEL_WSL_RUNTIME_FILE` | 从 Windows `LOCALAPPDATA` 自动发现 | Windows launcher descriptor 的 WSL 路径 |
 | `CODEX_PANEL_CODESIGN_IDENTITY` | 匹配的本机 Apple Development 身份，否则为 `-` | 签名 `Codex Panel.app` 时显式指定身份名称或证书哈希 |
-| `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` | 无 | Windows 正式构建所需的 Authenticode 证书指纹 |
+| `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` | 无 | 可选的 Authenticode 证书指纹；不配置时生成未签名安装包 |
 
 `npm start` 会输出本地 URL 和可用的局域网 URL。同一受信任网络中的协作者可以打开局域网 URL，共用同一个 Panel 服务。任务、评论和附件变更会通过服务器发送事件广播到所有已打开的客户端；重新连接的客户端会执行完整刷新，避免遗漏断线期间的变更。协作者可设置 `CODEX_PANEL_URL=http://<host-ip>:47823`，让 `panelctl` 连接共享服务。
 

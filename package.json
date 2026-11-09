@@ -22,7 +22,7 @@
     "app:build:local": "npm run app:prepare -- --target aarch64-apple-darwin && CI=true tauri build --target aarch64-apple-darwin --bundles app --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'",
     "app:build:linux:x64": "npm run app:prepare -- --target x86_64-unknown-linux-gnu && tauri build --target x86_64-unknown-linux-gnu --bundles deb,appimage --ci --config src-tauri/tauri.linux.conf.json",
     "app:build:windows": "node scripts/build-windows-app.mjs",
-    "app:build:windows:unsigned": "npm run app:prepare -- --target x86_64-pc-windows-msvc && tauri build --target x86_64-pc-windows-msvc --bundles nsis --no-sign --ci --config src-tauri/tauri.windows.conf.json",
+    "app:build:windows:unsigned": "node scripts/build-windows-app.mjs --unsigned",
     "app:preflight": "node scripts/preflight-macos-app.mjs",
     "app:verify-packaged-panelctl": "node scripts/verify-packaged-taskctl.mjs",
     "tauri": "tauri",

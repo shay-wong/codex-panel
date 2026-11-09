@@ -1166,11 +1166,13 @@ fn windows_directory() -> Result<PathBuf, String> {
 
 #[cfg(target_os = "windows")]
 fn verify_windows_launcher_signature() -> Result<(), String> {
-    let expected = option_env!("CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT")
-        .filter(|value| value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .ok_or_else(|| {
-            "当前 Windows 构建未配置 Codex Panel 代码签名，拒绝启动打包 runtime".to_string()
-        })?;
+    let Some(expected) = option_env!("CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT")
+        .filter(|value| !value.trim().is_empty()) else {
+        return Ok(());
+    };
+    if expected.len() != 40 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Windows 代码签名证书指纹无效，拒绝启动打包 runtime".into());
+    }
     let windows = windows_directory()?;
     let powershell_directory = windows.join("System32/WindowsPowerShell/v1.0");
     let powershell = powershell_directory.join("powershell.exe");

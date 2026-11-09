@@ -3,21 +3,23 @@
 import { spawnSync } from "node:child_process";
 
 const target = "x86_64-pc-windows-msvc";
-const thumbprint = (process.env.CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT || "")
+const thumbprint = (process.argv.includes("--unsigned")
+  ? ""
+  : process.env.CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT || "")
   .replaceAll(/\s/g, "")
   .toUpperCase();
-if (!/^[A-F0-9]{40}$/.test(thumbprint)) {
+if (thumbprint && !/^[A-F0-9]{40}$/.test(thumbprint)) {
   throw new Error(
     "CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT must be the 40-character SHA-1 thumbprint of the Windows code-signing certificate",
   );
 }
 
-const timestampUrl = new URL(
+const timestampUrl = thumbprint ? new URL(
   process.env.CODEX_PANEL_WINDOWS_TIMESTAMP_URL || "http://timestamp.digicert.com",
-);
-if (!new Set(["http:", "https:"]).has(timestampUrl.protocol)
+) : null;
+if (timestampUrl && (!new Set(["http:", "https:"]).has(timestampUrl.protocol)
   || timestampUrl.username
-  || timestampUrl.password) {
+  || timestampUrl.password)) {
   throw new Error("CODEX_PANEL_WINDOWS_TIMESTAMP_URL must be an HTTP(S) URL without credentials");
 }
 
@@ -37,7 +39,7 @@ function runNpm(args, extraEnvironment = {}) {
 }
 
 if (process.platform !== "win32") {
-  throw new Error("Codex Panel for Windows must be built and signed on Windows");
+  throw new Error("Codex Panel for Windows must be built on Windows");
 }
 
 runNpm(["run", "app:prepare", "--", "--target", target]);
@@ -58,12 +60,12 @@ runNpm([
     plugins: { updater: { pubkey: process.env.CODEX_PANEL_UPDATER_PUBLIC_KEY || "" } },
     bundle: {
       createUpdaterArtifacts: process.env.CODEX_PANEL_CREATE_UPDATER_ARTIFACTS === "1",
-      windows: {
+      windows: thumbprint ? {
         certificateThumbprint: thumbprint,
         digestAlgorithm: "sha256",
         timestampUrl: timestampUrl.toString(),
         tsp: true,
-      },
+      } : undefined,
     },
   }),
 ], {
