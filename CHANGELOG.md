@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.5.1-fork
+
 - Build macOS and Windows packages in parallel, wait for both results, and publish the successful platforms even when the other build fails.
 
 - Windows: publish x64 NSIS installers with optional Authenticode signing and verified in-app updates. Builds without a certificate can run; older test builds require one manual installation. Initial Windows release support by @InTheManXG.

@@ -1,6 +1,6 @@
 {
   "name": "codex-panel",
-  "version": "0.5.0-fork",
+  "version": "0.5.1-fork",
   "private": true,
   "type": "module",
   "engines": {

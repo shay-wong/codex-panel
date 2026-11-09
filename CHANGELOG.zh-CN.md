@@ -6,6 +6,8 @@
 
 ## 未发布
 
+## 0.5.1-fork
+
 - macOS 与 Windows 并行打包，等待两边结束后统一发布成功平台的产物，一边失败不再阻塞另一边。
 
 - Windows：发布 x64 NSIS 安装器，Authenticode 签名可选，无证书也可构建和使用；保留更新包验签及安装确认，旧测试版需先手动安装一次。初始 Windows 发布支持由 @InTheManXG 贡献。
