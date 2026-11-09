@@ -128,9 +128,11 @@ Ultrafast 设置说明：`launcher/src/App.tsx` 将适用模型、必需的 `fea
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`9aa1f4e7936d841748ed4e0fc7781b57ae6ae6cc`
-- 精确已合并上游基线：`9aa1f4e7936d841748ed4e0fc7781b57ae6ae6cc`
-- 比较范围：`9aa1f4e7936d841748ed4e0fc7781b57ae6ae6cc..HEAD`
+- 本次合并的上游父提交：`bdf7698f6c3f3737a65377814dbb9db7ce81ea38`
+- 精确已合并上游基线：`bdf7698f6c3f3737a65377814dbb9db7ce81ea38`
+- 比较范围：`bdf7698f6c3f3737a65377814dbb9db7ce81ea38..HEAD`
+
+本轮同步上游 E2E 与 CI 提交，新增项目、议题、附件、关联关系和视图的真实浏览器验证，以及属性保存完成后的同步等待；不改变产品行为或 Fork 发布版本。Fork 服务入口、隔离环境与 CI 规则的适配保留在紧随合并的独立提交中。
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 

@@ -7,6 +7,7 @@ dist/
 cloud-migration-exports/
 .playwright-cli/
 /output/
+.e2e/
 src-tauri/binaries/
 src-tauri/gen/
 src-tauri/resources/

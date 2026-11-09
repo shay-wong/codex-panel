@@ -102,7 +102,7 @@ A failed or empty usage read keeps the current turn’s statistics and live upda
 
 ## Requirements
 
-- Node.js 22.5 or newer
+- Node.js 22.22.3 or newer in the 22.x line, or 24.8 or newer
 
 ## Run locally
 

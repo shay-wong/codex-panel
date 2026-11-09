@@ -39,6 +39,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       run_native: ${{ steps.native-scope.outputs.run_native }}
+      run_e2e: ${{ steps.native-scope.outputs.run_e2e }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -85,6 +86,36 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+
+  e2e:
+    name: E2E web suite
+    needs: main-check-scope
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs['main-check-scope'].outputs.run_full != 'false') && (github.event_name != 'pull_request' || needs['main-check-scope'].outputs.run_e2e != 'false') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install the Playwright Chromium browser
+        run: npx -y playwright@1.64.0 install --with-deps chromium
+      - run: npm run build:web
+      - run: npm run test:e2e
+        env:
+          E2E_TELEMETRY_DISABLED: "1"
+      - name: Preserve e2e failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-results-${{ github.run_id }}
+          path: .e2e/results/
+          if-no-files-found: ignore
+          retention-days: 14
 
   macos-launcher:
     name: macOS Rust check
