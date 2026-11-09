@@ -150,6 +150,8 @@ In a Jira planning conversation, an explicitly requested repository link can be 
 
 ## Configure AI workflows
 
+For linked Feishu/Lark Docx or Wiki content, Manage Panel directs the agent to `lark-doc` and `lark-cli docs +fetch --as user`. Existing access is reused; missing authorization or scopes are explained before asking whether you can authorize the required access. Browser fallback requires your explicit choice.
+
 Task entry attaches only **Manage Panel**. It reads the issue first, then fetches applicable stages with `panelctl workflow get <stage> --project PROJECT_ID --json`. Pure research checks sources and conclusions without loading implementation or code-review Skills, even when saving a report. Authorized code changes use the configured execution and review stages; an explicit code-review request can use review directly. `in_review` also means a research report awaits your confirmation.
 
 Each stage has a complete editable workflow template alongside its Skill selection. Customize the steps and output format, or restore the default. `{{skill_instructions}}` inserts the selected Skill order or the stage's default method. Custom templates replace the default steps; task context and fixed Panel rules are attached separately and explained in the editor.

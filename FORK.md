@@ -197,6 +197,8 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 
 ### 全局可定制 AI 工作流
 
+飞书文档读取（本次变更，沿用本节长期保留契约）：Manage Panel 对关联的 Docx/Wiki 正文优先使用 `lark-doc` 与 `lark-cli docs +fetch --as user`，复用已有授权直接读取。缺少或过期授权、scope 不足时，先读当前 `lark-shared` 的身份权限说明，告知原因并询问能否授权；同意后按最小 scope 分步授权并重试，区分应用 scope、文档访问权和用户授权。不得默认申请全部权限、切换身份或自动转浏览器；浏览器回退必须由用户明确选择，已有明确授权可复用。规则源：`skills/manage-panel/SKILL.md`；用户说明：中英文 README 与 `docs/fork-capabilities.md#configurable-ai-workflows`；发布记录：中英文 CHANGELOG 的未发布节。验证：`node --test test/manage-panel-skill.test.mjs`，并对照当前 Lark 命令和技能核对读取、授权失败及浏览器选择路径；这不代表真实账号授权或 Agent 后续执行已验证。定位：`git log -S'Read linked Feishu/Lark documents' -- skills/manage-panel/SKILL.md`。合并时保留上述入口与授权边界；上游提供等价规则后再吸收。
+
 - 原生导航历史（本次变更）：Panel 在 Codex MemoryRouter 中以同路径、独立 state 标记创建历史记录；返回和前进统一控制原生页面与 Panel 的显示。删除按钮标题、命令菜单、通知及会话变更关闭分支，不包装 window.history。连接通过 React 祖先 props 找到 navigator，只观察 push/replace/go，不占用 React 唯一 listen，卸载恢复原方法。沿用原生嵌入能力生命周期及用户文档；定位：`git log -S'PANEL_ROUTE_STATE' -- inject/codex-panel.user.js`。
 原规划会话执行状态衔接（本次修复）：普通任务与 Jira 规划均可在用户明确要求后沿用当前会话；Jira 先解析已发布的仓库执行 Issue，缺少绑定时显式绑定后重读；明确授权在当前会话接手时按下述显式替换契约转交，保留目标仓库的开发上下文规则；仅批准 Spec 或发布任务不启动执行。规划与执行固定规则及 Manage Panel 明确要求，用户授权实现后、编辑前，用最新版本和原完整会话绑定执行 `issue move --status in_progress`，验证后进入 `in_review`；不依赖再次点击 Panel，不从任意会话消息推断执行。已有对话须重读更新后的 Skill 或执行配置。沿用本节生命周期及用户文档。代码：`shared/workflow-prompts.json`、`skills/manage-panel/SKILL.md`；验证：`node --test test/task-planning-api.test.mjs`；定位：`git log -S'Continue from planning into execution' -- skills/manage-panel/SKILL.md`。合并时保留固定规则不受自定义模板替换及原会话绑定、Spec、子任务范围约束。
 

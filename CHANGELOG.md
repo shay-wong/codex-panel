@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Prefer Lark CLI for linked document content, ask before requesting authorization, and require an explicit choice before switching to a browser.
+
 - Restore automatic issue-conversation naming and linking after the native composer is rebuilt or an unsent draft is restored, for both Enter and Send.
 
 - Focus the existing conversation tab or right split pane when clicking a plain conversation notification, including after navigating to another conversation.

@@ -17,6 +17,16 @@ Within that scope, use `panelctl` for every project, issue, relation, and commen
 - On Linux, when no binary is injected and Codex was started by the desktop app, use `panelctl issue get ID --json`. The desktop app adds its packaged wrapper to the managed Codex `PATH`; do not search the filesystem for another CLI or reconstruct the tokenized URL.
 - If that exact command reaches a sandbox restriction on the loopback service, retry the same command with the required permission. Do not switch binaries or endpoints.
 
+## Read linked Feishu/Lark documents
+
+Apply this to Docx/Wiki content linked from Panel issues, comments, Specs, or reference material, during planning, research, and execution.
+
+1. Read `lark-doc` and its fetch reference, then use `lark-cli docs +fetch --doc "DOCUMENT_URL" --as user`. Pass the Docx/Wiki URL directly; use `lark-wiki` for node or space management, not as the default document-content entry. Follow `lark-doc` when the content links to other resource types.
+2. Reading still requires valid user authorization, the necessary scopes, and access to that document. Reuse existing access and try the read directly; do not pre-run `auth login` or `auth status --verify` for an ordinary read.
+3. On missing or expired authorization, `need_user_authorization`, `token_missing`, or insufficient scopes, read `lark-shared` and its applicable identity/permission reference. Explain the actual failure and needed access, then ask whether the user can authorize it before starting login or changing permissions. Reuse explicit approval already given for the same authorization; a document-reading request alone is not approval to grant new scopes.
+4. After approval, follow the current `lark-shared` split flow with the minimum required scopes, then retry the original read. Do not use bare `auth login` or request all domains by default. Distinguish missing application scopes or document access from user OAuth authorization; ask for the corresponding access instead of repeating login or switching identity.
+5. Switch to a logged-in browser only when the user explicitly chooses that route, including an existing choice in this conversation. A CLI failure alone does not authorize browser fallback. When authorization is unavailable, offer authorizing the CLI, using the browser, or providing the content as applicable, and wait for the user's choice.
+
 ## Terminology: local companion
 
 In this product, **companion** means the **device-local loopback service** used for cloud mode. Related names include `local companion`, `loopback companion`, and `CODEX_PANEL_COMPANION_URL`. When writing Chinese, use **本地 companion** / **本地配套服务** / **环回代理**; never translate it as **伴侣** or call ordinary Panel HTTP routes a “companion API”.
