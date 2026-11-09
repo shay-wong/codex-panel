@@ -165,6 +165,15 @@ export function createRspackThreadTabsRuntime() {
 export function rewriteRspackThreadTabs(source, context) {
   const id = '[A-Za-z_$][\\w$]*', quote = '["\x27\x60]';
   const esc = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (source.includes('"navigate-to-route"') && source.includes('.notificationThread')) {
+    const notification = source.match(new RegExp(`\\{scope:(${id}),navigate:(${id}),location:${id},thread:(${id}),navigationState:(${id})\\.state\\}`));
+    if (!notification) throw new Error('Native notification conversation context changed');
+    const [, root, navigate, thread, request] = notification;
+    const navigation = source.match(new RegExp(`${esc(navigate)}\\((${id}),\\{replace:null==(${id})&&${esc(request)}\\.replace,state:"/cloud-environments/new"===\\1\\?\\2:${esc(request)}\\.state\\}\\)`));
+    if (!navigation) throw new Error('Native notification conversation navigation changed');
+    // 带问题或审阅动作的通知仍由原生导航消费 state。
+    return source.replace(navigation[0], `${thread}&&null==${request}.state&&globalThis.__codexPanelRspackTabsV1__.focusExisting(${root},{conversationId:${thread}.threadId,hostId:${thread}.hostId})||${navigation[0]}`);
+  }
   const menu = source.match(new RegExp(`async function ${id}\\(\\{scope:(${id}),target:(${id}),[^}]*surface:(${id}),[^}]*paneItems:(${id})[^}]*\\}\\)`));
   const sidebar = source.includes('codex.localTaskRow.archiveTask') && source.includes('startTransition') && source.includes('isActive:');
   if (!menu && !sidebar) return null;

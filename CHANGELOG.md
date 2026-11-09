@@ -8,6 +8,8 @@ This file records user-visible changes introduced by the fork.
 
 - Restore automatic issue-conversation naming and linking after the native composer is rebuilt or an unsent draft is restored, for both Enter and Send.
 
+- Focus the existing conversation tab or right split pane when clicking a plain conversation notification, including after navigating to another conversation.
+
 - Restore custom-provider sending on Codex 26.1103.60933 after native submission checks switched to a list of blocking reasons, preserving all non-quota blockers.
 
 - Check Codex releases directly from the official feed, so skipping a version in the native dialog no longer hides it in Panel; manual checks refresh the result.
