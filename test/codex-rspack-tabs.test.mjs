@@ -15,6 +15,7 @@ const fixtures = {
   react: 'function(e,t,n){t.useSyncExternalStore=React.useSyncExternalStore}',
   menu: 'function(e,t,n){async function menu({scope:root,target:target,actions:actions,surface:surface,paneItems:panes}){let items=[];items.push(...panes??[]);return items}}',
   sidebar: 'function(e,t,n){var React=n("react");function row(props){let {isActive:active,dataAttributes:attributes}=props,highlighted=void 0!==active&&active,root=props.root,host=provider??summary?.hostId??fallback??null;let result=(0,nav.go)(root,id,host,null==state&&null==access?void 0:{state:state,threadAccess:access});React.startTransition(()=>{});let output={isActive:highlighted,dataAttributes:attributes,primaryAction:null,label:"codex.localTaskRow.archiveTask"};return output}}',
+  notification: 'function(module,exports,require){const channel="navigate-to-route";module.exports=async function(e){let l=null==e.notificationThread?null:{hostId:e.notificationThread.hostId,threadId:normalize(e.notificationThread.conversationId)};if(review({scope:R,navigate:O,location:P,thread:l,navigationState:e.state}))return;beforeNavigation();let a=e.path,s;O(a,{replace:null==s&&e.replace,state:"/cloud-environments/new"===a?s:e.state})}}',
 };
 
 function context(sources = fixtures) {
@@ -123,6 +124,46 @@ test('restores a child as its own page and clears the original group menu state'
   assert.deepEqual(await h.runtime.menu(h.root, child, 'header'), []);
 });
 
+test('notification clicks focus an existing split conversation and retain native navigation otherwise', async t => {
+  const h = harness(t), child = h.target('second'), navigations = [];
+  await (await h.runtime.menu(h.root, child, 'sidebar')).find(item => item.id === 'panel-thread-split').onSelect();
+  h.runtime.focusExisting(h.root, h.target('first'));
+  await new Promise(resolve => setImmediate(resolve));
+  const module = { exports: {} };
+  let effects = 0;
+  const source = rewriteRspackThreadTabs(fixtures.notification, context()) ?? fixtures.notification;
+  vm.runInNewContext(`(${source})(module,{},()=>{});`, {
+    module, R: h.root, P: h.root.location, normalize: value => value, review: () => false,
+    beforeNavigation: () => effects++, __codexPanelRspackTabsV1__: h.runtime,
+    O(path, options) { navigations.push({ path, options }); h.root.location = { pathname: path, search: '' }; },
+  });
+  const notify = (id, extra = {}) => module.exports({ path: `/local/${id}`, notificationThread: { hostId: 'local', conversationId: id }, ...extra });
+  await notify('second');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.root.location.pathname, '/local/first');
+  assert.equal(h.focus(), 'local:second');
+  assert.deepEqual(h.scope('first').layout, { mode: 'split', contentSide: 'right' });
+  assert.equal(h.scope('first').tabs.size, 1);
+  assert.equal(navigations.length, 0);
+  assert.equal(effects, 1, 'native notification effects still execute');
+
+  h.root.location = { pathname: '/local/third', search: '' };
+  await notify('second');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.root.location.pathname, '/local/first');
+  assert.equal(h.focus(), 'local:second');
+  assert.equal(h.scope('first').tabs.size, 1);
+
+  await notify('third');
+  assert.equal(h.root.location.pathname, '/local/third');
+  const state = { openRequestUserInputAsyncQuestion: { hostId: 'local', threadId: 'second' } };
+  await notify('second', { state });
+  assert.equal(navigations.at(-1).options.state, state, 'notification actions keep their native navigation state');
+  await module.exports({ path: '/local/first', replace: true });
+  assert.equal(navigations.at(-1).path, '/local/first');
+  assert.equal(navigations.at(-1).options.replace, true);
+});
+
 test('reports readiness only after both adapted native factories execute', t => {
   const { runtime } = harness(t);
   runtime.mark('sidebar');
@@ -142,5 +183,5 @@ test('current extracted native factories remain syntactically valid after adapta
       if (patched) { new vm.Script(`(${patched})`); changed.add(entry.id); }
     }
   }
-  assert.equal(changed.size, 2);
+  assert.equal(changed.size, 3);
 });
