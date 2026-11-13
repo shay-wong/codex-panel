@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.5.2-fork
+
 - Add a macOS switch in the Codex update card to disable Codex’s built-in updater on the next Panel-managed launch, while retaining manual updates in Panel. It defaults to off; an already downloaded native update may still install on the first exit.
 
 - Restore custom-provider quota and Fast/Ultrafast controls on Codex 26.1106.51428; support its renamed worktree settings, GPT-6 Plus quota banner and legacy automation migration.
