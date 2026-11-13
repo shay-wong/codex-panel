@@ -146,6 +146,7 @@ export function createRspackThreadTabsRuntime() {
       if (!found) return [];
       const zh = document.documentElement.lang.startsWith('zh'), items = [];
       const currentSplit = found.view && found.view !== 'chat' && found.scope.get(native.layoutState).mode === 'split'
+        && !(native.fullWidth && found.scope.get(native.fullWidth))
         && found.scope.get(native.tabs.activeTab$)?.tabId === found.view.tabId;
       for (const split of [false, true]) {
         if (found.view === 'chat' || (found.view && split === currentSplit)) continue;
@@ -223,12 +224,37 @@ export function rewriteRspackThreadTabs(source, context) {
   const identity = find(['"ThreadScope"', 'getThreadScopeRouteId', 'clientThreadId']);
   const mainId = identity.source.match(new RegExp(`function (${id})\\((${id}),(${id})\\)\\{return \\2\\.get\\((${id}),(${id})\\(\\3\\)\\)\\}`));
   if (!mainId) throw new Error('Native conversation identity changed');
-  const scopeModule = find(['open-page-on-right', 'getThreadScopeRouteId', 'new-thread-panel']);
-  const scope = scopeModule.source.match(new RegExp(`function ${id}\\((${id})\\)\\{let (${id})=\\1\\.get\\((${id})\\.(${id})\\);if\\(null==\\2\\)return null;let (${id})=\\(0,(${id})\\.(${id})\\)\\(\\{pathname:`));
-  const threadScope = scopeModule.source.match(new RegExp(`let (${id})=\\(0,(${id})\\.(${id})\\)\\((${id}),\\4\\.get\\(\\2\\.(${id}),\\(0,\\2\\.(${id})\\)\\((${id})\\)\\)\\),(${id})=\\(0,(${id})\\.(${id})\\)\\(\\1,\\(0,\\9\\.(${id})\\)\\(\\7\\)\\)`));
-  const blocked = threadScope && scopeModule.source.match(new RegExp(`return null==${esc(threadScope[8])}\\|\\|${esc(threadScope[8])}\\.get\\(${esc(threadScope[9])}\\.(${id})\\)\\?null:`));
+  const legacyScope = context.findModule(['open-page-on-right', 'getThreadScopeRouteId', 'new-thread-panel']);
+  const scopeModule = legacyScope ?? find(['Library chat preview failed to open', 'getThreadScopeRouteId', 'routeTemplate:']);
+  const scopeAliases = aliases(scopeModule.source);
+  const scope = scopeModule.source.match(new RegExp(legacyScope
+    ? `function ${id}\\((${id})\\)\\{let (${id})=\\1\\.get\\((${id})\\.(${id})\\);if\\(null==\\2\\)return null;let (${id})=\\(0,(${id})\\.(${id})\\)\\(\\{pathname:`
+    : `let (${id})=\\(0,(${id})\\.(${id})\\)\\(\\{pathname:(${id})\\.pathname,routeTemplate:\\4\\.pathname,search:\\4\\.search\\}\\)`));
+  const keyCall = legacyScope ? `\\(0,\\9\\.(${id})\\)\\(\\7\\)` : `\\9\\.(${id})\\.getKey\\?\\.\\(\\7\\)`;
+  const threadScope = scopeModule.source.match(new RegExp(`let (${id})=\\(0,(${id})\\.(${id})\\)\\((${id}),\\4\\.get\\(\\2\\.(${id}),\\(0,\\2\\.(${id})\\)\\((${id})\\)\\)\\),(${id})=\\(0,(${id})\\.(${id})\\)\\(\\1,${keyCall}\\)`));
   const chatGpt = scopeModule.source.match(new RegExp(`conversationId=${id}\\.get\\((${id})\\.(${id}),${id}\\.conversationId\\)\\?\\?`));
-  if (!scope || !threadScope || !blocked || !chatGpt) throw new Error('Native active conversation scope changed');
+  if (!scope || !threadScope || !chatGpt) throw new Error('Native active conversation scope changed');
+  let location, parseRoute, routeKey, blockedScope;
+  if (legacyScope) {
+    const blocked = scopeModule.source.match(new RegExp(`return null==${esc(threadScope[8])}\\|\\|${esc(threadScope[8])}\\.get\\(${esc(threadScope[9])}\\.(${id})\\)\\?null:`));
+    if (!blocked) throw new Error('Native active conversation scope changed');
+    location = ref(scopeAliases, scope[3], scope[4]);
+    parseRoute = ref(scopeAliases, scope[6], scope[7]);
+    routeKey = ref(scopeAliases, threadScope[9], threadScope[11]);
+    blockedScope = ref(scopeAliases, threadScope[9], blocked[1]);
+  } else {
+    if (scope[1] !== threadScope[7] || scope[2] !== threadScope[9]) throw new Error('Native active conversation scope changed');
+    const currentLocation = scopeModule.source.match(new RegExp(`let ${esc(scope[4])}=${esc(threadScope[4])}\\.get\\((${id})\\.(${id})\\)`));
+    if (!currentLocation) throw new Error('Native active conversation location changed');
+    const routeModule = scopeAliases.get(scope[2]), routeSource = context.moduleSource(routeModule);
+    const descriptor = routeSource?.match(new RegExp(`let (${id})=\\(0,${id}\\.${id}\\)\\(${quote}RouteScope${quote},\\{key:(${id}),parent:`));
+    const blocked = descriptor && routeSource.match(new RegExp(`let (${id})=\\(0,${id}\\.${id}\\)\\(${esc(descriptor[1])},!1\\)`));
+    if (!descriptor || !blocked) throw new Error('Native active conversation scope changed');
+    location = ref(scopeAliases, currentLocation[1], currentLocation[2]);
+    parseRoute = ref(scopeAliases, scope[2], scope[3]);
+    routeKey = [routeModule, exported(routeSource, descriptor[2])];
+    blockedScope = [routeModule, exported(routeSource, blocked[1])];
+  }
   const focus = find(['expiresTimeoutId:0', 'focusAnimationFrameId:null', 'composerId']);
   const requestFocus = focus.source.match(new RegExp(`function (${id})\\((${id})\\)\\{${id}\\(\\);let ${id}=\\{composerId:\\2,expiresTimeoutId:0,focusAnimationFrameId:null\\}`));
   const currentFocus = focus.source.match(new RegExp(`function (${id})\\(\\)\\{let (${id})=${id}\\(\\);return null==\\2\\?null:${id}\\.get\\(\\2\\)\\?\\.composerId\\?\\?null\\}`));
@@ -241,20 +267,21 @@ export function rewriteRspackThreadTabs(source, context) {
   if (!state?.source) throw new Error('Native conversation layout state missing');
   const stateFn = state.source.match(new RegExp(`(${id})=\\(0,${id}\\.${id}\\)\\([^,]+,\\(\\{get:(${id})\\}\\)=>${quote}full${quote}===\\2\\([^)]*\\)\\?\\{mode:${quote}full${quote}\\}:\\{contentSide:\\2\\([^)]*\\),mode:${quote}split${quote}\\}\\)`));
   if (!stateFn) throw new Error('Native conversation layout state changed');
+  const fullWidth = layout.source.match(new RegExp(`!${id}&&${id}\\.get\\((${id})\\.(${id})\\)&&${id}\\?\\.tabType\\.onEnterFullWidth`));
   const navigation = find(['AppNavigationSignalBridge is missing', 'navigateToLocalConversation']);
   const navigate = navigation.source.match(new RegExp(`(${id}):function\\((${id}),\\.\\.\\.(${id})\\)\\{return \\2\\.get\\(${id}\\)\\.navigate\\(\\.\\.\\.\\3\\)\\}`));
   const navigateThread = navigation.source.match(new RegExp(`(${id}):function\\((${id}),\\.\\.\\.(${id})\\)\\{return \\2\\.get\\(${id}\\)\\.navigateToLocalConversation\\(\\.\\.\\.\\3\\)\\}`));
   if (!navigate || !navigateThread) throw new Error('Native conversation navigation changed');
-  const scopeAliases = aliases(scopeModule.source);
   const bindings = {
     open: [open.id, exported(open.source, openFn[1])], tabs: ref(aliases(open.source), tab[1], tab[2]),
     layout: [layout.id, exported(layout.source, layoutFn[1])], focus: [layout.id, exported(layout.source, focusFn[1])],
     mainId: [identity.id, exported(identity.source, mainId[1])], localId: [identity.id, exported(identity.source, mainId[5])],
-    location: ref(scopeAliases, scope[3], scope[4]), parseRoute: ref(scopeAliases, scope[6], scope[7]),
+    location, parseRoute,
     threadScope: ref(scopeAliases, threadScope[2], threadScope[3]), threadId: ref(scopeAliases, threadScope[2], threadScope[5]),
     routeId: ref(scopeAliases, threadScope[2], threadScope[6]), routeScope: ref(scopeAliases, threadScope[9], threadScope[10]),
-    routeKey: ref(scopeAliases, threadScope[9], threadScope[11]), blockedScope: ref(scopeAliases, threadScope[9], blocked[1]),
+    routeKey, blockedScope,
     chatGptId: ref(scopeAliases, chatGpt[1], chatGpt[2]), layoutState: [state.id, exported(state.source, stateFn[1])],
+    ...(fullWidth ? { fullWidth: ref(aliases(layout.source), fullWidth[1], fullWidth[2]) } : {}),
     focusComposer: [focus.id, exported(focus.source, requestFocus[1])], currentFocus: [focus.id, exported(focus.source, currentFocus[1])],
     subscribeFocus: [focus.id, subscribe[1]], navigate: [navigation.id, navigate[1]], navigateThread: [navigation.id, navigateThread[1]],
   };

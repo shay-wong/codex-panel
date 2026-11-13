@@ -628,6 +628,8 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 
 - 26.1103.60933 / build 25894 的发送判断改为 `submitDisabledReasons`；`rewriteRspackQuota` 沿用 provider 与 host 识别，只在开关启用且有效服务为本地非 OpenAI 时，条件生成 `reserve-limit`、`usage-limit` 两项原因。改写发生在原生 memo 比较前，保证开关或 provider 改变后缓存同步更新；保留所有其他原因及旧版布尔路径。`test/codex-rspack-quota.test.mjs` 复现旧实现失败，并验证原因缓存、切换、有效 provider 与非额度限制；两个真实 composer 变体改写及语法通过。真实客户端发送与安装另行验证。来源定位：`git log -S'reasonQuotas' -- scripts/codex-rspack-quota.mjs`；沿用本条生命周期与移除条件。
 
+- 26.1106.51428 / build 26605 删除了 `open-page-on-right` 所在的会话作用域 helper；`scripts/codex-rspack-tabs.mjs` 从当前原生预览路径读取 location、route、thread scope，并从 `RouteScope` 的定义读取 route key 和 blocked signal，复用原生标签、布局与焦点调用。旧 helper 存在时沿用其导出；不按模块 ID 固定版本。原生统一标签栏的全宽状态独立于 layout.mode，菜单读取该全宽 signal，保证全宽标签提供并排入口、分栏提供标签入口。当前 6,965 个真实 factory 的菜单、侧栏与通知改写和语法检查通过，`node --test test/codex-rspack-tabs.test.mjs test/codex-rspack.test.mjs` 的 14 项检查覆盖新结构、全宽识别与原有直接路径。全新隔离的真实 26605 App 中，悬浮菜单的标签打开、切为右侧并排、全宽/分栏入口切换及两套输入框显示通过，无作用域或运行时错误；原生右键菜单已确认共用同一 builder，但 OS 弹出菜单的选择未可靠验证。日常 App 未替换。用户说明：中英文 README/CHANGELOG、`docs/fork-capabilities.md#conversation-tabs-and-split-view`。本次变更定位：`git log -S'Library chat preview failed to open' -- scripts/codex-rspack-tabs.mjs`；沿用本条生命周期与移除条件，不将菜单验证扩展为该版本所有适配器均受支持的结论。
+
 
 ### 本地 Rust 构建占用
 

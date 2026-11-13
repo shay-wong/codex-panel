@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Restore conversation tab and split-view menu actions on Codex 26.1106.51428 after its active-conversation helper was removed, and recognize full-width tabs correctly when switching views.
+
 - Refresh native queued-message visibility when Codex settings finish loading after a Panel update, without switching chats or restarting Codex.
 
 ## 0.5.1-fork

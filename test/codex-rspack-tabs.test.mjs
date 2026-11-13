@@ -46,28 +46,53 @@ test('adapts Rspack menu and sidebar factories without named app chunks', () => 
   assert.throws(() => rewriteRspackThreadTabs(fixtures.menu, context({ ...fixtures, layout: 'unsupported' })), /Native thread factory missing/);
 });
 
-function harness(t) {
+test('resolves the active route after Codex removes the open-page-on-right helper', () => {
+  const ctx = context({ ...fixtures,
+    scope: fixtures.scope.replace('let marker="open-page-on-right"', 'let marker="Library chat preview failed to open"')
+      .replace('(0,Route.key)(r)', 'Route.descriptor.getKey?.(r)')
+      .replace('return null==v||v.get(Route.blocked)?null:v', 'return v'),
+    route: 'function(e,t,n){let route=(0,signals.scope)("RouteScope",{key:key,parent:ThreadScope});let blocked=(0,signals.value)(route,!1);n.d(t,{hf:()=>key,Rj:()=>blocked})}',
+  });
+  for (const source of [fixtures.menu, fixtures.sidebar]) {
+    const patched = rewriteRspackThreadTabs(source, ctx);
+    assert.match(patched, /"location":\["location","current"\]/);
+    assert.match(patched, /"parseRoute":\["route","parse"\]/);
+    assert.match(patched, /"routeKey":\["route","hf"\]/);
+    assert.match(patched, /"blockedScope":\["route","Rj"\]/);
+    new vm.Script(`(${patched})`);
+  }
+});
+
+test('resolves the separate native full-width signal used by the unified tab strip', () => {
+  const layout = fixtures.layout.replace('l=null;', 'l=null,full=e.get(State.fullWidth);')
+    .replace('tabType.onEnterFullWidth()', '!full&&e.get(State.fullWidth)&&tab?.tabType.onEnterFullWidth()');
+  const patched = rewriteRspackThreadTabs(fixtures.menu, context({ ...fixtures, layout }));
+  assert.match(patched, /"fullWidth":\["state","fullWidth"\]/);
+});
+
+function harness(t, unified = false) {
   const savedDocument = globalThis.document, savedRuntime = globalThis.__codexPanelRspack__;
   globalThis.document = { documentElement: { lang: 'zh-CN' } };
   t.after(() => { globalThis.document = savedDocument; globalThis.__codexPanelRspack__ = savedRuntime; delete globalThis.__codexPanelThreadTabsReady__; });
-  const scopes = new Map(), callbacks = new Set(), actions = [], location = Symbol(), blocked = Symbol(), layoutState = Symbol(), threadId = Symbol();
+  const scopes = new Map(), callbacks = new Set(), actions = [], location = Symbol(), blocked = Symbol(), layoutState = Symbol(), threadId = Symbol(), fullWidth = Symbol();
   let focusId = null;
   const tabs = { tabById$: Symbol(), activeTab$: Symbol() };
   function scope(id) {
     if (!scopes.has(id)) scopes.set(id, { node: {}, value: { conversationId: id, hostId: 'local', pathname: `/local/${id}`, routeKind: 'local-thread' }, tabs: new Map(), selected: null, layout: { mode: 'full' },
-      get(atom, tabId) { if (atom === blocked) return false; if (atom === tabs.tabById$) return this.tabs.get(tabId); if (atom === tabs.activeTab$) return this.tabs.get(this.selected); if (atom === layoutState) return this.layout; },
+      get(atom, tabId) { if (atom === blocked) return false; if (atom === tabs.tabById$) return this.tabs.get(tabId); if (atom === tabs.activeTab$) return this.tabs.get(this.selected); if (atom === layoutState) return this.layout; if (atom === fullWidth) return this.fullWidth; },
     });
     return scopes.get(id);
   }
   const root = { location: { pathname: '/local/first', search: '' }, get(atom, value) { if (atom === location) return this.location; if (atom === threadId) return value; } };
   const native = {
     location, blockedScope: blocked, layoutState, threadId, chatGptId: Symbol(),
+    ...(unified ? { fullWidth } : {}),
     parseRoute: value => ({ ...value, routeKind: 'local-thread', conversationId: value.pathname.split('/').at(-1) }),
     threadScope: (_root, id) => scope(id), routeId: route => route.conversationId, routeKey: route => route.pathname, routeScope: value => value,
     mainId: (_scope, id) => `client:${id}`, localId: id => `local:${id}`,
     tabs,
     open(owner, target, title, options) { const tabId = `orbit-activity:${target.hostId}:${target.threadId}`; owner.tabs.set(tabId, { tabId, props: { conversationId: target.threadId, hostId: target.hostId } }); owner.selected = tabId; actions.push(['open', target.threadId, title, options]); },
-    layout(owner, view, value) { owner.layout = value; if (view !== 'chat') owner.selected = view.tabId; actions.push(['layout', owner.value.conversationId, view, value]); },
+    layout(owner, view, value) { owner.fullWidth = value.mode === 'full'; owner.layout = unified ? { mode: 'split', contentSide: 'right' } : value; if (view !== 'chat') owner.selected = view.tabId; actions.push(['layout', owner.value.conversationId, view, value]); },
     focus(owner, view) { actions.push(['focus', owner.value.conversationId, view]); },
     focusComposer(id) { focusId = id; for (const callback of callbacks) callback(); },
     currentFocus: () => focusId,
@@ -82,6 +107,20 @@ function harness(t) {
   const target = id => ({ conversationId: id, hostId: 'local', threadSummary: { title: id } });
   return { runtime, root, target, scope, actions, focus: () => focusId };
 }
+
+test('a full-width tab offers split view when native layout mode remains split', async t => {
+  const h = harness(t, true), child = h.target('second');
+  await (await h.runtime.menu(h.root, child, 'sidebar')).find(item => item.id === 'panel-thread-tab').onSelect();
+  assert.equal(h.scope('first').layout.mode, 'split');
+  assert.equal(h.scope('first').fullWidth, true);
+  let menu = await h.runtime.menu(h.root, child, 'sidebar');
+  assert.deepEqual(menu.map(item => item.id), ['panel-thread-split', 'panel-thread-restore']);
+  await menu.find(item => item.id === 'panel-thread-split').onSelect();
+  assert.equal(h.scope('first').fullWidth, false);
+  menu = await h.runtime.menu(h.root, child, 'sidebar');
+  assert.deepEqual(menu.map(item => item.id), ['panel-thread-tab', 'panel-thread-restore']);
+  assert.equal(h.scope('first').tabs.size, 1);
+});
 
 test('opens once, switches presentation, moves focus and keeps only the focused row active', async t => {
   const h = harness(t), main = h.target('first'), child = h.target('second');
