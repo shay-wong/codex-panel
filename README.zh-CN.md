@@ -1,5 +1,7 @@
 # Codex Panel
 
+连接 Panel 后，指定的 **Lumi** 宠物在鼠标移入时播放已确认的 15 秒比心、舞蹈动画，结束后回到待机；鼠标移出恢复原生状态，“减少动态效果”开启时显示静态姿势。动画由 Panel 提供，无需修改 Codex 应用包。适用宠物及兼容范围见 [Lumi 悬停动画](docs/fork-capabilities.md#lumi-hover-animation)。
+
 Codex 新会话页和已有会话右侧均以原生浮窗卡片独立显示**快捷短语**，上方项目浮窗隐藏时仍可使用；浮窗显示时，快捷短语卡片放在它下方。打开右侧文件或预览栏时，快捷短语自动隐藏，关闭后恢复。点击标题栏可收起或展开列表，收起后仍可打开“配置”。点击“配置”，每行输入一条并保存，再点击短语即可通过当前原生输入框发送，也可用作新会话的第一条消息。配置保存在本机，同一 Codex 配置环境下的会话共用；不会覆盖已有草稿或附件。详见[快捷短语](docs/fork-capabilities.md#quick-phrases)。摘要有动画容器时，短语随其同步移动；摘要缺失时保持独立位置。
 
 任务支持在明确授权后由新会话接手：`panelctl conversation bind ISSUE_ID --replace-thread-id OLD_ID` 替换刚读取的旧绑定，旧会话保留在活动记录中，Spec、状态、分支和工作树不变。详见[会话工作流](docs/fork-capabilities.md#configurable-ai-workflows)。

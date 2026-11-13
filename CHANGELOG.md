@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Play Lumi's approved 15-second heart-and-dance animation on hover through Panel, including the floating pet window, without changing the Codex app bundle.
+
 ## 0.5.4-fork
 
 - Windows: keep launcher, restart, and background PowerShell, Node, and CLI checks hidden to prevent console windows flashing.

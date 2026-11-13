@@ -623,9 +623,9 @@ class CdpConnection {
   }
 }
 
-async function codexTargets(port) {
+async function codexTargets(port, select = isCodexTarget) {
   const targets = await fetchJson(`http://127.0.0.1:${port}/json/list`);
-  return targets.filter(isCodexTarget).map((target) => {
+  return targets.filter(select).map((target) => {
     return {
       ...target,
       webSocketDebuggerUrl: validatedLoopbackCdpWebSocketUrl(
@@ -653,6 +653,17 @@ function isCodexTarget(target) {
       !target.url?.includes("initialRoute=%2Favatar-overlay") &&
       (target.url?.startsWith("app://") || target.title === "Codex")
   );
+}
+
+function isCodexAvatarTarget(target) {
+  if (target.type !== "page") return false;
+  try {
+    const url = new URL(target.url);
+    const route = new URL(url.searchParams.get("initialRoute") || url.href, url);
+    return url.protocol === "app:" && route.pathname === "/avatar-overlay";
+  } catch {
+    return false;
+  }
 }
 
 export async function waitForRendererReady(cdp, timeoutMs) {
@@ -701,6 +712,7 @@ export async function reloadRenderer(cdp, timeoutMs) {
 function tcpCdpRuntime(port) {
   return {
     targets: () => codexTargets(port),
+    avatarTargets: () => codexTargets(port, isCodexAvatarTarget),
     connect: async (target) => {
       const connection = new CdpConnection(target.webSocketDebuggerUrl);
       await connection.open();
@@ -714,6 +726,9 @@ function pipeCdpRuntime(browser) {
   return {
     targets: async () => (await browser.targets())
       .filter(isCodexTarget)
+      .map((target) => ({ ...target, id: target.targetId })),
+    avatarTargets: async () => (await browser.targets())
+      .filter(isCodexAvatarTarget)
       .map((target) => ({ ...target, id: target.targetId })),
     connect: (target) => browser.connect(target.id),
     isHealthy: () => !browser.closed,
@@ -2551,6 +2566,83 @@ async function registerInjectionSource(cdp, source) {
   return registration.identifier;
 }
 
+async function readAvatarInjectionStatus(cdp) {
+  const result = await cdp.send("Runtime.evaluate", {
+    expression: `({
+      sourceHash: globalThis.__codexPanelLumiInjectionHash__,
+      scriptIdentifier: globalThis.__codexPanelLumiScriptIdentifier__,
+      prepared: Boolean(globalThis.__codexPanelRspack__ && globalThis.__codexPanelLumiPetV1__)
+    })`,
+    returnByValue: true,
+  });
+  return result.result?.value ?? {};
+}
+
+async function injectAvatarTarget(runtime, target, sourceHash, appPath, keepAlive) {
+  const cdp = await runtime.connect(target);
+  let retained = false;
+  try {
+    await cdp.send("Page.enable");
+    await cdp.send("Runtime.enable");
+    await waitForRendererReady(cdp, 15_000);
+    const adapters = await prepareCodexRspack(cdp, appPath, undefined, console.error, { petsOnly: true });
+    if (!adapters?.prepared.pets) throw new Error("Lumi animation module is unavailable");
+    const currentStatus = await readAvatarInjectionStatus(cdp);
+    const source = `${adapters.source}\nglobalThis.__codexPanelLumiInjectionHash__ = ${JSON.stringify(sourceHash)};`;
+    const publishRegistration = identifier => cdp.send("Runtime.evaluate", {
+      expression: `globalThis.__codexPanelLumiScriptIdentifier__ = ${JSON.stringify(identifier)}`,
+      returnByValue: true,
+    });
+    await cdp.send("Page.setBypassCSP", { enabled: true });
+    const reconciled = await reconcileInjectionRuntime({
+      currentStatus,
+      source,
+      sourceHash,
+      reloadRequired: !currentStatus.prepared,
+      removeRegisteredSource: identifier => cdp.send("Page.removeScriptToEvaluateOnNewDocument", { identifier }),
+      registerCurrentSource: currentSource => registerInjectionSource(cdp, currentSource),
+      reloadRenderer: () => reloadRenderer(cdp, 15_000),
+      evaluateCurrentSource: currentSource => evaluateInjectionSource(cdp, currentSource),
+      publishRegistration,
+    });
+    const status = await readAvatarInjectionStatus(cdp);
+    if (!status.prepared || status.sourceHash !== sourceHash) throw new Error("Lumi animation bootstrap is not ready");
+    cdp.on("Page.loadEventFired", () => {
+      void publishRegistration(reconciled.scriptIdentifier).catch(error => {
+        console.error(`Lumi animation registration failed: ${error.message}`);
+      });
+    });
+    cdp.lumiSourceHash = sourceHash;
+    retained = keepAlive;
+    return retained ? cdp : null;
+  } finally {
+    if (!retained) cdp.close();
+  }
+}
+
+async function injectAvatarTargets(runtime, sourceHash, connections, appPath, keepAlive) {
+  const targets = await runtime.avatarTargets();
+  const activeIds = new Set(targets.map(target => target.id));
+  for (const [id, connection] of connections) {
+    if (!activeIds.has(id) || connection.closed || connection.lumiSourceHash !== sourceHash) {
+      connection.close();
+      connections.delete(id);
+    }
+  }
+  const results = [];
+  for (const target of targets) {
+    if (connections.has(target.id)) continue;
+    try {
+      const connection = await injectAvatarTarget(runtime, target, sourceHash, appPath, keepAlive);
+      if (connection) connections.set(target.id, connection);
+      results.push({ targetId: target.id, url: target.url, petsPrepared: true });
+    } catch (error) {
+      console.error(`Lumi avatar window ${target.id} is not ready: ${error.message}`);
+    }
+  }
+  return results;
+}
+
 async function prepareNativeAdapters(cdp, appPath, reportThreadTabs) {
   const preferences = panelEnvironment("PREFERENCES_FILE");
   try {
@@ -2856,8 +2948,10 @@ async function currentInjectionSource() {
   const providerUltrafast = await readFile(new URL("./codex-provider-ultrafast.mjs", import.meta.url), "utf8");
   const dotEntry = await readFile(new URL("./codex-dot-entry.mjs", import.meta.url), "utf8");
   const threadTabs = await readFile(new URL("./codex-thread-tabs.mjs", import.meta.url), "utf8");
-  const rspack = await Promise.all(["codex-rspack.mjs", "codex-rspack-source.mjs", "codex-rspack-quota.mjs", "codex-rspack-tabs.mjs", "codex-rspack-capabilities.mjs"]
+  const rspack = await Promise.all(["codex-rspack.mjs", "codex-rspack-source.mjs", "codex-rspack-quota.mjs", "codex-rspack-tabs.mjs", "codex-rspack-capabilities.mjs", "codex-rspack-pets.mjs"]
     .map(file => readFile(new URL(file, import.meta.url), "utf8")));
+  const petAssets = await Promise.all(["../inject/pets/lumi-hover.webp", "../inject/pets/lumi-hover.json"]
+    .map(async file => createHash("sha256").update(await readFile(new URL(file, import.meta.url))).digest("hex")));
   const sourceHash = createHash("sha256").update(JSON.stringify({
     userScript,
     providerQuotaFix,
@@ -2865,6 +2959,7 @@ async function currentInjectionSource() {
     dotEntry,
     threadTabs,
     rspack,
+    petAssets,
   })).digest("hex");
   const runtimeSource = `window.__CODEX_PANEL_MANAGED_ORIGIN__ = ${JSON.stringify(panelOrigin)};
 window.__CODEX_PANEL_HOST_CAPABILITY__ = ${JSON.stringify(hostCapability)};
@@ -3047,6 +3142,7 @@ async function main() {
   let preferencesWatcher = null;
   let stopHostHeartbeats = null;
   const injectedTargets = new Map();
+  const avatarConnections = new Map();
   const remoteCodexConnections = new Map();
   const routableCodexConnections = new Set();
   const codexRendererWaiters = new Set();
@@ -3167,6 +3263,8 @@ async function main() {
         connection.close();
       });
       injectedTargets.clear();
+      avatarConnections.forEach(connection => connection.close());
+      avatarConnections.clear();
       cdpRuntime?.close();
       cdpRuntime = null;
       const launchedCodex = codexProcess;
@@ -3204,6 +3302,15 @@ async function main() {
     await supervisor.ensure({ force: true });
 
     const { source, sourceHash } = await currentInjectionSource();
+    const syncAvatarWindows = async keepAlive => {
+      if (!cdpRuntime) return;
+      try {
+        const results = await injectAvatarTargets(cdpRuntime, sourceHash, avatarConnections, options.appPath, keepAlive);
+        if (results.length > 0) console.log(JSON.stringify({ petsInjected: results }, null, 2));
+      } catch (error) {
+        console.error(`Lumi avatar discovery failed: ${error.message}`);
+      }
+    };
     let lastThreadTabsStatus = "";
     const publishThreadTabsStatus = async () => {
       // 只报告已成功挂载的主窗口；未挂载的 Spotlight 等窗口不能掩盖主窗口失败。
@@ -3542,6 +3649,7 @@ async function main() {
       emitLauncherEvent("injected", { panelManagedReady: true });
       await publishManagedStatus();
     }
+    await syncAvatarWindows(options.watch);
     if (!options.watch) {
       codexProcess?.unref?.();
       return;
@@ -3616,6 +3724,8 @@ async function main() {
               connection.close();
             }
             injectedTargets.clear();
+            avatarConnections.forEach(connection => connection.close());
+            avatarConnections.clear();
             cdpRuntime?.close();
             options.port = discoveredPort;
             cdpVersionUrl = `http://127.0.0.1:${options.port}/json/version`;
@@ -3678,6 +3788,8 @@ async function main() {
               connection.close();
             });
             injectedTargets.clear();
+            avatarConnections.forEach(connection => connection.close());
+            avatarConnections.clear();
             cdpRuntime.close();
             cdpRuntime = null;
             codexProcess = null;
@@ -3698,6 +3810,8 @@ async function main() {
             connection.close();
           });
           injectedTargets.clear();
+          avatarConnections.forEach(connection => connection.close());
+          avatarConnections.clear();
           cdpRuntime?.close();
           const exitCode = codexProcess.exitCode;
           codexProcess = null;
@@ -3736,6 +3850,7 @@ async function main() {
         console.error(`Waiting for Codex renderer: ${error.message}`);
         emitLauncherEvent("waitingForCodex", { message: error.message });
       }
+      await syncAvatarWindows(true);
     }
   } finally {
     if (options.watch) {

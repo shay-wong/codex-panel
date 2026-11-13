@@ -28,6 +28,86 @@ test("standalone and prewarmed Page windows are excluded without excluding main-
   assert.equal(select(target("app://-/index.html")), true);
 });
 
+test("TCP and pipe discover avatar windows separately from Panel windows", async () => {
+  const targets = [
+    { id: "main", targetId: "main", type: "page", title: "ChatGPT", url: "app://-/index.html" },
+    { id: "pet", targetId: "pet", type: "page", title: "ChatGPT", url: "app://-/index.html?initialRoute=%2Favatar-overlay" },
+    { id: "page", targetId: "page", type: "page", title: "ChatGPT", url: "app://-/space/fixture?window=page" },
+  ];
+  const selectors = source.slice(source.indexOf("async function codexTargets("), source.indexOf("export async function waitForRendererReady("));
+  const runtimes = source.slice(source.indexOf("function tcpCdpRuntime("), source.indexOf("function codexDebuggingPorts("));
+  const { tcpCdpRuntime, pipeCdpRuntime } = vm.runInNewContext(`${selectors}\n${runtimes}; ({ tcpCdpRuntime, pipeCdpRuntime })`, {
+    URL, fetchJson: async () => targets, validatedLoopbackCdpWebSocketUrl: url => url,
+  });
+  for (const runtime of [tcpCdpRuntime(9229), pipeCdpRuntime({ targets: async () => targets })]) {
+    assert.equal((await runtime.targets()).map(target => target.id).join(","), "main");
+    assert.equal((await runtime.avatarTargets()).map(target => target.id).join(","), "pet");
+  }
+});
+
+test("avatar injection handles late windows and reconnects without mounting Panel", async () => {
+  const { reconcileInjectionRuntime } = await import("../scripts/codex-injector-runtime.mjs");
+  const start = source.indexOf("async function readAvatarInjectionStatus(");
+  const end = source.indexOf("async function prepareNativeAdapters(", start);
+  let page = vm.createContext({}), registeredSource = "", registration = 0, reloads = 0, connects = 0;
+  let targets = [];
+  const commands = [], preparations = [];
+  const connections = new Map();
+  const inject = vm.runInNewContext(`${source.slice(start, end)}; injectAvatarTargets`, {
+    console: { error() {} },
+    waitForRendererReady: async () => {},
+    prepareCodexRspack: async (...args) => {
+      preparations.push(args);
+      return { prepared: { pets: true }, source: "globalThis.__codexPanelRspack__={};globalThis.__codexPanelLumiPetV1__={};" };
+    },
+    reconcileInjectionRuntime,
+    registerInjectionSource: async (_cdp, text) => { registeredSource = text; return String(++registration); },
+    reloadRenderer: async () => { reloads++; page = vm.createContext({}); vm.runInContext(registeredSource, page); },
+    evaluateInjectionSource: async (_cdp, text) => vm.runInContext(text, page),
+  });
+  const runtime = {
+    avatarTargets: async () => targets,
+    connect: async () => {
+      connects++;
+      return {
+        closed: false,
+        on() {},
+        close() { this.closed = true; },
+        send: async (method, params) => {
+          commands.push(method);
+          return method === "Runtime.evaluate"
+            ? { result: { value: vm.runInContext(params.expression, page) } }
+            : {};
+        },
+      };
+    },
+  };
+  const run = (hash = "first") => inject(runtime, hash, connections, "/fixture/ChatGPT.app", true);
+  assert.equal((await run()).length, 0);
+  targets = [{ id: "pet", url: "app://-/index.html?initialRoute=%2Favatar-overlay" }];
+  assert.equal((await run()).length, 1);
+  assert.equal(connections.size, 1);
+  assert.equal(reloads, 1);
+  assert.equal((await run()).length, 0);
+  assert.equal(connects, 1);
+  connections.get("pet").close();
+  assert.equal((await run()).length, 1);
+  assert.equal(reloads, 1, "the existing bootstrap survives an injector reconnect");
+  assert.equal((await run("updated")).length, 1);
+  assert.equal(reloads, 2, "a changed source installs the new bootstrap");
+  const retained = connections.get("pet");
+  targets = [];
+  assert.equal((await run("updated")).length, 0);
+  assert.equal(connections.size, 0);
+  assert.equal(retained.closed, true);
+  assert.equal(page.__codexPanelLumiInjectionHash__, "updated");
+  assert.equal(page.__codexPanelInjection__, undefined);
+  assert.equal(page.__CODEX_PANEL_HOST_CAPABILITY__, undefined);
+  assert.equal(commands.includes("Runtime.addBinding"), false);
+  assert.equal(commands.filter(command => command === "Page.removeScriptToEvaluateOnNewDocument").length, 2);
+  assert(preparations.every(([, appPath, preferences, , options]) => appPath === "/fixture/ChatGPT.app" && preferences === undefined && options.petsOnly));
+});
+
 test("unmounted entries never report successful injection", async () => {
   const start = source.indexOf("async function prepareNativeAdapters(");
   const end = source.indexOf("async function injectAll(", start);
