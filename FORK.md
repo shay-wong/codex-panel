@@ -586,6 +586,13 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 - 代码：`scripts/codex-update.mjs`、`scripts/codex-update-download.mjs`、`scripts/codex-update-delta.mjs`、`scripts/prepare-codex-delta.mjs`、`scripts/codex-update-transport.mjs`、`scripts/codex-update-transport.swift`、`scripts/prepare-codex-transport.mjs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-control.mjs`、`src-tauri/src/codex_update.rs`、`src-tauri/src/main.rs`、`launcher/src/App.tsx`；两份打包清单必须携带新模块及 `tools/BinaryDelta`、`tools/Sparkle-LICENSE` 及源码编译、ad hoc 签名的双架构 `tools/CodexTransport`。生产工具仅允许官方 HTTPS 域名；回环 HTTP 仅在隔离测试编译中开启。构建从固定 Sparkle 2.9.1 官方 release 下载，校验 archive、CLI 及许可证固定 SHA-256；运行不下载或编译工具。状态 `codexUpdateAvailable` / `codexUpdateDownloading` / `codexUpdatePhase` 经过私有通道传给 Launcher。限定 macOS TCP，下载及解压只写 Panel 暂存目录；安装需要应用所在目录可写。不自动提权、不改变用户账号或更新通道。Node 异步 Ed25519 验证读取完整增量包，短暂额外内存约为包大小（24141→24614 约 134 MB）；合成及验签后删除增量，不在后续启动重复读取。
 - 验证入口：`test/codex-update.test.mjs`、`test/codex-update-download.test.mjs`、`test/codex-update-delta.test.mjs`、`test/codex-update-transport.test.mjs`、`test/injector-control.test.mjs`、Launcher 组件检查及 `codex_update` Rust 模块自检。使用隔离下载/签名 fixture、一次性 App 目录和实际 Launcher 页面；实际官方大包下载与安装升级不在自动验证中执行。用户文档同步中英文 README/CHANGELOG 及 `docs/fork-capabilities.md#codex-updates-through-panel`。来源定位 `git log -S'createCodexUpdateDownload' -- scripts/codex-update-download.mjs`；上游原生接口支持无需确认下载和保留 Panel 启动参数后重新评估。
 
+### 禁止 Codex 自动更新（本次新增，长期保留）
+
+- 目的与不变量：macOS「运行概览 → 功能与维护 → Codex 更新」提供默认关闭的 `disableCodexAutoUpdate`，保存后沿用持久重启提醒。下次经 Panel 启动 Codex 时禁用其内置 updater，保留 Panel 手动检查、下载、验签和安装。关闭选项后下次受管启动恢复原生策略；不改用户 plist、原版 App、更新频道或 Panel 自身更新。外部直接启动与当前旧进程不受影响；已下载更新仍可能在首次退出时安装。
+- 路径：`LauncherPreferences` → `set_launcher_preference` → 保存 preferences 与重启提醒 → `start_launcher_locked` 传 `CODEX_SPARKLE_ENABLED=false` → `launchCodex` 通过 macOS `open --env` 显式传入 → Codex 原生 `shouldIncludeUpdater` 跳过初始化，renderer 后续策略不会重新启用。
+- 代码与验证：`launcher/src/App.tsx`、`src-tauri/src/main.rs`、`scripts/codex-injector.mjs`；`launcher/src/App.spec.tsx`、`test/codex-window-target.test.mjs` 和 Rust 偏好回读验证。真实 App 的隔离启动与手动更新验证单独报告；Windows Store 更新不在此开关范围内。
+- 用户文档：中英文 README/CHANGELOG、`docs/fork-capabilities.md#codex-updates-through-panel`。本次变更定位：`git log -S'disable_codex_auto_update' -- src-tauri/src/main.rs`。合并须保留原生启动前生效及手动更新边界；仅在用户明确移除此配置或原生提供等价控制后重新评估。
+
 ### 本次用量动画与计数修复
 
 - `usageAnimationMode` 仅选择点阵动画：默认 `smooth` 连续追踪，`morph` 为 500ms 点阵变换（含加载圆点转数字）。普通数字固定 120ms 渐隐 + 180ms 渐显，隐藏动画选择和速度设置；切回点阵恢复上次选择。Launcher → `set_usage_animation_mode` → 偏好原子保存 → injector 心跳 → 注入渲染；无需重启，最低/最高速度仅连续追踪使用。

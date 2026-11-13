@@ -426,6 +426,7 @@ export function launchCodex(executablePath, port) {
   const child = spawn(
     "/usr/bin/open",
     [
+      ...(environment.CODEX_SPARKLE_ENABLED === "false" ? ["--env", "CODEX_SPARKLE_ENABLED=false"] : []),
       "-W", "-n", "-a", applicationPath, "--args",
       `--user-data-dir=${independentCodexProfilePath}`,
       "--remote-debugging-address=127.0.0.1",

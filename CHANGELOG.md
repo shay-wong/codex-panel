@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Add a macOS switch in the Codex update card to disable Codex’s built-in updater on the next Panel-managed launch, while retaining manual updates in Panel. It defaults to off; an already downloaded native update may still install on the first exit.
+
 - Restore conversation tab and split-view menu actions on Codex 26.1106.51428 after its active-conversation helper was removed, and recognize full-width tabs correctly when switching views.
 
 - Refresh native queued-message visibility when Codex settings finish loading after a Panel update, without switching chats or restarting Codex.

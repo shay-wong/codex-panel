@@ -53,6 +53,7 @@ button, input { font: inherit; }
 .maintenance-card { flex-direction: row; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 18px; box-shadow: none; }
 .maintenance-card > .rt-Button { align-self: flex-start; margin-top: auto; }
 .maintenance-card .card-actions { margin-top: 0; padding-top: 0; }
+.codex-update-card { flex-direction: column; align-items: stretch; gap: 14px; }
 .status-row-copy { min-width: 0; overflow-wrap: anywhere; }
 .menu-diagnostics { margin-top: 8px; font-size: 12px; color: var(--gray-11); }
 .menu-diagnostics summary { cursor: pointer; width: fit-content; }

@@ -242,6 +242,8 @@ struct LauncherPreferences {
     #[serde(default)]
     show_custom_provider_dot: bool,
     #[serde(default)]
+    disable_codex_auto_update: bool,
+    #[serde(default)]
     window_size: Option<LauncherWindowSize>,
 }
 
@@ -271,6 +273,7 @@ impl Default for LauncherPreferences {
             custom_provider_quota_fix: false,
             custom_provider_ultrafast: false,
             show_custom_provider_dot: false,
+            disable_codex_auto_update: false,
             window_size: None,
         }
     }
@@ -2437,6 +2440,10 @@ fn start_launcher_locked(
         .current_dir(&app_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(target_os = "macos")]
+    if state.preferences.lock().unwrap().disable_codex_auto_update {
+        command.env("CODEX_SPARKLE_ENABLED", "false");
+    }
     #[cfg(target_os = "windows")]
     command.stdin(Stdio::piped());
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -3140,7 +3147,7 @@ async fn set_launcher_preference(
     enabled: bool,
     update_model_discovery: Option<bool>,
 ) -> Result<LauncherPreferences, String> {
-    if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel" | "hideUsageBanner" | "showThreadUsage" | "threadUsageAboveComposer" | "usageDotMatrix" | "customProviderQuotaFix" | "customProviderUltrafast" | "showCustomProviderDot") {
+    if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel" | "hideUsageBanner" | "showThreadUsage" | "threadUsageAboveComposer" | "usageDotMatrix" | "customProviderQuotaFix" | "customProviderUltrafast" | "showCustomProviderDot" | "disableCodexAutoUpdate") {
         return Err("未知的偏好设置".to_string());
     }
     if update_model_discovery == Some(true) {
@@ -3159,10 +3166,14 @@ async fn set_launcher_preference(
         "customProviderQuotaFix" => preferences.custom_provider_quota_fix = enabled,
         "customProviderUltrafast" => preferences.custom_provider_ultrafast = enabled,
         "showCustomProviderDot" => preferences.show_custom_provider_dot = enabled,
+        "disableCodexAutoUpdate" => preferences.disable_codex_auto_update = enabled,
         _ => unreachable!(),
     })?;
     if key == "customProviderUltrafast" {
         mark_codex_restart_required(&app, &state, "Ultrafast")?;
+    }
+    if key == "disableCodexAutoUpdate" {
+        mark_codex_restart_required(&app, &state, "Codex 自动更新")?;
     }
     Ok(preferences)
 }
@@ -4164,15 +4175,18 @@ mod tests {
         let path = root.join("preferences.json");
         let mut preferences = super::LauncherPreferences::default();
         assert!(preferences.window_size.is_none());
+        assert!(!preferences.disable_codex_auto_update);
         let logical = tauri::PhysicalSize::new(1920, 1440).to_logical::<f64>(2.0);
         preferences.window_size = Some(super::LauncherWindowSize { width: logical.width, height: logical.height });
         preferences.auto_open_panel = false;
+        preferences.disable_codex_auto_update = true;
         super::write_preferences(&path, preferences).unwrap();
         let restored = super::read_preferences(&path).unwrap();
         let size = restored.window_size.unwrap();
         assert!(size.valid());
         assert_eq!((size.width, size.height), (960.0, 720.0));
         assert!(!restored.auto_open_panel);
+        assert!(restored.disable_codex_auto_update);
         assert!(!super::LauncherWindowSize { width: 0.0, height: 0.0 }.valid());
         assert!(!super::LauncherWindowSize { width: f64::NAN, height: 720.0 }.valid());
         std::fs::remove_dir_all(root).unwrap();

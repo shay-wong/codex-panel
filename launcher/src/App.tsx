@@ -23,7 +23,7 @@ export type LauncherSnapshot = {
   codexUpdateChecking: boolean;
   appPath: string | null;
 };
-export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean };
+export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean };
 export type LauncherState = {
   snapshot: LauncherSnapshot;
   preferences: LauncherPreferences;
@@ -220,7 +220,7 @@ export function App() {
         setState(current => current && ({ ...current, preferences: next }));
       }
       setUltrafastChoice(null);
-      if (key === "customProviderUltrafast") {
+      if (key === "customProviderUltrafast" || key === "disableCodexAutoUpdate") {
         acceptState(await window.__TAURI__.core.invoke<LauncherState>("launcher_ui_state"));
         setRestartReminderDismissed(false);
       }
@@ -324,7 +324,7 @@ export function App() {
       {restartReminder && !restartReminderDismissed && <Callout.Root size="1" role="status" mb="4">
         <Callout.Icon><LinearIcon name="alert" /></Callout.Icon>
         <Box>
-          <Callout.Text>{restartReminder} 设置已保存。请重启 Codex，使核心模型能力和配置完整生效；重启会中断正在运行的任务。</Callout.Text>
+          <Callout.Text>{restartReminder} 设置已保存。请重启 Codex，使配置生效；重启会中断正在运行的任务。</Callout.Text>
           <Flex align="center" wrap="wrap" mt="3" style={{ gap: 8 }}>
             <Button size="2" variant="soft" {...actionProps("restart_codex", savingPreference)}>立即重启 Codex</Button>
             <Button size="2" variant="outline" onClick={() => setRestartReminderDismissed(true)}>稍后</Button>
@@ -372,17 +372,25 @@ export function App() {
                   </div>
                   {snapshot.threadTabsPhase !== "ready" && <Flex className="card-actions">{cardAction("retryThreadTabs", "retry_thread_tabs", "重试加载", <span className="action-icon" aria-hidden="true">↻</span>, !ready || snapshot.threadTabsPhase === "loading")}</Flex>}
                 </div>
-                {snapshot.appPath?.endsWith(".app") && <div className="maintenance-card" id="codexUpdateComponent">
-                  <div className="status-row-copy"><Text size="2" weight="medium">Codex 更新</Text><Text as="p" size="1" color="gray" mt="1">{!ready ? "连接 Codex 后读取更新状态" : snapshot.codexUpdateMessage || "正在读取更新状态…"}</Text></div>
-                  <Flex className="card-actions" gap="2">
-                    {ready && ["preparing", "downloading", "paused", "verifying"].includes(snapshot.codexUpdatePhase) ? <>
-                      {snapshot.codexUpdatePhase === "downloading" && <Tooltip content="暂停下载"><IconButton id="pauseCodexUpdate" aria-label="暂停下载" size="2" variant="soft" {...actionProps("control_codex_update_download", false, { action: "pause" })}><LinearIcon name="pause" /></IconButton></Tooltip>}
-                      {snapshot.codexUpdatePhase === "paused" && <Tooltip content="继续下载"><IconButton id="resumeCodexUpdate" aria-label="继续下载" size="2" variant="soft" {...actionProps("control_codex_update_download", false, { action: "resume" })}><LinearIcon name="play" /></IconButton></Tooltip>}
-                      <Tooltip content="取消下载"><IconButton id="cancelCodexUpdate" aria-label="取消下载" size="2" variant="soft" {...actionProps("control_codex_update_download", false, { action: "cancel" })}><LinearIcon name="close" /></IconButton></Tooltip>
-                    </> : ready && snapshot.codexUpdateReady ? cardAction("installCodexUpdate", "install_codex_update", "安装 Codex 更新并重启", <LinearIcon name="package" />)
-                      : ready && (snapshot.codexUpdateAvailable || snapshot.codexUpdateDownloading) ? <Tooltip content={snapshot.codexUpdateDownloading ? "正在下载并验证官方更新包" : "直接下载更新，完成后可安装并重启"}><IconButton id="downloadCodexUpdate" aria-label={snapshot.codexUpdateDownloading ? "正在下载更新…" : "下载更新"} size="2" variant="soft" {...actionProps("download_codex_update", snapshot.codexUpdateDownloading)} loading={busyAction === "download_codex_update" || snapshot.codexUpdateDownloading}><LinearIcon name="download" /></IconButton></Tooltip>
-                      : <Tooltip content={snapshot.codexUpdateChecking ? "正在检查更新…" : "检查更新"}><IconButton id="checkCodexUpdates" aria-label={snapshot.codexUpdateChecking ? "正在检查更新…" : "检查更新"} size="2" variant="soft" {...actionProps("check_codex_updates", !ready || snapshot.codexUpdateChecking)} loading={busyAction === "check_codex_updates" || snapshot.codexUpdateChecking}><span className="action-icon" aria-hidden="true">↻</span></IconButton></Tooltip>}
+                {snapshot.appPath?.endsWith(".app") && <div className="maintenance-card codex-update-card" id="codexUpdateComponent">
+                  <Flex align="center" justify="between" gap="4">
+                    <div className="status-row-copy"><Text size="2" weight="medium">Codex 更新</Text><Text as="p" size="1" color="gray" mt="1">{!ready ? "连接 Codex 后读取更新状态" : snapshot.codexUpdateMessage || "正在读取更新状态…"}</Text></div>
+                    <Flex className="card-actions" gap="2">
+                      {ready && ["preparing", "downloading", "paused", "verifying"].includes(snapshot.codexUpdatePhase) ? <>
+                        {snapshot.codexUpdatePhase === "downloading" && <Tooltip content="暂停下载"><IconButton id="pauseCodexUpdate" aria-label="暂停下载" size="2" variant="soft" {...actionProps("control_codex_update_download", false, { action: "pause" })}><LinearIcon name="pause" /></IconButton></Tooltip>}
+                        {snapshot.codexUpdatePhase === "paused" && <Tooltip content="继续下载"><IconButton id="resumeCodexUpdate" aria-label="继续下载" size="2" variant="soft" {...actionProps("control_codex_update_download", false, { action: "resume" })}><LinearIcon name="play" /></IconButton></Tooltip>}
+                        <Tooltip content="取消下载"><IconButton id="cancelCodexUpdate" aria-label="取消下载" size="2" variant="soft" {...actionProps("control_codex_update_download", false, { action: "cancel" })}><LinearIcon name="close" /></IconButton></Tooltip>
+                      </> : ready && snapshot.codexUpdateReady ? cardAction("installCodexUpdate", "install_codex_update", "安装 Codex 更新并重启", <LinearIcon name="package" />)
+                        : ready && (snapshot.codexUpdateAvailable || snapshot.codexUpdateDownloading) ? <Tooltip content={snapshot.codexUpdateDownloading ? "正在下载并验证官方更新包" : "直接下载更新，完成后可安装并重启"}><IconButton id="downloadCodexUpdate" aria-label={snapshot.codexUpdateDownloading ? "正在下载更新…" : "下载更新"} size="2" variant="soft" {...actionProps("download_codex_update", snapshot.codexUpdateDownloading)} loading={busyAction === "download_codex_update" || snapshot.codexUpdateDownloading}><LinearIcon name="download" /></IconButton></Tooltip>
+                        : <Tooltip content={snapshot.codexUpdateChecking ? "正在检查更新…" : "检查更新"}><IconButton id="checkCodexUpdates" aria-label={snapshot.codexUpdateChecking ? "正在检查更新…" : "检查更新"} size="2" variant="soft" {...actionProps("check_codex_updates", !ready || snapshot.codexUpdateChecking)} loading={busyAction === "check_codex_updates" || snapshot.codexUpdateChecking}><span className="action-icon" aria-hidden="true">↻</span></IconButton></Tooltip>}
+                    </Flex>
                   </Flex>
+                  <div className="preference-rows">
+                    <Setting id="disableCodexAutoUpdate" title="禁止 Codex 自动更新" detail={<>
+                      <span style={{ display: "block" }}>仅在通过 Panel 启动 Codex 时生效；保存后需重启，仍可在 Panel 手动更新。</span>
+                      <span style={{ display: "block" }}>已下载的原生更新仍可能在本次退出时安装。</span>
+                    </>} checked={preferences?.disableCodexAutoUpdate ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("disableCodexAutoUpdate", enabled)} />
+                  </div>
                 </div>}
               </div>
             </section>

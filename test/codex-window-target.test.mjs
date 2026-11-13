@@ -196,6 +196,13 @@ test("macOS Codex launch does not inherit terminal language overrides", () => {
   assert.equal(launched.command, "/usr/bin/open");
   assert.deepEqual(launched.options.env, { PATH: "/usr/bin", SAFE: "kept" });
   assert.equal(environment.LANG, "en_US.UTF-8", "do not change the parent process environment");
+  environment.CODEX_SPARKLE_ENABLED = "false";
+  launch("/Applications/ChatGPT.app/Contents/MacOS/ChatGPT", 12345);
+  assert.deepEqual(Array.from(launched.args.slice(0, 2)), ["--env", "CODEX_SPARKLE_ENABLED=false"]);
+  assert.equal(launched.options.env.CODEX_SPARKLE_ENABLED, "false");
+  delete environment.CODEX_SPARKLE_ENABLED;
+  launch("/Applications/ChatGPT.app/Contents/MacOS/ChatGPT", 12345);
+  assert.equal(launched.args.includes("--env"), false);
 });
 
 test("menu status distinguishes preparation from execution and manual retry resets the bounded queue", async () => {
