@@ -123,6 +123,17 @@ test("Rspack submit reasons preserve non-quota causes through cached renders", (
   assert.equal(render().submitDisabledReasons, "");
 });
 
+test("Rspack submit reasons retain dollar-suffixed native identifiers", () => {
+  for (const name of ["hostQuota", "policyBlock"]) {
+    const source = composerWithReasons.replaceAll(name, `${name}$`);
+    const { state, render } = load({ source });
+    assert.equal(render().submitDisabledReasons, "");
+    assert.equal(render({ status: "failed", error: { codexErrorInfo: "misalignmentPolicyViolation" } }).submitDisabledReasons, "policy-violation");
+    state.enabled = false;
+    assert.equal(render().submitDisabledReasons, "reserve-limit,usage-limit");
+  }
+});
+
 test("Rspack rewrite ignores unrelated factories and fails clearly on unsupported candidates", () => {
   assert.equal(rewriteRspackQuota("function(e,t,n){return 1}", context), null);
   assert.throws(() => rewriteRspackQuota(composer.replace("||hostQuota||workQuota", "||hostQuota"), context), /quota/);

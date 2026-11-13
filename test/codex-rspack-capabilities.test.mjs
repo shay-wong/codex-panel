@@ -89,16 +89,18 @@ test('Rspack Ultrafast keeps model/provider boundaries and uses the same access 
   assert.equal(settings('thread', options).setServiceTier('ultrafast'), false);
 });
 
-test('Rspack model menu gets the adapted access and shows selected Ultrafast icon', () => {
+test('Rspack model menu gets adapted access in standalone and comma declarations', () => {
   const source = `function(module,exports,load){load.d(exports,{menu:()=>menu});var settings=load("settings"),access=load("access"),native=load("native");function menu(){let{serviceTierSettings:tier,setServiceTier:set}=(0,settings.read)("thread",null);let target="host";let{serviceTierAccess:allowed}=(0,access.read)(target),other=null;let visible=tier.availableOptions.length>1;let chosen=tier.selectedServiceTier;let icon=true&&(0,native.icon)(null,chosen);const command="composer.openModelPicker";return {allowed,icon,visible}}}`;
-  const rewritten = rewriteRspackUltrafast(source, context({}));
-  const menu = execute(rewritten, {
-    settings: { read: () => ({ serviceTierSettings: { availableOptions: [{ value: 'standard' }, { value: 'ultrafast' }], selectedServiceTier: 'ultrafast' }, serviceTierAccess: { ultrafast: true }, setServiceTier() {} }) },
-    access: { read: () => ({ serviceTierAccess: { ultrafast: false } }) },
-    native: { icon: () => false },
-  }).menu;
-  assert.equal(menu().allowed.ultrafast, true);
-  assert.equal(menu().icon, true);
+  for (const declaration of [source, source.replace('let{serviceTierSettings:', 'let previous=null,{serviceTierSettings:')]) {
+    const rewritten = rewriteRspackUltrafast(declaration, context({}));
+    const menu = execute(rewritten, {
+      settings: { read: () => ({ serviceTierSettings: { availableOptions: [{ value: 'standard' }, { value: 'ultrafast' }], selectedServiceTier: 'ultrafast' }, serviceTierAccess: { ultrafast: true }, setServiceTier() {} }) },
+      access: { read: () => ({ serviceTierAccess: { ultrafast: false } }) },
+      native: { icon: () => false },
+    }).menu;
+    assert.equal(menu().allowed.ultrafast, true);
+    assert.equal(menu().icon, true);
+  }
 });
 
 test('Rspack Dot changes only existing orbit capabilities and tracks the preference', () => {

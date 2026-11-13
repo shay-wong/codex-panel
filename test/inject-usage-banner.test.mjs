@@ -50,6 +50,11 @@ test("conversation banners stay hidden before deferred refresh, and restore when
     attachBannerType(main.firstElementChild, "plus_rate_limit_reached");
     await new Promise(queueMicrotask);
     assert.equal(window.getComputedStyle(main.firstElementChild).display, "none");
+    attachBannerType(main.firstElementChild, "plus_gpt6_rate_limit_reached");
+    heartbeat(true);
+    assert.equal(window.getComputedStyle(main.firstElementChild).display, "none");
+    heartbeat(false);
+    assert.notEqual(window.getComputedStyle(main.firstElementChild).display, "none");
     for (const type of ["selected_model_limit_reached", "connection_error", "unknown_banner"]) {
       attachBannerType(main.firstElementChild, type);
       heartbeat(true);

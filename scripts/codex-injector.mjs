@@ -33,7 +33,7 @@ import {
   startPanelHostHeartbeats,
 } from "./codex-injector-runtime.mjs";
 import { readThreadUsage } from "./codex-thread-usage.mjs";
-import { downloadCodexUpdate, readCodexUpdateState, readCodexUpdateStatus } from "./codex-update.mjs";
+import { downloadCodexUpdate, findCodexRspackRequire, readCodexUpdateState, readCodexUpdateStatus } from "./codex-update.mjs";
 import { createCodexUpdateDownload } from "./codex-update-download.mjs";
 import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
 import { prepareCodexDotEntry } from "./codex-dot-entry.mjs";
@@ -1098,13 +1098,36 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
         "automation-run-now": "runNow",
         "inbox-items": "readHistory",
       }[${JSON.stringify(method)}];
+      let service;
+      const load = await (${findCodexRspackRequire})();
+      if (load) {
+        const markers = ["setAppHost", "setAppServices", "appServices:"];
+        const deadline = Date.now() + 10_000;
+        let module;
+        // 首次安装 host bridge 时，原生服务可能仍在异步初始化。
+        for (;;) {
+          if (!module) {
+            const runtime = globalThis.__codexPanelRspack__;
+            if (runtime?.require === load && runtime.findModule) module = runtime.findModule(markers);
+            else {
+              const matches = Object.entries(load.m).filter(([, factory]) =>
+                markers.every(marker => factory.toString().includes(marker)));
+              if (matches.length === 1) module = { id: matches[0][0] };
+            }
+          }
+          service = module && load(module.id).appServices?.localAutomations;
+          if (service) break;
+          if (Date.now() >= deadline) throw Error("Codex 原生自动任务服务尚未就绪");
+          await new Promise(resolve => window.setTimeout(resolve, 50));
+        }
+      }
       const urls = new Set([
         ...performance.getEntriesByType("resource").map(entry => entry.name),
         ...Array.from(document.querySelectorAll('script[src],link[rel="modulepreload"][href]')).map(node => node.src || node.href),
       ]);
       const current = new URL(location.href);
-      let service;
       for (const url of urls) {
+        if (service) break;
         const parsed = new URL(url, location.href);
         if (parsed.protocol !== current.protocol || parsed.host !== current.host || !/\\/app-shared-[\\w-]+\\.js$/.test(parsed.pathname)) continue;
         let module;

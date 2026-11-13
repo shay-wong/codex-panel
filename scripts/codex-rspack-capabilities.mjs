@@ -33,12 +33,12 @@ export function rewriteRspackUltrafast(source, context) {
       .replace(output, `{...${wrapper[2]},serviceTierAccess:${wrapper[1]},setServiceTier:$1}`);
   }
   if (!source.includes("composer.openModelPicker") || !source.includes("availableOptions.length>1")) return null;
-  const settings = source.match(new RegExp(`let\\{serviceTierSettings:(${id}),setServiceTier:(${id})\\}=\\(0,${id}\\.${id}\\)\\([^;]+\\);`));
+  const settings = source.match(new RegExp(`\\{serviceTierSettings:(${id}),setServiceTier:(${id})\\}=\\(0,${id}\\.${id}\\)\\([^;]+\\);`));
   const access = source.match(new RegExp(`let\\{serviceTierAccess:(${id})\\}=(\\(0,${id}\\.${id}\\)\\(${id}\\)),`));
   const selected = settings && source.match(new RegExp(`(${id})=${escape(settings[1])}\\.selectedServiceTier;`));
   const icon = selected && source.match(new RegExp(`&&\\(0,${id}\\.${id}\\)\\(${id},${escape(selected[1])}\\)`));
   if (!settings || !access || !selected || !icon) throw new Error("Unsupported Rspack Ultrafast menu structure");
-  return source.replace(settings[0], settings[0].replace("let{", "let{serviceTierAccess:panelServiceTierAccess,"))
+  return source.replace(settings[0], settings[0].replace("{", "{serviceTierAccess:panelServiceTierAccess,"))
     .replace(access[0], `let{serviceTierAccess:panelNativeServiceTierAccess}=${access[2]},${access[1]}=panelServiceTierAccess,`)
     .replace(icon[0], `&&(${selected[1]}==="ultrafast"&&${settings[1]}.availableOptions.some(option=>option.value==="ultrafast")||${icon[0].slice(2)})`);
 }

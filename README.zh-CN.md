@@ -16,7 +16,7 @@ macOS 管理窗口的输入框支持系统编辑快捷键：`⌘C` 复制、`⌘
 
 先打开一个会话，再右键侧栏中的其他 Codex 会话，可选择**在新标签页中打开**或**在右侧并排打开**，均在同一窗口内显示。同一会话只保留一个位置，左侧点击将输入光标和高亮切换到对应会话，保留当前布局；普通会话通知也会回到已打开的标签页或并排会话。右键“恢复为独立页面”可移出标签并回到完整会话页。菜单适配同时支持已移除旧会话定位函数的 Codex 26.1106.51428。参见[会话标签页与并排显示](docs/fork-capabilities.md#conversation-tabs-and-split-view)。
 
-适配采用 Rspack 数字模块的新版 Codex，覆盖自定义 API 发送限制开关、Ultrafast、Dot、会话标签与更新状态读取，沿用已有设置并按原生模块结构定位，同时适配 Dot 状态与 Ultrafast 设置的新版调用方式。支持 Codex 26.1103.60933 的发送禁用原因列表，开关仅为本地自定义服务排除账号额度原因，保留其他发送限制。Panel 更新后，Codex 设置加载完成时自动恢复原生排队消息显示，无需切换会话或重启 Codex。独立工作树开关、原生目录与旧自动任务服务继续保留，详见 [Rspack 兼容说明](docs/fork-capabilities.md#rspack-based-codex-builds)。
+适配采用 Rspack 数字模块的新版 Codex，覆盖自定义 API 发送限制开关、Ultrafast、Dot、会话标签与更新状态读取，沿用已有设置并按原生模块结构定位，同时适配 Dot 状态与 Ultrafast 设置的新版调用方式。支持 Codex 26.1103.60933 的发送禁用原因列表，开关仅为本地自定义服务排除账号额度原因，保留其他发送限制。Panel 更新后，Codex 设置加载完成时自动恢复原生排队消息显示，无需切换会话或重启 Codex。同时适配 Codex 26.1106.51428 的自定义服务额度与 Fast/Ultrafast 控件、改名后的“更多设置”工作树入口、GPT-6 Plus 额度横幅及旧原生自动任务暂停。独立工作树开关、原生目录与旧自动任务服务继续保留，详见 [Rspack 兼容说明](docs/fork-capabilities.md#rspack-based-codex-builds)。
 
 注入入口随 Codex 语言显示“任务面板”或“Panel”；Windows 打开面板时尝试唤醒本次启动的 Codex 窗口，并保留最大化状态。参见[入口语言与 Windows 窗口唤醒](docs/fork-capabilities.md#sidebar-language-and-windows-window-activation)。
 

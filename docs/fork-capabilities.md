@@ -2,6 +2,8 @@
 
 ## Rspack-based Codex builds
 
+Codex **26.1106.51428 / build 26605** retains the custom-provider quota and Fast/Ultrafast controls. Quota rewrites preserve `$` characters in native variable names, and speed settings support the updated menu declarations. **Additional settings** (更多设置 / 其他設定) is recognized when selecting the local worktree; local-host and checked-state confirmation still apply. **Hide exhausted-quota banners** also covers GPT-6 Plus quota notices. Legacy native automation migration and saved quota policies resolve the current native service even before Panel’s module hooks load; active automatic claiming continues through Panel’s own queue.
+
 The native adapters also support Codex builds using Rspack numeric modules. Existing switches still control custom-provider sending, Ultrafast and Dot; conversation tabs keep their split, restore, focus and highlight behavior. Update status uses the native updater services. Dot preference reads use the current scalar signal API; Ultrafast and custom-provider sending retain their outer module loaders so native parameters and local variables cannot shadow them. Installing this adapter uses the existing single renderer reload; subsequent preference changes keep their normal immediate behavior.
 
 If native queued messages initially appear empty while Codex settings load after an update, their display refreshes when those settings become available. No chat switch or Codex restart is needed. This uses Codex's existing queue and leaves its send, pause and delete behavior intact.

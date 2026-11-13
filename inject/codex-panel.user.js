@@ -124,7 +124,7 @@
       if (fiber.stateNode instanceof Element && fiber.stateNode !== banner) break;
       const type = fiber.memoizedProps?.banner?.banner_type;
       if (typeof type === "string") {
-        return /^(?:pro|plus|prolite|free_trial|go_trial|free_or_go|business|cbp|legacy)_rate_limit_reached$/.test(type)
+        return /^(?:pro|plus|plus_gpt6|prolite|free_trial|go_trial|free_or_go|business|cbp|legacy)_rate_limit_reached$/.test(type)
           || /^(?:workspace_member|workspace_owner)_(?:usage_limit_reached|credits_depleted)$/.test(type);
       }
     }
@@ -1585,7 +1585,7 @@
   async function selectNativeWorktree(useWorktree = true) {
     const labels = useWorktree ? NATIVE_WORKTREE_LABELS : ["local", "work locally", "本地", "本地模式", "本機", "本機作業"];
     const visibleLabel = (element) => normalizedLabel(element.innerText ?? element.textContent);
-    const settingsLabels = ["configure local environment", "配置本地环境", "設定本機環境"];
+    const settingsLabels = ["configure local environment", "配置本地环境", "設定本機環境", "additional settings", "更多设置", "其他設定"];
     const locationLabels = ["location", "work in", "位置", "工作位置"];
     const computerLabels = ["this computer", "此计算机", "這部電腦", "這台電腦"];
     const newControl = (names, root = document) => Array.from(root.querySelectorAll('button[aria-label]'))

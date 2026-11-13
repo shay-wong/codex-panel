@@ -51,7 +51,7 @@ export function rewriteRspackQuota(source, context) {
   if (reasonGate) {
     // Change each reason before native memoization so toggles invalidate its cached list.
     const quotaReasons = `${reasonQuotas[1]}=${reserve}&&!(${custom})&&"reserve-limit",${reasonQuotas[3]}=${usage}&&!(${custom})&&"usage-limit"`;
-    return rewritten.replace(reasonGate[0], read + reasonGate[0].replace(reasonQuotas[0], quotaReasons));
+    return rewritten.replace(reasonGate[0], () => read + reasonGate[0].replace(reasonQuotas[0], () => quotaReasons));
   }
   return rewritten.replace(gate[0], `${read}let ${gate[1]}=${gate[2]}||((${gate[3]}||${gate[4]})&&!(${custom}))`);
 }
