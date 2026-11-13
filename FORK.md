@@ -132,11 +132,11 @@ Ultrafast 设置说明：`launcher/src/App.tsx` 将适用模型、必需的 `fea
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`bdf7698f6c3f3737a65377814dbb9db7ce81ea38`
-- 精确已合并上游基线：`bdf7698f6c3f3737a65377814dbb9db7ce81ea38`
-- 比较范围：`bdf7698f6c3f3737a65377814dbb9db7ce81ea38..HEAD`
+- 本次合并的上游父提交：`bc25451c5c49a14abb6c4e8250b62c626b007f8a`
+- 精确已合并上游基线：`bc25451c5c49a14abb6c4e8250b62c626b007f8a`
+- 比较范围：`bc25451c5c49a14abb6c4e8250b62c626b007f8a..HEAD`
 
-本轮同步上游 E2E 与 CI 提交，新增项目、议题、附件、关联关系和视图的真实浏览器验证，以及属性保存完成后的同步等待；不改变产品行为或 Fork 发布版本。Fork 服务入口、隔离环境与 CI 规则的适配保留在紧随合并的独立提交中。
+本轮合入上游 PR #460：本地 Codex CLI 缺失导致 `ENOENT` 时，`GET /api/local/ai/catalog` 返回 HTTP 200、`available:false` 和空模型/Skill/命令目录；工作区无效等其他错误保留原状态。同步 `AI_SANDBOX_MODES`、类型声明和隔离服务端/浏览器测试。机械冲突解决保留 Fork 的 app-server 模型分页、独立 Skill 目录与去重、远端执行、现有 `ApiError` 和引用模块路径；不改变创建对话的 CLI 前提。上次合入的 E2E/CI 与 Fork 隔离适配继续保留。本次不改变 Fork 发布版本，用户说明见中英文 README、`docs/fork-capabilities.md#local-ai-catalog-availability` 和未发布更新日志。
 
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
@@ -169,8 +169,8 @@ Ultrafast 设置说明：`launcher/src/App.tsx` 将适用模型、必需的 `fea
 
 - 权威上游版本来源：精确合并基线中的 `package.json`
 - 发布版本来源：规范 `vX.Y.Z-fork` 标签。Actions 在构建目录同步 `package.json`、`package-lock.json` 根包条目、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock` 的 launcher 条目；main 中的字段仅作本地开发构建版本，不代表最新 Release。
-- 精确基线的上游版本：`1.1.27-beta.1`（沿用上游版本字段；本次合并仅增加 E2E/CI，不改变 Fork 发布版本）
-- 最近已核实发布：`v0.0.3-fork`。后续发布以 GitHub 标签与 Release 为准，无需逐版修改此台账。
+- 精确基线的上游版本：`1.1.27`（本次同步目录容错修复，不改变 Fork 发布版本）
+- 最近已核实发布：`v0.5.2-fork`。后续发布以 GitHub 标签与 Release 为准，无需逐版修改此台账。
 
 Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标签为 `vX.Y.Z-fork`；后续按 Fork 自身变更递增。上游版本只记录合并基线，不决定、重置或覆盖 Fork 版本。此决定替代旧的 `<upstream-version>-fork.<N>` 策略，后续应用 fork-doc 时以本仓库约定为准。
 

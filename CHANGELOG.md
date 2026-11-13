@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Return an unavailable local AI catalog when the Codex CLI is missing, instead of a server error; preserve workspace and other error responses.
+
 ## 0.5.2-fork
 
 - Add a macOS switch in the Codex update card to disable Codex’s built-in updater on the next Panel-managed launch, while retaining manual updates in Panel. It defaults to off; an already downloaded native update may still install on the first exit.

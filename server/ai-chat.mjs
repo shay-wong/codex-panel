@@ -6,6 +6,7 @@ import { signalProcessTree } from "../shared/process-tree.mjs";
 import { ApiError } from "./database.mjs";
 import { resolveWorkflow, workflowNotice } from "./workflow-settings.mjs";
 import { resolveCodexPermissions } from "../shared/codex-permissions.mjs";
+import { AI_SANDBOX_MODES } from "../shared/domain.mjs";
 import {
   ComposerCatalog,
   discoverAppServerAiCatalog,
@@ -22,7 +23,7 @@ import {
   spawnCodexTurn,
 } from "./ai-chat-process.mjs";
 
-const SANDBOXES = new Set(["read-only", "workspace-write", "danger-full-access"]);
+const SANDBOXES = new Set(AI_SANDBOX_MODES);
 const ERROR_CONTENT_LIMIT = 65_536;
 const AGENT_DISPATCH_PROTOCOL = "panel.agent.v1";
 const HANDOFF_COMMAND = /^\/(?:handoff|交接)(?:\s+([\s\S]+))?$/i;

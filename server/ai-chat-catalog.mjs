@@ -11,6 +11,7 @@ import { executableCommand } from "../shared/executable-command.mjs";
 import { composerReferencePersistence } from "./composer-reference.mjs";
 import { ApiError } from "./database.mjs";
 import { CodexAppServer } from "./codex-app-server.mjs";
+import { AI_SANDBOX_MODES } from "../shared/domain.mjs";
 
 const CATALOG_TIMEOUT_MS = 10_000;
 const CATALOG_MAX_BUFFER = 2 * 1024 * 1024;
@@ -1066,6 +1067,19 @@ async function listModels(appServer) {
   return models;
 }
 
+// The local Codex CLI is an optional catalog source: when it is absent the
+// catalog is unavailable, which callers report as a normal empty payload
+// instead of a server error.
+export function unavailableAiCatalog() {
+  return {
+    available: false,
+    models: [],
+    skills: [],
+    commands: [],
+    sandboxes: [...AI_SANDBOX_MODES],
+  };
+}
+
 export async function discoverAiCatalog({
   codexExecutable,
   workspacePath,
@@ -1088,7 +1102,7 @@ export async function discoverAiCatalog({
       models,
       skills: skillCatalog.skills,
       commands,
-      sandboxes: ["read-only", "workspace-write", "danger-full-access"],
+      sandboxes: [...AI_SANDBOX_MODES],
     };
   } finally {
     await appServer.close();
@@ -1105,6 +1119,6 @@ export async function discoverAppServerAiCatalog({ appServer, workspacePath }) {
     models,
     skills: sanitizeSkills(skillEntries),
     commands,
-    sandboxes: ["read-only", "workspace-write", "danger-full-access"],
+    sandboxes: [...AI_SANDBOX_MODES],
   };
 }

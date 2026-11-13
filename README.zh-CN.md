@@ -153,6 +153,8 @@ npm run panelctl -- issue create \
 
 ## 配置 AI 工作流
 
+缺少本地 Codex CLI 时，AI 目录返回不可用状态，模型、Skill 和命令列表为空。创建和运行对话仍需可用的 CLI。详见[本地 AI 目录可用性](docs/fork-capabilities.md#local-ai-catalog-availability)。
+
 读取关联的飞书/Lark Docx 或 Wiki 正文时，Manage Panel 指引 Agent 优先使用 `lark-doc` 和 `lark-cli docs +fetch --as user`，复用已有访问权限；缺少授权或 scope 时先说明原因并询问你能否授权，只有你明确选择后才改用浏览器。
 
 任务入口只附加 Manage Panel。它先读取需求，再通过 `panelctl workflow get <阶段> --project PROJECT_ID --json` 获取适用阶段的当前配置。纯调研核实来源、结论和未确定事项，不加载实现或代码审核 Skill；保存调研报告也不自动转成代码任务。获授权的代码改动再使用配置的实现和审核流程；明确要求代码审核时可以直接进入审核。`in_review` 也可表示调研报告等你确认。CLI 返回 `appliesWhen`、`prompt`、`rules`、有序 `skills` 及其路径、`mode` 和 `missing`；Agent 进入阶段时读取对应 `SKILL.md`。工作流解析只读取 Skills，不查询模型列表，因此模型列表读取失败不会阻断此操作。Skill 配置读取失败会报告问题，不当成空配置。

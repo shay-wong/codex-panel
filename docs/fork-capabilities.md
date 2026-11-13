@@ -231,6 +231,12 @@ Release tags supply the build version. After publication, the workflow commits t
 
 Fork releases use independent versions starting at `0.0.1-fork`, tagged `v0.0.1-fork`; upstream merges only update the recorded baseline. Existing local `0.1.0` builds need a one-time manual installation because `0.0.1-fork` is lower; subsequent updates follow normal increasing version order.
 
+## Local AI catalog availability
+
+When the local Codex CLI cannot be found, `GET /api/local/ai/catalog` returns HTTP 200 with `available: false`, empty `models`, `skills` and `commands`, and the supported sandbox options. A normal catalog omits `available`; API clients should check `available !== false`. An unavailable workspace still returns HTTP 409, and other errors keep their existing response. Creating and running conversations requires a working Codex CLI.
+
+缺少本地 Codex CLI 时，`GET /api/local/ai/catalog` 返回 HTTP 200、`available: false`，模型、Skill 和命令列表为空，保留支持的沙箱选项。正常目录不包含 `available` 字段，API 调用方应以 `available !== false` 判断。工作区不可用仍返回 HTTP 409，其他错误保留原有响应；创建和运行对话仍需可用的 Codex CLI。
+
 ## Link embedded AI conversations to issues
 
 An existing local AI conversation can be linked, moved, or unlinked through the issue menu in its header while no turn is running. Opening the menu loads active issues directly from the conversation's original project, independent of the project currently shown on the board. Linked conversations appear in the matching issue activity stream and open that exact local chat; the conversation history also shows the linked issue identifier.

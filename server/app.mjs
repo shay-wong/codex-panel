@@ -16,6 +16,7 @@ import { unified } from "unified";
 import remarkParse from "remark-parse";
 
 import {
+  AI_SANDBOX_MODES,
   DEFAULT_PROJECT_ID,
   JIRA_PROJECT_ID,
   PROJECT_ISSUE_KEY_PATTERN,
@@ -28,7 +29,7 @@ import { resolvePanelDataDirectory } from "../shared/panel-paths.mjs";
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
 import { withoutPanelLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { AiChatService } from "./ai-chat.mjs";
-import { resolveAiWorkspace, resolveMappedAiWorkspace } from "./ai-chat-catalog.mjs";
+import { resolveAiWorkspace, resolveMappedAiWorkspace, unavailableAiCatalog } from "./ai-chat-catalog.mjs";
 import { ClaimQueueService } from "./claim-queue.mjs";
 import { WORKFLOW_STAGES, resolveWorkflow, workflowNotice } from "./workflow-settings.mjs";
 import { decodeComposerReferenceKey } from "./composer-reference.mjs";
@@ -1141,7 +1142,7 @@ function parseTaskTreeQuery(searchParams) {
 
 function parseAiSandbox(value) {
   if (value === undefined) return undefined;
-  if (!["read-only", "workspace-write", "danger-full-access"].includes(value)) {
+  if (!AI_SANDBOX_MODES.includes(value)) {
     throw new ApiError(
       400,
       "INVALID_SANDBOX",
@@ -3635,11 +3636,21 @@ export function createPanelServer(options = {}) {
           "workspacePath",
         ]), "GET /api/local/ai/catalog");
         const projectId = validateProjectId(url.searchParams.get("projectId") ?? undefined);
-        return sendJson(
-          response,
-          200,
-          await aiChat.getCatalog(projectId, undefined, aiExecutionTargetFromQuery(url.searchParams)),
-        );
+        let catalog;
+        try {
+          catalog = await aiChat.getCatalog(
+            projectId,
+            undefined,
+            aiExecutionTargetFromQuery(url.searchParams),
+          );
+        } catch (error) {
+          // A missing Codex CLI (spawn ENOENT) makes the optional catalog
+          // unavailable rather than broken. ApiError paths keep their own
+          // status (for example the per-project 409 workspace semantics).
+          if (error?.code !== "ENOENT") throw error;
+          catalog = unavailableAiCatalog();
+        }
+        return sendJson(response, 200, catalog);
       }
 
       if (pathname === "/api/local/ai/composer/candidates") {
