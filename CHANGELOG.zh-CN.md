@@ -6,6 +6,8 @@
 
 ## 未发布
 
+## 0.5.4-fork
+
 - Windows：隐藏启动、重启和后台检查时的 PowerShell、Node 与 CLI 控制台窗口，避免连续弹出黑框。
 
 ## 0.5.3-fork
