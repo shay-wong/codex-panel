@@ -1,10 +1,20 @@
-# Import pet animations
+# Built-in and imported pet animations
 
 [Capability index](fork-capabilities.md#imported-pet-animations) · [README](../README.md) · [简体中文入口](../README.zh-CN.md)
 
+## Built-in Lumi
+
+Open **Preferences → 宠物动画** while Panel is connected to Codex, then click **使用 Lumi**. The card shows her thumbnail, nine native actions and sixteen look directions. The complete sprite sheet and 15-second hover heart-and-dance sequence ship with Panel; no JSON or image import is needed. Lumi also appears in Codex’s native pet picker. Choosing another pet there switches away from Lumi.
+
+The built-in ID is `panel-lumi`. Selection uses Codex’s native local setting, shared by the main and floating pet windows. This entry is not uploaded to the official pet catalog or synchronized as an official account pet. Panel must remain connected. Existing local or cloud Lumi pets retain their own IDs and are separate entries.
+
+连接 Codex 后，在 **偏好设置 → 宠物动画 → 使用 Lumi** 一键使用。卡片展示缩略图、9 个原生动作和 16 个视线方向，完整图集与 15 秒悬停比心舞蹈随 Panel 提供，无需手动导入。也可从 Codex 原生宠物选择器选择 Lumi，主窗口和浮窗共用；选择其他宠物即可切换。该内置项仅在本机使用，不上传或作为官方账号宠物同步；保持 Panel 连接。已有本地或云端 Lumi 保留原来的独立身份。
+
+## Import a custom pack
+
 In Codex Panel, open **Preferences → 宠物动画 → 导入动画资源** and select a JSON manifest. Place its PNG or static WebP sprite sheet in the same folder. Panel copies the resources into its data directory, so moving the original files afterward does not break the import.
 
-Each pack applies to the existing pet identified by `petId`; importing a pack does not create or select a pet. Import again with the same ID to replace its animations. Choose **移除** beside a pack to restore the pet's native animations. Source files and Codex application files are left intact.
+Each imported pack applies to the existing pet identified by `petId`; importing a pack does not create or select a pet. For the built-in Lumi use `panel-lumi`. Import again with the same ID to replace its animations. Choose **移除** beside a pack to restore the pet's native animations, or the bundled sequence for `panel-lumi`. Source files and Codex application files are left intact.
 
 Keep Panel connected. Both the main-window pet and floating pet apply changes during the next polling cycle, normally within two seconds. Installing or updating the native adapter can reload the renderer once; changing imported animation data does not require a full client reload.
 

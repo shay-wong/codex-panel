@@ -3198,6 +3198,14 @@ async fn list_pet_animations(
 }
 
 #[tauri::command]
+async fn use_builtin_lumi(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+) -> Result<Vec<PetAnimationSummary>, String> {
+    run_pet_animation_command(app, state.data_directory.clone(), "use-lumi", None).await
+}
+
+#[tauri::command]
 async fn import_pet_animation(
     app: AppHandle,
     window: tauri::WebviewWindow,
@@ -3684,6 +3692,7 @@ fn main() {
             reveal_data,
             read_model_discovery,
             list_pet_animations,
+            use_builtin_lumi,
             import_pet_animation,
             remove_pet_animation,
             read_model_context_settings,

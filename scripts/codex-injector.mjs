@@ -42,6 +42,7 @@ import { prepareCodexProviderUltrafast } from "./codex-provider-ultrafast.mjs";
 import { createUltrafastCatalogAdapter } from "./codex-provider-ultrafast-catalog.mjs";
 import { prepareCodexProviderQuotaFix, watchCodexProviderQuotaPreferences } from "./codex-provider-quota.mjs";
 import { prepareCodexRspack } from "./codex-rspack.mjs";
+import { selectBuiltinLumi } from "./codex-rspack-pets.mjs";
 import { readPetAnimations } from "./pet-animations.mjs";
 import { createPanelSupervisor } from "./panel-supervisor.mjs";
 import {
@@ -2982,6 +2983,8 @@ async function currentInjectionSource() {
   const threadTabs = await readFile(new URL("./codex-thread-tabs.mjs", import.meta.url), "utf8");
   const rspack = await Promise.all(["codex-rspack.mjs", "codex-rspack-source.mjs", "codex-rspack-quota.mjs", "codex-rspack-tabs.mjs", "codex-rspack-capabilities.mjs", "codex-rspack-pets.mjs", "pet-animations.mjs"]
     .map(file => readFile(new URL(file, import.meta.url), "utf8")));
+  const lumi = await Promise.all(["pet.json", "spritesheet.webp", "animation.json", "hover.webp"]
+    .map(async file => createHash("sha256").update(await readFile(path.join(projectRoot, "inject/pets/lumi", file))).digest("hex")));
   const sourceHash = createHash("sha256").update(JSON.stringify({
     userScript,
     providerQuotaFix,
@@ -2989,6 +2992,7 @@ async function currentInjectionSource() {
     dotEntry,
     threadTabs,
     rspack,
+    lumi,
   })).digest("hex");
   const runtimeSource = `window.__CODEX_PANEL_MANAGED_ORIGIN__ = ${JSON.stringify(panelOrigin)};
 window.__CODEX_PANEL_HOST_CAPABILITY__ = ${JSON.stringify(hostCapability)};
@@ -3473,7 +3477,7 @@ async function main() {
       controlServer = await startInjectorControlServer({
         controlSocket,
         startupToken: options.startupToken,
-        actions: process.platform === "win32" ? ["interrupt-thread"] : undefined,
+        actions: process.platform === "win32" ? ["interrupt-thread", "use-lumi"] : undefined,
         handlers: {
           "codex-update-status": async () => {
             if (process.platform !== "darwin" || options.cdpPipe) throw new Error("安装后由 Panel 重启目前需要 macOS TCP 连接模式");
@@ -3559,6 +3563,17 @@ async function main() {
               throw new Error("Managed Panel renderer did not confirm page visibility");
             }
             return { opened: true, ...readiness };
+          },
+          "use-lumi": async () => {
+            const cdp = [...injectedTargets.values()].find(connection => !connection.closed);
+            if (!cdp) throw new Error("请先通过 Panel 连接 Codex");
+            const response = await cdp.send("Runtime.evaluate", {
+              expression: `(async () => (${selectBuiltinLumi})(await (${findCodexRspackRequire})()))()`,
+              awaitPromise: true, returnByValue: true,
+            });
+            if (response.exceptionDetails) throw new Error(response.exceptionDetails.exception?.description ?? "无法启用 Lumi");
+            if (response.result?.value?.petId !== "panel-lumi") throw new Error("Codex 未确认启用 Lumi");
+            return response.result.value;
           },
           "interrupt-thread": async (request) => {
             const threadId = typeof request.threadId === "string" ? request.threadId.trim() : "";

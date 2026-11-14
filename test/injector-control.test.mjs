@@ -37,6 +37,7 @@ test("the injector control endpoint requires the manager token and stays private
         interrupted.push([request.threadId, request.codexHostId]);
         return { interrupted: true };
       },
+      "use-lumi": async () => ({ petId: "panel-lumi" }),
       shutdown: async () => ({ stopping: ++stopped }),
     },
   });
@@ -93,6 +94,9 @@ test("the injector control endpoint requires the manager token and stays private
   }), { interrupted: true });
   assert.deepEqual(interrupted, [["thread-1", "local"]]);
   assert.deepEqual(await sendInjectorControlRequest({
+    runtimeFile, startupToken, action: "use-lumi", ownership,
+  }), { petId: "panel-lumi" });
+  assert.deepEqual(await sendInjectorControlRequest({
     runtimeFile, startupToken, action: "retry-thread-tabs", ownership,
   }), { queued: true });
   for (const [action, phase] of [["pause", "paused"], ["resume", "downloading"], ["cancel", "cancelled"]]) {
@@ -118,7 +122,7 @@ test("Windows control endpoints are private named pipes derived from the runtime
   assert.notEqual(first, injectorControlSocketPath("C:\\Panel\\launcher-runtime.json", "other-token", "win32"));
 });
 
-test("the Windows named pipe action boundary only accepts native interruption", async (context) => {
+test("the Windows named pipe action boundary accepts interruption and the built-in pet", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "cp-wa-"));
   const runtimeFile = path.join(directory, "launcher-runtime.json");
   const startupToken = "manager-token";
@@ -126,10 +130,11 @@ test("the Windows named pipe action boundary only accepts native interruption", 
   const server = await startInjectorControlServer({
     controlSocket,
     startupToken,
-    actions: ["interrupt-thread"],
+    actions: ["interrupt-thread", "use-lumi"],
     handlers: {
       status: async () => ({ ready: true }),
       "interrupt-thread": async () => ({ interrupted: true }),
+      "use-lumi": async () => ({ petId: "panel-lumi" }),
     },
   });
   context.after(async () => closeInjectorControlServer(server));
@@ -154,6 +159,9 @@ test("the Windows named pipe action boundary only accepts native interruption", 
     action: "interrupt-thread",
     ownership,
   }), { interrupted: true });
+  assert.deepEqual(await sendInjectorControlRequest({
+    runtimeFile, startupToken, action: "use-lumi", ownership,
+  }), { petId: "panel-lumi" });
   await assert.rejects(sendInjectorControlRequest({
     runtimeFile,
     startupToken,

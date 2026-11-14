@@ -41,6 +41,8 @@ New Jira planning conversations are named `Jira ID · Jira 规划 · task title`
 
 ## Imported pet animations
 
+Panel includes **Lumi** with a thumbnail and **使用 Lumi** button in **Preferences → 宠物动画**. Connect Codex, then select it without importing files. Lumi appears in the native pet picker and supplies nine native states, sixteen look directions and a 15-second hover heart-and-dance sequence for main and floating pets. This Panel-local pet is excluded from native cloud selection sync; choosing another pet uses the native picker. Removing a custom animation override for `panel-lumi` restores the bundled animation.
+
 Open **Preferences → 宠物动画 → 导入动画资源** in Codex Panel and select an animation-pack JSON file. The sprite sheet must be a PNG or static WebP in the same folder. Panel copies the pack into its local data directory and lists its pet ID, states and look-direction coverage. Importing another pack with the same pet ID replaces it; **移除** restores native playback.
 
 The pack defines its grid, per-state frame sequence and timing, loops, and optional 16 look directions. Nothing is tied to a particular pet or dance. Missing states or look directions use the native pet resources, so a consistent outfit requires coverage of every state and all look directions. See the [pack format and example](pet-animations.md).

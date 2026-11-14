@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Bundle Lumi as a built-in pet with a preview and one-click selection, including nine native actions, sixteen look directions and the existing hover heart-and-dance animation.
+
 - Import custom pet animation packs in Preferences, with configurable state sequences, frame timing, loops and look directions; apply changes to main and floating pet windows without restarting Codex.
 
 ## 0.5.4-fork

@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { sendInjectorControlRequest } from './codex-injector-control.mjs';
 
 const states = new Set(['idle', 'running-right', 'running-left', 'waving', 'jumping', 'failed', 'waiting', 'running', 'review']);
 const imageLimit = 32 * 1024 * 1024;
+const lumiDirectory = fileURLToPath(new URL('../inject/pets/lumi/', import.meta.url));
 
 function validateManifest(value) {
   if (!value || value.version !== 1) throw new Error('动画清单版本必须为 1');
@@ -135,11 +137,23 @@ export async function listPetAnimations(dataDirectory) {
   return summaries(await readIndex(path.join(dataDirectory, 'pet-animations')));
 }
 
+export async function readBuiltinLumi() {
+  const manifest = JSON.parse(await readFile(path.join(lumiDirectory, 'pet.json'), 'utf8'));
+  const image = await readFile(path.join(lumiDirectory, manifest.spritesheetPath));
+  return {
+    id: manifest.id, displayName: manifest.displayName, description: manifest.description,
+    spriteVersionNumber: manifest.spriteVersionNumber, spritesheetUrl: `data:image/webp;base64,${image.toString('base64')}`,
+  };
+}
+
 export async function readPetAnimations(dataDirectory) {
   const directory = path.join(dataDirectory, 'pet-animations');
   const manifests = await readIndex(directory);
-  return Promise.all(manifests.map(async manifest => {
-    const image = await readImage(directory, manifest);
+  const builtin = validateManifest(JSON.parse(await readFile(path.join(lumiDirectory, 'animation.json'), 'utf8')));
+  const entries = manifests.map(manifest => ({ manifest, directory }));
+  if (!manifests.some(manifest => manifest.petId === builtin.petId)) entries.push({ manifest: builtin, directory: lumiDirectory });
+  return Promise.all(entries.map(async ({ manifest, directory: imageDirectory }) => {
+    const image = await readImage(imageDirectory, manifest);
     const format = path.extname(manifest.spritesheet).toLowerCase() === '.png' ? 'png' : 'webp';
     return { ...manifest, spritesheetUrl: `data:image/${format};base64,${image.toString('base64')}` };
   }));
@@ -174,10 +188,16 @@ export async function removePetAnimation(dataDirectory, petId) {
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
     const [operation, dataDirectory, value] = process.argv.slice(2);
-    if (!dataDirectory || !['list', 'import', 'remove'].includes(operation) || operation !== 'list' && !value) {
-      throw new Error('用法：pet-animations.mjs list <数据目录> | import <数据目录> <清单路径> | remove <数据目录> <宠物 ID>');
+    if (!dataDirectory || !['list', 'import', 'remove', 'use-lumi'].includes(operation) || ['import', 'remove'].includes(operation) && !value) {
+      throw new Error('用法：pet-animations.mjs list <数据目录> | import <数据目录> <清单路径> | remove <数据目录> <宠物 ID> | use-lumi <数据目录>');
     }
-    const result = operation === 'list' ? await listPetAnimations(dataDirectory)
+    if (operation === 'use-lumi') {
+      await sendInjectorControlRequest({
+        runtimeFile: path.join(dataDirectory, 'launcher-runtime.json'), action: 'use-lumi',
+        ownership: { nodePath: process.execPath, injectorPath: fileURLToPath(new URL('./codex-injector.mjs', import.meta.url)) },
+      });
+    }
+    const result = operation === 'list' || operation === 'use-lumi' ? await listPetAnimations(dataDirectory)
       : operation === 'import' ? await importPetAnimation(dataDirectory, value) : await removePetAnimation(dataDirectory, value);
     console.log(JSON.stringify(result));
   } catch (error) { console.error(error.message); process.exitCode = 1; }

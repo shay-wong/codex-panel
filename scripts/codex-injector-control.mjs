@@ -14,7 +14,7 @@ import path from "node:path";
 
 import { managedInjectorCommandMatches } from "./codex-injector-runtime.mjs";
 
-const allowedActions = new Set(["status", "open", "retry-thread-tabs", "codex-update-status", "check-codex-updates", "download-codex-update", "pause-codex-update", "resume-codex-update", "cancel-codex-update", "interrupt-thread", "shutdown"]);
+const allowedActions = new Set(["status", "open", "retry-thread-tabs", "codex-update-status", "check-codex-updates", "download-codex-update", "pause-codex-update", "resume-codex-update", "cancel-codex-update", "interrupt-thread", "use-lumi", "shutdown"]);
 const maximumMessageBytes = 64 * 1024;
 const requestTimeoutMs = 3_000;
 
@@ -234,7 +234,7 @@ export async function sendInjectorControlRequest({
     ...payload,
     action,
     startupToken: startupToken || descriptor.startupToken,
-  }, action === "interrupt-thread" ? 15_000 : requestTimeoutMs);
+  }, ["interrupt-thread", "use-lumi"].includes(action) ? 15_000 : requestTimeoutMs);
 }
 
 function processIsRunning(pid, killProcess = process.kill) {

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { deflateSync } from 'node:zlib';
 import test from 'node:test';
-import { importPetAnimation, listPetAnimations, readPetAnimations, removePetAnimation } from '../scripts/pet-animations.mjs';
+import { importPetAnimation, listPetAnimations, readBuiltinLumi, readPetAnimations, removePetAnimation } from '../scripts/pet-animations.mjs';
 
 function png() {
   const chunk = (type, data) => {
@@ -45,7 +45,12 @@ async function fixture(t) {
 test('imports a self-contained animation pack, updates one pet, and removes only its managed resources', async t => {
   const { data, file, manifest, save } = await fixture(t);
   assert.deepEqual(await listPetAnimations(data), []);
-  assert.deepEqual(await readPetAnimations(data), []);
+  const lumi = await readBuiltinLumi();
+  assert.equal(lumi.id, 'panel-lumi');
+  assert.equal(lumi.spriteVersionNumber, 2);
+  const [builtin] = await readPetAnimations(data);
+  assert.equal(builtin.petId, lumi.id);
+  assert.equal(builtin.animations.jumping.frames.reduce((total, frame) => total + frame[1], 0), 15_000);
   assert.deepEqual(await importPetAnimation(data, file), [
     { petId: 'test-pet', name: 'Test pet', states: ['idle', 'jumping'], hasLookFrames: true },
   ]);
