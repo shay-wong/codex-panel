@@ -1927,6 +1927,7 @@ async function scanDevelopmentContexts(workspacePath, processEnv = process.env) 
   try {
     const rootResult = await execFileAsync("git", ["-C", workspacePath, "rev-parse", "--show-toplevel"], {
       env: environment,
+      windowsHide: true,
       timeout: 4_000,
       maxBuffer: 1024 * 1024,
     });
@@ -1934,11 +1935,13 @@ async function scanDevelopmentContexts(workspacePath, processEnv = process.env) 
     const [branchesResult, worktreesResult] = await Promise.all([
       execFileAsync("git", ["-C", root, "for-each-ref", "--format=%(refname:short)", "refs/heads"], {
         env: environment,
+        windowsHide: true,
         timeout: 4_000,
         maxBuffer: 1024 * 1024,
       }),
       execFileAsync("git", ["-C", root, "worktree", "list", "--porcelain"], {
         env: environment,
+        windowsHide: true,
         timeout: 4_000,
         maxBuffer: 1024 * 1024,
       }),
@@ -2347,13 +2350,13 @@ export function createPanelServer(options = {}) {
       const statusResult = await execFileAsync(
         "git",
         ["-C", worktreePath, "status", "--porcelain"],
-        { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 },
+        { windowsHide: true, env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 },
       );
       if (statusResult.stdout.trim()) return task;
       const listResult = await execFileAsync(
         "git",
         ["-C", worktreePath, "worktree", "list", "--porcelain"],
-        { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 },
+        { windowsHide: true, env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 },
       );
       const repositoryRoot = parseWorktrees(listResult.stdout)[0]?.path;
       if (!repositoryRoot) return task;
@@ -2363,12 +2366,12 @@ export function createPanelServer(options = {}) {
           await execFileAsync(
             "git",
             ["-C", repositoryRoot, "show-ref", "--verify", target],
-            { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
+            { windowsHide: true, env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
           );
           await execFileAsync(
             "git",
             ["-C", repositoryRoot, "merge-base", "--is-ancestor", branch, target],
-            { env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
+            { windowsHide: true, env: codexProcessEnvironment, timeout: 10_000, maxBuffer: 1024 * 1024 },
           );
           merged = true;
           break;
@@ -2378,7 +2381,7 @@ export function createPanelServer(options = {}) {
       await execFileAsync(
         "git",
         ["-C", repositoryRoot, "worktree", "remove", worktreePath],
-        { env: codexProcessEnvironment, timeout: 30_000, maxBuffer: 4 * 1024 * 1024 },
+        { windowsHide: true, env: codexProcessEnvironment, timeout: 30_000, maxBuffer: 4 * 1024 * 1024 },
       );
     } catch {
       return task;

@@ -144,6 +144,7 @@ export function readProcessCommand(pid) {
     ]
     : ["-ww", "-p", String(pid), "-o", "command="];
   const result = spawnSync(command, args, {
+    windowsHide: true,
     encoding: "utf8",
     maxBuffer: 1024 * 1024,
   });

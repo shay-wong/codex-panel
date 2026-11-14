@@ -97,6 +97,8 @@ export class CodexAppServer {
     const starting = new Promise((resolve, reject) => {
       const command = executableCommand(this.executable, ["app-server", "--stdio"]);
       const child = spawn(command.executable, command.args, {
+        // App Server 通过标准流通信，无需向用户弹出控制台。
+        windowsHide: true,
         cwd: this.cwd,
         env: this.processEnv,
         stdio: ["pipe", "pipe", "pipe"],

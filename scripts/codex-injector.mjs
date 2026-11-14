@@ -321,6 +321,8 @@ function startPanel({ detached, onCodexAppServerRequest }) {
   const child = spawn(process.execPath, [path.join(projectRoot, "server", "index.mjs")], {
     cwd: projectRoot,
     detached,
+    // 后台服务沿用管道通信，Windows 不创建额外控制台。
+    windowsHide: true,
     env: privatePanelMode ? {
       ...process.env,
       CODEX_PANEL_INSTANCE_TOKEN: panelInstanceToken,
@@ -797,6 +799,7 @@ function startResidentInjector(
   const child = spawn(process.execPath, args, {
     cwd: projectRoot,
     detached: true,
+    windowsHide: true,
     stdio: "ignore",
   });
   child.unref();
@@ -1605,6 +1608,7 @@ function normalizeWorkspaceRoot(value) {
 function gitValue(workspacePath, args) {
   const result = spawnSync("git", ["-C", workspacePath, ...args], {
     encoding: "utf8",
+    windowsHide: true,
     env: withoutPanelLauncherEnvironment(process.env),
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 10_000,
