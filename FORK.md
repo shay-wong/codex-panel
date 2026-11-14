@@ -666,3 +666,9 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 
 - 等待上游吸收：`src-tauri/src/windows_open.rs` 使用现有 windows 依赖的 ShellExecuteW，替代 `main.rs` 通过 explorer.exe 退出码判断打开成败的实现。大于 32 表示系统接受打开请求；其余保留目标和 Shell 错误码，拒绝内嵌 NUL。共用入口覆盖 Codex、日志、目录及链接，不更改连接、调试端口或启动配置。
 - Windows 真实接口验证：无操作命令打开返回 42，文件不存在返回 2；返回值边界单元测试通过，生产模块及测试代码使用 windows 0.61.3 完成 x86_64-pc-windows-msvc 编译检查。系统接受请求不等于目标应用完成启动，已安装 Panel 按钮效果仍待重新打包后验证。上游等价修复后移除此差异；当前无 fork-doc 技能，按契约手工同步。
+
+### Windows 后台控制台窗口
+
+- 启动器的后台 PowerShell、taskkill 和 GitHub CLI 调用使用 `CREATE_NO_WINDOW`；Node 启动 Panel 服务、App Server、驻留注入器、进程身份检查及 Git 上下文读取使用 `windowsHide`。保留标准流、退出状态与错误处理，不隐藏产品窗口。
+- 路径：`src-tauri/src/main.rs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-control.mjs`、`scripts/codex-rate-limits.mjs`、`server/codex-app-server.mjs`。Windows 退出轮询每 100ms 查进程，因此所有后台检查必须明确隐藏控制台。
+- 来源：用户报告每次启动连续弹出黑框；源码确认旧调用未设置窗口标志。Node 应用程序错误仍需独立取得原始错误码，不能仅以隐藏窗口认定崩溃已修复。

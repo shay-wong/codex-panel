@@ -747,7 +747,11 @@ fn find_gh_executable() -> Option<PathBuf> {
 }
 
 fn releases_from_gh() -> Option<Vec<GitHubRelease>> {
-    let mut child = StdCommand::new(find_gh_executable()?)
+    let mut command = StdCommand::new(find_gh_executable()?);
+    // 后台更新检查不能为控制台程序弹出独立窗口。
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW.0);
+    let mut child = command
         .args([
             "api",
             "--hostname",
@@ -1181,6 +1185,7 @@ fn verify_windows_launcher_signature() -> Result<(), String> {
     let powershell = powershell_directory.join("powershell.exe");
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let output = StdCommand::new(powershell)
+        .creation_flags(CREATE_NO_WINDOW.0)
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -1489,6 +1494,7 @@ fn quit_codex_normally(pid: u32) -> Result<(), String> {
 #[cfg(target_os = "windows")]
 fn find_codex_app(_home_directory: &Path) -> Option<PathBuf> {
     let output = StdCommand::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW.0)
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -1510,6 +1516,7 @@ fn find_codex_app(_home_directory: &Path) -> Option<PathBuf> {
 #[cfg(target_os = "windows")]
 fn codex_process(app_path: &Path, codex_profile: &Path, include_managed: bool) -> Result<Option<u32>, String> {
     let output = StdCommand::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW.0)
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -1700,6 +1707,7 @@ fn process_group_is_running(pid: u32) -> bool {
 #[cfg(target_os = "windows")]
 fn process_group_is_running(pid: u32) -> bool {
     StdCommand::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW.0)
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -2043,6 +2051,7 @@ fn terminate_process_group(pid: u32) {
 fn terminate_process_group(pid: u32) {
     if process_group_is_running(pid) {
         let _ = StdCommand::new("taskkill.exe")
+            .creation_flags(CREATE_NO_WINDOW.0)
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .status();
     }
@@ -2081,6 +2090,7 @@ fn process_matches_record(record: &LauncherPidRecord) -> bool {
 #[cfg(target_os = "windows")]
 fn process_matches_record(record: &LauncherPidRecord) -> bool {
     let output = StdCommand::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW.0)
         .args([
             "-NoProfile",
             "-NonInteractive",

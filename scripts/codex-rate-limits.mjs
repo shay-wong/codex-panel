@@ -34,6 +34,7 @@ export async function readCodexQuotaStatus(model) {
 
 function startAppServer() {
   const child = spawn(resolveCodexExecutable(), ["app-server", "--stdio"], {
+    windowsHide: true,
     env: withoutPanelLauncherEnvironment(process.env),
     stdio: ["pipe", "pipe", "ignore"],
   });
