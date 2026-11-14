@@ -670,5 +670,5 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 ### Windows 后台控制台窗口
 
 - 启动器的后台 PowerShell、taskkill 和 GitHub CLI 调用使用 `CREATE_NO_WINDOW`；Node 启动 Panel 服务、App Server、驻留注入器、进程身份检查及 Git 上下文读取使用 `windowsHide`。保留标准流、退出状态与错误处理，不隐藏产品窗口。
-- 路径：`src-tauri/src/main.rs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-control.mjs`、`scripts/codex-rate-limits.mjs`、`server/codex-app-server.mjs`。Windows 退出轮询每 100ms 查进程，因此所有后台检查必须明确隐藏控制台。
+- 路径：`src-tauri/src/main.rs`、`scripts/codex-injector.mjs`、`scripts/codex-injector-control.mjs`、`scripts/codex-rate-limits.mjs`、`server/codex-app-server.mjs`、`server/app.mjs`。Windows 退出轮询每 100ms 查进程，因此所有后台检查必须明确隐藏控制台。
 - 来源：用户报告每次启动连续弹出黑框；源码确认旧调用未设置窗口标志。Node 应用程序错误仍需独立取得原始错误码，不能仅以隐藏窗口认定崩溃已修复。
