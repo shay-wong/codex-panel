@@ -342,6 +342,7 @@ async function copyApplicationResources() {
     "codex-rspack-tabs.mjs",
     "codex-rspack-capabilities.mjs",
     "codex-rspack-pets.mjs",
+    "pet-animations.mjs",
     "codex-provider-quota.mjs",
     "codex-provider-ultrafast.mjs",
     "codex-provider-ultrafast-catalog.mjs",
@@ -369,7 +370,6 @@ async function copyApplicationResources() {
     path.join(projectRoot, "inject", "codex-panel.user.js"),
     path.join(appResources, "inject", "codex-panel.user.js"),
   );
-  await cp(path.join(projectRoot, "inject", "pets"), path.join(appResources, "inject", "pets"), { recursive: true });
   await mkdir(path.join(appResources, "cli"), { recursive: true });
   await copyFile(
     path.join(projectRoot, "cli", "panelctl.mjs"),

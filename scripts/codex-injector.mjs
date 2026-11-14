@@ -42,6 +42,7 @@ import { prepareCodexProviderUltrafast } from "./codex-provider-ultrafast.mjs";
 import { createUltrafastCatalogAdapter } from "./codex-provider-ultrafast-catalog.mjs";
 import { prepareCodexProviderQuotaFix, watchCodexProviderQuotaPreferences } from "./codex-provider-quota.mjs";
 import { prepareCodexRspack } from "./codex-rspack.mjs";
+import { readPetAnimations } from "./pet-animations.mjs";
 import { createPanelSupervisor } from "./panel-supervisor.mjs";
 import {
   CdpPipeBrowser,
@@ -2569,9 +2570,9 @@ async function registerInjectionSource(cdp, source) {
 async function readAvatarInjectionStatus(cdp) {
   const result = await cdp.send("Runtime.evaluate", {
     expression: `({
-      sourceHash: globalThis.__codexPanelLumiInjectionHash__,
-      scriptIdentifier: globalThis.__codexPanelLumiScriptIdentifier__,
-      prepared: Boolean(globalThis.__codexPanelRspack__ && globalThis.__codexPanelLumiPetV1__)
+      sourceHash: globalThis.__codexPanelPetAnimationsInjectionHash__,
+      scriptIdentifier: globalThis.__codexPanelPetAnimationsScriptIdentifier__,
+      prepared: Boolean(globalThis.__codexPanelRspack__ && globalThis.__codexPanelPetAnimations__)
     })`,
     returnByValue: true,
   });
@@ -2585,12 +2586,13 @@ async function injectAvatarTarget(runtime, target, sourceHash, appPath, keepAliv
     await cdp.send("Page.enable");
     await cdp.send("Runtime.enable");
     await waitForRendererReady(cdp, 15_000);
-    const adapters = await prepareCodexRspack(cdp, appPath, undefined, console.error, { petsOnly: true });
-    if (!adapters?.prepared.pets) throw new Error("Lumi animation module is unavailable");
+    const petAnimations = await readPetAnimations(panelDataDirectory);
+    const adapters = await prepareCodexRspack(cdp, appPath, undefined, console.error, { petsOnly: true, petAnimations });
+    if (!adapters?.prepared.pets) throw new Error("Pet animation module is unavailable");
     const currentStatus = await readAvatarInjectionStatus(cdp);
-    const source = `${adapters.source}\nglobalThis.__codexPanelLumiInjectionHash__ = ${JSON.stringify(sourceHash)};`;
+    const source = `${adapters.source}\nglobalThis.__codexPanelPetAnimationsInjectionHash__ = ${JSON.stringify(sourceHash)};`;
     const publishRegistration = identifier => cdp.send("Runtime.evaluate", {
-      expression: `globalThis.__codexPanelLumiScriptIdentifier__ = ${JSON.stringify(identifier)}`,
+      expression: `globalThis.__codexPanelPetAnimationsScriptIdentifier__ = ${JSON.stringify(identifier)}`,
       returnByValue: true,
     });
     await cdp.send("Page.setBypassCSP", { enabled: true });
@@ -2606,13 +2608,14 @@ async function injectAvatarTarget(runtime, target, sourceHash, appPath, keepAliv
       publishRegistration,
     });
     const status = await readAvatarInjectionStatus(cdp);
-    if (!status.prepared || status.sourceHash !== sourceHash) throw new Error("Lumi animation bootstrap is not ready");
+    if (!status.prepared || status.sourceHash !== sourceHash) throw new Error("Pet animation bootstrap is not ready");
     cdp.on("Page.loadEventFired", () => {
+      cdp.petAnimationsRevision = undefined;
       void publishRegistration(reconciled.scriptIdentifier).catch(error => {
-        console.error(`Lumi animation registration failed: ${error.message}`);
+        console.error(`Pet animation registration failed: ${error.message}`);
       });
     });
-    cdp.lumiSourceHash = sourceHash;
+    cdp.petAnimationsSourceHash = sourceHash;
     retained = keepAlive;
     return retained ? cdp : null;
   } finally {
@@ -2624,7 +2627,7 @@ async function injectAvatarTargets(runtime, sourceHash, connections, appPath, ke
   const targets = await runtime.avatarTargets();
   const activeIds = new Set(targets.map(target => target.id));
   for (const [id, connection] of connections) {
-    if (!activeIds.has(id) || connection.closed || connection.lumiSourceHash !== sourceHash) {
+    if (!activeIds.has(id) || connection.closed || connection.petAnimationsSourceHash !== sourceHash) {
       connection.close();
       connections.delete(id);
     }
@@ -2637,16 +2640,43 @@ async function injectAvatarTargets(runtime, sourceHash, connections, appPath, ke
       if (connection) connections.set(target.id, connection);
       results.push({ targetId: target.id, url: target.url, petsPrepared: true });
     } catch (error) {
-      console.error(`Lumi avatar window ${target.id} is not ready: ${error.message}`);
+      console.error(`Pet avatar window ${target.id} is not ready: ${error.message}`);
     }
   }
   return results;
 }
 
+async function syncPetAnimations(dataDirectory, connections) {
+  const active = connections.filter(connection => !connection.closed);
+  if (!active.length) return;
+  let revision = "missing";
+  try {
+    const details = await stat(path.join(dataDirectory, "pet-animations", "index.json"));
+    revision = `${details.mtimeMs}:${details.size}:${details.ino}`;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const pending = active.filter(connection => connection.petAnimationsRevision !== revision);
+  if (!pending.length) return;
+  const packs = await readPetAnimations(dataDirectory);
+  const expression = `Boolean(globalThis.__codexPanelPetAnimations__ && (globalThis.__codexPanelPetAnimations__.setPacks(${JSON.stringify(packs)}), true))`;
+  for (const connection of pending) {
+    try {
+      const result = await connection.send("Runtime.evaluate", { expression, returnByValue: true });
+      if (result.result?.value === true) connection.petAnimationsRevision = revision;
+    } catch (error) {
+      console.error(`Pet animation update failed: ${error.message}`);
+    }
+  }
+}
+
 async function prepareNativeAdapters(cdp, appPath, reportThreadTabs) {
   const preferences = panelEnvironment("PREFERENCES_FILE");
   try {
-    const rspack = await prepareCodexRspack(cdp, appPath, preferences);
+    let petAnimations = [];
+    try { petAnimations = await readPetAnimations(panelDataDirectory); }
+    catch (error) { console.error(`Pet animation configuration is unavailable: ${error.message}`); }
+    const rspack = await prepareCodexRspack(cdp, appPath, preferences, console.error, { petAnimations });
     if (rspack) {
       if (!rspack.prepared.tabs) reportThreadTabs(`Panel conversation tabs unavailable: ${rspack.errors.tabs}`);
       return { source: rspack.source, threadTabsPrepared: rspack.prepared.tabs,
@@ -2763,6 +2793,7 @@ async function injectTarget(
       });
       scriptIdentifier = reconciled.scriptIdentifier;
       cdp.on("Page.loadEventFired", async () => {
+        cdp.petAnimationsRevision = undefined;
         await hostBridge.install();
         await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
         await hostBridge.publishHeartbeat();
@@ -2801,6 +2832,7 @@ async function injectTarget(
     }
     scriptIdentifier = await registerInjectionSource(cdp, source);
     cdp.on("Page.loadEventFired", async () => {
+      cdp.petAnimationsRevision = undefined;
       if (keepAlive) await hostBridge.install();
       await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
       if (keepAlive) await hostBridge.publishHeartbeat();
@@ -2948,10 +2980,8 @@ async function currentInjectionSource() {
   const providerUltrafast = await readFile(new URL("./codex-provider-ultrafast.mjs", import.meta.url), "utf8");
   const dotEntry = await readFile(new URL("./codex-dot-entry.mjs", import.meta.url), "utf8");
   const threadTabs = await readFile(new URL("./codex-thread-tabs.mjs", import.meta.url), "utf8");
-  const rspack = await Promise.all(["codex-rspack.mjs", "codex-rspack-source.mjs", "codex-rspack-quota.mjs", "codex-rspack-tabs.mjs", "codex-rspack-capabilities.mjs", "codex-rspack-pets.mjs"]
+  const rspack = await Promise.all(["codex-rspack.mjs", "codex-rspack-source.mjs", "codex-rspack-quota.mjs", "codex-rspack-tabs.mjs", "codex-rspack-capabilities.mjs", "codex-rspack-pets.mjs", "pet-animations.mjs"]
     .map(file => readFile(new URL(file, import.meta.url), "utf8")));
-  const petAssets = await Promise.all(["../inject/pets/lumi-hover.webp", "../inject/pets/lumi-hover.json"]
-    .map(async file => createHash("sha256").update(await readFile(new URL(file, import.meta.url))).digest("hex")));
   const sourceHash = createHash("sha256").update(JSON.stringify({
     userScript,
     providerQuotaFix,
@@ -2959,7 +2989,6 @@ async function currentInjectionSource() {
     dotEntry,
     threadTabs,
     rspack,
-    petAssets,
   })).digest("hex");
   const runtimeSource = `window.__CODEX_PANEL_MANAGED_ORIGIN__ = ${JSON.stringify(panelOrigin)};
 window.__CODEX_PANEL_HOST_CAPABILITY__ = ${JSON.stringify(hostCapability)};
@@ -3308,7 +3337,12 @@ async function main() {
         const results = await injectAvatarTargets(cdpRuntime, sourceHash, avatarConnections, options.appPath, keepAlive);
         if (results.length > 0) console.log(JSON.stringify({ petsInjected: results }, null, 2));
       } catch (error) {
-        console.error(`Lumi avatar discovery failed: ${error.message}`);
+        console.error(`Pet avatar discovery failed: ${error.message}`);
+      }
+      try {
+        await syncPetAnimations(panelDataDirectory, [...injectedTargets.values(), ...avatarConnections.values()]);
+      } catch (error) {
+        console.error(`Pet animation configuration is unavailable: ${error.message}`);
       }
     };
     let lastThreadTabsStatus = "";

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import vm from "node:vm";
 import { test } from "node:test";
 
@@ -52,13 +54,16 @@ test("avatar injection handles late windows and reconnects without mounting Pane
   let page = vm.createContext({}), registeredSource = "", registration = 0, reloads = 0, connects = 0;
   let targets = [];
   const commands = [], preparations = [];
+  const events = new Map();
   const connections = new Map();
   const inject = vm.runInNewContext(`${source.slice(start, end)}; injectAvatarTargets`, {
     console: { error() {} },
     waitForRendererReady: async () => {},
+    readPetAnimations: async () => [{ petId: "fixture" }],
+    panelDataDirectory: "/fixture/data",
     prepareCodexRspack: async (...args) => {
       preparations.push(args);
-      return { prepared: { pets: true }, source: "globalThis.__codexPanelRspack__={};globalThis.__codexPanelLumiPetV1__={};" };
+      return { prepared: { pets: true }, source: "globalThis.__codexPanelRspack__={};globalThis.__codexPanelPetAnimations__={};" };
     },
     reconcileInjectionRuntime,
     registerInjectionSource: async (_cdp, text) => { registeredSource = text; return String(++registration); },
@@ -71,7 +76,7 @@ test("avatar injection handles late windows and reconnects without mounting Pane
       connects++;
       return {
         closed: false,
-        on() {},
+        on(name, handler) { events.set(name, handler); },
         close() { this.closed = true; },
         send: async (method, params) => {
           commands.push(method);
@@ -88,6 +93,9 @@ test("avatar injection handles late windows and reconnects without mounting Pane
   assert.equal((await run()).length, 1);
   assert.equal(connections.size, 1);
   assert.equal(reloads, 1);
+  connections.get("pet").petAnimationsRevision = "old";
+  events.get("Page.loadEventFired")();
+  assert.equal(connections.get("pet").petAnimationsRevision, undefined);
   assert.equal((await run()).length, 0);
   assert.equal(connects, 1);
   connections.get("pet").close();
@@ -100,12 +108,52 @@ test("avatar injection handles late windows and reconnects without mounting Pane
   assert.equal((await run("updated")).length, 0);
   assert.equal(connections.size, 0);
   assert.equal(retained.closed, true);
-  assert.equal(page.__codexPanelLumiInjectionHash__, "updated");
+  assert.equal(page.__codexPanelPetAnimationsInjectionHash__, "updated");
   assert.equal(page.__codexPanelInjection__, undefined);
   assert.equal(page.__CODEX_PANEL_HOST_CAPABILITY__, undefined);
   assert.equal(commands.includes("Runtime.addBinding"), false);
   assert.equal(commands.filter(command => command === "Page.removeScriptToEvaluateOnNewDocument").length, 2);
-  assert(preparations.every(([, appPath, preferences, , options]) => appPath === "/fixture/ChatGPT.app" && preferences === undefined && options.petsOnly));
+  assert(preparations.every(([, appPath, preferences, , options]) => appPath === "/fixture/ChatGPT.app" && preferences === undefined && options.petsOnly && options.petAnimations[0].petId === "fixture"));
+});
+
+test("imported pet packs update main and avatar connections without reloading", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "panel-pet-live-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const directory = path.join(root, "pet-animations"), index = path.join(directory, "index.json");
+  await mkdir(directory);
+  await writeFile(index, "[]");
+  let packs = [], reads = 0;
+  const start = source.indexOf("async function syncPetAnimations(");
+  const end = source.indexOf("async function prepareNativeAdapters(", start);
+  const sync = vm.runInNewContext(`${source.slice(start, end)}; syncPetAnimations`, {
+    stat, path, console,
+    readPetAnimations: async dataDirectory => { assert.equal(dataDirectory, root); reads++; return packs; },
+  });
+  const commands = [];
+  const connections = ["main", "avatar"].map(name => {
+    const page = vm.createContext({ __codexPanelPetAnimations__: { setPacks(next) { this.packs = next; } } });
+    return { name, page, send: async (method, params) => {
+      commands.push(method);
+      return { result: { value: vm.runInContext(params.expression, page) } };
+    } };
+  });
+  await sync(root, connections);
+  assert.equal(reads, 1);
+  await sync(root, connections);
+  assert.equal(reads, 1, "unchanged registrations need no resource reread");
+  packs = [{ petId: "imported", spritesheetUrl: "data:image/png;base64,fixture" }];
+  await writeFile(index, JSON.stringify([{ petId: "imported" }]));
+  await sync(root, connections);
+  assert.equal(reads, 2, "one resource read supplies all live windows");
+  for (const connection of connections) assert.equal(connection.page.__codexPanelPetAnimations__.packs[0].petId, "imported");
+  connections[1].petAnimationsRevision = undefined;
+  await sync(root, connections);
+  assert.equal(reads, 3, "a reloaded document receives the current resources");
+  packs = [];
+  await rm(index);
+  await sync(root, connections);
+  for (const connection of connections) assert.equal(connection.page.__codexPanelPetAnimations__.packs.length, 0);
+  assert.equal(commands.every(method => method === "Runtime.evaluate"), true);
 });
 
 test("unmounted entries never report successful injection", async () => {

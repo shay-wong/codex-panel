@@ -34,6 +34,7 @@ it("keeps launcher feedback, live status and global preferences working through 
   const unlisten = vi.fn();
   const workflowUrl = "http://127.0.0.1:1/?view=workflow-settings";
   const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+    if (command === "list_pet_animations") return [];
     if (command === "open_embedded_panel") current.snapshot.openRequestPending = true;
     if (command === "open_browser_panel" && browserShouldFail) throw new Error("open failed");
     if (command === "reconnect_codex") await new Promise<void>(resolve => { finishRestart = resolve; });

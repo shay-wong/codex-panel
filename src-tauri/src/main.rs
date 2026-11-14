@@ -3149,6 +3149,79 @@ async fn read_model_discovery(app: AppHandle) -> Result<Option<bool>, String> {
     serde_json::from_str(output.trim()).map_err(|error| format!("读取 Codex 模型发现配置失败：{error}"))
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PetAnimationSummary {
+    pet_id: String,
+    name: String,
+    states: Vec<String>,
+    has_look_frames: bool,
+}
+
+async fn run_pet_animation_command(
+    app: AppHandle,
+    data_directory: PathBuf,
+    operation: &'static str,
+    argument: Option<std::ffi::OsString>,
+) -> Result<Vec<PetAnimationSummary>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let resources = app.path().resource_dir().map_err(|error| error.to_string())?;
+        let resources = dunce::simplified(&resources);
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let node = executable.parent().ok_or("无法定位 App 可执行文件目录")?
+            .join(if cfg!(target_os = "windows") { "node.exe" }
+                else if cfg!(target_os = "linux") { "codex-panel-node" } else { "node" });
+        verify_launcher_runtime(resources, &node)?;
+        let mut command = StdCommand::new(node);
+        #[cfg(target_os = "windows")]
+        command.creation_flags(CREATE_NO_WINDOW.0);
+        command.arg(resources.join("app/scripts/pet-animations.mjs"))
+            .arg(operation).arg(data_directory)
+            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        if let Some(argument) = argument {
+            command.arg(argument);
+        }
+        let output = command.output().map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(format!("宠物动画操作失败：{}", String::from_utf8_lossy(&output.stderr).trim()));
+        }
+        serde_json::from_slice(&output.stdout).map_err(|error| format!("读取宠物动画结果失败：{error}"))
+    }).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn list_pet_animations(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+) -> Result<Vec<PetAnimationSummary>, String> {
+    run_pet_animation_command(app, state.data_directory.clone(), "list", None).await
+}
+
+#[tauri::command]
+async fn import_pet_animation(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, Arc<LauncherState>>,
+) -> Result<Option<Vec<PetAnimationSummary>>, String> {
+    let picker = app.dialog().file().set_title("导入宠物动画")
+        .add_filter("动画清单", &["json"]).set_parent(&window);
+    let selected = tauri::async_runtime::spawn_blocking(move || picker.blocking_pick_file())
+        .await.map_err(|error| error.to_string())?;
+    let Some(selected) = selected else { return Ok(None) };
+    let path = selected.into_path().map_err(|error| error.to_string())?;
+    run_pet_animation_command(app, state.data_directory.clone(), "import", Some(path.into_os_string()))
+        .await.map(Some)
+}
+
+#[tauri::command]
+async fn remove_pet_animation(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+    pet_id: String,
+) -> Result<Vec<PetAnimationSummary>, String> {
+    run_pet_animation_command(app, state.data_directory.clone(), "remove", Some(pet_id.into())).await
+}
+
 #[tauri::command]
 async fn set_launcher_preference(
     app: AppHandle,
@@ -3610,6 +3683,9 @@ fn main() {
             open_log,
             reveal_data,
             read_model_discovery,
+            list_pet_animations,
+            import_pet_animation,
+            remove_pet_animation,
             read_model_context_settings,
             set_model_context_windows,
             set_launcher_preference,

@@ -75,6 +75,7 @@ const runtimeScriptNames = [
   "codex-rspack-tabs.mjs",
   "codex-rspack-capabilities.mjs",
   "codex-rspack-pets.mjs",
+  "pet-animations.mjs",
   "codex-provider-quota.mjs",
   "codex-provider-ultrafast.mjs",
   "codex-provider-ultrafast-catalog.mjs",

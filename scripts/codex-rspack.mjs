@@ -5,7 +5,7 @@ import { readCodexRspack, rspackSourceContext } from './codex-rspack-source.mjs'
 import { rewriteRspackQuota } from './codex-rspack-quota.mjs';
 import { rewriteRspackDot, rewriteRspackUltrafast } from './codex-rspack-capabilities.mjs';
 import { createRspackThreadTabsRuntime, rewriteRspackThreadTabs } from './codex-rspack-tabs.mjs';
-import { createLumiPetAnimation, readLumiPetAnimation, rewriteRspackPets } from './codex-rspack-pets.mjs';
+import { createPetAnimationRuntime, rewriteRspackPets } from './codex-rspack-pets.mjs';
 
 const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltrafast, dot: rewriteRspackDot, tabs: rewriteRspackThreadTabs, queue: rewriteRspackQueue, pets: rewriteRspackPets };
 const responsePatches = new WeakMap();
@@ -160,7 +160,7 @@ export function rewriteRspackEntry(source, url) {
     .replaceAll('import.meta.url', JSON.stringify(url));
 }
 
-export async function prepareCodexRspack(cdp, appPath, preferencesFile, report = console.error, { petsOnly = false } = {}) {
+export async function prepareCodexRspack(cdp, appPath, preferencesFile, report = console.error, { petsOnly = false, petAnimations = [] } = {}) {
   const catalog = await readCodexRspack(appPath);
   if (!catalog) return null;
   const result = await cdp.send('Runtime.evaluate', {
@@ -169,21 +169,17 @@ export async function prepareCodexRspack(cdp, appPath, preferencesFile, report =
   const url = result.result?.value?.find(candidate => new URL(candidate).pathname === catalog.main.urlPath);
   if (!url) return null;
   const plan = buildRspackPlan(catalog, petsOnly ? { pets: rewriteRspackPets } : transformers);
-  let petAnimation;
-  if (plan.prepared.pets) {
-    try { petAnimation = await readLumiPetAnimation(); }
-    catch (error) { plan.prepared.pets = false; plan.errors.pets = error.message; }
-  }
   for (const [feature, error] of Object.entries(plan.errors)) report(`Panel Rspack ${feature} unavailable: ${error}`);
   if (petsOnly && !plan.prepared.pets) return { source: '', prepared: plan.prepared, errors: plan.errors };
-  const petSource = petAnimation ? `globalThis.__codexPanelLumiPetV1__=(${createLumiPetAnimation})(${JSON.stringify(petAnimation)});` : '';
+  const petSource = plan.prepared.pets ? `const pets=globalThis.__codexPanelPetAnimations__??=(${createPetAnimationRuntime})();pets.setPacks(${JSON.stringify(petAnimations)});` : '';
   const entry = rewriteRspackEntry(catalog.main.source, url);
   await installRspackResponse(cdp, url, entry, report);
   if (petsOnly) {
     return { source: `(() => {
-      if(window!==window.top||globalThis.__codexPanelRspack__)return;
-      globalThis.__codexPanelRspack__=(${createCodexRspackRuntime})(${JSON.stringify(plan)});
+      if(window!==window.top)return;
       ${petSource}
+      if(globalThis.__codexPanelRspack__)return;
+      globalThis.__codexPanelRspack__=(${createCodexRspackRuntime})(${JSON.stringify(plan)});
     })();`, prepared: plan.prepared, errors: plan.errors };
   }
   let preferences = {};
@@ -198,6 +194,7 @@ export async function prepareCodexRspack(cdp, appPath, preferencesFile, report =
     const speed=globalThis.__codexPanelProviderUltrafastV1__??=createState(${preferences.customProviderUltrafast === true});
     const dot=globalThis.__codexPanelDotEntryV1__??=createState(${preferences.showCustomProviderDot === true});
     quota.setEnabled(${preferences.customProviderQuotaFix === true});speed.setEnabled(${preferences.customProviderUltrafast === true});dot.setEnabled(${preferences.showCustomProviderDot === true});
+    ${petSource}
     if(globalThis.__codexPanelRspack__)return;
     const plan=${JSON.stringify(plan)};
     globalThis.__codexPanelQuotaBootstrapPrepared__=plan.prepared.quota;
@@ -205,7 +202,6 @@ export async function prepareCodexRspack(cdp, appPath, preferencesFile, report =
     globalThis.__codexPanelDotBootstrapPrepared__=plan.prepared.dot;
     globalThis.__codexPanelRspack__=(${createCodexRspackRuntime})(plan);
     globalThis.__codexPanelRspackTabsV1__=(${createRspackThreadTabsRuntime})();
-    ${petSource}
     quota.prepared=true;
   })();`;
   return { source, prepared: plan.prepared, errors: plan.errors };

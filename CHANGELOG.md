@@ -6,7 +6,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
-- Play Lumi's approved 15-second heart-and-dance animation on hover through Panel, including the floating pet window, without changing the Codex app bundle.
+- Import custom pet animation packs in Preferences, with configurable state sequences, frame timing, loops and look directions; apply changes to main and floating pet windows without restarting Codex.
 
 ## 0.5.4-fork
 

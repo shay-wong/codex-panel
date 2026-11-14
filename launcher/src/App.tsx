@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { AlertDialog, Badge, Box, Button, Callout, Card, Dialog, Flex, Heading, IconButton, Select, Separator, Switch, Tabs, Text, TextField, Tooltip } from "@radix-ui/themes";
 import { LinearIcon } from "../../web/src/components/LinearIcon";
 import { ModelContextSettings } from "./ModelContextSettings";
+import { PetAnimationSettings } from "./PetAnimationSettings";
 
 export type LauncherSnapshot = {
   phase: string;
@@ -423,6 +424,7 @@ export function App() {
             <section className="preference-section" aria-labelledby="modelContextTitle">
               <Card><Flex className="preference-row" align="center" justify="between" gap="3"><Box><Heading as="h3" size="2" id="modelContextTitle">模型上下文</Heading><Text as="p" size="1" color="gray" mt="1">配置上下文、自动压缩及子代理模型与推理强度</Text></Box><Button variant="soft" disabled={!state || savingPreference} onClick={() => setModelContextOpen(true)}>配置上下文<LinearIcon name="chevronRight" /></Button></Flex></Card>
             </section>
+            <PetAnimationSettings disabled={!state || savingPreference} />
             <section className="preference-section" aria-labelledby="displayTitle">
               <Heading as="h2" size="2" id="displayTitle" mb="2">显示与系统</Heading>
               <div className="preference-rows">

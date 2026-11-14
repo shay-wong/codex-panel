@@ -35,15 +35,15 @@ See [per-model context windows](#per-model-context-windows) for the model contex
 
 New Jira planning conversations are named `Jira ID · Jira 规划 · task title`; replanning uses `Jira ID · Jira 重新规划 · task title`. Ordinary task conversations use `task ID · task title`. After the prepared draft is sent, Panel validates the actual conversation and sets its native title, then reads the title back before reporting completion. A missing sidebar row does not block this confirmation. Existing conversations are not bulk-renamed.
 
-## Lumi hover animation
+## Imported pet animations
 
-While Panel is connected, the custom Lumi pet (`pet_6ac9ddadb3dc819184a699b8b5cb05e7`) uses the approved 15-second hover animation: an overhead arm-heart pose, the dance, a finish, then its original slow idle. The dance uses eight poses in forward and reverse order, timed at a nominal 128 BPM. This is a visual sequence; Panel does not play music or listen to a microphone.
+Open **Preferences → 宠物动画 → 导入动画资源** in Codex Panel and select an animation-pack JSON file. The sprite sheet must be a PNG or static WebP in the same folder. Panel copies the pack into its local data directory and lists its pet ID, states and look-direction coverage. Importing another pack with the same pet ID replaces it; **移除** restores native playback.
 
-Use Codex's existing pet selection and hover controls. There is no additional Panel setting. The adapter applies only to this pet's hover/jumping state when no fixed look frame is requested. Moving the pointer away restores the underlying native state immediately. Reduced-motion settings show the first heart pose without animation. Other pets, Lumi's other states and fixed look directions retain their native behavior.
+The pack defines its grid, per-state frame sequence and timing, loops, and optional 16 look directions. Nothing is tied to a particular pet or dance. Missing states or look directions use the native pet resources, so a consistent outfit requires coverage of every state and all look directions. See the [pack format and example](pet-animations.md).
 
-Panel bundles the supplemental sprite sheet and timing data. It adapts the native renderer through its existing in-memory Rspack entry hook, including a separate connection for the floating pet window. That window receives only the pet adapter, not the Panel sidebar or host controls. Installing or updating the adapter uses a renderer reload; the original Codex application files and signature are unchanged. Keep Panel connected to make the adapter available on subsequent window loads.
+Keep Panel connected. Changes reach both main-window and floating pets during the next polling cycle, normally within two seconds, without a full client reload. The floating window receives only the native pet adapter. Initial installation or an adapter update can still reload the renderer once. Codex application files and signatures are unchanged; Panel does not play music or listen to a microphone.
 
-The current compatibility target is **Codex 26.1106.51428 / build 26605**. Its floating-window call path and native module structure have been checked. The real sprite component was also run with React in an isolated browser: it returned to idle after about 15.3 seconds, and pointer leave and reduced motion worked. The native chained timer can add event-loop delay to the 15-second schedule; it is not synchronized to an audio clock. This does not establish support for every desktop build. Unsupported structures retain native playback and log adapter unavailability. Installed-client hover playback remains a separate verification step.
+The native structure has been checked against **Codex 26.1106.51428 / build 26605**. Unsupported builds keep native playback and log adapter unavailability. Daily installed-client playback and the system file picker remain separate validation steps.
 
 ## Quick phrases
 
