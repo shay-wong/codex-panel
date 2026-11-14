@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.5.3-fork
+
 - Move conversation usage into the composer toolbar between permissions and model controls, retaining the above-composer option and a compact narrow-window layout.
 
 - Return an unavailable local AI catalog when the Codex CLI is missing, instead of a server error; preserve workspace and other error responses.
