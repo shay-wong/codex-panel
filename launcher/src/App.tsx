@@ -485,7 +485,7 @@ export function App() {
             <Box><Text as="label" htmlFor="threadUsagePosition" size="2" weight="medium">会话用量位置</Text><Text as="p" id="threadUsagePositionDetail" size="1" color="gray" mt="1">切换统计的显示位置，无需重启</Text></Box>
             <Select.Root value={preferences?.threadUsageAboveComposer ? "above" : "below"} disabled={!state || savingPreference} onValueChange={value => void savePreference("threadUsageAboveComposer", value === "above")}>
               <Select.Trigger id="threadUsagePosition" aria-describedby="threadUsagePositionDetail" />
-              <Select.Content><Select.Item value="above">输入框上方</Select.Item><Select.Item value="below">输入框下方</Select.Item></Select.Content>
+              <Select.Content><Select.Item value="above">输入框上方</Select.Item><Select.Item value="below">输入框工具栏</Select.Item></Select.Content>
             </Select.Root>
           </Flex>
           <Separator size="4" />

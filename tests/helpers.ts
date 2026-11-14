@@ -6,6 +6,8 @@ import { expect } from 'e2e';
 export const attachmentFixture = fileURLToPath(new URL('./fixtures/attachment.txt', import.meta.url));
 
 export async function createProject(screen: Screen, name: string) {
+  // 先等首屏渲染，避免把尚未出现的首用菜单误判为关闭后再点击切换。
+  await expect(screen.getByRole('button', 'Switch project')).toBeVisible();
   // On first use the app opens the project menu by itself (FIRST_USE_COMPLETE_KEY
   // is unset), so only tap the switcher when the menu is not already visible.
   const menu = screen.getByRole('menu', 'Projects');

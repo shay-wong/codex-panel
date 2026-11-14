@@ -279,7 +279,17 @@
       .codex-panel-phrases-dialog footer button { padding: 7px 14px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 8px; background: transparent; color: inherit; font: inherit; }
       .codex-panel-phrases-dialog button[type="submit"] { background: var(--color-token-foreground, CanvasText); color: var(--color-token-main-surface-primary, Canvas); }
       .codex-panel-usage-number-text { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-      .codex-panel-usage-line { display: flex; align-items: center; justify-content: center; }
+      .codex-panel-usage-line { display: flex; align-items: center; justify-content: center; flex: none; }
+      .codex-panel-usage-toolbar { flex: 1 1 0; min-width: 0; margin-inline: 6px; white-space: nowrap; overflow: hidden; container-type: inline-size; }
+      .codex-panel-usage-toolbar + * { flex: 0 1 auto; }
+      .codex-panel-usage-separator { margin-inline: 12px; }
+      .codex-panel-usage-toolbar > * { flex-shrink: 0; }
+      @container (max-width: 250px) { .codex-panel-usage-toolbar [data-usage-cache] > .codex-panel-usage-prefix { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip-path: inset(50%); } }
+      /* 窄输入框让两项统计占两行，给原生操作按钮留足空间。 */
+      @container composer-footer (max-width: 600px) {
+        .codex-panel-usage-toolbar { display: grid; grid-template-rows: repeat(2, 14px); justify-items: center; line-height: 14px !important; }
+        .codex-panel-usage-toolbar > svg, .codex-panel-usage-toolbar > .codex-panel-usage-separator { display: none !important; }
+      }
       .codex-panel-usage-line > [data-usage-speed], .codex-panel-usage-line > [data-usage-cache] { display: inline-flex; align-items: center; }
       .codex-panel-usage-odometer { display: inline-flex; height: 14px; font-variant-numeric: tabular-nums; }
       .codex-panel-usage-reel { display: block; width: 0.64em; height: 14px; overflow: hidden; }
@@ -3526,13 +3536,19 @@
         const line = document.createElement("div");
         line.setAttribute(OWNED_ATTRIBUTE, "true");
         line.className = "codex-panel-usage-line";
-        line.style.cssText = "font-size:12px;line-height:24px;text-align:center;color:var(--color-token-text-secondary,#888);font-variant-numeric:tabular-nums;flex:none;";
-        line.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:6px"><path d="M3 18a9 9 0 1 1 18 0"/><path data-usage-needle d="M12 15V8" transform="rotate(-90 12 15)"/><circle cx="12" cy="15" r="1"/></svg><span data-usage-speed></span>　 ·　 <svg aria-hidden="true" width="14" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:4px"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v14c0 4 14 4 14 0V5M5 12c0 4 14 4 14 0"/></svg><span data-usage-cache></span>';
+        line.style.cssText = "font-size:12px;line-height:24px;text-align:center;color:var(--color-token-text-secondary,#888);font-variant-numeric:tabular-nums;";
+        line.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:6px"><path d="M3 18a9 9 0 1 1 18 0"/><path data-usage-needle d="M12 15V8" transform="rotate(-90 12 15)"/><circle cx="12" cy="15" r="1"/></svg><span data-usage-speed></span><span class="codex-panel-usage-separator" aria-hidden="true">·</span><svg aria-hidden="true" width="14" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px;margin-right:4px"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v14c0 4 14 4 14 0V5M5 12c0 4 14 4 14 0"/></svg><span data-usage-cache></span>';
         state = { threadId, line, usage: null, pendingTokens: 0, revision: 0 };
         usageLines.set(card, state);
         renderUsageLine(line, null);
       }
-      if (threadUsageAboveComposer) {
+      // 复用原生右侧操作行的空白，不占用编辑区或覆盖模型、发送按钮。
+      const toolbar = !threadUsageAboveComposer
+        && card.querySelector("[data-composer-trailing-controls] .flex.items-center.justify-end");
+      state.line.classList.toggle("codex-panel-usage-toolbar", Boolean(toolbar));
+      if (toolbar) {
+        if (toolbar.firstElementChild !== state.line) toolbar.prepend(state.line);
+      } else if (threadUsageAboveComposer) {
         if (card.previousElementSibling !== state.line) card.before(state.line);
       } else if (card.nextElementSibling !== state.line) card.after(state.line);
       renderUsageState(state);
