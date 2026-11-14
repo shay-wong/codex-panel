@@ -112,7 +112,7 @@ test("host bridge validates thread identity and does not forward renderer file p
 test("composer status follows its own thread and removes values on Home", async () => {
   const source = await readFile(new URL("../inject/codex-panel.user.js", import.meta.url), "utf8");
   const block = source.slice(source.indexOf("  const usageLines = new Map();"), source.indexOf("  function mount() {"));
-  const dom = new JSDOM(`<html lang="zh"><body><div data-codex-composer-root data-composer-placement="thread"><span data-above-composer-conversation-id="local:${id}"></span><div data-composer-surface-variant="default"><textarea></textarea></div></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
+  const dom = new JSDOM(`<html lang="zh"><body><div data-codex-composer-root data-composer-placement="thread"><span data-above-composer-conversation-id="local:${id}"></span><div data-composer-surface-variant="default"><textarea></textarea><div data-composer-trailing-controls><div class="flex items-center justify-end"><button>模型</button><button>发送</button></div></div></div></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
   try {
     dom.window.Element.prototype.getBoundingClientRect = () => ({ height: 100 });
     dom.window.matchMedia = () => ({ matches: true });
@@ -128,7 +128,8 @@ test("composer status follows its own thread and removes values on Home", async 
     const line = dom.window.document.querySelector(".codex-panel-usage-line");
     assert.match(line.textContent, /20.0\s*tok\/s.*缓存命中\s*81.0%/);
     assert.equal(line.querySelectorAll('svg[aria-hidden="true"][stroke="currentColor"]').length, 2);
-    assert.equal(line.previousElementSibling.hasAttribute("data-composer-surface-variant"), true);
+    assert.equal(line.parentElement.closest("[data-composer-trailing-controls]") != null, true);
+    assert.equal(line.nextElementSibling.textContent, "模型");
     dom.window.renderUsage(line, { speed: null, cache: null, inProgress: true });
     assert.equal(line.querySelectorAll('.codex-panel-usage-dots i').length, 6);
     assert.match(line.querySelector('[data-usage-speed]').getAttribute('aria-label'), /统计中/);
