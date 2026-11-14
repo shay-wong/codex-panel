@@ -627,6 +627,8 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 
 ### Codex Rspack 模块兼容
 
+- 2026-11-14 核对 26.1111.21308 / build 27194：原始 7,328 个 factory 的六项适配准备全部通过，无功能代码变更。新版原生 footer 与当前用量工具栏选择器匹配；更新状态、频道、旧自动任务 registry 和输入框发送标记隔离调用通过；真实 MYVk/jMec 的设置就绪复放仍需要现有队列刷新适配。57 项定向检查通过。隔离 App 副本确认 `enableUpdater=false`、`enableSparkle=false`，适配器准备无异常；原生与注入后都停在 startup-loader，因此不能声称真实 Fast/Ultrafast 点击、完整发送或工作树切换通过。用户说明与验证边界见 `docs/fork-capabilities.md#rspack-based-codex-builds`。
+
 - 等待上游吸收：适配 26.1103.31037 / build 25241 从命名 ESM 切换到 Rspack 数字 chunk 后失效的自定义 API 发送限制、Ultrafast、Dot、会话标签和更新状态。既有开关、官方模型名单、local/custom 限定、安全策略、会话唯一位置与焦点行为保持。
 - 路径：`prepareNativeAdapters` → 只读解析当前 `app.asar` 的模块声明 → 按语义及 require/export 关系准备 factory 改写 → CDP Fetch 仅替换该版本主入口成功响应 → new-document runtime 在原生执行前代理模块注册表 → 初始或延迟加载时替换已验证的 factory。无 bootstrap 时主入口保留原生执行；源码不匹配时不替换。原生应用文件不写入，不在准备阶段执行模块，不按 chunk hash 或模块 ID 建版本表。
 - 代码：`scripts/codex-rspack-source.mjs`、`scripts/codex-rspack.mjs`、`scripts/codex-rspack-quota.mjs`、`scripts/codex-rspack-capabilities.mjs`、`scripts/codex-rspack-tabs.mjs`、`scripts/codex-update.mjs`、`scripts/codex-injector.mjs`。两个安装清单必须包含这些 runtime 模块。旧 ESM 路径继续保留；Rspack 菜单与侧栏都真正执行后才报告 ready。
