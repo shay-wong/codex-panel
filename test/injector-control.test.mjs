@@ -37,7 +37,9 @@ test("the injector control endpoint requires the manager token and stays private
         interrupted.push([request.threadId, request.codexHostId]);
         return { interrupted: true };
       },
+      "pet-selection": async () => ({ petId: "panel-lumi" }),
       "use-lumi": async () => ({ petId: "panel-lumi" }),
+      "cancel-lumi": async () => ({ petId: null }),
       shutdown: async () => ({ stopping: ++stopped }),
     },
   });
@@ -93,9 +95,11 @@ test("the injector control endpoint requires the manager token and stays private
     ownership,
   }), { interrupted: true });
   assert.deepEqual(interrupted, [["thread-1", "local"]]);
-  assert.deepEqual(await sendInjectorControlRequest({
-    runtimeFile, startupToken, action: "use-lumi", ownership,
-  }), { petId: "panel-lumi" });
+  for (const [action, petId] of [["pet-selection", "panel-lumi"], ["use-lumi", "panel-lumi"], ["cancel-lumi", null]]) {
+    assert.deepEqual(await sendInjectorControlRequest({
+      runtimeFile, startupToken, action, ownership,
+    }), { petId });
+  }
   assert.deepEqual(await sendInjectorControlRequest({
     runtimeFile, startupToken, action: "retry-thread-tabs", ownership,
   }), { queued: true });
@@ -130,11 +134,13 @@ test("the Windows named pipe action boundary accepts interruption and the built-
   const server = await startInjectorControlServer({
     controlSocket,
     startupToken,
-    actions: ["interrupt-thread", "use-lumi"],
+    actions: ["interrupt-thread", "pet-selection", "use-lumi", "cancel-lumi"],
     handlers: {
       status: async () => ({ ready: true }),
       "interrupt-thread": async () => ({ interrupted: true }),
+      "pet-selection": async () => ({ petId: "panel-lumi" }),
       "use-lumi": async () => ({ petId: "panel-lumi" }),
+      "cancel-lumi": async () => ({ petId: null }),
     },
   });
   context.after(async () => closeInjectorControlServer(server));
@@ -159,9 +165,11 @@ test("the Windows named pipe action boundary accepts interruption and the built-
     action: "interrupt-thread",
     ownership,
   }), { interrupted: true });
-  assert.deepEqual(await sendInjectorControlRequest({
-    runtimeFile, startupToken, action: "use-lumi", ownership,
-  }), { petId: "panel-lumi" });
+  for (const [action, petId] of [["pet-selection", "panel-lumi"], ["use-lumi", "panel-lumi"], ["cancel-lumi", null]]) {
+    assert.deepEqual(await sendInjectorControlRequest({
+      runtimeFile, startupToken, action, ownership,
+    }), { petId });
+  }
   await assert.rejects(sendInjectorControlRequest({
     runtimeFile,
     startupToken,

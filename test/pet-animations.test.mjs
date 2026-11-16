@@ -51,9 +51,12 @@ test('imports a self-contained animation pack, updates one pet, and removes only
   const [builtin] = await readPetAnimations(data);
   assert.equal(builtin.petId, lumi.id);
   assert.equal(builtin.animations.jumping.frames.reduce((total, frame) => total + frame[1], 0), 15_000);
-  assert.deepEqual(await importPetAnimation(data, file), [
-    { petId: 'test-pet', name: 'Test pet', states: ['idle', 'jumping'], hasLookFrames: true },
-  ]);
+  const imported = await importPetAnimation(data, file);
+  assert.deepEqual(imported, [{
+    petId: 'test-pet', name: 'Test pet', states: ['idle', 'jumping'], hasLookFrames: true, builtinLumi: false,
+    preview: { spritesheetUrl: `data:image/png;base64,${png().toString('base64')}`, columns: 2, rows: 2, frame: 0, aspectRatio: 1 },
+  }]);
+  assert.deepEqual(await listPetAnimations(data), imported);
   const [first] = await readPetAnimations(data);
   assert.equal(first.columns, 2);
   assert.deepEqual(first.animations.jumping, manifest.animations.jumping);
@@ -65,15 +68,78 @@ test('imports a self-contained animation pack, updates one pet, and removes only
   await save();
   await importPetAnimation(data, file);
   manifest.petId = 'test-pet'; manifest.name = 'Updated';
+  manifest.animations.idle.frames = [[3, 200]];
   await save();
   const updated = await importPetAnimation(data, file);
   assert.equal(updated.length, 2);
   assert.equal(updated.find(item => item.petId === 'test-pet').name, 'Updated');
+  assert.equal(updated.find(item => item.petId === 'test-pet').preview.frame, 3);
   assert.ok(!(await readdir(directory)).includes(first.spritesheet));
   assert.equal((await readdir(directory)).filter(name => name.endsWith('.png')).length, 2);
   assert.deepEqual((await removePetAnimation(data, 'test-pet')).map(item => item.petId), ['second-pet']);
   assert.equal((await readdir(directory)).filter(name => name.endsWith('.png')).length, 1);
   assert.equal(await readFile(path.join(directory, 'user-note.txt'), 'utf8'), 'keep');
+});
+
+test('groups identical Lumi imports with the built-in pet without changing stored packs', async t => {
+  const { source, data, file } = await fixture(t);
+  const [builtin] = await readPetAnimations(data);
+  const { spritesheetUrl, ...manifest } = builtin;
+  const bytes = Buffer.from(spritesheetUrl.split(',')[1], 'base64');
+  manifest.spritesheet = 'lumi.webp';
+  await writeFile(path.join(source, manifest.spritesheet), bytes);
+  manifest.petId = 'pet-cloud-lumi';
+  manifest.name = 'Lumi imported under another name';
+  await writeFile(file, JSON.stringify(manifest));
+  await importPetAnimation(data, file);
+  manifest.petId = 'different-pet';
+  manifest.animations.idle.frames[0][1] += 1;
+  await writeFile(file, JSON.stringify(manifest));
+  await importPetAnimation(data, file);
+  manifest.petId = 'panel-lumi';
+  await writeFile(file, JSON.stringify(manifest));
+  await importPetAnimation(data, file);
+  const indexFile = path.join(data, 'pet-animations/index.json');
+  const before = await readFile(indexFile, 'utf8');
+  const summaries = await listPetAnimations(data);
+  assert.deepEqual(summaries.map(({ petId, builtinLumi }) => [petId, builtinLumi]), [
+    ['pet-cloud-lumi', true], ['different-pet', false], ['panel-lumi', true],
+  ]);
+  assert.equal(await readFile(indexFile, 'utf8'), before);
+  const packs = await readPetAnimations(data);
+  assert.equal(packs.length, 3);
+  assert.equal(packs.find(item => item.petId === 'panel-lumi').animations.idle.frames[0][1], manifest.animations.idle.frames[0][1]);
+});
+
+test('uses the bundled Lumi directly for identical imports and leftover overrides', async t => {
+  const { source, data, file } = await fixture(t);
+  const [builtin] = await readPetAnimations(data);
+  const { spritesheetUrl, ...manifest } = builtin;
+  const bytes = Buffer.from(spritesheetUrl.split(',')[1], 'base64');
+  manifest.spritesheet = 'lumi.webp';
+  await writeFile(path.join(source, manifest.spritesheet), bytes);
+  await writeFile(file, JSON.stringify(manifest));
+  assert.deepEqual(await importPetAnimation(data, file), []);
+  assert.deepEqual(await readPetAnimations(data), [builtin]);
+  await assert.rejects(readdir(path.join(data, 'pet-animations')), { code: 'ENOENT' });
+
+  const directory = path.join(data, 'pet-animations');
+  await mkdir(directory, { recursive: true });
+  const storedImage = '11111111-1111-1111-1111-111111111111.webp';
+  await writeFile(path.join(directory, storedImage), bytes);
+  await writeFile(path.join(directory, 'index.json'), JSON.stringify([{ ...manifest, spritesheet: storedImage }]));
+  assert.deepEqual(await listPetAnimations(data), []);
+  assert.deepEqual(await readPetAnimations(data), [builtin]);
+
+  manifest.animations.idle.frames[0][1] += 1;
+  await writeFile(file, JSON.stringify(manifest));
+  assert.equal((await importPetAnimation(data, file)).length, 1);
+  manifest.animations.idle.frames[0][1] -= 1;
+  await writeFile(file, JSON.stringify(manifest));
+  assert.deepEqual(await importPetAnimation(data, file), []);
+  assert.deepEqual(await readPetAnimations(data), [builtin]);
+  assert.deepEqual(JSON.parse(await readFile(path.join(directory, 'index.json'), 'utf8')), []);
+  assert.equal((await readdir(directory)).filter(name => name.endsWith('.webp')).length, 0);
 });
 
 test('rejects invalid frames, non-divisible grids and paths outside the selected package before writing', async t => {

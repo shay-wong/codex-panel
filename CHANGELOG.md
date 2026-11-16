@@ -6,9 +6,9 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
-- Bundle Lumi as a built-in pet with a preview and one-click selection, including nine native actions, sixteen look directions and the existing hover heart-and-dance animation.
+- Add a separate Pets page with matching preview cards for built-in and imported resources. Lumi shows its actual native selection and can be canceled to restore the default Codex pet. Built-in Lumi, its custom override, and identical imported copies share a single card. Identical animations use the built-in resource directly, without a duplicate override or restore action.
 
-- Import custom pet animation packs in Preferences, with configurable state sequences, frame timing, loops and look directions; apply changes to main and floating pet windows without restarting Codex.
+- Bundle the updated Lumi with nine native actions, sixteen look directions, cleaned hair edges, a consistent curved outfit hem, and a 15-second hover dance with an aligned arm-lowering transition. Import custom animation packs on the Pets page, with configurable state sequences, timing, loops and look directions; apply changes to main and floating pets without restarting Codex.
 
 ## 0.5.4-fork
 

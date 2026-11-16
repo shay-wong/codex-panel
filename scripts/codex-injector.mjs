@@ -42,8 +42,8 @@ import { prepareCodexProviderUltrafast } from "./codex-provider-ultrafast.mjs";
 import { createUltrafastCatalogAdapter } from "./codex-provider-ultrafast-catalog.mjs";
 import { prepareCodexProviderQuotaFix, watchCodexProviderQuotaPreferences } from "./codex-provider-quota.mjs";
 import { prepareCodexRspack } from "./codex-rspack.mjs";
-import { selectBuiltinLumi } from "./codex-rspack-pets.mjs";
-import { readPetAnimations } from "./pet-animations.mjs";
+import { nativePetSelection } from "./codex-rspack-pets.mjs";
+import { listPetAnimations, readPetAnimations } from "./pet-animations.mjs";
 import { createPanelSupervisor } from "./panel-supervisor.mjs";
 import {
   CdpPipeBrowser,
@@ -3477,7 +3477,7 @@ async function main() {
       controlServer = await startInjectorControlServer({
         controlSocket,
         startupToken: options.startupToken,
-        actions: process.platform === "win32" ? ["interrupt-thread", "use-lumi"] : undefined,
+        actions: process.platform === "win32" ? ["interrupt-thread", "pet-selection", "use-lumi", "cancel-lumi"] : undefined,
         handlers: {
           "codex-update-status": async () => {
             if (process.platform !== "darwin" || options.cdpPipe) throw new Error("安装后由 Panel 重启目前需要 macOS TCP 连接模式");
@@ -3564,17 +3564,20 @@ async function main() {
             }
             return { opened: true, ...readiness };
           },
-          "use-lumi": async () => {
+          ...Object.fromEntries(["pet-selection", "use-lumi", "cancel-lumi"].map(action => [action, async () => {
             const cdp = [...injectedTargets.values()].find(connection => !connection.closed);
             if (!cdp) throw new Error("请先通过 Panel 连接 Codex");
+            const lumiPetIds = action === "cancel-lumi"
+              ? (await listPetAnimations(panelDataDirectory)).filter(pet => pet.builtinLumi).map(pet => pet.petId) : [];
             const response = await cdp.send("Runtime.evaluate", {
-              expression: `(async () => (${selectBuiltinLumi})(await (${findCodexRspackRequire})()))()`,
+              expression: `(async () => (${nativePetSelection})(await (${findCodexRspackRequire})(),${JSON.stringify(action)},${JSON.stringify(lumiPetIds)}))()`,
               awaitPromise: true, returnByValue: true,
             });
-            if (response.exceptionDetails) throw new Error(response.exceptionDetails.exception?.description ?? "无法启用 Lumi");
-            if (response.result?.value?.petId !== "panel-lumi") throw new Error("Codex 未确认启用 Lumi");
+            if (response.exceptionDetails) throw new Error(response.exceptionDetails.exception?.description ?? "无法读取宠物选择");
+            const petId = response.result?.value?.petId;
+            if (petId !== null && typeof petId !== "string") throw new Error("Codex 未返回有效的宠物选择");
             return response.result.value;
-          },
+          }])),
           "interrupt-thread": async (request) => {
             const threadId = typeof request.threadId === "string" ? request.threadId.trim() : "";
             const codexHostId = typeof request.codexHostId === "string" ? request.codexHostId.trim() : "";

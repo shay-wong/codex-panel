@@ -3156,14 +3156,32 @@ struct PetAnimationSummary {
     name: String,
     states: Vec<String>,
     has_look_frames: bool,
+    builtin_lumi: bool,
+    preview: PetAnimationPreview,
 }
 
-async fn run_pet_animation_command(
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PetAnimationPreview {
+    spritesheet_url: String,
+    columns: u32,
+    rows: u32,
+    frame: u32,
+    aspect_ratio: f64,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PetSelection {
+    pet_id: Option<String>,
+}
+
+async fn run_pet_animation_command<T: serde::de::DeserializeOwned + Send + 'static>(
     app: AppHandle,
     data_directory: PathBuf,
     operation: &'static str,
     argument: Option<std::ffi::OsString>,
-) -> Result<Vec<PetAnimationSummary>, String> {
+) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let resources = app.path().resource_dir().map_err(|error| error.to_string())?;
         let resources = dunce::simplified(&resources);
@@ -3198,11 +3216,27 @@ async fn list_pet_animations(
 }
 
 #[tauri::command]
+async fn read_pet_selection(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+) -> Result<PetSelection, String> {
+    run_pet_animation_command(app, state.data_directory.clone(), "pet-selection", None).await
+}
+
+#[tauri::command]
 async fn use_builtin_lumi(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
-) -> Result<Vec<PetAnimationSummary>, String> {
+) -> Result<PetSelection, String> {
     run_pet_animation_command(app, state.data_directory.clone(), "use-lumi", None).await
+}
+
+#[tauri::command]
+async fn cancel_builtin_lumi(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+) -> Result<PetSelection, String> {
+    run_pet_animation_command(app, state.data_directory.clone(), "cancel-lumi", None).await
 }
 
 #[tauri::command]
@@ -3692,7 +3726,9 @@ fn main() {
             reveal_data,
             read_model_discovery,
             list_pet_animations,
+            read_pet_selection,
             use_builtin_lumi,
+            cancel_builtin_lumi,
             import_pet_animation,
             remove_pet_animation,
             read_model_context_settings,

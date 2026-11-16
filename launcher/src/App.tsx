@@ -73,6 +73,7 @@ export function App() {
   const [usageSettingsOpen, setUsageSettingsOpen] = useState(false);
   const [workflowUrl, setWorkflowUrl] = useState("");
   const [view, setView] = useState("overview");
+  const [petRefreshKey, setPetRefreshKey] = useState(0);
   const workflowFrame = useRef<HTMLIFrameElement>(null);
   const panelButton = useRef<HTMLButtonElement>(null);
   const keepDiscoveryButton = useRef<HTMLButtonElement>(null);
@@ -114,6 +115,7 @@ export function App() {
     setState(next);
     setSnapshot(next.snapshot);
     setRestartReminder(next.codexRestartReminder ?? "");
+    setPetRefreshKey(current => current + 1);
     if (next.snapshot.phase === "error") setError(next.snapshot.message);
   }
 
@@ -306,12 +308,13 @@ export function App() {
         <Tabs.List aria-label="启动器页面" highContrast size="2" className="launcher-navigation">
           <Tabs.Trigger value="overview"><LinearIcon name="home" />运行概览</Tabs.Trigger>
           <Tabs.Trigger value="preferences"><LinearIcon name="settings" />偏好设置</Tabs.Trigger>
+          <Tabs.Trigger value="pets"><LinearIcon name="package" />宠物</Tabs.Trigger>
           <Tabs.Trigger value="about"><LinearIcon name="file" />关于</Tabs.Trigger>
         </Tabs.List>
       </aside>
     <main key={workflowUrl ? "workflow" : view} className={`launcher-main${workflowUrl ? " workflow-page" : ""}`} style={modelContextOpen || usageSettingsOpen ? { overflowY: "hidden" } : undefined}>
       {!workflowUrl && <header className="page-heading">
-        <Box><Heading as="h2" size="5">{view === "overview" ? "运行概览" : view === "preferences" ? "偏好设置" : "关于"}</Heading><Text as="p" size="1" color="gray" mt="1">{view === "overview" ? "管理本机服务与 Codex 连接" : view === "preferences" ? "所有项目共用的工作流与使用偏好" : "应用信息与版本更新"}</Text></Box>
+        <Box><Heading as="h2" size="5">{view === "overview" ? "运行概览" : view === "preferences" ? "偏好设置" : view === "pets" ? "宠物" : "关于"}</Heading><Text as="p" size="1" color="gray" mt="1">{view === "overview" ? "管理本机服务与 Codex 连接" : view === "preferences" ? "所有项目共用的工作流与使用偏好" : view === "pets" ? "选择内置伙伴，管理已有宠物的动画资源" : "应用信息与版本更新"}</Text></Box>
         <Flex className="page-heading-actions" align="center" gap="2">
           {iconAction("refresh", "launcher_ui_state", "刷新状态", <span className="refresh-icon" aria-hidden="true">↻</span>)}
           {iconAction("browserPanel", "open_browser_panel", "在浏览器中打开", <LinearIcon name="openExternal" />, !hasProcess)}
@@ -424,7 +427,6 @@ export function App() {
             <section className="preference-section" aria-labelledby="modelContextTitle">
               <Card><Flex className="preference-row" align="center" justify="between" gap="3"><Box><Heading as="h3" size="2" id="modelContextTitle">模型上下文</Heading><Text as="p" size="1" color="gray" mt="1">配置上下文、自动压缩及子代理模型与推理强度</Text></Box><Button variant="soft" disabled={!state || savingPreference} onClick={() => setModelContextOpen(true)}>配置上下文<LinearIcon name="chevronRight" /></Button></Flex></Card>
             </section>
-            <PetAnimationSettings disabled={!state || savingPreference} connected={ready} />
             <section className="preference-section" aria-labelledby="displayTitle">
               <Heading as="h2" size="2" id="displayTitle" mb="2">显示与系统</Heading>
               <div className="preference-rows">
@@ -456,6 +458,9 @@ export function App() {
               </div>
             </section>
             </>}
+          </Tabs.Content>
+          <Tabs.Content value="pets" id="petsView">
+            <PetAnimationSettings disabled={!state || savingPreference} connected={ready} refreshKey={petRefreshKey} />
           </Tabs.Content>
           <Tabs.Content value="about" id="aboutView">
             <Flex align="center" gap="4" mb="5">

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -110,8 +110,34 @@ async function readIndex(directory) {
   return manifests;
 }
 
-function summaries(manifests) {
-  return manifests.map(item => ({ petId: item.petId, name: item.name, states: Object.keys(item.animations), hasLookFrames: Boolean(item.lookFrames) }));
+function animationKey(item, image) {
+  return JSON.stringify([
+    item.columns, item.rows, [...states].map(state => item.animations[state] ?? null), item.lookFrames ?? null,
+    createHash('sha256').update(image).digest('hex'),
+  ]);
+}
+
+async function summaries(manifests, directory) {
+  const builtin = validateManifest(JSON.parse(await readFile(path.join(lumiDirectory, 'animation.json'), 'utf8')));
+  const builtinImage = await readImage(lumiDirectory, builtin);
+  const builtinKey = animationKey(builtin, builtinImage);
+  const result = await Promise.all(manifests.map(async item => {
+    const image = await readImage(directory, item);
+    const matchesBuiltin = animationKey(item, image) === builtinKey;
+    if (item.petId === builtin.petId && matchesBuiltin) return null;
+    const [width, height] = imageDimensions(image, item.spritesheet);
+    const format = path.extname(item.spritesheet).toLowerCase() === '.png' ? 'png' : 'webp';
+    return {
+      petId: item.petId, name: item.name, states: Object.keys(item.animations), hasLookFrames: Boolean(item.lookFrames),
+      builtinLumi: item.petId === builtin.petId || matchesBuiltin,
+      preview: {
+        spritesheetUrl: `data:image/${format};base64,${image.toString('base64')}`,
+        columns: item.columns, rows: item.rows, frame: item.animations.idle.frames[0][0],
+        aspectRatio: width / item.columns / (height / item.rows),
+      },
+    };
+  }));
+  return result.filter(Boolean);
 }
 
 async function writeIndex(directory, manifests) {
@@ -134,7 +160,8 @@ async function removeUnusedImages(directory, previous, next) {
 }
 
 export async function listPetAnimations(dataDirectory) {
-  return summaries(await readIndex(path.join(dataDirectory, 'pet-animations')));
+  const directory = path.join(dataDirectory, 'pet-animations');
+  return summaries(await readIndex(directory), directory);
 }
 
 export async function readBuiltinLumi() {
@@ -150,10 +177,16 @@ export async function readPetAnimations(dataDirectory) {
   const directory = path.join(dataDirectory, 'pet-animations');
   const manifests = await readIndex(directory);
   const builtin = validateManifest(JSON.parse(await readFile(path.join(lumiDirectory, 'animation.json'), 'utf8')));
+  const builtinImage = await readImage(lumiDirectory, builtin);
+  const builtinKey = animationKey(builtin, builtinImage);
   const entries = manifests.map(manifest => ({ manifest, directory }));
   if (!manifests.some(manifest => manifest.petId === builtin.petId)) entries.push({ manifest: builtin, directory: lumiDirectory });
   return Promise.all(entries.map(async ({ manifest, directory: imageDirectory }) => {
-    const image = await readImage(imageDirectory, manifest);
+    let image = await readImage(imageDirectory, manifest);
+    if (manifest.petId === builtin.petId && animationKey(manifest, image) === builtinKey) {
+      manifest = builtin;
+      image = builtinImage;
+    }
     const format = path.extname(manifest.spritesheet).toLowerCase() === '.png' ? 'png' : 'webp';
     return { ...manifest, spritesheetUrl: `data:image/${format};base64,${image.toString('base64')}` };
   }));
@@ -162,6 +195,10 @@ export async function readPetAnimations(dataDirectory) {
 export async function importPetAnimation(dataDirectory, manifestPath) {
   const manifest = validateManifest(JSON.parse((await readLimited(manifestPath, 1024 * 1024)).toString('utf8')));
   const image = await readImage(path.dirname(path.resolve(manifestPath)), manifest);
+  const builtin = validateManifest(JSON.parse(await readFile(path.join(lumiDirectory, 'animation.json'), 'utf8')));
+  if (manifest.petId === builtin.petId && animationKey(manifest, image) === animationKey(builtin, await readImage(lumiDirectory, builtin))) {
+    return removePetAnimation(dataDirectory, manifest.petId);
+  }
   const directory = path.join(dataDirectory, 'pet-animations');
   await mkdir(directory, { recursive: true });
   const previous = await readIndex(directory);
@@ -172,7 +209,7 @@ export async function importPetAnimation(dataDirectory, manifestPath) {
   try { await writeIndex(directory, next); }
   catch (error) { await unlink(path.join(directory, spritesheet)).catch(() => {}); throw error; }
   await removeUnusedImages(directory, previous, next);
-  return summaries(next);
+  return summaries(next, directory);
 }
 
 export async function removePetAnimation(dataDirectory, petId) {
@@ -182,23 +219,22 @@ export async function removePetAnimation(dataDirectory, petId) {
     await writeIndex(directory, next);
     await removeUnusedImages(directory, previous, next);
   }
-  return summaries(next);
+  return summaries(next, directory);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
     const [operation, dataDirectory, value] = process.argv.slice(2);
-    if (!dataDirectory || !['list', 'import', 'remove', 'use-lumi'].includes(operation) || ['import', 'remove'].includes(operation) && !value) {
-      throw new Error('用法：pet-animations.mjs list <数据目录> | import <数据目录> <清单路径> | remove <数据目录> <宠物 ID> | use-lumi <数据目录>');
+    if (!dataDirectory || !['list', 'import', 'remove', 'pet-selection', 'use-lumi', 'cancel-lumi'].includes(operation) || ['import', 'remove'].includes(operation) && !value) {
+      throw new Error('用法：pet-animations.mjs list|pet-selection|use-lumi|cancel-lumi <数据目录> | import <数据目录> <清单路径> | remove <数据目录> <宠物 ID>');
     }
-    if (operation === 'use-lumi') {
-      await sendInjectorControlRequest({
-        runtimeFile: path.join(dataDirectory, 'launcher-runtime.json'), action: 'use-lumi',
+    const result = ['pet-selection', 'use-lumi', 'cancel-lumi'].includes(operation)
+      ? await sendInjectorControlRequest({
+        runtimeFile: path.join(dataDirectory, 'launcher-runtime.json'), action: operation,
         ownership: { nodePath: process.execPath, injectorPath: fileURLToPath(new URL('./codex-injector.mjs', import.meta.url)) },
-      });
-    }
-    const result = operation === 'list' || operation === 'use-lumi' ? await listPetAnimations(dataDirectory)
-      : operation === 'import' ? await importPetAnimation(dataDirectory, value) : await removePetAnimation(dataDirectory, value);
+      })
+      : operation === 'list' ? await listPetAnimations(dataDirectory)
+        : operation === 'import' ? await importPetAnimation(dataDirectory, value) : await removePetAnimation(dataDirectory, value);
     console.log(JSON.stringify(result));
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

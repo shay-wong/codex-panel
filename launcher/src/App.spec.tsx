@@ -384,3 +384,43 @@ it("keeps restart reminders until a confirmed restart starts, including after re
   expect(screen.queryByText(/Ultrafast 设置已保存/)).toBeNull();
   view.unmount();
 });
+
+it("opens pets from its own navigation page and refreshes the real selection when the launcher reopens", async () => {
+  vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const state: LauncherState = {
+    snapshot: { phase: "running", version: "test", message: "Ready", childPid: 1, embeddedVisible: true, threadTabsPhase: "ready", threadTabsMessage: "", openRequestPending: false, updateMessage: "", updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false, appPath: "/disposable/Codex.app" },
+    preferences: { autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false },
+    autostart: false, dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
+  };
+  let selected: string | null = "panel-lumi";
+  let windowOpened!: () => void;
+  const invoke = vi.fn(async (command: string) => {
+    if (command === "launcher_ui_state") return structuredClone(state);
+    if (command === "list_pet_animations") return [];
+    if (command === "read_pet_selection") return { petId: selected };
+    throw new Error(command);
+  });
+  vi.stubGlobal("__TAURI__", { core: { invoke }, event: { listen: async (event: string, listener: () => void) => {
+    if (event === "launcher-window-opened") windowOpened = listener;
+    return () => {};
+  } } });
+  render(<Theme><App /></Theme>);
+  await act(async () => {});
+  fireEvent.mouseDown(screen.getByRole("tab", { name: /偏好设置/ }), { button: 0, ctrlKey: false });
+  await act(async () => {});
+  expect(within(document.getElementById("preferencesView")!).queryByText("Lumi")).toBeNull();
+  expect(invoke).not.toHaveBeenCalledWith("read_pet_selection");
+  fireEvent.mouseDown(screen.getByRole("tab", { name: /宠物/ }), { button: 0, ctrlKey: false });
+  await act(async () => {});
+  expect(document.getElementById("petsView")?.getAttribute("data-state")).toBe("active");
+  expect(within(document.getElementById("petsView")!).getByRole("button", { name: "取消使用" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "宠物" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "导入动画资源" })).toBeTruthy();
+  selected = null;
+  await act(async () => { windowOpened(); });
+  expect(screen.getByRole("button", { name: "使用 Lumi" })).toBeTruthy();
+  selected = "panel-lumi";
+  await act(async () => { fireEvent.click(document.getElementById("refresh")!); });
+  await screen.findByRole("button", { name: "取消使用" });
+});

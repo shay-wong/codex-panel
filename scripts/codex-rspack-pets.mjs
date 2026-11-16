@@ -47,20 +47,28 @@ export function createPetAnimationRuntime(initialPacks = [], builtinPet) {
   };
 }
 
-export async function selectBuiltinLumi(load) {
+export async function nativePetSelection(load, action, lumiPetIds = []) {
+  if (!['pet-selection', 'use-lumi', 'cancel-lumi'].includes(action)) throw Error('不支持的宠物操作');
   const runtime = globalThis.__codexPanelRspack__;
-  if (!load || runtime?.require !== load || !runtime.prepared.pets) throw Error('请先通过 Panel 连接 Codex');
-  const catalog = runtime.findModule(['The original Codex companion.', 'spritesheetUrl', 'custom:']);
-  const available = catalog && Object.values(load(catalog.id)).some(value => Array.isArray(value)
-    && value.some(pet => pet?.id === 'panel-lumi'));
-  if (!available) throw Error('当前 Codex 尚未载入内置 Lumi，请重启 Codex');
+  if (!load || runtime?.require !== load) throw Error('请先通过 Panel 连接 Codex');
+  if (action === 'use-lumi') {
+    const catalog = runtime.prepared.pets && runtime.findModule(['The original Codex companion.', 'spritesheetUrl', 'custom:']);
+    const available = catalog && Object.values(load(catalog.id)).some(value => Array.isArray(value)
+      && value.some(pet => pet?.id === 'panel-lumi'));
+    if (!available) throw Error('当前 Codex 尚未载入内置 Lumi，请重启 Codex');
+  }
   const deadline = Date.now() + 10_000;
   for (;;) {
     const module = runtime.findModule(['setAppHost', 'setAppServices', 'appServices:']);
     const settings = module && load(module.id).appServices?.settings;
     if (settings) {
-      await settings.write('selected-avatar-id', 'panel-lumi');
-      return { petId: 'panel-lumi' };
+      let current = await settings.read('selected-avatar-id');
+      if (action === 'use-lumi' || action === 'cancel-lumi' && (current.effective === 'panel-lumi' || lumiPetIds.includes(current.effective))) {
+        await settings.write('selected-avatar-id', action === 'use-lumi' ? 'panel-lumi' : null);
+        current = await settings.read('selected-avatar-id');
+      }
+      if (current.effective !== null && typeof current.effective !== 'string') throw Error('Codex 未返回有效的宠物选择');
+      return { petId: current.effective };
     }
     if (Date.now() >= deadline) throw Error('Codex 原生宠物设置尚未就绪');
     await new Promise(resolve => window.setTimeout(resolve, 50));
