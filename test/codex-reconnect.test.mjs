@@ -21,6 +21,7 @@ test("resident injector replaces the stale connection and publishes the recovere
   assert.ok(start >= 0 && end > start);
   const calls = [];
   const connections = new Map([["old", { close() { calls.push("connection closed"); } }]]);
+  const avatarConnections = new Map([["old-avatar", { close() { calls.push("avatar closed"); } }]]);
   const run = vm.runInNewContext(`async () => {
     let cdpVersionUrl = "http://127.0.0.1:41001/json/version";
     let cdpRuntime = {close() { calls.push("runtime closed"); }};
@@ -28,7 +29,7 @@ test("resident injector replaces the stale connection and publishes the recovere
     ${source.slice(start, end)}
     return { cdpVersionUrl, codexProcess, port: cdpRuntime.port };
   }`, {
-    calls, injectedTargets: connections,
+    calls, injectedTargets: connections, avatarConnections,
     options: {cdpPipe:false, attachExisting:true, port:41001, startupToken:"test"},
     isReachable: async () => false, discoverCodexPort: async () => 41002,
     unregisterRoutableCodexConnection: () => calls.push("route removed"),
@@ -43,5 +44,6 @@ test("resident injector replaces the stale connection and publishes the recovere
   assert.equal(result.codexProcess, null);
   assert.equal(result.cdpVersionUrl, "http://127.0.0.1:41002/json/version");
   assert.equal(connections.size, 0);
-  assert.deepEqual(calls, ["route removed","quota removed","connection closed","runtime closed",41002]);
+  assert.equal(avatarConnections.size, 0);
+  assert.deepEqual(calls, ["route removed","quota removed","connection closed","avatar closed","runtime closed",41002]);
 });

@@ -517,7 +517,7 @@ test("injection code identity survives host address and capability rotation", as
   const start = source.indexOf('async function currentInjectionSource()');
   const end = source.indexOf('async function resolveRunnableCodexExecutable', start);
   const context = vm.createContext({
-    createHash, URL, injectionPath: '/fixture/inject.js',
+    createHash, URL, path, projectRoot: '/fixture', injectionPath: '/fixture/inject.js',
     readFile: async (path) => String(path).endsWith('inject.js') ? '// injection' : '// quota',
     panelOrigin: 'http://127.0.0.1:10001', panelPageUrl: 'http://127.0.0.1:10001/first/',
     privatePanelMode: true, hostCapability: 'first', injectionSourceHashName: '__CODEX_PANEL_SOURCE_HASH__',
@@ -528,6 +528,10 @@ test("injection code identity survives host address and capability rotation", as
   const second = await vm.runInContext('currentInjectionSource()', context);
   assert.equal(second.sourceHash, first.sourceHash, 'restarting a service is not a code update');
   assert.notEqual(second.source, first.source, 'connection credentials must still rotate');
+  context.readFile = async (filename) => String(filename).endsWith('spritesheet.webp') ? 'updated pet image'
+    : String(filename).endsWith('inject.js') ? '// injection' : '// quota';
+  const updatedPet = await vm.runInContext('currentInjectionSource()', context);
+  assert.notEqual(updatedPet.sourceHash, first.sourceHash, 'changing packaged pet assets is a code update');
   context.readFile = async () => '// upgraded code';
   const upgraded = await vm.runInContext('currentInjectionSource()', context);
   assert.notEqual(upgraded.sourceHash, first.sourceHash);
@@ -563,7 +567,7 @@ test("Windows initial and repeated Panel opens foreground only the managed PID w
   const end = source.indexOf('    if (options.watch && process.platform === "win32")', start);
   const firstStart = source.indexOf("    if (firstResults.length > 0) {");
   const firstEnd = source.indexOf("    if (!options.watch) {", firstStart);
-  const calls = [], errors = [];
+  const calls = [], errors = [], avatarSyncs = [];
   let denyFocus = false, opens = true;
   const context = {
     process: { platform: "win32", env: { SAFE: "1" } },
@@ -574,12 +578,13 @@ test("Windows initial and repeated Panel opens foreground only the managed PID w
     withoutPanelLauncherEnvironment: (env) => env,
     openRuntimePanel: async () => opens,
     publishManagedStatus: async () => {}, emitLauncherEvent() {},
+    syncAvatarWindows: async (keepAlive) => { avatarSyncs.push(keepAlive); },
     forwardCodexAppServerNotification() {}, registerRoutableCodexConnection() {}, unregisterRoutableCodexConnection() {},
     console: { error: (message) => errors.push(message), log() {} },
   };
   const api = vm.runInNewContext(`(() => {
     let codexProcess = { pid: 456 }, openRequestGeneration = 1, openedRequestGeneration = 0, openRequestInFlight = null;
-    const cdpRuntime = {}, sourceHash = "test", options = { startupToken: "isolated" };
+    const cdpRuntime = {}, sourceHash = "test", options = { startupToken: "isolated", watch: true };
     ${source.slice(start, end)}
     return {
       async initial() {
@@ -592,6 +597,7 @@ test("Windows initial and repeated Panel opens foreground only the managed PID w
   })()`, context);
   await api.initial();
   assert.equal(calls.length, 1);
+  assert.deepEqual(avatarSyncs, [true]);
   assert.equal(await api.reopen(), true);
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[0], { pid: 456, env: { SAFE: "1" } });
