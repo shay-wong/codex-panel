@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Add optional, default-off App/CLI shared sessions for macOS and Windows. The connection settings provide a terminal command that reuses Codex's existing backend without restarting the App. Native approvals remain in the App; disabling sharing disconnects terminal views without canceling App tasks. Ordinary CLI launches remain independent and can still conflict. Existing chats are continued from the CLI; create or fork in the App first. The isolated macOS main flow passed; Windows runtime acceptance is pending; see the [guide](docs/shared-sessions.md).
+
 ## 0.5.5-fork
 
 - Add a separate Pets page with matching preview cards for built-in and imported resources. Lumi shows its actual native selection and can be canceled to restore the default Codex pet. Built-in Lumi, its custom override, and identical imported copies share a single card. Identical animations use the built-in resource directly, without a duplicate override or restore action.

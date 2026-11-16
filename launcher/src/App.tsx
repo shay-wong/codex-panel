@@ -24,7 +24,7 @@ export type LauncherSnapshot = {
   codexUpdateChecking: boolean;
   appPath: string | null;
 };
-export type LauncherPreferences = { autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean };
+export type LauncherPreferences = { sharedSessionBackend: boolean; autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean };
 export type LauncherState = {
   snapshot: LauncherSnapshot;
   preferences: LauncherPreferences;
@@ -63,6 +63,7 @@ export function App() {
   const [busyAction, setBusyAction] = useState("");
   const [feedback, setFeedback] = useState<Record<string, "success" | "failed">>({});
   const [savingPreference, setSavingPreference] = useState(false);
+  const [sharedCliCopied, setSharedCliCopied] = useState(false);
   const [usageMinimum, setUsageMinimum] = useState("5");
   const [usageMaximum, setUsageMaximum] = useState("40");
   const [usageAnimationMode, setUsageAnimationMode] = useState<"smooth" | "morph">("smooth");
@@ -223,12 +224,22 @@ export function App() {
         setState(current => current && ({ ...current, preferences: next }));
       }
       setUltrafastChoice(null);
+      if (key === "sharedSessionBackend") setSharedCliCopied(false);
       if (key === "customProviderUltrafast" || key === "disableCodexAutoUpdate") {
         acceptState(await window.__TAURI__.core.invoke<LauncherState>("launcher_ui_state"));
         setRestartReminderDismissed(false);
       }
     } catch (cause) { setError(String(cause)); }
     finally { setSavingPreference(false); }
+  }
+
+  async function copySharedCliCommand() {
+    setError("");
+    try {
+      const command = await window.__TAURI__.core.invoke<string>("copy_shared_cli_command");
+      await navigator.clipboard.writeText(command);
+      setSharedCliCopied(true);
+    } catch (cause) { setError(String(cause)); }
   }
 
   async function saveUsageAnimationSpeeds() {
@@ -422,6 +433,9 @@ export function App() {
                 <Setting id="autoConnectCodex" title="启动时连接 Codex" detail="打开启动器时，自动连接 Codex" checked={preferences?.autoConnectCodex ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("autoConnectCodex", enabled)} />
                 <Separator size="4" />
                 <Setting id="autoOpenPanel" title="连接后打开任务面板" detail={preferences?.autoConnectCodex ? "连接就绪后自动显示 Panel" : "需先开启“启动时连接 Codex”"} checked={preferences?.autoOpenPanel ?? false} disabled={!preferences?.autoConnectCodex || savingPreference} onChange={enabled => void savePreference("autoOpenPanel", enabled)} />
+                <Separator size="4" />
+                <Setting id="sharedSessionBackend" title="App 与 CLI 共享会话" detail="让终端通过共享 CLI 命令继续已有会话；新建与审批在 App 中完成。" checked={preferences?.sharedSessionBackend ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("sharedSessionBackend", enabled)} />
+                <Flex className="preference-row" justify="end"><Button id="copySharedCliCommand" variant="soft" disabled={!preferences?.sharedSessionBackend || savingPreference || busy} onClick={() => void copySharedCliCommand()}>{sharedCliCopied ? "已复制" : "复制共享 CLI 命令"}</Button></Flex>
               </div>
             </section>
             <section className="preference-section" aria-labelledby="modelContextTitle">

@@ -40,6 +40,8 @@ import { prepareCodexDotEntry } from "./codex-dot-entry.mjs";
 import { prepareCodexThreadTabs } from "./codex-thread-tabs.mjs";
 import { prepareCodexProviderUltrafast } from "./codex-provider-ultrafast.mjs";
 import { createUltrafastCatalogAdapter } from "./codex-provider-ultrafast-catalog.mjs";
+import { startSharedSessionGateway } from "./codex-shared-session.mjs";
+import { readSharedSessionInitialization, retainSharedConversation } from "./codex-shared-session-native.mjs";
 import { prepareCodexProviderQuotaFix, watchCodexProviderQuotaPreferences } from "./codex-provider-quota.mjs";
 import { prepareCodexRspack } from "./codex-rspack.mjs";
 import { nativePetSelection } from "./codex-rspack-pets.mjs";
@@ -1295,6 +1297,7 @@ async function requestCodexAppServerViaCdp(
             finish({
               ok: false,
               error: message.message.error.message || "Codex App Server request failed",
+              rpcError: message.message.error,
             });
             return;
           }
@@ -1336,7 +1339,7 @@ async function requestCodexAppServerViaCdp(
     const response = evaluation.result.value;
     responseDiagnostic = response?.diagnostic;
     outcome = response?.ok ? "success" : response?.failure === "timeout" ? "timeout" : "rpc-error";
-    if (!response?.ok) throw new Error(response?.error || "Codex App Server request failed");
+    if (!response?.ok) throw Object.assign(new Error(response?.error || "Codex App Server request failed"), response?.rpcError);
     return response.result;
   } finally {
     console.error(JSON.stringify({ event: "panel.app-server.request", phase: "end", at: new Date().toISOString(), ...diagnostic, outcome, elapsedMs: Date.now() - startedAt, ...responseDiagnostic }));
@@ -3173,6 +3176,9 @@ async function main() {
   let openControl = null;
   let openSignalHandler = null;
   let preferencesWatcher = null;
+  let sharedSessionGateway = null;
+  let sharedSessionSync = Promise.resolve();
+  const sharedConversationConnections = new Map();
   let stopHostHeartbeats = null;
   const injectedTargets = new Map();
   const avatarConnections = new Map();
@@ -3186,12 +3192,27 @@ async function main() {
     for (const resolve of codexRendererWaiters) resolve();
     codexRendererWaiters.clear();
   };
+  const resetSharedSessionGateway = () => {
+    const gateway = sharedSessionGateway;
+    sharedSessionGateway = null;
+    sharedSessionSync = sharedSessionSync.catch(() => {}).then(() => gateway?.close())
+      .catch(error => console.error(`Panel 共享会话断开失败：${error.message}`));
+  };
   const registerRoutableCodexConnection = (connection) => {
+    if (!routableCodexConnections.has(connection)) {
+      connection.on("Runtime.executionContextsCleared", () => {
+        if ([...sharedConversationConnections.values()].includes(connection)) resetSharedSessionGateway();
+      });
+    }
     routableCodexConnections.add(connection);
     wakeCodexRendererRequests();
   };
   const unregisterRoutableCodexConnection = (connection) => {
     routableCodexConnections.delete(connection);
+    if ([...sharedConversationConnections.values()].includes(connection)) {
+      // 页面重载会销毁原生租约；关闭旧 CLI 连接，让重连重新建立订阅。
+      resetSharedSessionGateway();
+    }
     for (const [hostId, current] of remoteCodexConnections) {
       if (current === connection) remoteCodexConnections.delete(hostId);
     }
@@ -3250,8 +3271,60 @@ async function main() {
       message.params,
     );
   };
+  const syncSharedSessionGateway = () => {
+    sharedSessionSync = sharedSessionSync.catch(() => {}).then(async () => {
+      let enabled = panelEnvironment("SHARED_SESSION_BACKEND") === "1";
+      const preferencesFile = panelEnvironment("PREFERENCES_FILE");
+      if (preferencesFile) {
+        const preferences = JSON.parse(await readFile(preferencesFile, "utf8"));
+        enabled = preferences.sharedSessionBackend === true;
+      }
+      if (stopping || !enabled) {
+        await sharedSessionGateway?.close();
+        sharedSessionGateway = null;
+        return;
+      }
+      if (sharedSessionGateway) return;
+      sharedSessionGateway = await startSharedSessionGateway({
+        dataDirectory: panelDataDirectory,
+        executable: process.env.CODEX_EXECUTABLE,
+        request: async (method, params) => requestCodexAppServerViaCdp(
+          await codexConnectionForHost("local"), "local", method, params,
+        ),
+        initializeResult: async () => {
+          const cdp = await codexConnectionForHost("local");
+          const response = await cdp.send("Runtime.evaluate", {
+            expression: `(async () => (${readSharedSessionInitialization})(await (${findCodexRspackRequire})()))()`,
+            awaitPromise: true, returnByValue: true,
+          });
+          if (response.exceptionDetails) throw Error(response.exceptionDetails.exception?.description ?? "无法读取 Codex 原生连接信息");
+          return response.result.value;
+        },
+        retainThread: async threadId => {
+          const cdp = await codexConnectionForHost("local");
+          const response = await cdp.send("Runtime.evaluate", {
+            expression: `(async () => (${retainSharedConversation})(await (${findCodexRspackRequire})(),${JSON.stringify(threadId)},true))()`,
+            awaitPromise: true, returnByValue: true,
+          });
+          if (response.exceptionDetails) throw Error(response.exceptionDetails.exception?.description ?? "无法保留共享会话");
+          sharedConversationConnections.set(threadId, cdp);
+        },
+        releaseThread: async threadId => {
+          const cdp = sharedConversationConnections.get(threadId);
+          sharedConversationConnections.delete(threadId);
+          if (!cdp || cdp.closed) return;
+          await cdp.send("Runtime.evaluate", {
+            expression: `(${retainSharedConversation})(null,${JSON.stringify(threadId)},false)`,
+            awaitPromise: true, returnByValue: true,
+          });
+        },
+      });
+    });
+    return sharedSessionSync;
+  };
   const forwardCodexAppServerNotification = (cdp, notification) => {
     if (remoteCodexConnections.get(notification.hostId) !== cdp) return;
+    if (notification.hostId === "local") sharedSessionGateway?.publish(notification);
     if (!panelChild?.connected) return;
     panelChild.send({
       type: "panel:codex-app-server-notification",
@@ -3288,6 +3361,8 @@ async function main() {
     if (cleanupPromise) return cleanupPromise;
     cleanupPromise = (async () => {
       preferencesWatcher?.close();
+      await sharedSessionSync.catch(() => {});
+      await sharedSessionGateway?.close();
       await ultrafastCatalog.close();
       stopHostHeartbeats?.();
       injectedTargets.forEach((connection) => {
@@ -3707,7 +3782,9 @@ async function main() {
       return;
     }
 
+    await syncSharedSessionGateway().catch(error => console.error(`Panel 共享会话启动失败：${error.message}`));
     preferencesWatcher = watchCodexProviderQuotaPreferences(panelEnvironment("PREFERENCES_FILE"), () => {
+      void syncSharedSessionGateway().catch(error => console.error(`Panel 共享会话更新失败：${error.message}`));
       void ultrafastCatalog.sync().catch(error => {
         console.error(`Panel Ultrafast catalog update failed: ${error.message}`);
       });
@@ -3726,6 +3803,7 @@ async function main() {
       ]);
       if (stopping) break;
       try {
+        await syncSharedSessionGateway();
         const service = await supervisor.ensure();
         if (service.restarted && panelRuntimeFile && options.startupToken) {
           await publishInjectorRuntime(panelRuntimeFile, {

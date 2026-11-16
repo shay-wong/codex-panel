@@ -21,7 +21,7 @@ it("keeps launcher feedback, live status and global preferences working through 
       updateMessage: "尚未检查更新。", updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false,
       appPath: "/disposable/Codex.app",
     },
-    preferences: { autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false },
+    preferences: { sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false },
     autostart: true, dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
   };
   let statusListener!: (event: { payload: LauncherSnapshot }) => void;
@@ -33,8 +33,13 @@ it("keeps launcher feedback, live status and global preferences working through 
   let discoveryShouldFail = false;
   const unlisten = vi.fn();
   const workflowUrl = "http://127.0.0.1:1/?view=workflow-settings";
+  const sharedCliCommand = "'/disposable/panel' --shared-cli";
+  const writeClipboard = vi.fn();
+  const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: writeClipboard } });
   const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
     if (command === "list_pet_animations") return [];
+    if (command === "copy_shared_cli_command") return sharedCliCommand;
     if (command === "open_embedded_panel") current.snapshot.openRequestPending = true;
     if (command === "open_browser_panel" && browserShouldFail) throw new Error("open failed");
     if (command === "reconnect_codex") await new Promise<void>(resolve => { finishRestart = resolve; });
@@ -229,8 +234,20 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(autoOpen.getAttribute("aria-checked")).toBe("true");
   await click(autoConnect);
   expect(autoOpen.disabled).toBe(false);
+  const sharedSession = screen.getByRole("switch", { name: "App 与 CLI 共享会话" });
+  expect(sharedSession.getAttribute("aria-checked")).toBe("false");
+  expect(button("copySharedCliCommand").disabled).toBe(true);
+  await click(sharedSession);
+  expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "sharedSessionBackend", enabled: true });
+  expect(sharedSession.getAttribute("aria-checked")).toBe("true");
+  await click(button("copySharedCliCommand"));
+  expect(invoke).toHaveBeenCalledWith("copy_shared_cli_command");
+  expect(writeClipboard).toHaveBeenCalledWith(sharedCliCommand);
+  expect(button("copySharedCliCommand").textContent).toBe("已复制");
+  await click(sharedSession);
+  expect(button("copySharedCliCommand").disabled).toBe(true);
   await click(screen.getByRole("switch", { name: "隐藏额度耗尽提示" }));
-  expect(current.preferences).toEqual({ autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false });
+  expect(current.preferences).toEqual({ sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false });
   const quotaFix = screen.getByRole("switch", { name: "移除账号额度不足时 API 发送限制" });
   const restartCount = invoke.mock.calls.filter(([command]) => command === "reconnect_codex").length;
   await click(quotaFix);
@@ -318,6 +335,8 @@ it("keeps launcher feedback, live status and global preferences working through 
   });
   expect(screen.queryByTitle("全局工作流设置")).toBeNull();
   expect(button("configureWorkflows")).toBeTruthy();
+  if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
+  else Reflect.deleteProperty(navigator, "clipboard");
   view.unmount();
   expect(unlisten).toHaveBeenCalledOnce();
 }, 15_000);
@@ -390,7 +409,7 @@ it("opens pets from its own navigation page and refreshes the real selection whe
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const state: LauncherState = {
     snapshot: { phase: "running", version: "test", message: "Ready", childPid: 1, embeddedVisible: true, threadTabsPhase: "ready", threadTabsMessage: "", openRequestPending: false, updateMessage: "", updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false, appPath: "/disposable/Codex.app" },
-    preferences: { autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false },
+    preferences: { sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false },
     autostart: false, dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
   };
   let selected: string | null = "panel-lumi";
