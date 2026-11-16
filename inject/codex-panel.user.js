@@ -280,6 +280,8 @@
       .codex-panel-phrases-dialog button[type="submit"] { background: var(--color-token-foreground, CanvasText); color: var(--color-token-main-surface-primary, Canvas); }
       .codex-panel-usage-number-text { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
       .codex-panel-usage-line { display: flex; align-items: center; justify-content: center; flex: none; }
+      /* Keep present queues open when the native exit style remains applied. */
+      [data-codex-panel-queued-messages][data-composer-rail-item="present"] { grid-template-rows: 1fr !important; }
       .codex-panel-usage-toolbar { flex: 1 1 0; min-width: 0; margin-inline: 6px; white-space: nowrap; overflow: hidden; container-type: inline-size; }
       .codex-panel-usage-toolbar + * { flex: 0 1 auto; }
       .codex-panel-usage-separator { margin-inline: 12px; }
