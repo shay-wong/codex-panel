@@ -6,6 +6,8 @@
 
 ## 未发布
 
+## 0.5.6-fork
+
 - macOS / Windows 新增默认关闭的 App / CLI 共享会话，连接设置可复制终端命令，复用 Codex 当前后台，无需重启 App。原生审批仍在 App 处理；关闭共享只断开终端视图，不取消 App 任务。普通 CLI 启动仍独立，同一会话仍可能冲突。共享 CLI 续接已有会话，新建和分叉先在 App 完成。macOS 隔离主流程已通过，Windows 实机验收待完成，详见[使用指南](docs/shared-sessions.md)。
 
 ## 0.5.5-fork
