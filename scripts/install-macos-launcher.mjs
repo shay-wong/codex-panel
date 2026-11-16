@@ -62,6 +62,8 @@ const runtimeScriptNames = [
   "codex-thread-tabs.mjs",
   "codex-injector-control.mjs",
   "codex-injector-runtime.mjs",
+  "codex-shared-session.mjs",
+  "codex-shared-session-native.mjs",
   "codex-injector.mjs",
   "codex-rate-limits.mjs",
   "codex-thread-usage.mjs",

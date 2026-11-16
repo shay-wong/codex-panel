@@ -1,5 +1,11 @@
 # Fork capabilities
 
+## App and CLI shared sessions
+
+The macOS and Windows launcher offers **Preferences → Connection behavior → App 与 CLI 共享会话**, off by default. Enable it with Panel connected to Codex, then run the command from **复制共享 CLI 命令** in your terminal. Panel forwards the terminal's requests and notifications through the App's existing local authenticated connection, and uses the native `retainActiveConversation` lease while a CLI view is attached. It does not remove Codex's writer lock or start another backend for that chat. The App keeps its existing transport and does not need to restart. Approvals and questions are handled in the App. Exiting with /quit or disabling sharing releases its view without canceling the App's task. Create or fork chats in the App before selecting them in the shared CLI.
+
+普通 `codex` 启动不会自动加入共享，仍可能与 App 占用同一会话。必须使用 Panel 生成的命令，并保持 Panel 和 Codex 运行。连接凭据保存在本机描述文件，按 `0600` 模式写入，再通过子进程环境传给 CLI；复制命令不包含 token，Windows 使用其文件权限机制。macOS 隔离主流程已验证；Windows 实机和真实账号审批仍待验证。步骤、命令形式和边界见[共享会话指南](shared-sessions.md)。
+
 ## Rspack-based Codex builds
 
 Codex **26.1111.21308 / build 27194** was checked against the existing adapters. All six adapters (custom-provider quota, Fast/Ultrafast, Dot, conversation tabs, queue refresh and imported pet animations) prepare successfully from 7,328 native factories without code changes. Native footer execution confirms the usage-toolbar mount; isolated replays cover update-state subscriptions, legacy automation discovery, composer submission markers and queue readiness. The queue refresh adapter remains necessary. In a disposable App copy, native automatic updates were disabled and adapter preparation reported no errors, but both the unmodified renderer and the injected renderer stayed on the startup loader in the isolated account environment. Full UI interaction, sending and worktree switching were not verified for this build.

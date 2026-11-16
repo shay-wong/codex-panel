@@ -330,6 +330,8 @@ async function copyApplicationResources() {
     "codex-injector-control.mjs",
     "codex-injector.mjs",
     "codex-injector-runtime.mjs",
+    "codex-shared-session.mjs",
+    "codex-shared-session-native.mjs",
     "codex-rate-limits.mjs",
     "codex-thread-usage.mjs",
     "codex-update.mjs",
