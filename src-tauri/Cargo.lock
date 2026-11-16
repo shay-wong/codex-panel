@@ -394,7 +394,7 @@ dependencies = [
 
 [[package]]
 name = "codex-panel-launcher"
-version = "0.5.4-fork"
+version = "0.5.5-fork"
 dependencies = [
  "dispatch2",
  "dunce",
