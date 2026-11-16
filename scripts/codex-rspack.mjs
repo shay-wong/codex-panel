@@ -12,6 +12,12 @@ const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltraf
 const responsePatches = new WeakMap();
 
 export function rewriteRspackQueue(source, context) {
+  if (source.includes('QueuedMessageList:') && source.includes('composer.queuedMessage.interruptedQueue')) {
+    if (source.includes('data-codex-panel-queued-messages')) return null;
+    const items = [...source.matchAll(/\(0,[\w$]+\.jsx\)\([\w$]+\.[\w$]+\.Item,\{initial:!1,/g)];
+    if (items.length !== 1) throw new Error('Native queued-message rail is unsupported');
+    return source.replace(items[0][0], `${items[0][0]}"data-codex-panel-queued-messages":"",`);
+  }
   if (!source.includes('field:"queuedMessages"') || !source.includes('messages:void 0') || source.includes('panelQueueRequire')) return null;
   const id = '[A-Za-z_$][\\w$]*';
   const require = source.match(new RegExp(`^function\\s*[^\\(]*\\(${id},${id},(${id})\\)`))?.[1];

@@ -149,3 +149,22 @@ test('republishing evaluations restores the native queue and disposes every RPC 
   adapted.publish(false);
   assert.equal(adapted.subscriptions.length, 4, 'disposing the watch also removes its publication listener');
 });
+
+test('the native queue forwards its display marker to the rail without changing its messages', () => {
+  const source = 'function(e,t,n){n.d(t,{QueuedMessageList:()=>W});var i=n("jsx"),r=n("rail");function W(e){let id="composer.queuedMessage.interruptedQueue";return(0,i.jsx)(r.l.Item,{initial:!1,variant:"default",children:e.messages})}}';
+  const patched = rewriteRspackQueue(source, {});
+  const exports = {}, Item = Symbol('native rail item');
+  const load = id => id === 'jsx' ? { jsx: (type, props) => ({ type, props }) } : { l: { Item } };
+  load.d = (target, getters) => {
+    for (const [name, get] of Object.entries(getters)) Object.defineProperty(target, name, { get });
+  };
+  vm.runInNewContext(`(${patched})`)({}, exports, load);
+  const messages = [{ id: 'retained-queued-message' }];
+  const result = exports.QueuedMessageList({ messages });
+  assert.equal(result.type, Item);
+  assert.equal(result.props['data-codex-panel-queued-messages'], '');
+  assert.equal(result.props.children, messages);
+  assert.equal(result.props.initial, false);
+  assert.equal(rewriteRspackQueue(patched, {}), null);
+  assert.equal(rewriteRspackQueue(otherSource, {}), null);
+});

@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Restore queued messages hidden by a queue panel stuck collapsed on Codex 26.1111.21308, preserving native send, pause, delete and exit behavior.
+
 ## 0.5.5-fork
 
 - Add a separate Pets page with matching preview cards for built-in and imported resources. Lumi shows its actual native selection and can be canceled to restore the default Codex pet. Built-in Lumi, its custom override, and identical imported copies share a single card. Identical animations use the built-in resource directly, without a duplicate override or restore action.
