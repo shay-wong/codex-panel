@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.5.8-fork
+
 - Restore native queued-message visibility when the core reports queue support after settings have already loaded.
 
 - Import new local pets with use, cancel and remove actions. Add optional animation audio and a sound switch; complete Lumi’s preparation and four-beat closing gesture around the full music phrase, fade on the last beat, and drive frames from the audio clock to prevent cumulative drift.
