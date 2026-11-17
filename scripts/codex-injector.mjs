@@ -2381,6 +2381,7 @@ function installPanelHostBinding(
           let customProviderQuotaFix = false;
           let customProviderUltrafast = false;
           let showCustomProviderDot = false;
+          let defaultProjectlessChat = false;
           const preferencesFile = panelEnvironment("PREFERENCES_FILE");
           if (preferencesFile) {
             try {
@@ -2395,6 +2396,7 @@ function installPanelHostBinding(
               customProviderQuotaFix = preferences.customProviderQuotaFix === true;
               customProviderUltrafast = preferences.customProviderUltrafast === true;
               showCustomProviderDot = preferences.showCustomProviderDot === true;
+              defaultProjectlessChat = preferences.defaultProjectlessChat === true;
             } catch {}
           }
           await cdp.send("Runtime.evaluate", {
@@ -2413,6 +2415,7 @@ function installPanelHostBinding(
               customProviderQuotaFix: ${JSON.stringify(customProviderQuotaFix)},
               customProviderUltrafast: ${JSON.stringify(customProviderUltrafast)},
               showCustomProviderDot: ${JSON.stringify(showCustomProviderDot)},
+              defaultProjectlessChat: ${JSON.stringify(defaultProjectlessChat)},
               startupToken: ${JSON.stringify(startupToken)}
             }, window.location.origin)`,
             returnByValue: true,
