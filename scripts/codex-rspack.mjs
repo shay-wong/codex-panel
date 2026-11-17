@@ -3,12 +3,12 @@ import vm from 'node:vm';
 import { createCodexProviderQuotaRuntime } from './codex-provider-quota.mjs';
 import { readCodexRspack, rspackSourceContext } from './codex-rspack-source.mjs';
 import { rewriteRspackQuota } from './codex-rspack-quota.mjs';
-import { rewriteRspackDot, rewriteRspackUltrafast } from './codex-rspack-capabilities.mjs';
+import { rewriteRspackDot, rewriteRspackUltrafast, rewriteRspackProjectlessChat } from './codex-rspack-capabilities.mjs';
 import { createRspackThreadTabsRuntime, rewriteRspackThreadTabs } from './codex-rspack-tabs.mjs';
 import { createPetAnimationRuntime, rewriteRspackPets } from './codex-rspack-pets.mjs';
 import { readBuiltinLumi } from './pet-animations.mjs';
 
-const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltrafast, dot: rewriteRspackDot, tabs: rewriteRspackThreadTabs, queue: rewriteRspackQueue, pets: rewriteRspackPets };
+const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltrafast, dot: rewriteRspackDot, tabs: rewriteRspackThreadTabs, queue: rewriteRspackQueue, pets: rewriteRspackPets, projectlessChat: rewriteRspackProjectlessChat };
 const responsePatches = new WeakMap();
 
 export function rewriteRspackQueue(source, context) {
@@ -200,7 +200,9 @@ export async function prepareCodexRspack(cdp, appPath, preferencesFile, report =
     const quota=globalThis.__codexPanelProviderQuotaV1__??=createState(${preferences.customProviderQuotaFix === true});
     const speed=globalThis.__codexPanelProviderUltrafastV1__??=createState(${preferences.customProviderUltrafast === true});
     const dot=globalThis.__codexPanelDotEntryV1__??=createState(${preferences.showCustomProviderDot === true});
+    const projectless=globalThis.__codexPanelProjectlessChatV1__??=createState(${preferences.defaultProjectlessChat === true});
     quota.setEnabled(${preferences.customProviderQuotaFix === true});speed.setEnabled(${preferences.customProviderUltrafast === true});dot.setEnabled(${preferences.showCustomProviderDot === true});
+    projectless.setEnabled(${preferences.defaultProjectlessChat === true});
     ${petSource}
     if(globalThis.__codexPanelRspack__)return;
     const plan=${JSON.stringify(plan)};

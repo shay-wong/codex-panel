@@ -24,7 +24,7 @@ export type LauncherSnapshot = {
   codexUpdateChecking: boolean;
   appPath: string | null;
 };
-export type LauncherPreferences = { sharedSessionBackend: boolean; autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean };
+export type LauncherPreferences = { defaultProjectlessChat: boolean; sharedSessionBackend: boolean; autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean };
 export type LauncherState = {
   snapshot: LauncherSnapshot;
   preferences: LauncherPreferences;
@@ -433,6 +433,8 @@ export function App() {
                 <Setting id="autoConnectCodex" title="启动时连接 Codex" detail="打开启动器时，自动连接 Codex" checked={preferences?.autoConnectCodex ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("autoConnectCodex", enabled)} />
                 <Separator size="4" />
                 <Setting id="autoOpenPanel" title="连接后打开任务面板" detail={preferences?.autoConnectCodex ? "连接就绪后自动显示 Panel" : "需先开启“启动时连接 Codex”"} checked={preferences?.autoOpenPanel ?? false} disabled={!preferences?.autoConnectCodex || savingPreference} onChange={enabled => void savePreference("autoOpenPanel", enabled)} />
+                <Separator size="4" />
+                <Setting id="defaultProjectlessChat" title="新聊天默认不带项目" detail="普通新建和“最近”中新建的聊天不关联项目；从具体项目内新建时保留项目。" checked={preferences?.defaultProjectlessChat ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("defaultProjectlessChat", enabled)} />
                 <Separator size="4" />
                 <Setting id="sharedSessionBackend" title="App 与 CLI 共享会话" detail="让终端通过共享 CLI 命令继续已有会话；新建与审批在 App 中完成。" checked={preferences?.sharedSessionBackend ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("sharedSessionBackend", enabled)} />
                 <Flex className="preference-row" justify="end"><Button id="copySharedCliCommand" variant="soft" disabled={!preferences?.sharedSessionBackend || savingPreference || busy} onClick={() => void copySharedCliCommand()}>{sharedCliCopied ? "已复制" : "复制共享 CLI 命令"}</Button></Flex>
