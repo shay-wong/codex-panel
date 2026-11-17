@@ -1,4 +1,24 @@
 // These functions are serialized into the native module loader; keep their helpers local.
+export function rewriteRspackProjectlessChat(source) {
+  const enabled = 'globalThis.__codexPanelProjectlessChatV1__?.getSnapshot()===true';
+  if (source.includes('canStartProjectlessChat:') && source.includes('currentThreadKey:')
+    && source.includes('assignment:null,kind:"projectless"')) {
+    const guard = /if\(([\w$]+)\)return\{assignment:null,kind:"projectless"\}/g;
+    if ([...source.matchAll(guard)].length !== 1) throw new Error('Unsupported default new-chat target');
+    // 普通和最近入口不再继承当前会话的项目；显式项目入口不调用这个选择器。
+    return source.replace(guard, (_, value) => `if(${value}||${enabled})return{assignment:null,kind:"projectless"}`);
+  }
+  if (source.includes('startNewConversation:') && source.includes('onFreshChatDraftCreated:')) {
+    const args = source.match(/function [\w$]+\(([\w$]+),([\w$]+)\)\{(?:(?!function ).)*?let\{activeProject:/s);
+    const binding = /let\{activeProject:([\w$]+),defaultCloudEnvironment:/g;
+    if (!args || [...source.matchAll(binding)].length !== 1) throw new Error('Unsupported native new-chat action');
+    const options = args[2];
+    // 缺省项目才清空；项目内新建、显式工作区和其他导航参数保持原值。
+    return source.replace(binding, match => `if(${enabled}&&${options}?.activeProject===undefined)${options}={...${options},activeProject:null};${match}`);
+  }
+  return null;
+}
+
 export function rewriteRspackUltrafast(source, context) {
   const id = "[A-Za-z_$][\\w$]*";
   const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

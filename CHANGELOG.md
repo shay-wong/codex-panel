@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Add a default-off **新聊天默认不带项目** switch: ordinary and Recent new-chat actions start outside projects, while creation from a specific project keeps that project. Existing chats remain unchanged.
+
 ## 0.5.6-fork
 
 - Add optional, default-off App/CLI shared sessions for macOS and Windows. The connection settings provide a terminal command that reuses Codex's existing backend without restarting the App. Native approvals remain in the App; disabling sharing disconnects terminal views without canceling App tasks. Ordinary CLI launches remain independent and can still conflict. Existing chats are continued from the CLI; create or fork in the App first. The isolated macOS main flow passed; Windows runtime acceptance is pending; see the [guide](docs/shared-sessions.md).
