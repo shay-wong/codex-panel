@@ -79,6 +79,18 @@ test('URLSession downloads 200 responses and unknown-length metadata', { skip: !
   assert.equal(await readFile(metadata, 'utf8'), '<rss/>');
 });
 
+test('system network errors show a short message and retain the original diagnostic in logs', { skip: !macOS }, async t => {
+  const detail = 'Error Domain=NSURLErrorDomain Code=-1200 "A TLS error caused the secure connection to fail." UserInfo={NSErrorFailingURLStringKey=https://updates.oaistatic.com/codex/app/appcast?installation_id=fixture}';
+  const failingHelper = path.join(root, 'network-error');
+  await writeFile(failingHelper, `#!/bin/sh\nprintf '%s\\n' '${detail}' >&2\nexit 1\n`, { mode: 0o700 });
+  const log = t.mock.method(console, 'error', () => {});
+  await assert.rejects(downloadCodexFile({ url: `${baseURL}/metadata`, destination: path.join(root, 'network-failed') }, { helperPath: failingHelper }), {
+    message: '网络连接失败，请检查网络或代理后重试',
+  });
+  assert.equal(log.mock.callCount(), 1);
+  assert.equal(log.mock.calls[0].arguments[1], detail);
+});
+
 test('URLSession resumes 206 and overwrites when a range request receives 200', { skip: !macOS }, async () => {
   for (const route of ['/range', '/full']) {
     const destination = path.join(root, route.slice(1) + '-resumed');

@@ -43,7 +43,12 @@ export async function downloadCodexFile({ url, destination, expectedLength, offs
       lines.close();
       if (signal?.aborted) reject(signal.reason);
       else if (error) reject(error);
-      else if (code !== 0) reject(new Error(stderr.trim() || `Codex 系统下载失败：${exitSignal ?? code}`));
+      else if (code !== 0) {
+        const detail = stderr.trim() || `Codex 系统下载失败：${exitSignal ?? code}`;
+        const networkError = detail.includes('Error Domain=NSURLErrorDomain');
+        if (networkError) console.error('[codex-update] Network request failed:', detail);
+        reject(new Error(networkError ? '网络连接失败，请检查网络或代理后重试' : detail));
+      }
       else resolve();
     });
   });
