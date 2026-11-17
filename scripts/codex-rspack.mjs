@@ -5,7 +5,7 @@ import { readCodexRspack, rspackSourceContext } from './codex-rspack-source.mjs'
 import { rewriteRspackQuota } from './codex-rspack-quota.mjs';
 import { rewriteRspackDot, rewriteRspackUltrafast } from './codex-rspack-capabilities.mjs';
 import { createRspackThreadTabsRuntime, rewriteRspackThreadTabs } from './codex-rspack-tabs.mjs';
-import { createPetAnimationRuntime, rewriteRspackPets } from './codex-rspack-pets.mjs';
+import { createPetAnimationRuntime, rewriteRspackPets, installPetAudioBinding } from './codex-rspack-pets.mjs';
 import { readBuiltinLumi } from './pet-animations.mjs';
 
 const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltrafast, dot: rewriteRspackDot, tabs: rewriteRspackThreadTabs, queue: rewriteRspackQueue, pets: rewriteRspackPets };
@@ -172,7 +172,13 @@ export async function prepareCodexRspack(cdp, appPath, preferencesFile, report =
   const plan = buildRspackPlan(catalog, petsOnly ? { pets: rewriteRspackPets } : transformers);
   for (const [feature, error] of Object.entries(plan.errors)) report(`Panel Rspack ${feature} unavailable: ${error}`);
   if (petsOnly && !plan.prepared.pets) return { source: '', prepared: plan.prepared, errors: plan.errors };
-  const petSource = plan.prepared.pets ? `const pets=globalThis.__codexPanelPetAnimations__??=(${createPetAnimationRuntime})([],${JSON.stringify(await readBuiltinLumi())});pets.setPacks(${JSON.stringify(petAnimations)});` : '';
+  if (plan.prepared.pets) await installPetAudioBinding(cdp);
+  let preferences = {};
+  if (preferencesFile) {
+    try { preferences = JSON.parse(await readFile(preferencesFile, 'utf8')); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  const petSource = plan.prepared.pets ? `const pets=globalThis.__codexPanelPetAnimations__??=(${createPetAnimationRuntime})([],${JSON.stringify(await readBuiltinLumi())});pets.setSoundEnabled(${preferences.petSounds !== false});pets.setPacks(${JSON.stringify(petAnimations)});` : '';
   const entry = rewriteRspackEntry(catalog.main.source, url);
   await installRspackResponse(cdp, url, entry, report);
   if (petsOnly) {
@@ -182,11 +188,6 @@ export async function prepareCodexRspack(cdp, appPath, preferencesFile, report =
       if(globalThis.__codexPanelRspack__)return;
       globalThis.__codexPanelRspack__=(${createCodexRspackRuntime})(${JSON.stringify(plan)});
     })();`, prepared: plan.prepared, errors: plan.errors };
-  }
-  let preferences = {};
-  if (preferencesFile) {
-    try { preferences = JSON.parse(await readFile(preferencesFile, 'utf8')); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
   const source = `(() => {
     if(window!==window.top)return;

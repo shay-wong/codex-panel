@@ -61,6 +61,7 @@ test("avatar injection handles late windows and reconnects without mounting Pane
     waitForRendererReady: async () => {},
     readPetAnimations: async () => [{ petId: "fixture" }],
     panelDataDirectory: "/fixture/data",
+    panelEnvironment: () => undefined,
     prepareCodexRspack: async (...args) => {
       preparations.push(args);
       return { prepared: { pets: true }, source: "globalThis.__codexPanelRspack__={};globalThis.__codexPanelPetAnimations__={};" };
@@ -94,8 +95,10 @@ test("avatar injection handles late windows and reconnects without mounting Pane
   assert.equal(connections.size, 1);
   assert.equal(reloads, 1);
   connections.get("pet").petAnimationsRevision = "old";
+  connections.get("pet").petSoundsEnabled = false;
   events.get("Page.loadEventFired")();
   assert.equal(connections.get("pet").petAnimationsRevision, undefined);
+  assert.equal(connections.get("pet").petSoundsEnabled, undefined);
   assert.equal((await run()).length, 0);
   assert.equal(connects, 1);
   connections.get("pet").close();
@@ -116,22 +119,27 @@ test("avatar injection handles late windows and reconnects without mounting Pane
   assert(preparations.every(([, appPath, preferences, , options]) => appPath === "/fixture/ChatGPT.app" && preferences === undefined && options.petsOnly && options.petAnimations[0].petId === "fixture"));
 });
 
-test("imported pet packs update main and avatar connections without reloading", async t => {
+test("imported pet packs and sound preferences update both windows without reloading animations", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "panel-pet-live-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const directory = path.join(root, "pet-animations"), index = path.join(directory, "index.json");
   await mkdir(directory);
   await writeFile(index, "[]");
-  let packs = [], reads = 0;
+  let packs = [], reads = 0, preferencesFile;
   const start = source.indexOf("async function syncPetAnimations(");
   const end = source.indexOf("async function prepareNativeAdapters(", start);
   const sync = vm.runInNewContext(`${source.slice(start, end)}; syncPetAnimations`, {
-    stat, path, console,
+    stat, path, console, readFile,
+    panelEnvironment: key => { assert.equal(key, "PREFERENCES_FILE"); return preferencesFile; },
     readPetAnimations: async dataDirectory => { assert.equal(dataDirectory, root); reads++; return packs; },
   });
   const commands = [];
   const connections = ["main", "avatar"].map(name => {
-    const page = vm.createContext({ __codexPanelPetAnimations__: { setPacks(next) { this.packs = next; } } });
+    const page = vm.createContext({ __codexPanelPetAnimations__: {
+      packUpdates: 0, soundUpdates: 0,
+      setPacks(next) { this.packs = next; this.packUpdates++; },
+      setSoundEnabled(enabled) { this.soundEnabled = enabled; this.soundUpdates++; },
+    } });
     return { name, page, send: async (method, params) => {
       commands.push(method);
       return { result: { value: vm.runInContext(params.expression, page) } };
@@ -139,8 +147,21 @@ test("imported pet packs update main and avatar connections without reloading", 
   });
   await sync(root, connections);
   assert.equal(reads, 1);
+  for (const connection of connections) assert.equal(connection.page.__codexPanelPetAnimations__.soundEnabled, true);
   await sync(root, connections);
   assert.equal(reads, 1, "unchanged registrations need no resource reread");
+  preferencesFile = path.join(root, "preferences.json");
+  await writeFile(preferencesFile, JSON.stringify({ petSounds: false }));
+  await sync(root, connections);
+  assert.equal(reads, 1, "muting does not reread or restart the current animation");
+  for (const connection of connections) {
+    const runtime = connection.page.__codexPanelPetAnimations__;
+    assert.equal(runtime.soundEnabled, false);
+    assert.equal(runtime.soundUpdates, 2);
+    assert.equal(runtime.packUpdates, 1);
+  }
+  await sync(root, connections);
+  for (const connection of connections) assert.equal(connection.page.__codexPanelPetAnimations__.soundUpdates, 2);
   packs = [{ petId: "imported", spritesheetUrl: "data:image/png;base64,fixture" }];
   await writeFile(index, JSON.stringify([{ petId: "imported" }]));
   await sync(root, connections);

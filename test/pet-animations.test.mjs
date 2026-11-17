@@ -42,24 +42,42 @@ async function fixture(t) {
   return { root, source, data, manifest, file, save };
 }
 
+async function builtinManifest(source, pack) {
+  const { spritesheetUrl, builtinLumi, ...manifest } = structuredClone(pack);
+  manifest.spritesheet = 'lumi.webp';
+  await writeFile(path.join(source, manifest.spritesheet), Buffer.from(spritesheetUrl.split(',')[1], 'base64'));
+  for (const clip of Object.values(manifest.animations)) {
+    if (clip.audio) await writeFile(path.join(source, clip.audio), Buffer.from(clip.audioUrl.split(',')[1], 'base64'));
+    delete clip.audioUrl;
+  }
+  return manifest;
+}
+
 test('imports a self-contained animation pack, updates one pet, and removes only its managed resources', async t => {
-  const { data, file, manifest, save } = await fixture(t);
+  const { source, data, file, manifest, save } = await fixture(t);
   assert.deepEqual(await listPetAnimations(data), []);
   const lumi = await readBuiltinLumi();
   assert.equal(lumi.id, 'panel-lumi');
   assert.equal(lumi.spriteVersionNumber, 2);
   const [builtin] = await readPetAnimations(data);
   assert.equal(builtin.petId, lumi.id);
-  assert.equal(builtin.animations.jumping.frames.reduce((total, frame) => total + frame[1], 0), 15_000);
+  assert.equal(builtin.animations.jumping.frames.reduce((total, frame) => total + frame[1], 0), 18_750);
+  assert.match(builtin.animations.jumping.audioUrl, /^data:audio\/mp4;base64,/);
+  const audio = Buffer.from(builtin.animations.jumping.audioUrl.split(',')[1], 'base64');
+  await writeFile(path.join(source, 'dance.m4a'), audio);
+  manifest.animations.jumping.audio = 'dance.m4a';
+  await save();
   const imported = await importPetAnimation(data, file);
   assert.deepEqual(imported, [{
-    petId: 'test-pet', name: 'Test pet', states: ['idle', 'jumping'], hasLookFrames: true, builtinLumi: false,
+    petId: 'test-pet', name: 'Test pet', states: ['idle', 'jumping'], hasLookFrames: true, builtinLumi: false, selectable: true,
     preview: { spritesheetUrl: `data:image/png;base64,${png().toString('base64')}`, columns: 2, rows: 2, frame: 0, aspectRatio: 1 },
   }]);
   assert.deepEqual(await listPetAnimations(data), imported);
   const [first] = await readPetAnimations(data);
   assert.equal(first.columns, 2);
-  assert.deepEqual(first.animations.jumping, manifest.animations.jumping);
+  assert.deepEqual(first.animations.jumping.frames, manifest.animations.jumping.frames);
+  assert.equal(first.animations.jumping.loop, false);
+  assert.ok(Buffer.from(first.animations.jumping.audioUrl.split(',')[1], 'base64').equals(audio));
   assert.ok(Buffer.from(first.spritesheetUrl.split(',')[1], 'base64').equals(png()));
   const directory = path.join(data, 'pet-animations');
   await writeFile(path.join(directory, 'user-note.txt'), 'keep');
@@ -75,19 +93,26 @@ test('imports a self-contained animation pack, updates one pet, and removes only
   assert.equal(updated.find(item => item.petId === 'test-pet').name, 'Updated');
   assert.equal(updated.find(item => item.petId === 'test-pet').preview.frame, 3);
   assert.ok(!(await readdir(directory)).includes(first.spritesheet));
+  assert.ok(!(await readdir(directory)).includes(first.animations.jumping.audio));
   assert.equal((await readdir(directory)).filter(name => name.endsWith('.png')).length, 2);
+  assert.equal((await readdir(directory)).filter(name => name.endsWith('.m4a')).length, 2);
   assert.deepEqual((await removePetAnimation(data, 'test-pet')).map(item => item.petId), ['second-pet']);
   assert.equal((await readdir(directory)).filter(name => name.endsWith('.png')).length, 1);
+  assert.equal((await readdir(directory)).filter(name => name.endsWith('.m4a')).length, 1);
+  assert.ok((await readFile(path.join(source, 'dance.m4a'))).equals(audio));
   assert.equal(await readFile(path.join(directory, 'user-note.txt'), 'utf8'), 'keep');
 });
 
 test('groups identical Lumi imports with the built-in pet without changing stored packs', async t => {
   const { source, data, file } = await fixture(t);
   const [builtin] = await readPetAnimations(data);
-  const { spritesheetUrl, ...manifest } = builtin;
-  const bytes = Buffer.from(spritesheetUrl.split(',')[1], 'base64');
-  manifest.spritesheet = 'lumi.webp';
-  await writeFile(path.join(source, manifest.spritesheet), bytes);
+  const manifest = await builtinManifest(source, builtin);
+  delete manifest.animations.jumping.audio;
+  // The already imported silent package used the original eight-frame preparation.
+  manifest.animations.jumping.frames = [
+    [104, 117], [105, 117], [106, 118], [107, 117], [108, 117], [109, 117], [110, 117], [111, 118],
+    ...manifest.animations.jumping.frames.slice(12, 236), [36, 937],
+  ];
   manifest.petId = 'pet-cloud-lumi';
   manifest.name = 'Lumi imported under another name';
   await writeFile(file, JSON.stringify(manifest));
@@ -108,16 +133,31 @@ test('groups identical Lumi imports with the built-in pet without changing store
   assert.equal(await readFile(indexFile, 'utf8'), before);
   const packs = await readPetAnimations(data);
   assert.equal(packs.length, 3);
+  assert.equal(packs.find(item => item.petId === 'pet-cloud-lumi').animations.jumping.audioUrl, builtin.animations.jumping.audioUrl);
+  assert.deepEqual(packs.find(item => item.petId === 'pet-cloud-lumi').animations.jumping.frames, builtin.animations.jumping.frames);
   assert.equal(packs.find(item => item.petId === 'panel-lumi').animations.idle.frames[0][1], manifest.animations.idle.frames[0][1]);
+
+  const musicVariant = await builtinManifest(source, builtin);
+  musicVariant.petId = 'different-audio';
+  const wave = Buffer.alloc(46);
+  wave.write('RIFF'); wave.writeUInt32LE(38, 4); wave.write('WAVEfmt ', 8);
+  wave.writeUInt32LE(16, 16); wave.writeUInt16LE(1, 20); wave.writeUInt16LE(1, 22);
+  wave.writeUInt32LE(8000, 24); wave.writeUInt32LE(16000, 28); wave.writeUInt16LE(2, 32); wave.writeUInt16LE(16, 34);
+  wave.write('data', 36); wave.writeUInt32LE(2, 40);
+  musicVariant.animations.jumping.audio = 'different.wav';
+  await writeFile(path.join(source, 'different.wav'), wave);
+  await writeFile(file, JSON.stringify(musicVariant));
+  const variants = await importPetAnimation(data, file);
+  assert.equal(variants.find(item => item.petId === 'different-audio').builtinLumi, false);
+  const variant = (await readPetAnimations(data)).find(item => item.petId === 'different-audio');
+  assert.equal(variant.animations.jumping.audioUrl, `data:audio/wav;base64,${wave.toString('base64')}`);
 });
 
 test('uses the bundled Lumi directly for identical imports and leftover overrides', async t => {
   const { source, data, file } = await fixture(t);
   const [builtin] = await readPetAnimations(data);
-  const { spritesheetUrl, ...manifest } = builtin;
-  const bytes = Buffer.from(spritesheetUrl.split(',')[1], 'base64');
-  manifest.spritesheet = 'lumi.webp';
-  await writeFile(path.join(source, manifest.spritesheet), bytes);
+  const manifest = await builtinManifest(source, builtin);
+  const bytes = Buffer.from(builtin.spritesheetUrl.split(',')[1], 'base64');
   await writeFile(file, JSON.stringify(manifest));
   assert.deepEqual(await importPetAnimation(data, file), []);
   assert.deepEqual(await readPetAnimations(data), [builtin]);
@@ -127,6 +167,7 @@ test('uses the bundled Lumi directly for identical imports and leftover override
   await mkdir(directory, { recursive: true });
   const storedImage = '11111111-1111-1111-1111-111111111111.webp';
   await writeFile(path.join(directory, storedImage), bytes);
+  await writeFile(path.join(directory, manifest.animations.jumping.audio), Buffer.from(builtin.animations.jumping.audioUrl.split(',')[1], 'base64'));
   await writeFile(path.join(directory, 'index.json'), JSON.stringify([{ ...manifest, spritesheet: storedImage }]));
   assert.deepEqual(await listPetAnimations(data), []);
   assert.deepEqual(await readPetAnimations(data), [builtin]);
@@ -155,6 +196,15 @@ test('rejects invalid frames, non-divisible grids and paths outside the selected
   manifest.spritesheet = '../outside.png';
   await save();
   await assert.rejects(importPetAnimation(data, file), /同目录/);
+  manifest.spritesheet = 'spritesheet.png';
+  manifest.animations.jumping.audio = '../outside.mp3';
+  await save();
+  await assert.rejects(importPetAnimation(data, file), /audio 必须是同目录/);
+  manifest.animations.jumping.audio = 'invalid.mp3';
+  await writeFile(path.join(source, 'invalid.mp3'), png());
+  await save();
+  await assert.rejects(importPetAnimation(data, file), /音频内容与格式不符/);
+  delete manifest.animations.jumping.audio;
   if (process.platform !== 'win32') {
     await writeFile(path.join(root, 'outside.png'), png());
     await symlink(path.join(root, 'outside.png'), path.join(source, 'external.png'));

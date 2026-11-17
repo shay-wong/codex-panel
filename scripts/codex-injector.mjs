@@ -2588,7 +2588,7 @@ async function injectAvatarTarget(runtime, target, sourceHash, appPath, keepAliv
     await cdp.send("Runtime.enable");
     await waitForRendererReady(cdp, 15_000);
     const petAnimations = await readPetAnimations(panelDataDirectory);
-    const adapters = await prepareCodexRspack(cdp, appPath, undefined, console.error, { petsOnly: true, petAnimations });
+    const adapters = await prepareCodexRspack(cdp, appPath, panelEnvironment("PREFERENCES_FILE"), console.error, { petsOnly: true, petAnimations });
     if (!adapters?.prepared.pets) throw new Error("Pet animation module is unavailable");
     const currentStatus = await readAvatarInjectionStatus(cdp);
     const source = `${adapters.source}\nglobalThis.__codexPanelPetAnimationsInjectionHash__ = ${JSON.stringify(sourceHash)};`;
@@ -2612,6 +2612,7 @@ async function injectAvatarTarget(runtime, target, sourceHash, appPath, keepAliv
     if (!status.prepared || status.sourceHash !== sourceHash) throw new Error("Pet animation bootstrap is not ready");
     cdp.on("Page.loadEventFired", () => {
       cdp.petAnimationsRevision = undefined;
+      cdp.petSoundsEnabled = undefined;
       void publishRegistration(reconciled.scriptIdentifier).catch(error => {
         console.error(`Pet animation registration failed: ${error.message}`);
       });
@@ -2650,6 +2651,19 @@ async function injectAvatarTargets(runtime, sourceHash, connections, appPath, ke
 async function syncPetAnimations(dataDirectory, connections) {
   const active = connections.filter(connection => !connection.closed);
   if (!active.length) return;
+  let soundEnabled = true;
+  const preferencesFile = panelEnvironment("PREFERENCES_FILE");
+  if (preferencesFile) {
+    try { soundEnabled = JSON.parse(await readFile(preferencesFile, "utf8")).petSounds !== false; }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+  for (const connection of active.filter(connection => connection.petSoundsEnabled !== soundEnabled)) {
+    const result = await connection.send("Runtime.evaluate", {
+      expression: `Boolean(globalThis.__codexPanelPetAnimations__ && (globalThis.__codexPanelPetAnimations__.setSoundEnabled(${soundEnabled}), true))`,
+      returnByValue: true,
+    });
+    if (result.result?.value === true) connection.petSoundsEnabled = soundEnabled;
+  }
   let revision = "missing";
   try {
     const details = await stat(path.join(dataDirectory, "pet-animations", "index.json"));
@@ -2795,6 +2809,7 @@ async function injectTarget(
       scriptIdentifier = reconciled.scriptIdentifier;
       cdp.on("Page.loadEventFired", async () => {
         cdp.petAnimationsRevision = undefined;
+        cdp.petSoundsEnabled = undefined;
         await hostBridge.install();
         await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
         await hostBridge.publishHeartbeat();
@@ -2834,6 +2849,7 @@ async function injectTarget(
     scriptIdentifier = await registerInjectionSource(cdp, source);
     cdp.on("Page.loadEventFired", async () => {
       cdp.petAnimationsRevision = undefined;
+      cdp.petSoundsEnabled = undefined;
       if (keepAlive) await hostBridge.install();
       await publishInjectionScriptIdentifier(cdp, scriptIdentifier);
       if (keepAlive) await hostBridge.publishHeartbeat();
@@ -2983,7 +2999,7 @@ async function currentInjectionSource() {
   const threadTabs = await readFile(new URL("./codex-thread-tabs.mjs", import.meta.url), "utf8");
   const rspack = await Promise.all(["codex-rspack.mjs", "codex-rspack-source.mjs", "codex-rspack-quota.mjs", "codex-rspack-tabs.mjs", "codex-rspack-capabilities.mjs", "codex-rspack-pets.mjs", "pet-animations.mjs"]
     .map(file => readFile(new URL(file, import.meta.url), "utf8")));
-  const lumi = await Promise.all(["pet.json", "spritesheet.webp", "animation.json", "hover.webp"]
+  const lumi = await Promise.all(["pet.json", "spritesheet.webp", "animation.json", "hover.webp", "dance.m4a"]
     .map(async file => createHash("sha256").update(await readFile(path.join(projectRoot, "inject/pets/lumi", file))).digest("hex")));
   const sourceHash = createHash("sha256").update(JSON.stringify({
     userScript,
@@ -3477,7 +3493,7 @@ async function main() {
       controlServer = await startInjectorControlServer({
         controlSocket,
         startupToken: options.startupToken,
-        actions: process.platform === "win32" ? ["interrupt-thread", "pet-selection", "use-lumi", "cancel-lumi"] : undefined,
+        actions: process.platform === "win32" ? ["interrupt-thread", "pet-selection", "use-lumi", "cancel-lumi", "use-pet", "cancel-pet"] : undefined,
         handlers: {
           "codex-update-status": async () => {
             if (process.platform !== "darwin" || options.cdpPipe) throw new Error("安装后由 Panel 重启目前需要 macOS TCP 连接模式");
@@ -3564,13 +3580,20 @@ async function main() {
             }
             return { opened: true, ...readiness };
           },
-          ...Object.fromEntries(["pet-selection", "use-lumi", "cancel-lumi"].map(action => [action, async () => {
+          ...Object.fromEntries(["pet-selection", "use-lumi", "cancel-lumi", "use-pet", "cancel-pet"].map(action => [action, async (request) => {
             const cdp = [...injectedTargets.values()].find(connection => !connection.closed);
             if (!cdp) throw new Error("请先通过 Panel 连接 Codex");
+            let targetPetId;
+            if (action === "use-pet" || action === "cancel-pet") {
+              targetPetId = request.petId;
+              const packs = await readPetAnimations(panelDataDirectory);
+              if (!packs.some(pack => pack.petId === targetPetId)) throw new Error("该宠物尚未导入，请刷新宠物列表");
+              await syncPetAnimations(panelDataDirectory, [...injectedTargets.values(), ...avatarConnections.values()]);
+            }
             const lumiPetIds = action === "cancel-lumi"
               ? (await listPetAnimations(panelDataDirectory)).filter(pet => pet.builtinLumi).map(pet => pet.petId) : [];
             const response = await cdp.send("Runtime.evaluate", {
-              expression: `(async () => (${nativePetSelection})(await (${findCodexRspackRequire})(),${JSON.stringify(action)},${JSON.stringify(lumiPetIds)}))()`,
+              expression: `(async () => (${nativePetSelection})(await (${findCodexRspackRequire})(),${JSON.stringify(action)},${JSON.stringify(lumiPetIds)},${JSON.stringify(targetPetId)}))()`,
               awaitPromise: true, returnByValue: true,
             });
             if (response.exceptionDetails) throw new Error(response.exceptionDetails.exception?.description ?? "无法读取宠物选择");
@@ -3716,6 +3739,7 @@ async function main() {
           console.error(`Panel preference update failed: ${error.message}`);
         });
       }
+      void syncAvatarWindows(true);
     });
     preferencesWatcher?.on("error", error => console.error(`Panel preference watch failed: ${error.message}`));
 

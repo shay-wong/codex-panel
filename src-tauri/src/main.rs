@@ -243,6 +243,8 @@ struct LauncherPreferences {
     show_custom_provider_dot: bool,
     #[serde(default)]
     disable_codex_auto_update: bool,
+    #[serde(default = "enabled_by_default")]
+    pet_sounds: bool,
     #[serde(default)]
     window_size: Option<LauncherWindowSize>,
 }
@@ -274,6 +276,7 @@ impl Default for LauncherPreferences {
             custom_provider_ultrafast: false,
             show_custom_provider_dot: false,
             disable_codex_auto_update: false,
+            pet_sounds: true,
             window_size: None,
         }
     }
@@ -3157,6 +3160,7 @@ struct PetAnimationSummary {
     states: Vec<String>,
     has_look_frames: bool,
     builtin_lumi: bool,
+    selectable: bool,
     preview: PetAnimationPreview,
 }
 
@@ -3240,12 +3244,30 @@ async fn cancel_builtin_lumi(
 }
 
 #[tauri::command]
+async fn use_imported_pet(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+    pet_id: String,
+) -> Result<PetSelection, String> {
+    run_pet_animation_command(app, state.data_directory.clone(), "use-pet", Some(pet_id.into())).await
+}
+
+#[tauri::command]
+async fn cancel_imported_pet(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+    pet_id: String,
+) -> Result<PetSelection, String> {
+    run_pet_animation_command(app, state.data_directory.clone(), "cancel-pet", Some(pet_id.into())).await
+}
+
+#[tauri::command]
 async fn import_pet_animation(
     app: AppHandle,
     window: tauri::WebviewWindow,
     state: State<'_, Arc<LauncherState>>,
 ) -> Result<Option<Vec<PetAnimationSummary>>, String> {
-    let picker = app.dialog().file().set_title("导入宠物动画")
+    let picker = app.dialog().file().set_title("导入宠物包")
         .add_filter("动画清单", &["json"]).set_parent(&window);
     let selected = tauri::async_runtime::spawn_blocking(move || picker.blocking_pick_file())
         .await.map_err(|error| error.to_string())?;
@@ -3272,7 +3294,7 @@ async fn set_launcher_preference(
     enabled: bool,
     update_model_discovery: Option<bool>,
 ) -> Result<LauncherPreferences, String> {
-    if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel" | "hideUsageBanner" | "showThreadUsage" | "threadUsageAboveComposer" | "usageDotMatrix" | "customProviderQuotaFix" | "customProviderUltrafast" | "showCustomProviderDot" | "disableCodexAutoUpdate") {
+    if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel" | "hideUsageBanner" | "showThreadUsage" | "threadUsageAboveComposer" | "usageDotMatrix" | "customProviderQuotaFix" | "customProviderUltrafast" | "showCustomProviderDot" | "disableCodexAutoUpdate" | "petSounds") {
         return Err("未知的偏好设置".to_string());
     }
     if update_model_discovery == Some(true) {
@@ -3292,6 +3314,7 @@ async fn set_launcher_preference(
         "customProviderUltrafast" => preferences.custom_provider_ultrafast = enabled,
         "showCustomProviderDot" => preferences.show_custom_provider_dot = enabled,
         "disableCodexAutoUpdate" => preferences.disable_codex_auto_update = enabled,
+        "petSounds" => preferences.pet_sounds = enabled,
         _ => unreachable!(),
     })?;
     if key == "customProviderUltrafast" {
@@ -3729,6 +3752,8 @@ fn main() {
             read_pet_selection,
             use_builtin_lumi,
             cancel_builtin_lumi,
+            use_imported_pet,
+            cancel_imported_pet,
             import_pet_animation,
             remove_pet_animation,
             read_model_context_settings,
@@ -4307,10 +4332,12 @@ mod tests {
         let mut preferences = super::LauncherPreferences::default();
         assert!(preferences.window_size.is_none());
         assert!(!preferences.disable_codex_auto_update);
+        assert!(preferences.pet_sounds);
         let logical = tauri::PhysicalSize::new(1920, 1440).to_logical::<f64>(2.0);
         preferences.window_size = Some(super::LauncherWindowSize { width: logical.width, height: logical.height });
         preferences.auto_open_panel = false;
         preferences.disable_codex_auto_update = true;
+        preferences.pet_sounds = false;
         super::write_preferences(&path, preferences).unwrap();
         let restored = super::read_preferences(&path).unwrap();
         let size = restored.window_size.unwrap();
@@ -4318,6 +4345,7 @@ mod tests {
         assert_eq!((size.width, size.height), (960.0, 720.0));
         assert!(!restored.auto_open_panel);
         assert!(restored.disable_codex_auto_update);
+        assert!(!restored.pet_sounds);
         assert!(!super::LauncherWindowSize { width: 0.0, height: 0.0 }.valid());
         assert!(!super::LauncherWindowSize { width: f64::NAN, height: 720.0 }.valid());
         std::fs::remove_dir_all(root).unwrap();

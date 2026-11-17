@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Import new local pets with use, cancel and remove actions. Add optional animation audio and a sound switch; complete Lumi’s preparation and four-beat closing gesture around the full music phrase, fade on the last beat, and drive frames from the audio clock to prevent cumulative drift.
+
 - Show a short message for network failures during Codex update checks and downloads, keeping full system diagnostics in the runtime log.
 
 ## 0.5.5-fork

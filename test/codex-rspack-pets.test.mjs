@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
-import { createPetAnimationRuntime, rewriteRspackPets, nativePetSelection } from '../scripts/codex-rspack-pets.mjs';
+import { createPetAnimationRuntime, rewriteRspackPets, nativePetSelection, installPetAudioBinding } from '../scripts/codex-rspack-pets.mjs';
 import { findCodexRspackRequire } from '../scripts/codex-update.mjs';
 
 // Captured native renderer from Codex 26.1106.51428; no application or user data is loaded.
@@ -20,8 +20,8 @@ const pack = {
 };
 
 function render(source, packs, { petId = pack.petId, state = 'idle', hover = false, reduced = false, lookFrame } = {}) {
-  const element = { style: {} }, effects = [], timers = new Map(), hoverChanges = [];
-  let timerId = 0;
+  const element = { style: {} }, effects = [], timers = new Map(), animationFrames = new Map(), hoverChanges = [];
+  let timerId = 0, now = 0;
   const modules = {
     ABep: { jsx: (tag, props) => ({ tag, props }) },
     on57: { A: (...classes) => classes.filter(Boolean).join(' ') },
@@ -40,7 +40,10 @@ function render(source, packs, { petId = pack.petId, state = 'idle', hover = fal
     window: {
       setTimeout(callback, delay) { const id = ++timerId; timers.set(id, { callback, delay }); return id; },
       clearTimeout: id => timers.delete(id),
+      requestAnimationFrame(callback) { const id = ++timerId; animationFrames.set(id, callback); return id; },
+      cancelAnimationFrame: id => animationFrames.delete(id),
     },
+    performance: { now: () => now },
     packs,
   });
   vm.runInContext(`globalThis.__codexPanelPetAnimations__=(${createPetAnimationRuntime})(packs)`, context);
@@ -49,7 +52,14 @@ function render(source, packs, { petId = pack.petId, state = 'idle', hover = fal
     source: { petId, spriteRowCount: 11, spritesheetUrl: 'native.webp' },
     assetMap: {}, state, lookFrame, respondToHover: true,
   });
-  return { output, element, timers, hoverChanges, cleanup: effects.at(-1)() };
+  return { output, element, timers, animationFrames, hoverChanges, cleanup: effects.at(-1)(),
+    advance(milliseconds) {
+      now += milliseconds;
+      const callbacks = [...animationFrames.values()];
+      animationFrames.clear();
+      for (const callback of callbacks) callback(now);
+    },
+  };
 }
 
 test('imported pet clips use their own grid, states and idle timing with native hover cancellation', () => {
@@ -59,17 +69,18 @@ test('imported pet clips use their own grid, states and idle timing with native 
   assert.equal(playing.output.props.style.backgroundImage, `url(${pack.spritesheetUrl})`);
   for (const [cell, duration] of pack.animations.jumping.frames) {
     assert.equal(playing.element.style.backgroundPosition, `${cell % 4 / 3 * 100}% ${Math.floor(cell / 4) / 2 * 100}%`);
-    const [id, timer] = [...playing.timers][0];
-    assert.equal(timer.delay, duration);
-    playing.timers.delete(id);
-    timer.callback();
+    playing.advance(duration);
   }
   assert.equal(playing.element.style.backgroundPosition, '33.33333333333333% 100%');
-  assert.equal([...playing.timers.values()][0].delay, 1680);
+  playing.advance(1679);
+  assert.equal(playing.element.style.backgroundPosition, '33.33333333333333% 100%');
+  playing.advance(1);
+  assert.equal(playing.element.style.backgroundPosition, '66.66666666666666% 100%');
   playing.output.props.onPointerLeave();
   assert.deepEqual(playing.hoverChanges, [false]);
   playing.cleanup();
   assert.equal(playing.timers.size, 0);
+  assert.equal(playing.animationFrames.size, 0);
 
   for (const state of ['idle', 'running', 'review']) {
     const result = render(patchedSource, [pack], { state });
@@ -79,12 +90,15 @@ test('imported pet clips use their own grid, states and idle timing with native 
   const looking = render(patchedSource, [pack], { lookFrame: { rowIndex: 10, columnIndex: 4 } });
   assert.equal(looking.element.style.backgroundPosition, '0% 0%');
   assert.equal(looking.timers.size, 0);
+  assert.equal(looking.animationFrames.size, 0);
   const paused = render(patchedSource, [pack], { lookFrame: { rowIndex: 0, columnIndex: 0 } });
   assert.equal(paused.element.style.backgroundPosition, '33.33333333333333% 100%');
   assert.equal(paused.timers.size, 0);
+  assert.equal(paused.animationFrames.size, 0);
   const reduced = render(patchedSource, [pack], { hover: true, reduced: true });
   assert.equal(reduced.element.style.backgroundPosition, '0% 100%');
   assert.equal(reduced.timers.size, 0);
+  assert.equal(reduced.animationFrames.size, 0);
 
   for (const options of [{ petId: 'unconfigured-pet', hover: true }, { state: 'failed' }]) {
     const before = render(nativeSource, [], options), after = render(patchedSource, [pack], options);
@@ -96,16 +110,166 @@ test('imported pet clips use their own grid, states and idle timing with native 
 
 test('replacing and removing imported data notifies renderer subscriptions', () => {
   const runtime = createPetAnimationRuntime([]);
+  const original = { id: 'codex', assetRef: 'codex' };
+  const catalog = [original];
+  runtime.bindCatalog(catalog);
   let notified = 0;
   const unsubscribe = runtime.subscribe(() => notified++);
   runtime.setPacks([pack]);
+  assert.equal(catalog[0], original);
+  assert.equal(catalog[1].id, pack.petId);
+  assert.equal(catalog[1].spritesheetUrl, pack.spritesheetUrl);
+  assert.equal(runtime.isLocalPet(pack.petId), true);
   assert.equal(runtime.resolve(runtime.getSnapshot(), {petId: pack.petId}, 'running').pack, pack);
+  assert.equal(runtime.resolve(runtime.getSnapshot(), {petId: pack.petId}, 'failed').frames, pack.animations.idle.frames);
+  assert.deepEqual(runtime.resolve(runtime.getSnapshot(), {petId: pack.petId}, 'failed', {rowIndex: 10, columnIndex: 1}).frames, [[pack.lookFrames[9], 1]]);
+  const idleOnly = { ...pack, name: 'Updated', animations: { idle: pack.animations.idle }, lookFrames: undefined };
+  runtime.setPacks([idleOnly]);
+  assert.equal(catalog[1].displayName, 'Updated');
+  assert.deepEqual(runtime.resolve(runtime.getSnapshot(), {petId: pack.petId}, 'running', {rowIndex: 10, columnIndex: 1}).frames, [[9, 1]]);
+  assert.equal(runtime.resolve(runtime.getSnapshot(), {petId: pack.petId}, 'running').frames, pack.animations.idle.frames);
+  runtime.setPacks([{ ...idleOnly, builtinLumi: true }]);
+  assert.equal(catalog[1].id, pack.petId, 'replacing a selected local pet with Lumi resources preserves its selectable identity');
+  assert.equal(runtime.isLocalPet(pack.petId), true);
   runtime.setPacks([]);
+  assert.deepEqual(catalog, [original]);
+  assert.equal(runtime.isLocalPet(pack.petId), false);
   assert.equal(runtime.resolve(runtime.getSnapshot(), {petId: pack.petId}, 'running'), null);
-  assert.equal(notified, 2);
+  assert.equal(notified, 4);
   unsubscribe();
   runtime.setPacks([pack]);
-  assert.equal(notified, 2);
+  assert.equal(notified, 4);
+});
+
+test('animation music starts with the clip and stops on finish, cancellation or mute', async t => {
+  const sounds = [], callbacks = new Map();
+  let now = 0;
+  const previousWindow = globalThis.window, previousAudio = globalThis.Audio;
+  t.mock.method(performance, 'now', () => now);
+  globalThis.window = {
+    requestAnimationFrame(callback) { const id = Symbol(); callbacks.set(id, callback); return id; },
+    cancelAnimationFrame(id) { callbacks.delete(id); },
+  };
+  globalThis.Audio = class {
+    constructor(url) { this.url = url; this.currentTime = 0; this.paused = true; this.ended = false; sounds.push(this); }
+    play() { this.paused = false; return Promise.resolve(); }
+    pause() { this.paused = true; }
+  };
+  t.after(() => { globalThis.window = previousWindow; globalThis.Audio = previousAudio; });
+  const runtime = createPetAnimationRuntime([pack]);
+  const animation = { pack, ...pack.animations.jumping, audioUrl: 'data:audio/mp4;base64,fixture' };
+  const element = { style: {} };
+  const tick = milliseconds => {
+    now += milliseconds;
+    const pending = [...callbacks.values()];
+    callbacks.clear();
+    for (const callback of pending) callback(now);
+  };
+  let stop = runtime.play(element, animation, false, false);
+  assert.equal(sounds[0].paused, false);
+  assert.equal(sounds[0].loop, false);
+  assert.equal(callbacks.size, 0, 'the first frame waits for audio playback to start');
+  await Promise.resolve();
+  sounds[0].currentTime = 1.2;
+  tick(1200);
+  assert.equal(sounds[0].paused, true);
+  assert.equal(element.style.backgroundPosition, '33.33333333333333% 100%');
+  stop();
+  stop = runtime.play(element, animation, false, false);
+  stop();
+  assert.equal(sounds[1].paused, true);
+  stop = runtime.play(element, animation, false, false);
+  runtime.setSoundEnabled(false);
+  assert.equal(sounds[2].paused, true);
+  tick(950);
+  assert.equal(element.style.backgroundPosition, '0% 0%', 'muted playback continues with elapsed time');
+  stop();
+  for (const [reduced, still] of [[false, false], [true, false], [false, true]]) {
+    runtime.play(element, { ...animation, still }, reduced, false)();
+  }
+  assert.equal(sounds.length, 3, 'muted animations do not create a player');
+  runtime.setSoundEnabled(true);
+  for (const [reduced, still] of [[true, false], [false, true]]) runtime.play(element, { ...animation, still }, reduced, false)();
+  assert.equal(sounds.length, 3, 'still poses do not start music');
+  stop = runtime.play(element, animation, false, true);
+  assert.equal(sounds[3].loop, true);
+  stop();
+  assert.equal(callbacks.size, 0);
+});
+
+test('late paints follow the audio clock and silent playback keeps absolute elapsed time', async t => {
+  const previousWindow = globalThis.window, previousAudio = globalThis.Audio;
+  const callbacks = new Map(), sounds = [];
+  let now = 0;
+  t.mock.method(performance, 'now', () => now);
+  globalThis.window = {
+    requestAnimationFrame(callback) { const id = Symbol(); callbacks.set(id, callback); return id; },
+    cancelAnimationFrame(id) { callbacks.delete(id); },
+  };
+  globalThis.Audio = class {
+    constructor() { this.currentTime = 0; this.paused = true; this.ended = false; sounds.push(this); }
+    play() { this.paused = false; return Promise.resolve(); }
+    pause() { this.paused = true; }
+  };
+  t.after(() => { globalThis.window = previousWindow; globalThis.Audio = previousAudio; });
+  const tick = value => {
+    now = value;
+    const pending = [...callbacks.values()];
+    callbacks.clear();
+    for (const callback of pending) callback(now);
+  };
+  const runtime = createPetAnimationRuntime([pack]);
+  const animation = { pack, ...pack.animations.jumping, audioUrl: 'data:audio/mp4;base64,fixture' };
+  const element = { style: {} };
+  let stop = runtime.play(element, animation, false, false);
+  await Promise.resolve();
+  sounds[0].currentTime = 1.065;
+  tick(1550);
+  assert.equal(element.style.backgroundPosition, '66.66666666666666% 0%', 'a delayed paint skips to the frame matching audio time');
+  runtime.setSoundEnabled(false);
+  tick(1600);
+  assert.equal(element.style.backgroundPosition, '33.33333333333333% 100%', 'muting preserves the media position before continuing silently');
+  stop();
+  const silent = render(rewriteRspackPets(nativeSource), [pack], { hover: true });
+  silent.advance(1065);
+  assert.equal(silent.element.style.backgroundPosition, '66.66666666666666% 0%');
+  silent.cleanup();
+  runtime.setSoundEnabled(true);
+  stop = runtime.play(element, animation, false, false);
+  await Promise.resolve();
+  sounds[1].currentTime = 1.065;
+  sounds[1].paused = sounds[1].ended = true;
+  tick(2400);
+  tick(2700);
+  assert.equal(element.style.backgroundPosition, '33.33333333333333% 100%', 'natural audio completion continues through the silent tail');
+  stop();
+  stop = runtime.play(element, animation, false, true);
+  await Promise.resolve();
+  sounds[2].currentTime = 0.955;
+  tick(3655);
+  assert.equal(element.style.backgroundPosition, '0% 0%');
+  sounds[2].currentTime = 0.2;
+  tick(3760);
+  assert.equal(element.style.backgroundPosition, '66.66666666666666% 0%', 'a shorter audio loop does not skip the visual tail');
+  tick(3814);
+  assert.equal(element.style.backgroundPosition, '0% 100%', 'the whole visual cycle completes before restarting');
+  stop();
+});
+
+test('pet audio activation uses the requested player in its own renderer context', async () => {
+  const commands = [], events = new Map();
+  const cdp = { async send(method, params) { commands.push({ method, params }); }, on(name, callback) { events.set(name, callback); } };
+  await installPetAudioBinding(cdp);
+  await installPetAudioBinding(cdp);
+  assert.equal(commands.length, 1);
+  const callback = events.get('Runtime.bindingCalled');
+  callback({ name: '__codexPanelPlayPetAudioV1', payload: '4);globalThis.unrelated()', executionContextId: 8 });
+  assert.equal(commands.length, 1);
+  callback({ name: '__codexPanelPlayPetAudioV1', payload: '4', executionContextId: 8 });
+  assert.deepEqual(commands[1], { method: 'Runtime.evaluate', params: {
+    expression: 'globalThis.__codexPanelPetAnimations__?.playAudio(4)',
+    contextId: 8, userGesture: true, awaitPromise: true, returnByValue: true,
+  } });
 });
 
 test('packaged Lumi joins the native catalog and selection stays local', async () => {
@@ -148,35 +312,79 @@ test('packaged Lumi joins the native catalog and selection stays local', async (
   assert.equal(settingsWrites.length, 1);
   assert.equal((await selection(load, 'use-lumi')).petId, 'panel-lumi');
   assert.deepEqual(settingsWrites, [['selected-avatar-id', null], ['selected-avatar-id', 'panel-lumi']]);
+
+  const cloudPack = { ...pack, petId: 'pet_fixture' };
+  const existingPack = { ...pack, petId: 'custom:fixture' };
+  const duplicateLumi = { ...pack, petId: 'another-lumi', builtinLumi: true };
+  const nativeOverride = { ...pack, petId: 'codex' };
+  context.__codexPanelPetAnimations__.setPacks([pack, cloudPack, existingPack, duplicateLumi, nativeOverride]);
+  assert.deepEqual(Array.from(nativeCatalog.B4, pet => pet.id), ['codex', 'panel-lumi', pack.petId, duplicateLumi.petId]);
+  assert.equal(nativeCatalog.i0([], []).at(-1).id, duplicateLumi.petId);
+  assert.equal(nativeCatalog.aN(nativeCatalog.B4.at(-1)).spritesheetUrl, pack.spritesheetUrl);
+  nativeCloud.select(pack.petId);
+  assert.equal(cloudWrites.length, 2);
+  nativeCloud.select(duplicateLumi.petId);
+  assert.equal(cloudWrites.length, 2);
+  nativeCloud.select(cloudPack.petId);
+  assert.equal(cloudWrites.length, 3);
+  assert.equal((await selection(load, 'use-pet', [], pack.petId)).petId, pack.petId);
+  selected = 'pet_fixture';
+  assert.equal((await selection(load, 'cancel-pet', [], pack.petId)).petId, 'pet_fixture');
+  selected = pack.petId;
+  assert.equal((await selection(load, 'cancel-pet', [], pack.petId)).petId, null);
+  await assert.rejects(selection(load, 'use-pet', [], 'not-imported'), /尚未导入/);
+  await assert.rejects(selection(load, 'use-pet', [], cloudPack.petId), /原生选择器/);
+  assert.equal((await selection(load, 'use-pet', [], nativeOverride.petId)).petId, 'codex');
+  assert.equal(context.__codexPanelPetAnimations__.resolve([cloudPack], {petId: cloudPack.petId}, 'failed'), null);
+  context.__codexPanelPetAnimations__.setPacks([]);
+  assert.deepEqual(Array.from(nativeCatalog.B4, pet => pet.id), ['codex', 'panel-lumi']);
+  selected = 'panel-lumi';
   nativeCatalog.B4.pop();
   await assert.rejects(selection(load, 'use-lumi'), /尚未载入内置 Lumi/);
   assert.equal((await selection(load, 'pet-selection')).petId, 'panel-lumi');
   assert.equal((await selection(load, 'cancel-lumi')).petId, null);
-  assert.equal(settingsWrites.length, 3);
+  assert.equal(settingsWrites.length, 6);
 });
 
-test('cancel Lumi resolves aliases from local packs and ignores request-supplied IDs', async () => {
+test('pet controls use trusted imports and synchronize both windows before selection', async () => {
   const injector = await readFile(new URL('../scripts/codex-injector.mjs', import.meta.url), 'utf8');
-  const start = injector.indexOf('...Object.fromEntries(["pet-selection", "use-lumi", "cancel-lumi"].map(');
+  const start = injector.indexOf('...Object.fromEntries(["pet-selection", "use-lumi", "cancel-lumi", "use-pet", "cancel-pet"].map(');
   const end = injector.indexOf('\n          "interrupt-thread"', start);
   assert.ok(start > 0 && end > start);
   let selected = 'pet_unrelated', reads = 0;
-  const writes = [];
-  const load = () => ({ appServices: { settings: {
+  const writes = [], syncs = [];
+  const nativeCatalog = { B4: [{ id: 'codex' }] };
+  const petRuntime = createPetAnimationRuntime([pack]);
+  petRuntime.bindCatalog(nativeCatalog.B4);
+  const load = id => id === 'catalog' ? nativeCatalog : ({ appServices: { settings: {
     async read() { return { configured: null, effective: selected }; },
-    async write(key, value) { writes.push([key, value]); selected = value; },
+    async write(key, value) {
+      if (value === pack.petId) assert.equal(syncs.length, 1, 'synchronize the imported catalog before selecting it');
+      writes.push([key, value]); selected = value;
+    },
   } } });
   load.m = {};
   const page = vm.createContext({
-    __codexPanelRspack__: { require: load, findModule: () => ({ id: 'services' }) },
+    __codexPanelPetAnimations__: petRuntime,
+    __codexPanelRspack__: { require: load, prepared: { pets: true },
+      findModule: markers => ({ id: markers.includes('appServices:') ? 'services' : 'catalog' }) },
   });
   const cdp = { async send(method, params) {
     assert.equal(method, 'Runtime.evaluate');
     return { result: { value: await vm.runInContext(params.expression, page) } };
   } };
+  const avatar = { closed: false };
   const handlers = vm.runInNewContext(`({${injector.slice(start, end)}})`, {
-    injectedTargets: new Map([['native', cdp]]), panelDataDirectory: '/isolated/panel-data',
+    injectedTargets: new Map([['native', cdp]]), avatarConnections: new Map([['avatar', avatar]]), panelDataDirectory: '/isolated/panel-data',
     nativePetSelection, findCodexRspackRequire,
+    async readPetAnimations(directory) { assert.equal(directory, '/isolated/panel-data'); return [pack]; },
+    async syncPetAnimations(directory, connections) {
+      assert.equal(directory, '/isolated/panel-data');
+      assert.equal(connections.length, 2);
+      assert.equal(connections[0], cdp);
+      assert.equal(connections[1], avatar);
+      syncs.push(connections);
+    },
     async listPetAnimations(directory) {
       assert.equal(directory, '/isolated/panel-data'); reads++;
       return [{ petId: 'pet_old_lumi', builtinLumi: true }, { petId: 'pet_unrelated', builtinLumi: false }];
@@ -190,4 +398,19 @@ test('cancel Lumi resolves aliases from local packs and ignores request-supplied
   assert.equal((await handlers['cancel-lumi']({ lumiPetIds: [] })).petId, null);
   assert.equal(reads, 2);
   assert.deepEqual(writes, [['selected-avatar-id', null]]);
+  assert.equal((await handlers['use-pet']({ petId: pack.petId })).petId, pack.petId);
+  assert.deepEqual(writes.at(-1), ['selected-avatar-id', pack.petId]);
+  selected = 'pet_unrelated';
+  const written = writes.length;
+  assert.equal((await handlers['cancel-pet']({ petId: pack.petId })).petId, selected);
+  assert.equal(writes.length, written);
+  selected = pack.petId;
+  assert.equal((await handlers['cancel-pet']({ petId: pack.petId })).petId, null);
+  assert.deepEqual(writes.at(-1), ['selected-avatar-id', null]);
+  const synchronized = syncs.length;
+  for (const action of ['use-pet', 'cancel-pet']) {
+    await assert.rejects(handlers[action]({ petId: 'not-imported', packs: [{ petId: 'not-imported' }] }), /尚未导入/);
+  }
+  assert.equal(syncs.length, synchronized, 'request-supplied resources cannot reach the renderer');
+  assert.equal(writes.length, written + 1);
 });
