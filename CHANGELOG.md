@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.5.7-fork
+
 - Add a default-off **新聊天默认不带项目** switch: ordinary and Recent new-chat actions start outside projects, while creation from a specific project keeps that project. Existing chats remain unchanged.
 
 ## 0.5.6-fork
