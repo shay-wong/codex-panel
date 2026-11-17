@@ -4,8 +4,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { PetAnimationSettings } from "./PetAnimationSettings";
 
 const preview = { spritesheetUrl: "data:image/webp;base64,ZmFrZQ==", columns: 8, rows: 3, frame: 18, aspectRatio: 192 / 208 };
-const first = { petId: "pet-first", name: "First", states: ["idle", "jumping"], hasLookFrames: true, preview, builtinLumi: false };
-const second = { petId: "pet-second", name: "Second", states: ["idle"], hasLookFrames: false, preview: { ...preview, columns: 1, rows: 1, frame: 0, aspectRatio: 2 }, builtinLumi: false };
+const first = { petId: "pet_first", name: "First", states: ["idle", "jumping"], hasLookFrames: true, preview, builtinLumi: false, selectable: false };
+const second = { petId: "pet_second", name: "Second", states: ["idle"], hasLookFrames: false, preview: { ...preview, columns: 1, rows: 1, frame: 0, aspectRatio: 2 }, builtinLumi: false, selectable: false };
 const click = async (name: string) => { await act(async () => { fireEvent.click(screen.getByRole("button", { name })); }); };
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -55,7 +55,7 @@ it("disables selection while disconnected or unknown and uses refreshed bridge s
   });
   vi.stubGlobal("__TAURI__", { core: { invoke } });
   const view = render(<Theme><PetAnimationSettings /></Theme>);
-  await screen.findByText("尚未导入自定义动画；内置 Lumi 可直接使用。");
+  await screen.findByText("尚未导入宠物包；内置 Lumi 可直接使用。");
   expect((screen.getByRole("button", { name: "使用 Lumi" }) as HTMLButtonElement).disabled).toBe(true);
   expect(invoke).not.toHaveBeenCalledWith("read_pet_selection");
   view.rerender(<Theme><PetAnimationSettings connected /></Theme>);
@@ -116,15 +116,15 @@ it("shows imported previews in the same cards and retains imports on cancel or f
   expect(custom.style.backgroundPosition).toBe(`${2 / 7 * 100}% 100%`);
   expect(custom.style.aspectRatio).toBe(builtIn.style.aspectRatio);
   expect(custom.closest(".pet-card")?.getAttribute("aria-label")).toBe("导入动画 First");
-  await click("导入动画资源");
+  await click("导入宠物包");
   expect(screen.getByText("First")).toBeTruthy();
   failImport = true;
-  await click("导入动画资源");
+  await click("导入宠物包");
   expect(screen.getByRole("alert").textContent).toContain("invalid frames");
   expect(screen.getByText("First")).toBeTruthy();
   failImport = false;
   imported = [first, second];
-  await click("导入动画资源");
+  await click("导入宠物包");
   expect(screen.getByText("Second")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.getByRole("img", { name: "Second" }).style.backgroundPosition).toBe("0% 0%");
@@ -134,7 +134,7 @@ it("shows imported previews in the same cards and retains imports on cancel or f
 });
 
 it("shows one Lumi for the canonical override and identical cloud alias while preserving a distinct variant", async () => {
-  const canonical = { ...first, petId: "panel-lumi", name: "Lumi imported override", builtinLumi: true };
+  const canonical = { ...first, petId: "panel-lumi", name: "Lumi imported override", builtinLumi: true, selectable: true };
   const cloud = { ...first, petId: "cloud-lumi", name: "Lumi cloud copy", builtinLumi: true };
   const variant = { ...second, petId: "custom-lumi", name: "Lumi variant" };
   let packs = [canonical, cloud, variant];
@@ -169,11 +169,14 @@ it("shows one Lumi for the canonical override and identical cloud alias while pr
   expect(screen.queryByText("正在使用")).toBeNull();
   await click("使用 Lumi");
   expect(screen.getByRole("button", { name: "取消使用" })).toBeTruthy();
-  await click("导入动画资源");
+  await click("导入宠物包");
   expect(document.querySelectorAll(".pet-card")).toHaveLength(2);
   expect(screen.getByRole("img", { name: /^Lumi$/ }).style.backgroundSize).toBe("100% 100%");
   expect(within(mainCard).getByText("内置宠物 · 1 个动作")).toBeTruthy();
+  const cancelCount = invoke.mock.calls.filter(([command]) => command === "cancel_builtin_lumi" || command === "cancel_imported_pet").length;
   await click("恢复内置动画");
+  expect(invoke.mock.calls.filter(([command]) => command === "cancel_builtin_lumi" || command === "cancel_imported_pet")).toHaveLength(cancelCount);
+  expect(selected).toBe("panel-lumi");
   expect(invoke).toHaveBeenCalledWith("remove_pet_animation", { petId: "panel-lumi" });
   expect(packs.map(pack => pack.petId)).toEqual([cloud.petId, variant.petId]);
   expect(screen.queryByRole("button", { name: "恢复内置动画" })).toBeNull();
@@ -185,4 +188,52 @@ it("shows one Lumi for the canonical override and identical cloud alias while pr
   await act(async () => { fireEvent.focus(window); });
   expect(screen.getByRole("button", { name: "取消使用" })).toBeTruthy();
   expect(within(mainCard).getByText("正在使用")).toBeTruthy();
+});
+
+it("uses new imported pets, cancels them, and cancels before removing an active pet", async () => {
+  const pet = { ...first, petId: "panel-fox", name: "Fox", selectable: true };
+  let packs = [pet];
+  let selected: string | null = null;
+  let failCancel = false;
+  const invoke = vi.fn(async (command: string, args?: { petId: string }) => {
+    if (command === "list_pet_animations") return packs;
+    if (command === "read_pet_selection") return { petId: selected };
+    if (command === "use_imported_pet") {
+      expect(args).toEqual({ petId: pet.petId });
+      return { petId: selected = pet.petId };
+    }
+    if (command === "cancel_imported_pet") {
+      expect(args).toEqual({ petId: pet.petId });
+      if (failCancel) throw new Error("Codex connection lost");
+      return { petId: selected = null };
+    }
+    if (command === "remove_pet_animation") {
+      expect(selected).toBeNull();
+      return packs = [];
+    }
+    throw new Error(command);
+  });
+  vi.stubGlobal("__TAURI__", { core: { invoke } });
+  const view = render(<Theme><PetAnimationSettings /></Theme>);
+  await screen.findByText(pet.name);
+  await click("移除宠物 Fox");
+  expect(screen.getByRole("alert").textContent).toContain("连接 Codex");
+  expect(invoke).not.toHaveBeenCalledWith("remove_pet_animation", { petId: pet.petId });
+  view.rerender(<Theme><PetAnimationSettings connected /></Theme>);
+  await act(async () => {});
+  await click("使用 Fox");
+  expect(within(screen.getByLabelText("导入宠物 Fox")).getByText("正在使用")).toBeTruthy();
+  await click("取消使用");
+  expect(screen.getByRole("button", { name: "使用 Fox" })).toBeTruthy();
+  await click("使用 Fox");
+  failCancel = true;
+  await click("移除宠物 Fox");
+  expect(screen.getByRole("alert").textContent).toContain("Codex connection lost");
+  expect(screen.getByText(pet.name)).toBeTruthy();
+  expect(invoke).not.toHaveBeenCalledWith("remove_pet_animation", { petId: pet.petId });
+  failCancel = false;
+  await click("移除宠物 Fox");
+  expect(screen.queryByText(pet.name)).toBeNull();
+  expect(selected).toBeNull();
+  expect(invoke).toHaveBeenCalledWith("remove_pet_animation", { petId: pet.petId });
 });

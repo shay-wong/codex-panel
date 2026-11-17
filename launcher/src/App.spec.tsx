@@ -21,7 +21,7 @@ it("keeps launcher feedback, live status and global preferences working through 
       updateMessage: "尚未检查更新。", updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false,
       appPath: "/disposable/Codex.app",
     },
-    preferences: { defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false },
+    preferences: { defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true },
     autostart: true, dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
   };
   let statusListener!: (event: { payload: LauncherSnapshot }) => void;
@@ -254,7 +254,7 @@ it("keeps launcher feedback, live status and global preferences working through 
   await click(sharedSession);
   expect(button("copySharedCliCommand").disabled).toBe(true);
   await click(screen.getByRole("switch", { name: "隐藏额度耗尽提示" }));
-  expect(current.preferences).toEqual({ defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false });
+  expect(current.preferences).toEqual({ defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true });
   const quotaFix = screen.getByRole("switch", { name: "移除账号额度不足时 API 发送限制" });
   const restartCount = invoke.mock.calls.filter(([command]) => command === "reconnect_codex").length;
   await click(quotaFix);
@@ -416,13 +416,14 @@ it("opens pets from its own navigation page and refreshes the real selection whe
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const state: LauncherState = {
     snapshot: { phase: "running", version: "test", message: "Ready", childPid: 1, embeddedVisible: true, threadTabsPhase: "ready", threadTabsMessage: "", openRequestPending: false, updateMessage: "", updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false, appPath: "/disposable/Codex.app" },
-    preferences: { defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false },
+    preferences: { defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true },
     autostart: false, dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
   };
   let selected: string | null = "panel-lumi";
   let windowOpened!: () => void;
-  const invoke = vi.fn(async (command: string) => {
+  const invoke = vi.fn(async (command: string, args?: { key: keyof LauncherPreferences; enabled: boolean }) => {
     if (command === "launcher_ui_state") return structuredClone(state);
+    if (command === "set_launcher_preference") return state.preferences = { ...state.preferences, [args!.key]: args!.enabled };
     if (command === "list_pet_animations") return [];
     if (command === "read_pet_selection") return { petId: selected };
     throw new Error(command);
@@ -442,7 +443,13 @@ it("opens pets from its own navigation page and refreshes the real selection whe
   expect(document.getElementById("petsView")?.getAttribute("data-state")).toBe("active");
   expect(within(document.getElementById("petsView")!).getByRole("button", { name: "取消使用" })).toBeTruthy();
   expect(screen.getByRole("heading", { name: "宠物" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "导入动画资源" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "导入宠物包" })).toBeTruthy();
+  const sounds = screen.getByRole("switch", { name: "播放宠物声音" });
+  expect(sounds.getAttribute("aria-checked")).toBe("true");
+  await act(async () => { fireEvent.click(sounds); });
+  expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "petSounds", enabled: false });
+  expect(sounds.getAttribute("aria-checked")).toBe("false");
+  expect(screen.queryByText(/设置已保存/)).toBeNull();
   selected = null;
   await act(async () => { windowOpened(); });
   expect(screen.getByRole("button", { name: "使用 Lumi" })).toBeTruthy();

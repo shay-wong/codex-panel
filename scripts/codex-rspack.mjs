@@ -5,7 +5,7 @@ import { readCodexRspack, rspackSourceContext } from './codex-rspack-source.mjs'
 import { rewriteRspackQuota } from './codex-rspack-quota.mjs';
 import { rewriteRspackDot, rewriteRspackUltrafast, rewriteRspackProjectlessChat } from './codex-rspack-capabilities.mjs';
 import { createRspackThreadTabsRuntime, rewriteRspackThreadTabs } from './codex-rspack-tabs.mjs';
-import { createPetAnimationRuntime, rewriteRspackPets } from './codex-rspack-pets.mjs';
+import { createPetAnimationRuntime, rewriteRspackPets, installPetAudioBinding } from './codex-rspack-pets.mjs';
 import { readBuiltinLumi } from './pet-animations.mjs';
 
 const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltrafast, dot: rewriteRspackDot, tabs: rewriteRspackThreadTabs, queue: rewriteRspackQueue, pets: rewriteRspackPets, projectlessChat: rewriteRspackProjectlessChat };
@@ -27,12 +27,16 @@ export function rewriteRspackQueue(source, context) {
   const signal = publication?.source.match(new RegExp(`let ${id}=${id}\\((${id})\\);if\\(${id}\\?\\.hasEvaluations`))?.[1];
   const exported = signal && publication.source.slice(publication.source.lastIndexOf('.d('))
     .match(new RegExp(`(${id}):(?:\\(\\)=>)?${signal.replaceAll('$', '\\$')}(?=[,}])`))?.[1];
-  if (!require || subscriptions.length !== 1 || !publication || !exported) {
+  const version = context.findModule(['appServerVersion$)??null)']);
+  const versionSignal = version?.source.match(new RegExp(`let (${id})=\\(0,${id}\\.${id}\\)\\([^;]*?\\.appServerVersion\\$\\)\\?\\?null\\)`))?.[1];
+  const versionExport = versionSignal && version.source.slice(version.source.lastIndexOf('.d('))
+    .match(new RegExp(`(${id}):(?:\\(\\)=>)?${versionSignal.replaceAll('$', '\\$')}(?=[,}])`))?.[1];
+  if (!require || subscriptions.length !== 1 || !publication || !exported || !versionExport) {
     throw new Error('Native queued-follow-up subscription is unsupported');
   }
   const subscription = `(0,${subscriptions[0][1]}.${subscriptions[0][2]})`;
-  // A restored rollout must reload the server queue after an empty startup snapshot.
-  const reactive = `((...panelQueueArgs)=>panelQueueArgs[0].watch(({get:panelQueueGet})=>{panelQueueGet(panelQueueRequire(${JSON.stringify(publication.id)}).${exported});return ${subscription}(...panelQueueArgs)}))`;
+  // Settings and core version can become ready independently after an empty startup snapshot.
+  const reactive = `((...panelQueueArgs)=>panelQueueArgs[0].watch(({get:panelQueueGet})=>{panelQueueGet(panelQueueRequire(${JSON.stringify(publication.id)}).${exported});panelQueueGet(panelQueueRequire(${JSON.stringify(version.id)}).${versionExport},panelQueueArgs[1].hostId);return ${subscription}(...panelQueueArgs)}))`;
   return source.replace(/^(function\s*[^\(]*\([^)]*\)\{)/, `$1const panelQueueRequire=${require};`)
     .replace(subscription, reactive);
 }
@@ -178,7 +182,13 @@ export async function prepareCodexRspack(cdp, appPath, preferencesFile, report =
   const plan = buildRspackPlan(catalog, petsOnly ? { pets: rewriteRspackPets } : transformers);
   for (const [feature, error] of Object.entries(plan.errors)) report(`Panel Rspack ${feature} unavailable: ${error}`);
   if (petsOnly && !plan.prepared.pets) return { source: '', prepared: plan.prepared, errors: plan.errors };
-  const petSource = plan.prepared.pets ? `const pets=globalThis.__codexPanelPetAnimations__??=(${createPetAnimationRuntime})([],${JSON.stringify(await readBuiltinLumi())});pets.setPacks(${JSON.stringify(petAnimations)});` : '';
+  if (plan.prepared.pets) await installPetAudioBinding(cdp);
+  let preferences = {};
+  if (preferencesFile) {
+    try { preferences = JSON.parse(await readFile(preferencesFile, 'utf8')); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  const petSource = plan.prepared.pets ? `const pets=globalThis.__codexPanelPetAnimations__??=(${createPetAnimationRuntime})([],${JSON.stringify(await readBuiltinLumi())});pets.setSoundEnabled(${preferences.petSounds !== false});pets.setPacks(${JSON.stringify(petAnimations)});` : '';
   const entry = rewriteRspackEntry(catalog.main.source, url);
   await installRspackResponse(cdp, url, entry, report);
   if (petsOnly) {
@@ -188,11 +198,6 @@ export async function prepareCodexRspack(cdp, appPath, preferencesFile, report =
       if(globalThis.__codexPanelRspack__)return;
       globalThis.__codexPanelRspack__=(${createCodexRspackRuntime})(${JSON.stringify(plan)});
     })();`, prepared: plan.prepared, errors: plan.errors };
-  }
-  let preferences = {};
-  if (preferencesFile) {
-    try { preferences = JSON.parse(await readFile(preferencesFile, 'utf8')); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
   const source = `(() => {
     if(window!==window.top)return;

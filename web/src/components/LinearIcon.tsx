@@ -37,6 +37,9 @@ const ICONS = {
   package: {
     content: <path d="M8 1.5 14 4.75v6.5L8 14.5 2 11.25v-6.5ZM2 4.75 8 8l6-3.25M8 8v6.5M5 3.125l6 3.25" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />,
   },
+  paw: {
+    content: <><ellipse cx="2.8" cy="6.3" rx="1.5" ry="2" transform="rotate(-25 2.8 6.3)" /><ellipse cx="6.1" cy="3.4" rx="1.5" ry="2.1" transform="rotate(-10 6.1 3.4)" /><ellipse cx="9.9" cy="3.4" rx="1.5" ry="2.1" transform="rotate(10 9.9 3.4)" /><ellipse cx="13.2" cy="6.3" rx="1.5" ry="2" transform="rotate(25 13.2 6.3)" /><path d="M8 7.3c-1.5 0-2.2 1.5-3.2 2.6-1 1-1.9 1.8-1.5 3.1.3 1.2 1.4 1.7 2.6 1.4l2.1-.6 2.1.6c1.2.3 2.3-.2 2.6-1.4.4-1.3-.5-2.1-1.5-3.1C10.2 8.8 9.5 7.3 8 7.3Z" /></>,
+  },
   dragHandle: {
     content: <><circle cx="5" cy="4" r="1" /><circle cx="11" cy="4" r="1" /><circle cx="5" cy="8" r="1" /><circle cx="11" cy="8" r="1" /><circle cx="5" cy="12" r="1" /><circle cx="11" cy="12" r="1" /></>,
   },

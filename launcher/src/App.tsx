@@ -24,7 +24,7 @@ export type LauncherSnapshot = {
   codexUpdateChecking: boolean;
   appPath: string | null;
 };
-export type LauncherPreferences = { defaultProjectlessChat: boolean; sharedSessionBackend: boolean; autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean };
+export type LauncherPreferences = { defaultProjectlessChat: boolean; sharedSessionBackend: boolean; autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean; petSounds: boolean };
 export type LauncherState = {
   snapshot: LauncherSnapshot;
   preferences: LauncherPreferences;
@@ -319,13 +319,13 @@ export function App() {
         <Tabs.List aria-label="启动器页面" highContrast size="2" className="launcher-navigation">
           <Tabs.Trigger value="overview"><LinearIcon name="home" />运行概览</Tabs.Trigger>
           <Tabs.Trigger value="preferences"><LinearIcon name="settings" />偏好设置</Tabs.Trigger>
-          <Tabs.Trigger value="pets"><LinearIcon name="package" />宠物</Tabs.Trigger>
+          <Tabs.Trigger value="pets"><LinearIcon name="paw" />宠物</Tabs.Trigger>
           <Tabs.Trigger value="about"><LinearIcon name="file" />关于</Tabs.Trigger>
         </Tabs.List>
       </aside>
     <main key={workflowUrl ? "workflow" : view} className={`launcher-main${workflowUrl ? " workflow-page" : ""}`} style={modelContextOpen || usageSettingsOpen ? { overflowY: "hidden" } : undefined}>
       {!workflowUrl && <header className="page-heading">
-        <Box><Heading as="h2" size="5">{view === "overview" ? "运行概览" : view === "preferences" ? "偏好设置" : view === "pets" ? "宠物" : "关于"}</Heading><Text as="p" size="1" color="gray" mt="1">{view === "overview" ? "管理本机服务与 Codex 连接" : view === "preferences" ? "所有项目共用的工作流与使用偏好" : view === "pets" ? "选择内置伙伴，管理已有宠物的动画资源" : "应用信息与版本更新"}</Text></Box>
+        <Box><Heading as="h2" size="5">{view === "overview" ? "运行概览" : view === "preferences" ? "偏好设置" : view === "pets" ? "宠物" : "关于"}</Heading><Text as="p" size="1" color="gray" mt="1">{view === "overview" ? "管理本机服务与 Codex 连接" : view === "preferences" ? "所有项目共用的工作流与使用偏好" : view === "pets" ? "选择内置伙伴，导入新宠物与动画音乐" : "应用信息与版本更新"}</Text></Box>
         <Flex className="page-heading-actions" align="center" gap="2">
           {iconAction("refresh", "launcher_ui_state", "刷新状态", <span className="refresh-icon" aria-hidden="true">↻</span>)}
           {iconAction("browserPanel", "open_browser_panel", "在浏览器中打开", <LinearIcon name="openExternal" />, !hasProcess)}
@@ -476,7 +476,7 @@ export function App() {
             </>}
           </Tabs.Content>
           <Tabs.Content value="pets" id="petsView">
-            <PetAnimationSettings disabled={!state || savingPreference} connected={ready} refreshKey={petRefreshKey} />
+            <PetAnimationSettings disabled={!state || savingPreference} connected={ready} refreshKey={petRefreshKey} soundsEnabled={preferences?.petSounds ?? true} onSoundsChange={enabled => void savePreference("petSounds", enabled)} />
           </Tabs.Content>
           <Tabs.Content value="about" id="aboutView">
             <Flex align="center" gap="4" mb="5">

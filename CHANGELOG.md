@@ -6,6 +6,12 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Restore native queued-message visibility when the core reports queue support after settings have already loaded.
+
+- Import new local pets with use, cancel and remove actions. Add optional animation audio and a sound switch; complete Lumi’s preparation and four-beat closing gesture around the full music phrase, fade on the last beat, and drive frames from the audio clock to prevent cumulative drift.
+
+- Show a short message for network failures during Codex update checks and downloads, keeping full system diagnostics in the runtime log.
+
 - Restore queued messages hidden by a queue panel stuck collapsed on Codex 26.1111.21308, preserving native send, pause, delete and exit behavior.
 
 ## 0.5.7-fork

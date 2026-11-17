@@ -4,7 +4,7 @@ import vm from 'node:vm';
 
 const catalogs = new Map();
 const nativeMarkers = ['CodexComposerAdapter', 'model_provider', 'serviceTierForRequest',
-  'requiresFirstPartyInference', 'orbit-activity', 'paneItems', 'composerId:', 'tabById$', 'navigateToLocalConversation', 'notificationThread', 'getServerSnapshot', 'statsigEvaluations', 'composer.queuedMessage.interruptedQueue', 'data-codex-pet-state', 'The original Codex companion.', 'cloud-pet-selection', 'canStartProjectlessChat:', 'onFreshChatDraftCreated:'];
+  'requiresFirstPartyInference', 'orbit-activity', 'paneItems', 'composerId:', 'tabById$', 'navigateToLocalConversation', 'notificationThread', 'getServerSnapshot', 'statsigEvaluations', 'composer.queuedMessage.interruptedQueue', 'data-codex-pet-state', 'The original Codex companion.', 'cloud-pet-selection', 'canStartProjectlessChat:', 'onFreshChatDraftCreated:', 'appServerVersion$'];
 
 export function normalizeRspackFactory(source) {
   if (/^(?:async\s+)?function\b/.test(source)) return source;

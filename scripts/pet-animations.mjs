@@ -6,6 +6,7 @@ import { sendInjectorControlRequest } from './codex-injector-control.mjs';
 
 const states = new Set(['idle', 'running-right', 'running-left', 'waving', 'jumping', 'failed', 'waiting', 'running', 'review']);
 const imageLimit = 32 * 1024 * 1024;
+const audioLimit = 16 * 1024 * 1024;
 const lumiDirectory = fileURLToPath(new URL('../inject/pets/lumi/', import.meta.url));
 
 function validateManifest(value) {
@@ -31,6 +32,10 @@ function validateManifest(value) {
     if (!states.has(state)) throw new Error(`不支持的动画状态：${state}`);
     if (!animation || !Array.isArray(animation.frames) || !animation.frames.length || animation.frames.length > 10_000
       || animation.loop !== undefined && typeof animation.loop !== 'boolean') throw new Error(`${state} 动作无效`);
+    if (animation.audio !== undefined && (typeof animation.audio !== 'string' || animation.audio.length > 240
+      || !/^[^\\/:\x00-\x1f\x7f]+\.(?:m4a|mp3|wav|ogg)$/i.test(animation.audio))) {
+      throw new Error(`${state} audio 必须是同目录的 M4A、MP3、WAV 或 Ogg 文件名`);
+    }
     const frames = animation.frames.map(frame => {
       if (!Array.isArray(frame) || frame.length !== 2 || !validCell(frame[0]) || !Number.isInteger(frame[1]) || frame[1] < 1 || frame[1] > 60_000) {
         throw new Error(`${state} 帧须为有效的 [格子序号, 毫秒]`);
@@ -38,7 +43,7 @@ function validateManifest(value) {
       return [...frame];
     });
     frameCount += frames.length;
-    animations[state] = { frames, loop: animation.loop ?? state === 'idle' };
+    animations[state] = { frames, loop: animation.loop ?? state === 'idle', ...(animation.audio ? { audio: animation.audio } : {}) };
   }
   if (frameCount > 10_000) throw new Error('动画总帧数不能超过 10000');
   if (value.lookFrames !== undefined && (!Array.isArray(value.lookFrames) || value.lookFrames.length !== 16 || !value.lookFrames.every(validCell))) {
@@ -99,6 +104,30 @@ async function readImage(directory, manifest) {
   return bytes;
 }
 
+function audioType(bytes, filename) {
+  const extension = path.extname(filename).toLowerCase();
+  if (extension === '.m4a' && bytes.length >= 16 && bytes.toString('ascii', 4, 8) === 'ftyp'
+    && bytes.readUInt32BE(0) >= 16 && bytes.readUInt32BE(0) <= bytes.length) return 'audio/mp4';
+  if (extension === '.mp3' && bytes.length >= 4 && (bytes.toString('ascii', 0, 3) === 'ID3'
+    || bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0 && (bytes[1] & 6) !== 0)) return 'audio/mpeg';
+  if (extension === '.wav' && bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF'
+    && bytes.toString('ascii', 8, 12) === 'WAVE') return 'audio/wav';
+  if (extension === '.ogg' && bytes.length >= 27 && bytes.toString('ascii', 0, 4) === 'OggS' && bytes[4] === 0) return 'audio/ogg';
+  throw new Error(`音频内容与格式不符：${filename}`);
+}
+
+async function readAudio(directory, manifest) {
+  const names = [...new Set(Object.values(manifest.animations).map(clip => clip.audio).filter(Boolean))];
+  if (!names.length) return {};
+  const root = await realpath(directory);
+  return Object.fromEntries(await Promise.all(names.map(async name => {
+    const file = await realpath(path.join(root, name));
+    if (path.dirname(file) !== root) throw new Error('音频必须位于清单所在目录，不能链接到外部文件');
+    const bytes = await readLimited(file, audioLimit);
+    return [name, { bytes, type: audioType(bytes, name) }];
+  })));
+}
+
 async function readIndex(directory) {
   let bytes;
   try { bytes = await readLimited(path.join(directory, 'index.json'), 4 * 1024 * 1024); }
@@ -110,26 +139,38 @@ async function readIndex(directory) {
   return manifests;
 }
 
-function animationKey(item, image) {
+function animationKey(item, image, audio = {}) {
   return JSON.stringify([
-    item.columns, item.rows, [...states].map(state => item.animations[state] ?? null), item.lookFrames ?? null,
+    item.columns, item.rows, [...states].map(state => {
+      const clip = item.animations[state];
+      return clip ? [clip.frames, clip.loop, clip.audio && audio[clip.audio] ? createHash('sha256').update(audio[clip.audio].bytes).digest('hex') : null] : null;
+    }), item.lookFrames ?? null,
     createHash('sha256').update(image).digest('hex'),
   ]);
+}
+
+function matchesBuiltinLumi(item, image, audio, builtinKeys) {
+  const key = animationKey(item, image, audio);
+  // The shipped silent Lumi pack keeps its identity when its preparation timing is updated.
+  return builtinKeys.has(key) || createHash('sha256').update(key).digest('hex')
+    === '6d49a3d4e2afe659baaf02b16b7b3cb5911ed0d745c130a9d700bf26c26b9c8d';
 }
 
 async function summaries(manifests, directory) {
   const builtin = validateManifest(JSON.parse(await readFile(path.join(lumiDirectory, 'animation.json'), 'utf8')));
   const builtinImage = await readImage(lumiDirectory, builtin);
-  const builtinKey = animationKey(builtin, builtinImage);
+  const builtinAudio = await readAudio(lumiDirectory, builtin);
+  const builtinKeys = new Set([animationKey(builtin, builtinImage, builtinAudio), animationKey(builtin, builtinImage)]);
   const result = await Promise.all(manifests.map(async item => {
     const image = await readImage(directory, item);
-    const matchesBuiltin = animationKey(item, image) === builtinKey;
+    const matchesBuiltin = matchesBuiltinLumi(item, image, await readAudio(directory, item), builtinKeys);
     if (item.petId === builtin.petId && matchesBuiltin) return null;
     const [width, height] = imageDimensions(image, item.spritesheet);
     const format = path.extname(item.spritesheet).toLowerCase() === '.png' ? 'png' : 'webp';
     return {
       petId: item.petId, name: item.name, states: Object.keys(item.animations), hasLookFrames: Boolean(item.lookFrames),
       builtinLumi: item.petId === builtin.petId || matchesBuiltin,
+      selectable: !item.petId.startsWith('pet_') && !item.petId.startsWith('custom:'),
       preview: {
         spritesheetUrl: `data:image/${format};base64,${image.toString('base64')}`,
         columns: item.columns, rows: item.rows, frame: item.animations.idle.frames[0][0],
@@ -150,11 +191,13 @@ async function writeIndex(directory, manifests) {
   } finally { await unlink(temporary).catch(() => {}); }
 }
 
-async function removeUnusedImages(directory, previous, next) {
-  for (const item of previous) {
-    if (/^[\da-f-]{36}\.(?:png|webp)$/.test(item.spritesheet) && !next.some(pack => pack.spritesheet === item.spritesheet)) {
+async function removeUnusedResources(directory, previous, next) {
+  const resources = packs => new Set(packs.flatMap(item => [item.spritesheet, ...Object.values(item.animations).map(clip => clip.audio).filter(Boolean)]));
+  const retained = resources(next);
+  for (const file of resources(previous)) {
+    if (/^[\da-f-]{36}\.(?:png|webp|m4a|mp3|wav|ogg)$/.test(file) && !retained.has(file)) {
       // The registry is already committed; leftover managed files must not turn success into failure.
-      await unlink(path.join(directory, item.spritesheet)).catch(() => {});
+      await unlink(path.join(directory, file)).catch(() => {});
     }
   }
 }
@@ -178,37 +221,61 @@ export async function readPetAnimations(dataDirectory) {
   const manifests = await readIndex(directory);
   const builtin = validateManifest(JSON.parse(await readFile(path.join(lumiDirectory, 'animation.json'), 'utf8')));
   const builtinImage = await readImage(lumiDirectory, builtin);
-  const builtinKey = animationKey(builtin, builtinImage);
+  const builtinAudio = await readAudio(lumiDirectory, builtin);
+  const builtinKeys = new Set([animationKey(builtin, builtinImage, builtinAudio), animationKey(builtin, builtinImage)]);
   const entries = manifests.map(manifest => ({ manifest, directory }));
   if (!manifests.some(manifest => manifest.petId === builtin.petId)) entries.push({ manifest: builtin, directory: lumiDirectory });
   return Promise.all(entries.map(async ({ manifest, directory: imageDirectory }) => {
     let image = await readImage(imageDirectory, manifest);
-    if (manifest.petId === builtin.petId && animationKey(manifest, image) === builtinKey) {
-      manifest = builtin;
+    let audio = await readAudio(imageDirectory, manifest);
+    const matchesBuiltin = matchesBuiltinLumi(manifest, image, audio, builtinKeys);
+    if (matchesBuiltin) {
+      manifest = { ...builtin, petId: manifest.petId, name: manifest.name };
       image = builtinImage;
+      audio = builtinAudio;
     }
     const format = path.extname(manifest.spritesheet).toLowerCase() === '.png' ? 'png' : 'webp';
-    return { ...manifest, spritesheetUrl: `data:image/${format};base64,${image.toString('base64')}` };
+    const animations = Object.fromEntries(Object.entries(manifest.animations).map(([state, clip]) => [state, {
+      ...clip, ...(clip.audio ? { audioUrl: `data:${audio[clip.audio].type};base64,${audio[clip.audio].bytes.toString('base64')}` } : {}),
+    }]));
+    return { ...manifest, animations, builtinLumi: manifest.petId === builtin.petId || matchesBuiltin,
+      spritesheetUrl: `data:image/${format};base64,${image.toString('base64')}` };
   }));
 }
 
 export async function importPetAnimation(dataDirectory, manifestPath) {
   const manifest = validateManifest(JSON.parse((await readLimited(manifestPath, 1024 * 1024)).toString('utf8')));
-  const image = await readImage(path.dirname(path.resolve(manifestPath)), manifest);
+  const sourceDirectory = path.dirname(path.resolve(manifestPath));
+  const image = await readImage(sourceDirectory, manifest);
+  const audio = await readAudio(sourceDirectory, manifest);
   const builtin = validateManifest(JSON.parse(await readFile(path.join(lumiDirectory, 'animation.json'), 'utf8')));
-  if (manifest.petId === builtin.petId && animationKey(manifest, image) === animationKey(builtin, await readImage(lumiDirectory, builtin))) {
+  const builtinImage = await readImage(lumiDirectory, builtin);
+  const builtinKeys = new Set([animationKey(builtin, builtinImage, await readAudio(lumiDirectory, builtin)), animationKey(builtin, builtinImage)]);
+  if (manifest.petId === builtin.petId && matchesBuiltinLumi(manifest, image, audio, builtinKeys)) {
     return removePetAnimation(dataDirectory, manifest.petId);
   }
   const directory = path.join(dataDirectory, 'pet-animations');
   await mkdir(directory, { recursive: true });
   const previous = await readIndex(directory);
   const spritesheet = `${randomUUID()}${path.extname(manifest.spritesheet).toLowerCase()}`;
-  const next = [...previous.filter(item => item.petId !== manifest.petId), { ...manifest, spritesheet }];
+  const audioNames = Object.fromEntries(Object.keys(audio).map(name => [name, `${randomUUID()}${path.extname(name).toLowerCase()}`]));
+  const animations = Object.fromEntries(Object.entries(manifest.animations).map(([state, clip]) => [state, {
+    ...clip, ...(clip.audio ? { audio: audioNames[clip.audio] } : {}),
+  }]));
+  const next = [...previous.filter(item => item.petId !== manifest.petId), { ...manifest, spritesheet, animations }];
   if (next.length > 128) throw new Error('最多导入 128 个宠物动画包');
-  await writeFile(path.join(directory, spritesheet), image, { flag: 'wx', mode: 0o600 });
-  try { await writeIndex(directory, next); }
-  catch (error) { await unlink(path.join(directory, spritesheet)).catch(() => {}); throw error; }
-  await removeUnusedImages(directory, previous, next);
+  const written = [];
+  try {
+    for (const [name, bytes] of [[spritesheet, image], ...Object.entries(audio).map(([name, resource]) => [audioNames[name], resource.bytes])]) {
+      await writeFile(path.join(directory, name), bytes, { flag: 'wx', mode: 0o600 });
+      written.push(name);
+    }
+    await writeIndex(directory, next);
+  } catch (error) {
+    for (const name of written) await unlink(path.join(directory, name)).catch(() => {});
+    throw error;
+  }
+  await removeUnusedResources(directory, previous, next);
   return summaries(next, directory);
 }
 
@@ -217,7 +284,7 @@ export async function removePetAnimation(dataDirectory, petId) {
   const next = previous.filter(item => item.petId !== petId);
   if (next.length !== previous.length) {
     await writeIndex(directory, next);
-    await removeUnusedImages(directory, previous, next);
+    await removeUnusedResources(directory, previous, next);
   }
   return summaries(next, directory);
 }
@@ -225,12 +292,14 @@ export async function removePetAnimation(dataDirectory, petId) {
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
     const [operation, dataDirectory, value] = process.argv.slice(2);
-    if (!dataDirectory || !['list', 'import', 'remove', 'pet-selection', 'use-lumi', 'cancel-lumi'].includes(operation) || ['import', 'remove'].includes(operation) && !value) {
-      throw new Error('用法：pet-animations.mjs list|pet-selection|use-lumi|cancel-lumi <数据目录> | import <数据目录> <清单路径> | remove <数据目录> <宠物 ID>');
+    if (!dataDirectory || !['list', 'import', 'remove', 'pet-selection', 'use-lumi', 'cancel-lumi', 'use-pet', 'cancel-pet'].includes(operation)
+      || ['import', 'remove', 'use-pet', 'cancel-pet'].includes(operation) && !value) {
+      throw new Error('用法：pet-animations.mjs list|pet-selection|use-lumi|cancel-lumi <数据目录> | import <数据目录> <清单路径> | remove|use-pet|cancel-pet <数据目录> <宠物 ID>');
     }
-    const result = ['pet-selection', 'use-lumi', 'cancel-lumi'].includes(operation)
+    const result = ['pet-selection', 'use-lumi', 'cancel-lumi', 'use-pet', 'cancel-pet'].includes(operation)
       ? await sendInjectorControlRequest({
         runtimeFile: path.join(dataDirectory, 'launcher-runtime.json'), action: operation,
+        ...(['use-pet', 'cancel-pet'].includes(operation) ? { payload: { petId: value } } : {}),
         ownership: { nodePath: process.execPath, injectorPath: fileURLToPath(new URL('./codex-injector.mjs', import.meta.url)) },
       })
       : operation === 'list' ? await listPetAnimations(dataDirectory)
