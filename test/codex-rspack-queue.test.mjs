@@ -8,10 +8,11 @@ const queueSource = 'function(e,t,n){var r=n("SZCv"),i=n.n(r),a=n("zTeN"),s=n("D
 
 // jMec's publication signal and derived readiness retain their native export shape.
 const publicationSource = 'function(e,t,n){var r=n("zTeN"),i=n("OWtl"),a=n("GaA7");let d=(0,r.vP)(i.u,()=>void 0,{onMount:e=>a.appServices.statsigEvaluations.subscribe(e)}),c=(0,r.un)(i.u,({get:e})=>{let t=e(d);if(t?.hasEvaluations!==void 0)return t.hasEvaluations?t.defaultEnableFeatures:{} });n.d(t,{},{B:c,L:d})}';
+const versionSource = 'function(e,t,n){var r=n("zTeN"),i=n("rljs"),a=n("OWtl");let s=(0,r.i1)(a.u,(e,{get:t})=>t(t(i.kA,e).appServerVersion$)??null),o=(0,r.vP)(a.u,()=>["local"]);n.d(t,{},{B:s,D:o})}';
 const otherSource = 'function(e,t,n){t.read=()=>"native";t.subscribe=(e,t,n)=>e.rpc.subscribe({type:"thread",key:t,field:"queuedMessages",listener:n})}';
 
 function scopeFixture() {
-  const get = (atom, ...keys) => {
+  const read = (atom, keys, get) => {
     if (atom.kind === 'family') {
       if (!atom.values.has(keys[0])) atom.values.set(keys[0], atom.create(keys[0]));
       return atom.values.get(keys[0]);
@@ -20,6 +21,7 @@ function scopeFixture() {
     assert.equal(keys.length, 0, 'publication is a scalar signal');
     return atom.value;
   };
+  const get = (atom, ...keys) => read(atom, keys, get);
   return {
     get,
     set(atom, value) {
@@ -37,11 +39,11 @@ function scopeFixture() {
       };
       const run = () => {
         clear();
-        cleanup = effect({ get(atom) {
-          dependencies.add(atom);
-          atom.listeners.add(run);
-          return get(atom);
-        } });
+        const tracked = (atom, ...keys) => {
+          if (atom.listeners) { dependencies.add(atom); atom.listeners.add(run); }
+          return read(atom, keys, tracked);
+        };
+        cleanup = effect({ get: tracked });
       };
       run();
       return clear;
@@ -49,10 +51,11 @@ function scopeFixture() {
   };
 }
 
-function harness(adapt) {
+function harness(adapt, { settingsReady = false, versionReady = true } = {}) {
   const scope = scopeFixture(), key = { hostId: 'local', threadId: 'fixture-thread' };
   const coreMessages = [{ id: 'queued-before-reload' }], snapshots = [], subscriptions = [], active = new Set();
-  let mainReady = false;
+  let mainReady = settingsReady;
+  const version = { value: versionReady ? '0.169.0-fixture' : null, listeners: new Set() };
   const rpc = {
     subscribe({ type, key: thread, field, listener }) {
       assert.equal(type, 'thread');
@@ -62,7 +65,7 @@ function harness(adapt) {
       subscriptions.push(entry);
       active.add(entry);
       assert.equal(active.size, 1, 'old RPC subscription is disposed before resubscribing');
-      listener(mainReady ? coreMessages : []);
+      listener(mainReady && version.value ? coreMessages : []);
       return () => { entry.disposed++; active.delete(entry); };
     },
   };
@@ -77,8 +80,9 @@ function harness(adapt) {
     SZCv: () => Object.is, zTeN: reactive, DBCl: { sx6: message => message.id },
     bBSc: { j: (_scope, thread, subscribe, onData) => subscribe({ rpc }, thread, onData) },
     vdpW: {}, Ryoj: { L() {} }, OWtl: { u: Symbol('scope') }, GaA7: {},
+    rljs: { kA: { kind: 'derived', read: () => ({ appServerVersion$: version }) } },
   };
-  const sources = { MYVk: queueSource, jMec: publicationSource, other: otherSource };
+  const sources = { MYVk: queueSource, jMec: publicationSource, CfsC: versionSource, other: otherSource };
   const factories = new Map(Object.entries(sources).map(([id, source]) => [id, { id, source, chunkIds: [42] }]));
   const plan = buildRspackPlan({ factories }, adapt ? { queue: rewriteRspackQueue } : {});
   const table = Object.fromEntries(Object.entries(sources).map(([id, source]) => [id, vm.runInNewContext(`(${source})`)]));
@@ -99,12 +103,15 @@ function harness(adapt) {
   };
   load.m = createCodexRspackRuntime(plan).wrapFactories(table, load);
   const published = load('jMec').L, queue = load('MYVk').Ax;
+  if (settingsReady) published.value = { hasEvaluations: true, defaultEnableFeatures: {} };
   const stop = queue.mount(key, { get: scope.get, set: value => snapshots.push(value), scope });
   return {
     plan, coreMessages, snapshots, subscriptions, active, published, stop,
     otherUnchanged: load.m.other === originalOther,
     otherValue: load('other').read(),
     messages: () => scope.get(queue, key),
+    version,
+    publishVersion(value) { scope.set(version, value); },
     publish(ready) {
       mainReady = ready;
       scope.set(published, { hasEvaluations: ready, defaultEnableFeatures: {} });
@@ -128,7 +135,7 @@ test('republishing evaluations restores the native queue and disposes every RPC 
   t.after(adapted.stop);
   assert.equal(adapted.plan.prepared.queue, true);
   assert.deepEqual(Object.keys(adapted.plan.patches), ['MYVk']);
-  assert.deepEqual(adapted.plan.chunks, { jMec: [42] });
+  assert.deepEqual(adapted.plan.chunks, { jMec: [42], CfsC: [42] });
   assert.equal(adapted.otherUnchanged, true);
   assert.equal(adapted.otherValue, 'native');
   assert.equal(adapted.coreMessages.length, 1);
@@ -145,7 +152,24 @@ test('republishing evaluations restores the native queue and disposes every RPC 
   adapted.stop();
   assert.equal(adapted.active.size, 0);
   assert.equal(adapted.published.listeners.size, 0);
+  assert.equal(adapted.version.listeners.size, 0);
   assert.ok(adapted.subscriptions.every(entry => entry.disposed === 1));
   adapted.publish(false);
   assert.equal(adapted.subscriptions.length, 4, 'disposing the watch also removes its publication listener');
+});
+
+test('a late core version refreshes the queue without republishing ready settings', t => {
+  const native = harness(false, { settingsReady: true, versionReady: false });
+  const adapted = harness(true, { settingsReady: true, versionReady: false });
+  t.after(native.stop);
+  t.after(adapted.stop);
+  const published = adapted.published.value;
+  assert.equal(adapted.messages().length, 0);
+  native.publishVersion('0.169.0-fixture');
+  adapted.publishVersion('0.169.0-fixture');
+  assert.equal(native.messages().length, 0);
+  assert.equal(adapted.published.value, published);
+  assert.equal(adapted.messages()[0], adapted.coreMessages[0]);
+  assert.equal(adapted.subscriptions.length, 2);
+  assert.deepEqual(adapted.subscriptions.map(entry => entry.disposed), [1, 0]);
 });

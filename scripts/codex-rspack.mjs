@@ -21,12 +21,16 @@ export function rewriteRspackQueue(source, context) {
   const signal = publication?.source.match(new RegExp(`let ${id}=${id}\\((${id})\\);if\\(${id}\\?\\.hasEvaluations`))?.[1];
   const exported = signal && publication.source.slice(publication.source.lastIndexOf('.d('))
     .match(new RegExp(`(${id}):(?:\\(\\)=>)?${signal.replaceAll('$', '\\$')}(?=[,}])`))?.[1];
-  if (!require || subscriptions.length !== 1 || !publication || !exported) {
+  const version = context.findModule(['appServerVersion$)??null)']);
+  const versionSignal = version?.source.match(new RegExp(`let (${id})=\\(0,${id}\\.${id}\\)\\([^;]*?\\.appServerVersion\\$\\)\\?\\?null\\)`))?.[1];
+  const versionExport = versionSignal && version.source.slice(version.source.lastIndexOf('.d('))
+    .match(new RegExp(`(${id}):(?:\\(\\)=>)?${versionSignal.replaceAll('$', '\\$')}(?=[,}])`))?.[1];
+  if (!require || subscriptions.length !== 1 || !publication || !exported || !versionExport) {
     throw new Error('Native queued-follow-up subscription is unsupported');
   }
   const subscription = `(0,${subscriptions[0][1]}.${subscriptions[0][2]})`;
-  // A restored rollout must reload the server queue after an empty startup snapshot.
-  const reactive = `((...panelQueueArgs)=>panelQueueArgs[0].watch(({get:panelQueueGet})=>{panelQueueGet(panelQueueRequire(${JSON.stringify(publication.id)}).${exported});return ${subscription}(...panelQueueArgs)}))`;
+  // Settings and core version can become ready independently after an empty startup snapshot.
+  const reactive = `((...panelQueueArgs)=>panelQueueArgs[0].watch(({get:panelQueueGet})=>{panelQueueGet(panelQueueRequire(${JSON.stringify(publication.id)}).${exported});panelQueueGet(panelQueueRequire(${JSON.stringify(version.id)}).${versionExport},panelQueueArgs[1].hostId);return ${subscription}(...panelQueueArgs)}))`;
   return source.replace(/^(function\s*[^\(]*\([^)]*\)\{)/, `$1const panelQueueRequire=${require};`)
     .replace(subscription, reactive);
 }
