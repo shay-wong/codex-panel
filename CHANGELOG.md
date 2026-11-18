@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Restore Fast and Ultrafast selection for `gpt-6.2-astra` and `gpt-6.2-sol` on local custom providers by updating the native menu and model catalog adapters.
+
 ## 0.5.8-fork
 
 - Restore native queued-message visibility when the core reports queue support after settings have already loaded.
