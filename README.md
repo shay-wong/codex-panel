@@ -198,6 +198,8 @@ Existing browser settings and drafts are migrated from `taskboard.*` keys to `pa
 Workflow Skill search accepts a leading `$`, such as `$shay-skills:review`.
 The workflow picker shows one entry per real Skill file, preferring namespaced IDs and retaining existing selections.
 
+Click **Panel** in the Codex sidebar to show the task panel. Click it again to return to the previous Codex page while the Panel app and background service keep running. See [Panel navigation](docs/fork-capabilities.md#switch-between-panel-and-native-codex-destinations).
+
 With banner hiding enabled, switching conversations hides new usage banners without waiting for the delayed page refresh.
 
 ### Recommended: use the Codex Panel desktop app

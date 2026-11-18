@@ -231,6 +231,8 @@ The wait duration is fixed. If no main renderer appears within 30 seconds, the l
 
 ## Switch between Panel and native Codex destinations
 
+Click the sidebar **Panel** entry to open the task panel, then click the selected entry to close it and return to the previous native page. The entry’s accessible label switches between **Open Panel** and **Close Panel**. The Panel app and background service keep running, so you can reopen the task panel from the same entry.
+
 When Codex retains multiple sidebars, Panel skips hidden or inert copies and moves its existing entry to the available sidebar as interactivity changes. When switching between a text sidebar and an icon rail, Panel recreates the entry using the current native style so its text cannot widen the rail. Placement remains before Explore when that rail anchor exists, with the existing content-sidebar fallbacks otherwise. No setting is required.
 
 The rail entry preserves its native icon wrapper and alignment, uses the native inactive text color, and retains its original selected color. Native icons keep one React-owned SVG to avoid duplicate artwork during selection changes. Only history entries created by opening Panel, including their same-URL state replacements, can restore it; cached state copied into a new native destination does not reopen Panel. Clicking the currently selected native destination returns to that page without going back to a different destination.

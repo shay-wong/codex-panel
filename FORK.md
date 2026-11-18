@@ -135,6 +135,8 @@ Ultrafast 设置说明：`launcher/src/App.tsx` 将适用模型、必需的 `fea
 
 ### 新版 Codex 导航兼容
 
+- 侧栏入口开合（等待上游吸收）。点击 `inject/codex-panel.user.js` 中的任务面板入口时，若面板已打开则通过 `leavePanel()` 返回打开前的原生页面，收起后可从同一入口重新打开。无障碍标签随打开状态同步，Panel 应用和后台服务继续运行。针对性验证使用 `test/codex-sidebar-mount.test.mjs`、`test/inject-navigation-regression.test.mjs` 的入口和导航场景，以及隔离的打开、收起和重开流程。使用说明见中英文 README、CHANGELOG 及 `docs/fork-capabilities.md#switch-between-panel-and-native-codex-destinations`。用 `git log -S'if (active) leavePanel()' -- inject/codex-panel.user.js` 定位来源。合并时沿用原生历史，上游提供等价开合行为后移除此项。
+
 - 生命周期：`等待上游吸收`；分类：内部兼容性修复，保持既有任务面板入口与原生返回行为。
 - 原因与不变量：新版 Data Router 的 navigator 不再提供 location；使用 `router.state.location`、`navigate` 与 `subscribe`，在导航实际提交后同步面板，并在销毁时取消订阅。旧版 MemoryRouter 保留现有实现。多个会话常驻 DOM 时选择可见工作区；面板隐藏原内容后继续复用已挂载区域，不挂到隐藏会话。
 - 代码与验证：`inject/codex-panel.user.js`、`test/inject.test.mjs`；`node --test test/inject.test.mjs test/inject-fullheight-regression.test.mjs`，覆盖新旧导航、异步提交、前进返回、订阅清理及隔离 Chromium 实际挂载。实际安装版本仅在当前窗口应用修复后核对面板 ready 与可见尺寸，不改任务数据库。
