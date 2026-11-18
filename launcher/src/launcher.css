@@ -17,6 +17,13 @@ button, input { font: inherit; }
 .launcher-main { min-width: 0; overflow-y: auto; padding: 34px 38px 28px; }
 .launcher-main { --page-enter-x: -10px; animation: launcher-page-enter 200ms cubic-bezier(.2, .8, .2, 1) both; }
 .launcher-main.workflow-page { --page-enter-x: 14px; }
+.update-notes { max-height: 240px; overflow-y: auto; overflow-wrap: anywhere; padding: 14px 16px; border: 1px solid var(--gray-5); border-radius: 10px; background: var(--gray-2); font-size: 13px; line-height: 1.65; }
+.update-notes :is(h1, h2, h3, h4) { margin: 16px 0 8px; font-size: 14px; line-height: 1.5; }
+.update-notes :is(p, ul, ol, pre, blockquote) { margin: 8px 0; }
+.update-notes :is(ul, ol) { padding-left: 22px; }
+.update-notes pre { white-space: pre-wrap; }
+.update-notes > :first-child { margin-top: 0; }
+.update-notes > :last-child { margin-bottom: 0; }
 @keyframes launcher-page-enter {
   from { opacity: 0; transform: translateX(var(--page-enter-x)); }
   to { opacity: 1; transform: translateX(0); }
