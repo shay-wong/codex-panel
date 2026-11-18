@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import ReactMarkdown from "react-markdown";
 import { AlertDialog, Badge, Box, Button, Callout, Card, Dialog, Flex, Heading, IconButton, Select, Separator, Switch, Tabs, Text, TextField, Tooltip } from "@radix-ui/themes";
 import { LinearIcon } from "../../web/src/components/LinearIcon";
 import { ModelContextSettings } from "./ModelContextSettings";
@@ -14,6 +15,7 @@ export type LauncherSnapshot = {
   threadTabsMessage: string;
   openRequestPending: boolean;
   updateMessage: string;
+  updateNotes: string | null;
   updateAvailable: boolean;
   updateReady: boolean;
   codexUpdateReady: boolean;
@@ -43,7 +45,7 @@ const labels: Record<string, string> = { running: "运行正常", waiting: "等�
 const titles: Record<string, string> = { running: "Panel 已就绪", waiting: "服务已启动", restart_required: "需要重启 Codex", error: "服务需要处理", stopped: "服务已停止", starting: "正在建立连接" };
 const initialSnapshot: LauncherSnapshot = {
   phase: "starting", version: "—", message: "正在读取服务状态…", childPid: null,
-  embeddedVisible: false, threadTabsPhase: "waiting", threadTabsMessage: "", openRequestPending: false, updateMessage: "尚未检查更新。",
+  embeddedVisible: false, threadTabsPhase: "waiting", threadTabsMessage: "", openRequestPending: false, updateMessage: "尚未检查更新。", updateNotes: null,
   updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false, appPath: null,
 };
 
@@ -487,6 +489,15 @@ export function App() {
             <Separator size="4" my="5" />
             <Flex justify="between" align="center" mb="3"><Heading as="h3" size="2">版本更新</Heading>{snapshot.updateAvailable && <Badge id="updateBadge">有新版本</Badge>}</Flex>
             <Text as="p" size="2" color="gray" mb="4" id="updateMessage">{snapshot.updateMessage || "尚未检查更新。"}</Text>
+            {snapshot.updateAvailable && <Box mb="4">
+              <Heading as="h4" size="2" mb="2" id="updateNotesTitle">版本说明</Heading>
+              <div className="update-notes" role="region" aria-labelledby="updateNotesTitle" tabIndex={0}>
+                {snapshot.updateNotes?.trim()
+                  // 说明只在页内阅读；外部跳转沿用发布页按钮，避免替换管理窗口。
+                  ? <ReactMarkdown skipHtml components={{ a: ({ children }) => <>{children}</>, img: () => null }}>{snapshot.updateNotes}</ReactMarkdown>
+                  : <Text as="p" color="gray">该版本暂无版本说明。</Text>}
+              </div>
+            </Box>}
             <Flex gap="2" wrap="wrap">
               <Button variant="soft" {...actionProps("check_for_updates")}>检查更新</Button>
               {snapshot.updateReady && <Button id="installUpdate" highContrast {...actionProps("install_available_update")}>安装并重启</Button>}

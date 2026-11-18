@@ -18,7 +18,7 @@ it("keeps launcher feedback, live status and global preferences working through 
       phase: "waiting", message: "Panel 服务已启动，正在等待 Codex 连接。", version: "0.1.0",
       childPid: 123, openRequestPending: false, embeddedVisible: false,
       threadTabsPhase: "waiting", threadTabsMessage: "",
-      updateMessage: "尚未检查更新。", updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false,
+      updateMessage: "尚未检查更新。", updateNotes: null, updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false,
       appPath: "/disposable/Codex.app",
     },
     preferences: { defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true },
@@ -151,6 +151,16 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(button("checkCodexUpdates")).toBeTruthy();
   fireEvent.mouseDown(screen.getByRole("tab", { name: /关于/ }), { button: 0, ctrlKey: false });
   expect(within(document.getElementById("aboutView")!).getByRole("button", { name: "检查更新" })).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "版本说明" })).toBeNull();
+  await publish({ updateAvailable: true, updateNotes: "## 更新内容\n\n- 恢复 **GPT-6.2** 的 UF 选择。\n- 保留原生安装流程。" });
+  const updateNotes = screen.getByRole("region", { name: "版本说明" });
+  expect(within(updateNotes).getByRole("heading", { name: "更新内容" })).toBeTruthy();
+  expect(within(updateNotes).getAllByRole("listitem")).toHaveLength(2);
+  expect(within(updateNotes).getByText("GPT-6.2").tagName).toBe("STRONG");
+  await publish({ updateNotes: null });
+  expect(within(updateNotes).getByText("该版本暂无版本说明。")).toBeTruthy();
+  await publish({ updateAvailable: false, updateNotes: null });
+  expect(screen.queryByRole("region", { name: "版本说明" })).toBeNull();
   expect(document.getElementById("installUpdate")).toBeNull();
   await publish({ updateReady: true });
   await click(button("installUpdate"));
@@ -415,7 +425,7 @@ it("opens pets from its own navigation page and refreshes the real selection whe
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const state: LauncherState = {
-    snapshot: { phase: "running", version: "test", message: "Ready", childPid: 1, embeddedVisible: true, threadTabsPhase: "ready", threadTabsMessage: "", openRequestPending: false, updateMessage: "", updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false, appPath: "/disposable/Codex.app" },
+    snapshot: { phase: "running", version: "test", message: "Ready", childPid: 1, embeddedVisible: true, threadTabsPhase: "ready", threadTabsMessage: "", openRequestPending: false, updateMessage: "", updateNotes: null, updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false, appPath: "/disposable/Codex.app" },
     preferences: { defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true },
     autostart: false, dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
   };

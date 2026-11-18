@@ -126,6 +126,7 @@ struct LauncherSnapshot {
     phase: String,
     message: String,
     update_message: String,
+    update_notes: Option<String>,
     update_available: bool,
     update_ready: bool,
     codex_update_ready: bool,
@@ -340,6 +341,7 @@ struct GitHubRelease {
     #[serde(rename = "html_url")]
     html_url: String,
     draft: bool,
+    body: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -387,7 +389,12 @@ impl PartialOrd for PanelVersion {
 enum ReleaseCheckResult {
     None,
     Current,
-    Available { version: String, url: String },
+    Available {
+        version: String,
+        url: String,
+        #[serde(default)]
+        notes: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -516,6 +523,7 @@ impl LauncherState {
                 phase: "starting".into(),
                 message: "正在启动任务面板…".into(),
                 update_message: "尚未检查更新。".into(),
+                update_notes: None,
                 update_available: false,
                 update_ready: false,
                 codex_update_ready: false,
@@ -859,6 +867,7 @@ fn release_check_result(
     Ok(ReleaseCheckResult::Available {
         version: release.tag_name,
         url: release.html_url,
+        notes: release.body,
     })
 }
 
@@ -881,7 +890,7 @@ fn cached_release_check(
     if now.checked_sub(cache.checked_at)? >= cache_interval {
         return None;
     }
-    if let Ok(ReleaseCheckResult::Available { version, url }) = &cache.result {
+    if let Ok(ReleaseCheckResult::Available { version, url, .. }) = &cache.result {
         if !PanelVersion::is_release_tag(version) || !trusted_release_url(url, version) {
             return None;
         }
@@ -3588,7 +3597,8 @@ fn install_prepared_update(app: &AppHandle, state: &Arc<LauncherState>) -> Resul
     let Some((update, bytes)) = prepared else {
         return Err("更新尚未完成下载和签名验证，请先检查更新。".into());
     };
-    let Some(dialog) = UpdateDialog::prompt(app, &update.version) else {
+    let notes = state.snapshot.lock().unwrap().update_notes.clone();
+    let Some(dialog) = UpdateDialog::prompt(app, &update.version, notes.as_deref()) else {
         *state.prepared_update.lock().unwrap() = Some((update, bytes));
         return Ok(());
     };
@@ -3659,6 +3669,7 @@ async fn offer_update(
             snapshot.update_available = false;
             snapshot.update_ready = false;
             snapshot.update_url = None;
+            snapshot.update_notes = None;
         });
     }
     let used_cache = cached.is_some();
@@ -3679,6 +3690,7 @@ async fn offer_update(
                 snapshot.update_available = false;
                 snapshot.update_ready = false;
                 snapshot.update_url = None;
+                snapshot.update_notes = None;
             });
             if show_result {
                 show_message_dialog(app, "Codex Panel 更新", "Fork 暂无已发布版本。", MessageDialogKind::Info);
@@ -3691,19 +3703,21 @@ async fn offer_update(
                 snapshot.update_available = false;
                 snapshot.update_ready = false;
                 snapshot.update_url = None;
+                snapshot.update_notes = None;
             });
             if show_result {
                 show_message_dialog(app, "Codex Panel 更新", "当前已是最新版本。", MessageDialogKind::Info);
             }
             Ok(())
         }
-        Ok(ReleaseCheckResult::Available { version, url }) => {
+        Ok(ReleaseCheckResult::Available { version, url, notes }) => {
             append_log(state, &format!("Fork release {version} is available"));
             update_snapshot(app, state, |snapshot| {
                 snapshot.update_message = format!("发现新版本 {version}，正在准备更新…");
                 snapshot.update_available = true;
                 snapshot.update_ready = false;
                 snapshot.update_url = Some(url.clone());
+                snapshot.update_notes = notes.clone();
             });
             if show_result {
                 let _ = show_main_window(app);
@@ -3731,6 +3745,7 @@ async fn offer_update(
                 snapshot.update_available = false;
                 snapshot.update_ready = false;
                 snapshot.update_url = None;
+                snapshot.update_notes = None;
             });
             if show_result {
                 show_error_dialog(
@@ -4473,6 +4488,7 @@ mod tests {
             phase: "waiting".into(),
             message: String::new(),
             update_message: String::new(),
+            update_notes: None,
             update_available: false,
             update_ready: false,
             codex_update_ready: false,
@@ -4548,6 +4564,7 @@ mod tests {
             phase: "running".into(),
             message: String::new(),
             update_message: String::new(),
+            update_notes: None,
             update_available: false,
             update_ready: false,
             codex_update_ready: false,
@@ -4641,6 +4658,26 @@ mod tests {
         fs::write(root.join("app/unlisted.mjs"), "export {};\n").unwrap();
         assert!(verify_runtime_integrity(&root, &node, &manifest).is_err());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn selected_release_notes_survive_the_update_cache() {
+        let releases: Vec<super::GitHubRelease> = serde_json::from_value(serde_json::json!([
+            { "tag_name": "v0.5.9-fork", "html_url": "https://github.com/shay-wong/codex-panel/releases/tag/v0.5.9-fork", "draft": false, "body": "旧版本说明" },
+            { "tag_name": "v0.5.10-fork", "html_url": "https://github.com/shay-wong/codex-panel/releases/tag/v0.5.10-fork", "draft": false, "body": "## 更新内容\n- 在更新界面显示版本说明。" }
+        ])).unwrap();
+        let result = super::release_check_result("0.5.8-fork", releases).unwrap();
+        let path = env::temp_dir().join(format!("codex-panel-update-notes-{}.json", Uuid::new_v4()));
+        write_release_check_cache(&path, "0.5.8-fork", 1000, &Ok(result)).unwrap();
+        let cached = cached_release_check(&path, 1001, "0.5.8-fork").unwrap().unwrap();
+        assert!(matches!(cached, ReleaseCheckResult::Available { version, notes: Some(notes), .. }
+            if version == "v0.5.10-fork" && notes == "## 更新内容\n- 在更新界面显示版本说明。"));
+        // 旧缓存没有正文；保留检查结果，界面可显示“暂无版本说明”。
+        let old: ReleaseCheckResult = serde_json::from_value(serde_json::json!({
+            "Available": { "version": "v0.5.9-fork", "url": "https://github.com/shay-wong/codex-panel/releases/tag/v0.5.9-fork" }
+        })).unwrap();
+        assert!(matches!(old, ReleaseCheckResult::Available { notes: None, .. }));
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

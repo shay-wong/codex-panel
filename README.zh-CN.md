@@ -225,6 +225,8 @@ Fork 从 `0.0.1-fork`（标签 `v0.0.1-fork`）开始独立版本，不再随上
 
 Panel 每次启动时检查 Fork 的 GitHub Releases；有效的成功结果缓存 24 小时，临时失败缓存 5 分钟，匿名 API 限流缓存到 GitHub 返回的重置时间，缓存会在下次启动时再次判断。手动检查始终绕过缓存。检查会优先使用本机已登录的 `gh` CLI，无法使用时才回退到匿名 GitHub API，并分别提示额度耗尽、网络失败、暂无 Release、已是最新版本或发现新版本。只有规范化的 `vX.Y.Z-fork` 标签会成为更新候选，发现新版本后会在应用内下载并验证签名，只有用户确认后才安装并重启 Panel。macOS 使用原生前台确认弹窗，其他平台继续使用 Tauri 对话框。官方 Fork 构建内置更新公钥，自定义构建可用 `CODEX_PANEL_UPDATER_PUBLIC_KEY` 覆盖。详见[更新包配置](docs/fork-capabilities.md#signed-in-app-updates)。
 
+发现新版本后，**关于 → 版本更新** 和安装确认框会直接显示该版本的说明；页面和 macOS 确认框中的长内容可滚动阅读。没有说明时显示“该版本暂无版本说明。”；“查看发布说明”仍可打开 GitHub 发行版。
+
 App bundle 内包含 Panel runtime、`panelctl`、两个 Panel Skills，以及用于运行它们的官方签名 Node.js runtime。macOS 安装器优先使用 `CODEX_PANEL_CODESIGN_IDENTITY`，其次使用可复用的本机 Apple Development 身份；两者都不可用时回退到 ad-hoc 签名。Windows 的 Authenticode 签名可选：配置证书与 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` 时签名，全部留空时生成未签名的 NSIS 安装包；两种模式都保留 Tauri 更新包签名。macOS 与 Windows 并行打包，等待两边结束后统一发布成功平台的产物。
 
 连接前，应用会先校验自身 App 签名和打包 runtime，再按 OpenAI 的 Identifier 和 Team ID 校验官方 `ChatGPT.app` 及其内置 Codex 可执行文件，拒绝符号链接，并从子进程环境中移除 Node、shell 和动态加载器注入变量。Windows 始终在执行前校验编译进 launcher、覆盖 Node 和全部 Panel runtime 文件的 SHA-256 清单；配置了 Authenticode 证书的构建还会校验 launcher 的签名者。Panel 服务通过启动器持有的监听器和私有实例 token 仅绑定回环地址。如果正在运行的 Codex 已暴露有效 CDP，包括旧 Swift 启动器留下的端口，新 injector 会接管真实端口；否则通过 macOS LaunchServices 使用随机私有 CDP 端口启动官方应用。已经在无 CDP 模式下运行的 Codex 仍需完全退出后才能重新以 CDP 启动。运行状态、打开和停止请求在 macOS 使用受启动 token 保护且仅当前用户可访问的 Unix socket，在 Windows 使用启动器持有的子进程控制管道；Windows 上的 Panel 生命周期操作通过受启动 token 认证的 named pipe 中断 native Codex turn。停止或退出 Tauri 只会等待自己负责的 injector 和 Panel 服务退出，官方 ChatGPT/Codex 应用继续运行。应用不会修改 `ChatGPT.app` 或 `app.asar`。

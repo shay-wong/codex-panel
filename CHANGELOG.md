@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Show release notes directly in About → Version updates and the installation confirmation, with scrolling for long notes on macOS.
+
 ## 0.5.9-fork
 
 - Restore Fast and Ultrafast selection for `gpt-6.2-astra` and `gpt-6.2-sol` on local custom providers by updating the native menu and model catalog adapters.
