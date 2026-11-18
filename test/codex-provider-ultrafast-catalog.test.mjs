@@ -9,6 +9,64 @@ import { parse } from "smol-toml";
 import { CodexAppServer } from "../server/codex-app-server.mjs";
 import { createUltrafastCatalogAdapter, modelContextSettings, readBundledModelCatalog, readModelDiscovery, setModelDiscovery, withUltrafastCatalog } from "../scripts/codex-provider-ultrafast-catalog.mjs";
 
+test("manual native catalog refresh downloads new models without losing saved settings", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-catalog-refresh-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const catalogPath = path.join(root, "model-context-catalog.json");
+  const statePath = path.join(root, "model-context.json");
+  const configFile = path.join(root, "config.toml");
+  await writeFile(configFile, "");
+  const old = { slug: "gpt-6.1-sol", context_window: 272000, max_context_window: 872000,
+    supported_reasoning_levels: [{ effort: "high" }], base_instructions: "Native instructions" };
+  const stale = { models: [old] };
+  const latest = { models: [old,
+    { ...old, slug: "gpt-6.2-astra", service_tiers: [{ id: "ultrafast" }] },
+    { ...old, slug: "gpt-6.2-sol", context_window: 500000 },
+  ] };
+  const saved = { catalog: stale, contextWindows: { [old.slug]: 600000 },
+    autoCompactTokenLimits: { [old.slug]: "50%" }, multiAgentReasoningEfforts: { [old.slug]: "high" },
+    originalCatalog: null, catalogSource: "native" };
+  await writeFile(statePath, JSON.stringify(saved));
+  await writeFile(catalogPath, JSON.stringify(stale));
+  await writeFile(path.join(root, "models_cache.json"), JSON.stringify(stale));
+  const config = { model_provider: "probe", model_catalog_json: catalogPath,
+    agents: { default_subagent_model: old.slug, default_subagent_reasoning_effort: "high" } };
+  t.mock.method(CodexAppServer.prototype, "request", async method => {
+    assert.equal(method, "config/read", "refreshing an active Panel catalog must preserve user configuration");
+    return { config, layers: [{ name: { type: "user", file: configFile }, version: "v1", config }] };
+  });
+  let downloads = 0, failDownload = false;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(url, "https://raw.githubusercontent.com/openai/codex/main/codex-rs/models-manager/models.json");
+    assert.equal(options.headers, undefined, "public defaults must not receive provider credentials");
+    downloads++;
+    return new Response(failDownload ? "unavailable" : JSON.stringify(latest), { status: failDownload ? 502 : 200 });
+  });
+  const options = { executable: "/unused", dataDirectory: root, refreshCatalog: true };
+  const refreshed = await modelContextSettings(options);
+  assert.deepEqual(refreshed.models.map(model => model.slug), latest.models.map(model => model.slug));
+  assert.equal(refreshed.catalogChanged, true);
+  assert.deepEqual(refreshed.contextWindows, saved.contextWindows);
+  assert.deepEqual(refreshed.autoCompactTokenLimits, saved.autoCompactTokenLimits);
+  assert.deepEqual(refreshed.multiAgentReasoningEfforts, saved.multiAgentReasoningEfforts);
+  assert.equal(refreshed.defaultSubagentModel, old.slug);
+  assert.equal(refreshed.defaultSubagentReasoningEffort, "high");
+  const catalog = JSON.parse(await readFile(catalogPath));
+  assert.equal(catalog.models[0].context_window, 600000);
+  assert.equal(catalog.models[0].auto_compact_token_limit, 300000);
+  assert.equal(catalog.models[0].multi_agent_reasoning_effort, "high");
+  assert.deepEqual(catalog.models.slice(1), latest.models.slice(1), "new models retain their full metadata");
+  assert.equal((await modelContextSettings(options)).catalogChanged, false);
+  assert.equal(downloads, 2, "each explicit refresh must download rather than reuse the stale cache");
+  const beforeFailure = await readFile(statePath, "utf8");
+  const catalogBeforeFailure = await readFile(catalogPath, "utf8");
+  failDownload = true;
+  await assert.rejects(modelContextSettings(options), /502/);
+  assert.equal(await readFile(statePath, "utf8"), beforeFailure);
+  assert.equal(await readFile(catalogPath, "utf8"), catalogBeforeFailure);
+  assert.equal(await readFile(configFile, "utf8"), "");
+});
+
 test("role models and reasoning update registered and standalone files without changing instructions", async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-role-model-")));
   t.after(() => rm(root, { recursive: true, force: true }));

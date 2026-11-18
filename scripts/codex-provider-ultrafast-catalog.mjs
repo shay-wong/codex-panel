@@ -86,13 +86,24 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
     };
   }
   if (!Array.isArray(state.catalog?.models)) throw new Error("Codex 模型目录格式无效");
+  let catalogChanged = false;
   if (refreshCatalog) {
-    const source = state.originalCatalog
-      ? JSON.parse(await readFile(state.originalCatalog, "utf8"))
-      : await readJson(path.join(path.dirname(userLayer.name.file), "models_cache.json"), null)
+    let source;
+    if (state.originalCatalog) source = JSON.parse(await readFile(state.originalCatalog, "utf8"));
+    else if (sourceUrl) {
+      source = await readJson(path.join(path.dirname(userLayer.name.file), "models_cache.json"), null)
         ?? await readBundledModelCatalog(executable);
+    } else {
+      const response = await fetch("https://raw.githubusercontent.com/openai/codex/main/codex-rs/models-manager/models.json", {
+        cache: "no-store", signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error(`获取最新 Codex 模型目录失败（HTTP ${response.status}）`);
+      source = await response.json();
+    }
     if (!Array.isArray(source?.models) || !source.models.length) throw new Error("Codex 模型目录格式无效");
-    state.catalog = { models: source.models };
+    catalogChanged = config.model_catalog_json !== catalogPath
+      || JSON.stringify(source.models) !== JSON.stringify(state.catalog.models);
+    state.catalog = source;
     state.catalogSource = state.originalCatalog || sourceUrl ? "external" : "native";
   } else if (!state.catalogSource && !state.originalCatalog && !sourceUrl) {
     // Refresh unclassified legacy defaults from the current native source, retaining saved overrides.
@@ -102,7 +113,7 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
   state.autoCompactTokenLimits ??= {};
   state.multiAgentReasoningEfforts ??= {};
   state.useOfficialContextDefaults = state.catalogSource === "native";
-  return { config, userLayer, origins, state, statePath, catalogPath };
+  return { config, userLayer, origins, state, statePath, catalogPath, catalogChanged };
 }
 
 function withModelContextSettings(catalog, { contextWindows, autoCompactTokenLimits = {}, multiAgentReasoningEfforts = {}, useOfficialContextDefaults = false }) {
@@ -181,7 +192,7 @@ defaultSubagentReasoningEffort, agentReasoningEfforts) {
   dataDirectory = realpathSync(dataDirectory);
   const client = new CodexAppServer({ executable, processEnv, cwd });
   try {
-    const { config, userLayer, origins, state, statePath, catalogPath } = await modelContextState(
+    const { config, userLayer, origins, state, statePath, catalogPath, catalogChanged } = await modelContextState(
       { executable, dataDirectory, processEnv, cwd, refreshCatalog }, client,
     );
     const defaults = state.useOfficialContextDefaults ? withCurrentModelDefaults(state.catalog) : state.catalog;
@@ -291,6 +302,7 @@ defaultSubagentReasoningEffort, agentReasoningEfforts) {
       }
     }
     return {
+      catalogChanged,
       models: defaults.models.map(model => ({
         slug: model.slug, displayName: model.display_name ?? model.slug,
         contextWindow: model.context_window ?? model.max_context_window ?? null,

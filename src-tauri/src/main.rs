@@ -3395,8 +3395,10 @@ async fn refresh_model_catalog(
     state: State<'_, Arc<LauncherState>>,
 ) -> Result<serde_json::Value, String> {
     let output = run_model_configuration(app.clone(), "refresh-catalog", Some(state.data_directory.clone()), None).await?;
-    let result = serde_json::from_str(output.trim()).map_err(|error| error.to_string())?;
-    mark_codex_restart_required(&app, &state, "模型目录")?;
+    let result: serde_json::Value = serde_json::from_str(output.trim()).map_err(|error| error.to_string())?;
+    if result.get("catalogChanged").and_then(serde_json::Value::as_bool) == Some(true) {
+        mark_codex_restart_required(&app, &state, "模型目录")?;
+    }
     Ok(result)
 }
 

@@ -106,10 +106,10 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
     setError("");
     setRefreshMessage("");
     try {
-      const result = await window.__TAURI__.core.invoke<ModelContextSettings>("refresh_model_catalog");
+      const result = await window.__TAURI__.core.invoke<ModelContextSettings & { catalogChanged: boolean }>("refresh_model_catalog");
       setSettings({ ...result, agents: result.agents ?? [] });
-      setRefreshMessage("模型目录已刷新，重启 Codex 后生效。");
-      onSaved();
+      setRefreshMessage(result.catalogChanged ? "模型目录已更新，重启 Codex 后生效。" : "模型目录已是最新。");
+      if (result.catalogChanged) onSaved();
     } catch (cause) { setError(String(cause)); }
     finally { setSaving(false); }
   }

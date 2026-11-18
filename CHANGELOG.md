@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fix native model catalog refresh to download the latest official defaults, including `gpt-6.2-astra` and `gpt-6.2-sol`, while preserving saved model settings. Unchanged catalogs no longer prompt for a restart.
+
 ## 0.5.10-fork
 
 - Add **刷新模型目录** in model settings to load newly discovered Codex models without resetting saved context, compaction or subagent settings; restart Codex to apply the updated catalog.
