@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.5.10-fork
+
 - Add **刷新模型目录** in model settings to load newly discovered Codex models without resetting saved context, compaction or subagent settings; restart Codex to apply the updated catalog.
 
 ## 0.5.9-fork
