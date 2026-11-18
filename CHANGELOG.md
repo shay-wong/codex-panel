@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.5.11-fork
+
 - Show release notes directly in About → Version updates and the installation confirmation, with scrolling for long notes on macOS.
 
 ## 0.5.10-fork
