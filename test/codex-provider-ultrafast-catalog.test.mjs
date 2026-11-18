@@ -163,10 +163,11 @@ test("manual catalog refresh requests the active provider and preserves saved se
   assert.deepEqual(resaved.multiAgentReasoningEfforts, saved.multiAgentReasoningEfforts);
   await assert.rejects(modelContextSettings({ ...options, refreshCatalog: false },
     { ...saved.contextWindows, "new-unoffered-model": 64000 }, saved.autoCompactTokenLimits, saved.multiAgentReasoningEfforts), /模型目录中没有 new-unoffered-model/);
-  await assert.rejects(modelContextSettings({ ...options, refreshCatalog: false }, saved.contextWindows,
-    saved.autoCompactTokenLimits, { ...saved.multiAgentReasoningEfforts, [old.slug]: "ultra" }), /不支持子代理推理强度 ultra/);
+  latest.models[0].supported_reasoning_levels = [{ effort: "high" }];
+  await assert.rejects(modelContextSettings(options), /不支持子代理推理强度 max/);
+  latest.models[0].supported_reasoning_levels = [];
   assert.equal((await modelContextSettings(options)).catalogChanged, false);
-  assert.equal(downloads, 2, "each explicit refresh must request the provider rather than reuse a cache");
+  assert.equal(downloads, 3, "each explicit refresh must request the provider rather than reuse a cache");
   const provider = config.model_providers.probe;
   provider.model_catalog_url = `${origin}/panel-proxy`;
   provider.env_key = "FIXTURE_KEY";
@@ -176,10 +177,10 @@ test("manual catalog refresh requests the active provider and preserves saved se
   expectedPath = "/catalog";
   expectedToken = "fixture-env-key";
   assert.equal((await modelContextSettings(options)).catalogChanged, false);
-  assert.equal(downloads, 3, "explicit catalogs use the original provider URL, not Panel's proxy");
+  assert.equal(downloads, 4, "explicit catalogs use the original provider URL, not Panel's proxy");
   delete options.processEnv.FIXTURE_KEY;
   await assert.rejects(modelContextSettings(options), /FIXTURE_KEY/);
-  assert.equal(downloads, 3, "a missing env_key must not fall back to another credential");
+  assert.equal(downloads, 4, "a missing env_key must not fall back to another credential");
   options.processEnv.FIXTURE_KEY = expectedToken;
   const beforeFailure = await readFile(statePath, "utf8");
   const catalogBeforeFailure = await readFile(catalogPath, "utf8");
@@ -190,6 +191,44 @@ test("manual catalog refresh requests the active provider and preserves saved se
   assert.equal(await readFile(statePath, "utf8"), beforeFailure);
   assert.equal(await readFile(catalogPath, "utf8"), catalogBeforeFailure);
   assert.equal(await readFile(configFile, "utf8"), "");
+});
+
+test("reasoning overrides apply when capabilities are unspecified and reject explicit exclusions", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-reasoning-overrides-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const catalogPath = path.join(root, "model-context-catalog.json");
+  const statePath = path.join(root, "model-context.json");
+  const configFile = path.join(root, "config.toml");
+  const model = { slug: "gpt-6.1-sol", context_window: 128000, multi_agent_reasoning_effort: null, supported_reasoning_levels: [] };
+  const contexts = { [model.slug]: 128000 };
+  await writeFile(configFile, "");
+  await writeFile(catalogPath, JSON.stringify({ models: [model] }));
+  await writeFile(statePath, JSON.stringify({ catalog: { models: [model] }, catalogSource: "external",
+    originalCatalog: null, contextWindows: contexts, multiAgentReasoningEfforts: {} }));
+  const config = { model_catalog_json: catalogPath };
+  t.mock.method(CodexAppServer.prototype, "request", async method => {
+    assert.equal(method, "config/read");
+    return { config, layers: [{ name: { type: "user", file: configFile }, version: "v1", config }] };
+  });
+  const options = { executable: "/unused", dataDirectory: root };
+  for (const effort of ["max", "ultra"]) {
+    const result = await modelContextSettings(options, contexts, {}, { [model.slug]: effort });
+    assert.equal(result.multiAgentReasoningEfforts[model.slug], effort);
+    assert.equal(result.models[0].multiAgentReasoningEffort, null, "source default remains unspecified");
+    const catalog = JSON.parse(await readFile(catalogPath));
+    assert.equal(catalog.models[0].multi_agent_reasoning_effort, effort);
+    assert.deepEqual(catalog.models[0].supported_reasoning_levels, []);
+  }
+  await modelContextSettings(options, contexts, {}, { [model.slug]: "max" });
+  const state = JSON.parse(await readFile(statePath));
+  state.catalog.models[0].supported_reasoning_levels = [{ effort: "high" }];
+  await writeFile(statePath, JSON.stringify(state));
+  const before = await readFile(catalogPath, "utf8");
+  await assert.rejects(modelContextSettings(options, contexts, {}, { [model.slug]: "max" }), /不支持子代理推理强度 max/);
+  assert.equal(await readFile(catalogPath, "utf8"), before);
+  await modelContextSettings(options, contexts, {}, { [model.slug]: "high" });
+  assert.equal(JSON.parse(await readFile(catalogPath)).models[0].multi_agent_reasoning_effort, "high");
+  await assert.rejects(modelContextSettings(options, contexts, {}, { [model.slug]: null }), /必须为非空字符串/);
 });
 
 test("role models and reasoning update registered and standalone files without changing instructions", async t => {

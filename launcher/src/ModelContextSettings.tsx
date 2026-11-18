@@ -1,5 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Badge, Box, Button, Dialog, Flex, Select, Tabs, Text, TextField } from "@radix-ui/themes";
+import { AUTOMATION_MODELS } from "../../shared/panel-automation-options.mjs";
+
+const DEFAULT_REASONING_EFFORTS = [...new Set(AUTOMATION_MODELS.flatMap(model => model.efforts))];
 
 type ModelContextSettings = {
   models: Array<{ slug: string; displayName: string; contextWindow: number | null; autoCompactTokenLimit: number | null; multiAgentReasoningEffort: string | null; reasoningEfforts: string[] }>;
@@ -12,6 +15,10 @@ type ModelContextSettings = {
   globalContextWindow: number | null;
   globalAutoCompactTokenLimit: number | null;
 };
+
+function modelReasoningOptions(model: ModelContextSettings["models"][number]): string[] {
+  return model.reasoningEfforts.length ? model.reasoningEfforts : DEFAULT_REASONING_EFFORTS;
+}
 
 function contextWindowFor(model: ModelContextSettings["models"][number], contextValue: string | undefined) {
   const entered = Number(contextValue);
@@ -218,7 +225,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
                         </Button>
                       </TextField.Slot>
                     </TextField.Root>
-                    <Select.Root value={reasoningEfforts[model.slug] ?? "default"} disabled={saving || model.reasoningEfforts.length === 0 && !reasoningEfforts[model.slug]}
+                    <Select.Root value={reasoningEfforts[model.slug] ?? "default"} disabled={saving}
                       onValueChange={value => setReasoningEfforts(current => {
                         const next = { ...current };
                         if (value === "default") delete next[model.slug];
@@ -228,9 +235,9 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
                       <Select.Trigger id={`reasoning-${model.slug}`} aria-label={`${model.displayName} 子代理推理强度`} style={{ width: "100%" }} />
                       <Select.Content>
                         <Select.Item value="default">{model.multiAgentReasoningEffort ? `默认（${model.multiAgentReasoningEffort}）` : "默认（未指定）"}</Select.Item>
-                        {reasoningEfforts[model.slug] && !model.reasoningEfforts.includes(reasoningEfforts[model.slug])
+                        {reasoningEfforts[model.slug] && !modelReasoningOptions(model).includes(reasoningEfforts[model.slug])
                           && <Select.Item value={reasoningEfforts[model.slug]}>{reasoningEfforts[model.slug]}</Select.Item>}
-                        {model.reasoningEfforts.map(effort => <Select.Item key={effort} value={effort}>{effort}</Select.Item>)}
+                        {modelReasoningOptions(model).map(effort => <Select.Item key={effort} value={effort}>{effort}</Select.Item>)}
                       </Select.Content>
                     </Select.Root>
                   </Box>

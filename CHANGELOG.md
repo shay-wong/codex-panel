@@ -8,7 +8,7 @@ This file records user-visible changes introduced by the fork.
 
 - Fix model catalog refresh to fetch the current provider's complete catalog, preserving provider metadata and saved model settings. Official OpenAI reuses the current Codex subscription or API-key account with file credential storage; custom providers use their own configured credentials. Unchanged catalogs no longer prompt for a restart; failed refreshes keep the saved catalog and configuration.
 
-- Preserve an unchanged saved subagent reasoning effort when a refreshed catalog no longer advertises it. Keep that value visible and allow clearing it with **Default**, including when the provider lists no reasoning options.
+- Treat missing or empty per-model reasoning capability lists as unknown, allowing explicit user choices to override an unspecified default. Reject an effort only when a non-empty provider list excludes it; keep source defaults separate from saved overrides.
 
 ## 0.5.10-fork
 

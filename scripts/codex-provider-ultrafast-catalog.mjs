@@ -266,11 +266,13 @@ defaultSubagentReasoningEffort, agentReasoningEfforts) {
         throw new Error("子代理推理设置必须是模型 ID 与推理强度的对应表");
       }
       for (const [slug, effort] of Object.entries(multiAgentReasoningEfforts)) {
-        if (typeof effort === "string" && effort && Object.hasOwn(state.multiAgentReasoningEfforts, slug)
-          && state.multiAgentReasoningEfforts[slug] === effort) continue;
+        if (typeof effort !== "string" || !effort.trim()) throw new Error(`${slug} 的子代理推理强度必须为非空字符串`);
         const model = state.catalog.models.find(model => model.slug === slug);
-        if (!model) throw new Error(`模型目录中没有 ${slug}`);
-        if (!model.supported_reasoning_levels?.some(level => level.effort === effort)) {
+        if (!model) {
+          if (Object.hasOwn(state.multiAgentReasoningEfforts, slug) && state.multiAgentReasoningEfforts[slug] === effort) continue;
+          throw new Error(`模型目录中没有 ${slug}`);
+        }
+        if (model.supported_reasoning_levels?.length && !model.supported_reasoning_levels.some(level => level.effort === effort)) {
           throw new Error(`${slug} 不支持子代理推理强度 ${effort}`);
         }
       }
