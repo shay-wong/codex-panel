@@ -153,7 +153,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
             <Button type="button" size="1" variant="soft" disabled={!settings || saving}
               onClick={() => void refreshCatalog()}>刷新模型目录</Button>
           </Flex>
-          <Tabs.Content value="models" style={{ display: tab === "models" ? "flex" : "none", flexDirection: "column", minHeight: 0, flex: 1 }}>
+          <Tabs.Content value="models" style={{ display: tab === "models" ? "flex" : "none", flexDirection: "column", minHeight: 0, flex: 1, overflow: "hidden" }}>
             {settings && <Box mt="2" style={{ flexShrink: 0 }}>
               <Flex gap="3" aria-label="当前配置来源">
                 {[
@@ -178,7 +178,8 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
             <Box pr="1" style={{ minHeight: 0, flex: 1, overflowY: "auto", scrollbarWidth: "none", overscrollBehavior: "contain" }}>
               {!settings && !error && <Text as="p" size="2" role="status" mt="4">正在读取模型目录…</Text>}
               {settings && <Box style={{ minWidth: 568 }}>
-                <Box mb="2" style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 128px 128px 136px", gap: 12 }}>
+                <Box mb="2" py="1" style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 128px 128px 136px", gap: 12,
+                  position: "sticky", top: 0, zIndex: 1, background: "var(--color-panel-solid)" }}>
                   <Text size="1" color="gray">模型</Text>
                   <Text size="1" color="gray">上下文大小</Text>
                   <Text size="1" color="gray">自动压缩阈值</Text>

@@ -10,6 +10,8 @@ This file records user-visible changes introduced by the fork.
 
 - Treat missing or empty per-model reasoning capability lists as unknown, allowing explicit user choices to override an unspecified default. Reject an effort only when a non-empty provider list excludes it; keep source defaults separate from saved overrides.
 
+- Keep the model table header visible while scrolling and order model lists by family, with GPT first and newer versions first within each family, without changing the source catalog.
+
 ## 0.5.10-fork
 
 - Add **刷新模型目录** in model settings to load newly discovered Codex models without resetting saved context, compaction or subagent settings; restart Codex to apply the updated catalog.

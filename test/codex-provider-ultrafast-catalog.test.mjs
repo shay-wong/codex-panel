@@ -9,6 +9,24 @@ import { parse } from "smol-toml";
 import { CodexAppServer } from "../server/codex-app-server.mjs";
 import { createUltrafastCatalogAdapter, modelContextSettings, readBundledModelCatalog, readModelDiscovery, setModelDiscovery, withUltrafastCatalog } from "../scripts/codex-provider-ultrafast-catalog.mjs";
 
+test("model settings group model series with newer versions first without changing the source catalog", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-model-sort-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const statePath = path.join(root, "model-context.json");
+  const catalog = { models: ["gemini-3-flash", "gpt-6-sol", "claude-opus-4-7", "gpt-6.2-astra", "gemini-3.1-pro", "gpt-6.10-sol", "gpt-6.1-sol", "claude-opus-4-8", "gpt-6.2-sol"]
+    .map(slug => ({ slug })) };
+  const saved = JSON.stringify({ catalog, contextWindows: {}, catalogSource: "external", originalCatalog: null });
+  await writeFile(statePath, saved);
+  t.mock.method(CodexAppServer.prototype, "request", async method => {
+    assert.equal(method, "config/read");
+    return { config: { model_catalog_json: path.join(root, "model-context-catalog.json") },
+      layers: [{ name: { type: "user", file: path.join(root, "config.toml") }, version: "v1", config: {} }] };
+  });
+  const settings = await modelContextSettings({ executable: "/unused", dataDirectory: root });
+  assert.deepEqual(settings.models.map(model => model.slug), ["gpt-6.10-sol", "gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-sol", "claude-opus-4-8", "claude-opus-4-7", "gemini-3.1-pro", "gemini-3-flash"]);
+  assert.equal(await readFile(statePath, "utf8"), saved);
+});
+
 test("subscription catalog refresh uses the official endpoint and refreshed account credentials", async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-subscription-catalog-")));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -52,7 +70,7 @@ test("subscription catalog refresh uses the official endpoint and refreshed acco
   const options = { executable, dataDirectory: root, refreshCatalog: true, cwd: root,
     processEnv: { PATH: process.env.PATH, HOME: root, CODEX_HOME: root } };
   const result = await modelContextSettings(options);
-  assert.deepEqual(result.models.map(model => model.slug), latest.models.map(model => model.slug));
+  assert.deepEqual(result.models.map(model => model.slug).sort(), latest.models.map(model => model.slug).sort());
   assert.equal(result.catalogChanged, true);
   assert.equal(accountReads, 1);
   assert.equal(downloads, 1);
@@ -142,14 +160,14 @@ test("manual catalog refresh requests the active provider and preserves saved se
   const options = { executable, dataDirectory: root, refreshCatalog: true,
     processEnv: { PATH: process.env.PATH, HOME: root, CODEX_HOME: root, FIXTURE_ACTOR: "fixture-actor", FIXTURE_KEY: "fixture-env-key" }, cwd: root };
   const refreshed = await modelContextSettings(options);
-  assert.deepEqual(refreshed.models.map(model => model.slug), latest.models.map(model => model.slug));
+  assert.deepEqual(refreshed.models.map(model => model.slug).sort(), latest.models.map(model => model.slug).sort());
   assert.equal(refreshed.catalogChanged, true);
   assert.deepEqual(refreshed.contextWindows, saved.contextWindows);
   assert.deepEqual(refreshed.autoCompactTokenLimits, saved.autoCompactTokenLimits);
   assert.deepEqual(refreshed.multiAgentReasoningEfforts, saved.multiAgentReasoningEfforts);
   assert.equal(refreshed.defaultSubagentModel, old.slug);
   assert.equal(refreshed.defaultSubagentReasoningEffort, "high");
-  assert.equal(refreshed.models[0].contextWindow, old.context_window, "provider defaults must not receive native Sol corrections");
+  assert.equal(refreshed.models.find(model => model.slug === old.slug).contextWindow, old.context_window, "provider defaults must not receive native Sol corrections");
   const catalog = JSON.parse(await readFile(catalogPath));
   assert.equal(catalog.models[0].context_window, 600000);
   assert.equal(catalog.models[0].auto_compact_token_limit, 300000);

@@ -56,6 +56,22 @@ function withCurrentModelDefaults(catalog) {
     ? { ...model, context_window: 500000 } : model) };
 }
 
+const modelNameOrder = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+
+function compareModelSettings(left, right) {
+  const parts = model => {
+    const name = model.slug.split("/").at(-1).toLowerCase();
+    const match = /^(\D*?)(\d+(?:[._-]\d+)*)/.exec(name);
+    return { name, family: (match?.[1] ?? name).replace(/[-_]+$/, ""), version: (match?.[2] ?? "").replaceAll("-", ".") };
+  };
+  const a = parts(left), b = parts(right);
+  return Number(!a.family.startsWith("gpt")) - Number(!b.family.startsWith("gpt"))
+    || modelNameOrder.compare(a.family, b.family)
+    || modelNameOrder.compare(b.version, a.version)
+    || modelNameOrder.compare(a.name, b.name)
+    || modelNameOrder.compare(left.slug, right.slug);
+}
+
 async function readProviderModelCatalog({ executable, processEnv, cwd, config, provider, sourceUrl, codexHome }, client) {
   const settings = config.model_providers?.[provider] ?? {};
   const endpoint = sourceUrl ?? (settings.base_url ? `${settings.base_url.replace(/\/+$/, "")}/models`
@@ -354,7 +370,7 @@ defaultSubagentReasoningEffort, agentReasoningEfforts) {
     }
     return {
       catalogChanged,
-      models: defaults.models.map(model => ({
+      models: defaults.models.toSorted(compareModelSettings).map(model => ({
         slug: model.slug, displayName: model.display_name ?? model.slug,
         contextWindow: model.context_window ?? model.max_context_window ?? null,
         autoCompactTokenLimit: model.auto_compact_token_limit ?? null,
