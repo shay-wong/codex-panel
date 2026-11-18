@@ -9,40 +9,66 @@ import { parse } from "smol-toml";
 import { CodexAppServer } from "../server/codex-app-server.mjs";
 import { createUltrafastCatalogAdapter, modelContextSettings, readBundledModelCatalog, readModelDiscovery, setModelDiscovery, withUltrafastCatalog } from "../scripts/codex-provider-ultrafast-catalog.mjs";
 
-test("manual native catalog refresh downloads new models without losing saved settings", async t => {
+test("manual catalog refresh requests the active provider and preserves saved settings", async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-catalog-refresh-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   const catalogPath = path.join(root, "model-context-catalog.json");
   const statePath = path.join(root, "model-context.json");
   const configFile = path.join(root, "config.toml");
   await writeFile(configFile, "");
+  const executable = path.join(root, "codex.mjs");
+  await writeFile(executable, 'if (process.argv[2] !== "--version") throw Error("Unexpected CLI command"); console.log("codex-cli 0.169.0-alpha.11.1");');
   const old = { slug: "gpt-6.1-sol", context_window: 272000, max_context_window: 872000,
     supported_reasoning_levels: [{ effort: "high" }], base_instructions: "Native instructions" };
-  const stale = { models: [old] };
+  const stale = { models: [old, { ...old, slug: "not-offered-by-provider" }] };
   const latest = { models: [old,
     { ...old, slug: "gpt-6.2-astra", service_tiers: [{ id: "ultrafast" }] },
     { ...old, slug: "gpt-6.2-sol", context_window: 500000 },
   ] };
-  const saved = { catalog: stale, contextWindows: { [old.slug]: 600000 },
-    autoCompactTokenLimits: { [old.slug]: "50%" }, multiAgentReasoningEfforts: { [old.slug]: "high" },
+  const saved = { catalog: stale, contextWindows: { [old.slug]: 600000, "not-offered-by-provider": 96000 },
+    autoCompactTokenLimits: { [old.slug]: "50%", "not-offered-by-provider": "25%" },
+    multiAgentReasoningEfforts: { [old.slug]: "high", "not-offered-by-provider": "high" },
     originalCatalog: null, catalogSource: "native" };
   await writeFile(statePath, JSON.stringify(saved));
   await writeFile(catalogPath, JSON.stringify(stale));
   await writeFile(path.join(root, "models_cache.json"), JSON.stringify(stale));
-  const config = { model_provider: "probe", model_catalog_json: catalogPath,
+  let downloads = 0, failure = "", expectedPath = "/v1/models", expectedToken = "fixture-provider-key";
+  const api = createServer((request, response) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    assert.equal(url.pathname, expectedPath);
+    assert.equal(url.searchParams.get("client_version"), "0.169.0");
+    assert.equal(url.searchParams.get("deployment"), "fixture");
+    if (expectedPath === "/catalog") assert.equal(url.searchParams.get("tenant"), "fixture");
+    assert.equal(request.headers.authorization, `Bearer ${expectedToken}`);
+    assert.equal(request.headers["x-openai-actor-authorization"], "fixture-actor");
+    assert.equal(request.headers["x-provider"], "fixture");
+    downloads++;
+    if (failure === "http") { response.writeHead(502).end("unavailable"); return; }
+    if (failure === "redirect") { response.writeHead(302, { Location: "/credential-leak" }).end(); return; }
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify(failure === "format" ? { data: [{ id: "gpt-6.2-sol" }] } : latest));
+  });
+  api.listen(0, "127.0.0.1"); await once(api, "listening");
+  t.after(() => { api.closeAllConnections(); api.close(); });
+  const origin = `http://127.0.0.1:${api.address().port}`;
+  const config = { model_provider: "probe", model_catalog_json: catalogPath, model_providers: { probe: {
+    base_url: `${origin}/v1/`, experimental_bearer_token: expectedToken, requires_openai_auth: true,
+    http_headers: { "x-provider": "fixture", "x-openai-actor-authorization": "old-actor" },
+    env_http_headers: { "x-openai-actor-authorization": "FIXTURE_ACTOR" }, query_params: { deployment: "fixture" },
+  } },
     agents: { default_subagent_model: old.slug, default_subagent_reasoning_effort: "high" } };
   t.mock.method(CodexAppServer.prototype, "request", async method => {
     assert.equal(method, "config/read", "refreshing an active Panel catalog must preserve user configuration");
     return { config, layers: [{ name: { type: "user", file: configFile }, version: "v1", config }] };
   });
-  let downloads = 0, failDownload = false;
-  t.mock.method(globalThis, "fetch", async (url, options) => {
-    assert.equal(url, "https://raw.githubusercontent.com/openai/codex/main/codex-rs/models-manager/models.json");
-    assert.equal(options.headers, undefined, "public defaults must not receive provider credentials");
-    downloads++;
-    return new Response(failDownload ? "unavailable" : JSON.stringify(latest), { status: failDownload ? 502 : 200 });
+  const localFetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", (url, options) => {
+    assert.equal(url.origin, origin, "refresh must contact only the configured provider");
+    assert.equal(options.redirect, "error");
+    return localFetch(url, options);
   });
-  const options = { executable: "/unused", dataDirectory: root, refreshCatalog: true };
+  const options = { executable, dataDirectory: root, refreshCatalog: true,
+    processEnv: { PATH: process.env.PATH, HOME: root, CODEX_HOME: root, FIXTURE_ACTOR: "fixture-actor", FIXTURE_KEY: "fixture-env-key" }, cwd: root };
   const refreshed = await modelContextSettings(options);
   assert.deepEqual(refreshed.models.map(model => model.slug), latest.models.map(model => model.slug));
   assert.equal(refreshed.catalogChanged, true);
@@ -51,17 +77,41 @@ test("manual native catalog refresh downloads new models without losing saved se
   assert.deepEqual(refreshed.multiAgentReasoningEfforts, saved.multiAgentReasoningEfforts);
   assert.equal(refreshed.defaultSubagentModel, old.slug);
   assert.equal(refreshed.defaultSubagentReasoningEffort, "high");
+  assert.equal(refreshed.models[0].contextWindow, old.context_window, "provider defaults must not receive native Sol corrections");
   const catalog = JSON.parse(await readFile(catalogPath));
   assert.equal(catalog.models[0].context_window, 600000);
   assert.equal(catalog.models[0].auto_compact_token_limit, 300000);
   assert.equal(catalog.models[0].multi_agent_reasoning_effort, "high");
   assert.deepEqual(catalog.models.slice(1), latest.models.slice(1), "new models retain their full metadata");
+  const resaved = await modelContextSettings({ ...options, refreshCatalog: false }, refreshed.contextWindows,
+    refreshed.autoCompactTokenLimits, refreshed.multiAgentReasoningEfforts);
+  assert.deepEqual(resaved.contextWindows, saved.contextWindows);
+  assert.deepEqual(resaved.autoCompactTokenLimits, saved.autoCompactTokenLimits);
+  assert.deepEqual(resaved.multiAgentReasoningEfforts, saved.multiAgentReasoningEfforts);
+  await assert.rejects(modelContextSettings({ ...options, refreshCatalog: false },
+    { ...saved.contextWindows, "new-unoffered-model": 64000 }, saved.autoCompactTokenLimits, saved.multiAgentReasoningEfforts), /模型目录中没有 new-unoffered-model/);
   assert.equal((await modelContextSettings(options)).catalogChanged, false);
-  assert.equal(downloads, 2, "each explicit refresh must download rather than reuse the stale cache");
+  assert.equal(downloads, 2, "each explicit refresh must request the provider rather than reuse a cache");
+  const provider = config.model_providers.probe;
+  provider.model_catalog_url = `${origin}/panel-proxy`;
+  provider.env_key = "FIXTURE_KEY";
+  await writeFile(path.join(root, "ultrafast-catalog.json"), JSON.stringify({ providers: { probe: {
+    url: provider.model_catalog_url, originalUrl: `${origin}/catalog?tenant=fixture`,
+  } } }));
+  expectedPath = "/catalog";
+  expectedToken = "fixture-env-key";
+  assert.equal((await modelContextSettings(options)).catalogChanged, false);
+  assert.equal(downloads, 3, "explicit catalogs use the original provider URL, not Panel's proxy");
+  delete options.processEnv.FIXTURE_KEY;
+  await assert.rejects(modelContextSettings(options), /FIXTURE_KEY/);
+  assert.equal(downloads, 3, "a missing env_key must not fall back to another credential");
+  options.processEnv.FIXTURE_KEY = expectedToken;
   const beforeFailure = await readFile(statePath, "utf8");
   const catalogBeforeFailure = await readFile(catalogPath, "utf8");
-  failDownload = true;
-  await assert.rejects(modelContextSettings(options), /502/);
+  for (const [mode, error] of [["http", /502/], ["format", /Codex 完整模型目录/], ["redirect", /fetch failed/]]) {
+    failure = mode;
+    await assert.rejects(modelContextSettings(options), error);
+  }
   assert.equal(await readFile(statePath, "utf8"), beforeFailure);
   assert.equal(await readFile(catalogPath, "utf8"), catalogBeforeFailure);
   assert.equal(await readFile(configFile, "utf8"), "");

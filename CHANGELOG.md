@@ -6,7 +6,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
-- Fix native model catalog refresh to download the latest official defaults, including `gpt-6.2-astra` and `gpt-6.2-sol`, while preserving saved model settings. Unchanged catalogs no longer prompt for a restart.
+- Fix model catalog refresh to fetch the current provider's complete catalog with its configured credentials, preserving provider metadata and saved model settings. Unchanged catalogs no longer prompt for a restart; failed refreshes keep the saved catalog and configuration.
 
 ## 0.5.10-fork
 

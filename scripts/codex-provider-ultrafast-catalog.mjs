@@ -56,6 +56,36 @@ function withCurrentModelDefaults(catalog) {
     ? { ...model, context_window: 500000 } : model) };
 }
 
+async function readProviderModelCatalog({ executable, processEnv, cwd, config, provider, sourceUrl }) {
+  const settings = config.model_providers?.[provider] ?? {};
+  const endpoint = sourceUrl ?? (settings.base_url && `${settings.base_url.replace(/\/+$/, "")}/models`);
+  if (!endpoint) throw new Error("当前 provider 未配置可直接请求的模型目录地址");
+  const url = new URL(endpoint);
+  if (!["http:", "https:"].includes(url.protocol)) throw new Error("Provider 模型目录地址必须使用 HTTP 或 HTTPS");
+  const env = withoutPanelLauncherEnvironment(processEnv);
+  const headers = new Headers(settings.http_headers ?? {});
+  for (const [name, variable] of Object.entries(settings.env_http_headers ?? {})) {
+    if (env[variable]?.trim()) headers.set(name, env[variable]);
+  }
+  const token = settings.env_key ? env[settings.env_key]?.trim() : settings.experimental_bearer_token;
+  if (settings.env_key && !token) throw new Error(`未设置 provider 的 API Key 环境变量 ${settings.env_key}`);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (!token && !headers.has("Authorization") && (settings.requires_openai_auth || settings.auth)) {
+    throw new Error("当前 provider 使用原生账号或命令认证，尚不支持直接刷新其模型目录");
+  }
+  const command = executableCommand(executable, ["--version"]);
+  const { stdout } = await promisify(execFile)(command.executable, command.args, {
+    cwd, env, timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true,
+  });
+  const version = /\bcodex-cli\s+(\d+\.\d+\.\d+)/.exec(stdout)?.[1];
+  if (!version) throw new Error("无法识别 Codex CLI 版本");
+  for (const [name, value] of Object.entries(settings.query_params ?? {})) url.searchParams.append(name, value);
+  url.searchParams.append("client_version", version);
+  const response = await fetch(url, { headers, cache: "no-store", redirect: "error", signal: AbortSignal.timeout(10_000) });
+  if (!response.ok) throw new Error(`获取 provider 模型目录失败（HTTP ${response.status}）`);
+  return response.json();
+}
+
 async function modelContextState({ executable, dataDirectory, processEnv, cwd, refreshCatalog }, client) {
   const { config, layers, origins } = await client.request("config/read", { includeLayers: true });
   const userLayer = layers?.find(layer => layer.name?.type === "user" && !layer.name.profile);
@@ -88,23 +118,18 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
   if (!Array.isArray(state.catalog?.models)) throw new Error("Codex 模型目录格式无效");
   let catalogChanged = false;
   if (refreshCatalog) {
-    let source;
-    if (state.originalCatalog) source = JSON.parse(await readFile(state.originalCatalog, "utf8"));
-    else if (sourceUrl) {
-      source = await readJson(path.join(path.dirname(userLayer.name.file), "models_cache.json"), null)
-        ?? await readBundledModelCatalog(executable);
-    } else {
-      const response = await fetch("https://raw.githubusercontent.com/openai/codex/main/codex-rs/models-manager/models.json", {
-        cache: "no-store", signal: AbortSignal.timeout(10_000),
-      });
-      if (!response.ok) throw new Error(`获取最新 Codex 模型目录失败（HTTP ${response.status}）`);
-      source = await response.json();
+    const source = state.originalCatalog ? JSON.parse(await readFile(state.originalCatalog, "utf8"))
+      : await readProviderModelCatalog({ executable, processEnv, cwd, config, provider, sourceUrl });
+    if (!Array.isArray(source?.models) || !source.models.length
+      || source.models.some(model => typeof model?.slug !== "string" || !model.slug.trim())
+      || new Set(source.models.map(model => model.slug)).size !== source.models.length) {
+      throw new Error("Provider 未返回有效的 Codex 完整模型目录（需要 models 数组及唯一模型 slug）");
     }
-    if (!Array.isArray(source?.models) || !source.models.length) throw new Error("Codex 模型目录格式无效");
     catalogChanged = config.model_catalog_json !== catalogPath
+      || state.catalogSource !== "external"
       || JSON.stringify(source.models) !== JSON.stringify(state.catalog.models);
     state.catalog = source;
-    state.catalogSource = state.originalCatalog || sourceUrl ? "external" : "native";
+    state.catalogSource = "external";
   } else if (!state.catalogSource && !state.originalCatalog && !sourceUrl) {
     // Refresh unclassified legacy defaults from the current native source, retaining saved overrides.
     state.catalog = await readBundledModelCatalog(executable);
@@ -205,12 +230,18 @@ defaultSubagentReasoningEffort, agentReasoningEfforts) {
       multiAgentReasoningEfforts ??= state.multiAgentReasoningEfforts;
       const slugs = new Set(state.catalog.models.map(model => model.slug));
       const efforts = new Set(state.catalog.models.flatMap(model => (model.supported_reasoning_levels ?? []).map(level => level.effort)));
-      for (const [label, values] of [["上下文", contextWindows], ["自动压缩阈值", autoCompactTokenLimits]]) {
+      for (const [label, values, savedValues] of [
+        ["上下文", contextWindows, state.contextWindows],
+        ["自动压缩阈值", autoCompactTokenLimits, state.autoCompactTokenLimits],
+      ]) {
         if (!values || typeof values !== "object" || Array.isArray(values)) {
           throw new Error(`${label}设置必须是模型 ID 与 token 数的对应表`);
         }
         for (const [model, size] of Object.entries(values)) {
-          if (!slugs.has(model)) throw new Error(`模型目录中没有 ${model}`);
+          if (!slugs.has(model)) {
+            if (Object.hasOwn(savedValues, model) && savedValues[model] === size) continue;
+            throw new Error(`模型目录中没有 ${model}`);
+          }
           if (label === "自动压缩阈值" && typeof size === "string") continue;
           if (!Number.isSafeInteger(size) || size <= 0) throw new Error(`${model} 的${label} token 数必须为正整数`);
         }
@@ -220,7 +251,10 @@ defaultSubagentReasoningEffort, agentReasoningEfforts) {
       }
       for (const [slug, effort] of Object.entries(multiAgentReasoningEfforts)) {
         const model = state.catalog.models.find(model => model.slug === slug);
-        if (!model) throw new Error(`模型目录中没有 ${slug}`);
+        if (!model) {
+          if (Object.hasOwn(state.multiAgentReasoningEfforts, slug) && state.multiAgentReasoningEfforts[slug] === effort) continue;
+          throw new Error(`模型目录中没有 ${slug}`);
+        }
         if (!model.supported_reasoning_levels?.some(level => level.effort === effort)) {
           throw new Error(`${slug} 不支持子代理推理强度 ${effort}`);
         }
