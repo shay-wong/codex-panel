@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.5.9-fork
+
 - Restore Fast and Ultrafast selection for `gpt-6.2-astra` and `gpt-6.2-sol` on local custom providers by updating the native menu and model catalog adapters.
 
 ## 0.5.8-fork
