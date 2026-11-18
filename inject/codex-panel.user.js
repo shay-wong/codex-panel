@@ -97,6 +97,7 @@
   let lastNativeLocation = null;
   const panelLocationKeys = new Set(previous?.sourceHash === SOURCE_HASH ? previous.panelLocationKeys : []);
   let pendingPanelNavigation = false;
+  let pendingPanelClose = null;
   let lastNativeProjectId = "";
   let currentCodexUser = null;
   let suspendedNativeBrowserPanel = null;
@@ -558,7 +559,9 @@
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      openPanel();
+      // 沿用原生返回路径，收起面板时恢复打开前的页面。
+      if (active) leavePanel();
+      else openPanel();
     });
     if (button.tagName !== "BUTTON") {
       button.addEventListener("keydown", (event) => {
@@ -574,10 +577,12 @@
   function syncEntryText(button = entry) {
     if (!button) return;
     const label = hostText("任务面板", "Panel");
-    const ariaLabel = hostText("打开任务面板", "Open Panel");
-    // 观察器也监听入口属性；仅在语言变化时写入，避免持续触发刷新。
+    const isOpen = button.getAttribute("aria-current") === "page";
+    const ariaLabel = isOpen ? hostText("关闭任务面板", "Close Panel") : hostText("打开任务面板", "Open Panel");
+    const title = isOpen ? ariaLabel : label;
+    // 观察器也监听入口属性；只有文案变化时才写入，避免持续触发刷新。
     if (button.getAttribute("aria-label") !== ariaLabel) button.setAttribute("aria-label", ariaLabel);
-    if (button.getAttribute("title") !== label) button.setAttribute("title", label);
+    if (button.getAttribute("title") !== title) button.setAttribute("title", title);
     if (entryLabel && entryLabel.textContent !== label) entryLabel.textContent = label;
   }
 
@@ -591,6 +596,7 @@
     } else if (!active && entry.hasAttribute("aria-current")) {
       entry.removeAttribute("aria-current");
     }
+    syncEntryText();
   }
 
   function ensureEntry() {
@@ -607,7 +613,6 @@
       entry = createEntry(reference);
       entryInRail = inRail;
     }
-    syncEntryText();
     entry.style.height = row !== reference ? "var(--nav-item-height, var(--height-token-row, 36px))" : "";
     entry.style.flex = row !== reference ? "none" : "";
     entry.style.width = row !== reference ? "100%" : "";
@@ -2809,6 +2814,7 @@
     if (location === lastNativeLocation) return;
     const previousLocation = lastNativeLocation;
     lastNativeLocation = location;
+    pendingPanelClose = null;
     // Codex replaces route state in place and assigns a new key after Panel opens.
     if (nativeNavigator.action === "REPLACE"
       && panelLocationKeys.has(previousLocation?.key)
@@ -2854,7 +2860,11 @@
   }
 
   function leavePanel() {
-    if (nativeNavigator?.location.state?.[PANEL_ROUTE_STATE] === true) {
+    const location = nativeNavigator?.location;
+    if (location?.state?.[PANEL_ROUTE_STATE] === true && panelLocationKeys.has(location.key)) {
+      // 原生返回可能比点击处理晚提交，同一面板页只发出一次返回。
+      if (pendingPanelClose === location) return;
+      pendingPanelClose = location;
       nativeNavigator.go(-1);
     } else {
       closePanel();

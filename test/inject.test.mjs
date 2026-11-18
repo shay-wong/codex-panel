@@ -1747,7 +1747,7 @@ test("Panel participates in the native memory router and restores its original m
   const end = source.indexOf("  function scheduleRefresh()", start);
   const api = vm.runInNewContext(`(() => {
     let nativeNavigator = null, detachNativeNavigation = null, lastNativeLocation = null, active = false, destroyed = false, lastNativeThreadId = "";
-    const panelLocationKeys = new Set(); let pendingPanelNavigation = false;
+    const panelLocationKeys = new Set(); let pendingPanelNavigation = false, pendingPanelClose = null;
     const PANEL_ROUTE_STATE = "__codexPanel";
     const normalizeThreadId = value => value;
     const publishPendingThreadAssociation = () => {};
@@ -1927,7 +1927,7 @@ test("Panel follows Data Router navigation without navigator.location and unsubs
   const api = vm.runInNewContext(`(() => {
     let nativeNavigator = null, detachNativeNavigation = null, lastNativeLocation = null;
     let active = false, destroyed = false, lastNativeThreadId = "";
-    const panelLocationKeys = new Set(); let pendingPanelNavigation = false;
+    const panelLocationKeys = new Set(); let pendingPanelNavigation = false, pendingPanelClose = null;
     const PANEL_ROUTE_STATE = "__codexPanel";
     const normalizeThreadId = (id) => id;
     function showPanel() { active = true; }

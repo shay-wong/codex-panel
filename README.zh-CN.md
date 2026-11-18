@@ -199,6 +199,8 @@ npm run codex:install
 工作流 Skill 搜索支持带 `$` 前缀的引用，例如 `$shay-skills:review`。
 工作流选择器按真实 Skill 文件去重，优先显示带命名空间的 ID，并保留已有选择。
 
+点击 Codex 左侧的“任务面板”可打开面板。再点一次可收起并返回之前的 Codex 页面，Panel 应用和后台服务继续运行。详见[面板导航](docs/fork-capabilities.md#switch-between-panel-and-native-codex-destinations)。
+
 开启隐藏额度提示后，切换会话新增的横幅会立即隐藏，不再等待页面延迟刷新。
 
 ### 推荐：使用 Codex Panel 桌面端
