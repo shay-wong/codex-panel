@@ -205,10 +205,10 @@ test("model discovery reads only the persisted user setting and propagates read 
   await assert.rejects(readModelDiscovery({ async request() { return { layers: [] }; } }), /无法定位/);
 });
 
-test("catalog preserves native metadata and only adds the two official Ultrafast models", async t => {
+test("catalog preserves native metadata and only adds supported Ultrafast models", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "panel-catalog-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const models = ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "custom-alias", "GPT-6 Astra", "GPT-6.1 Sol"].map(slug => ({
+  const models = ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "custom-alias", "GPT-6 Astra", "GPT-6.1 Sol", "gpt-6.2-astra", "gpt-6.2-sol", "GPT-6.2 Astra", "GPT-6.2 Sol"].map(slug => ({
     slug, base_instructions: 'Native instructions with a quoted brace: "}"', service_tiers: [{ id: "priority" }],
   }));
   const original = { models, extra: "preserved" };
@@ -218,7 +218,9 @@ test("catalog preserves native metadata and only adds the two official Ultrafast
   const patched = withUltrafastCatalog(original);
   assert.equal(patched.extra, original.extra);
   assert.equal(patched.models[0].base_instructions, models[0].base_instructions);
-  assert.deepEqual(patched.models.map(m => m.service_tiers.some(tier => tier.id === "ultrafast")), [true, true, false, false, true, true]);
+  assert.deepEqual(patched.models.map(m => m.service_tiers.some(tier => tier.id === "ultrafast")), [true, true, false, false, true, true, true, true, true, true]);
+  assert.deepEqual(patched.models.map(model => model.slug), models.map(model => model.slug));
+  assert.ok(patched.models.every(model => model.service_tiers.some(tier => tier.id === "priority")));
   assert.equal(original.models[0].service_tiers.length, 1);
   assert.deepEqual(withUltrafastCatalog(patched), patched);
 });

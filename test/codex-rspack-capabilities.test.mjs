@@ -50,6 +50,10 @@ test('Rspack Ultrafast keeps model/provider boundaries and uses the same access 
     { model: 'gpt-6.1-sol', serviceTiers: [{ id: 'standard' }] },
     { model: 'GPT-6 Astra', serviceTiers: [{ id: 'standard' }] },
     { model: 'GPT-6.1 Sol', serviceTiers: [{ id: 'standard' }] },
+    { model: 'gpt-6.2-astra', serviceTiers: [{ id: 'standard' }] },
+    { model: 'gpt-6.2-sol', serviceTiers: [{ id: 'standard' }] },
+    { model: 'GPT-6.2 Astra', serviceTiers: [{ id: 'standard' }] },
+    { model: 'GPT-6.2 Sol', serviceTiers: [{ id: 'standard' }] },
     { model: 'unsupported', serviceTiers: [{ id: 'standard' }, { id: 'ultrafast' }] },
   ] };
   const rewritten = rewriteRspackUltrafast(hookSource, context({ provider: providerSource }));
@@ -66,13 +70,14 @@ test('Rspack Ultrafast keeps model/provider boundaries and uses the same access 
     extra: { atom: 'extra' },
     'target-module': { atom: 'target' }, 'config-module': { atom: 'config' }, 'provider-module': { atom: 'provider' },
   }, { __codexPanelProviderUltrafastV1__: { subscribe() {}, getSnapshot: () => enabled } }).settings;
-  for (const model of ['gpt-6-astra', 'gpt-6.1-sol', 'GPT-6 Astra', 'GPT-6.1 Sol']) {
+  for (const model of ['gpt-6-astra', 'gpt-6.1-sol', 'GPT-6 Astra', 'GPT-6.1 Sol', 'gpt-6.2-astra', 'gpt-6.2-sol', 'GPT-6.2 Astra', 'GPT-6.2 Sol']) {
     options.model = model;
     assert.equal(settings('thread', options).serviceTierAccess.fast, true);
     assert.equal(settings('thread', options).serviceTierSettings.availableOptions.some(t => t.value === 'priority'), true);
     assert.equal(settings('thread', options).serviceTierAccess.ultrafast, true);
     assert.equal(settings('thread', options).setServiceTier('ultrafast'), true);
     assert.equal(settings('thread', options).serviceTierSettings.availableOptions.some(t => t.value === 'ultrafast'), true);
+    assert.equal(settings('thread', options).serviceTierSettings.serviceTierForRequest, 'ultrafast');
   }
   options.model = 'unsupported';
   assert.equal(settings('thread', options).serviceTierAccess.ultrafast, false);
