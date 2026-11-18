@@ -97,6 +97,7 @@
   let lastNativeLocation = null;
   const panelLocationKeys = new Set(previous?.sourceHash === SOURCE_HASH ? previous.panelLocationKeys : []);
   let pendingPanelNavigation = false;
+  let pendingPanelClose = null;
   let lastNativeProjectId = "";
   let currentCodexUser = null;
   let suspendedNativeBrowserPanel = null;
@@ -2813,6 +2814,7 @@
     if (location === lastNativeLocation) return;
     const previousLocation = lastNativeLocation;
     lastNativeLocation = location;
+    pendingPanelClose = null;
     // Codex replaces route state in place and assigns a new key after Panel opens.
     if (nativeNavigator.action === "REPLACE"
       && panelLocationKeys.has(previousLocation?.key)
@@ -2858,7 +2860,11 @@
   }
 
   function leavePanel() {
-    if (nativeNavigator?.location.state?.[PANEL_ROUTE_STATE] === true) {
+    const location = nativeNavigator?.location;
+    if (location?.state?.[PANEL_ROUTE_STATE] === true && panelLocationKeys.has(location.key)) {
+      // 原生返回可能比点击处理晚提交，同一面板页只发出一次返回。
+      if (pendingPanelClose === location) return;
+      pendingPanelClose = location;
       nativeNavigator.go(-1);
     } else {
       closePanel();

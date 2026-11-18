@@ -73,7 +73,7 @@ async function navigationHarness({ root, document, window }, { deferred = false 
   const end = source.indexOf("  function scheduleRefresh()", start);
   const api = vm.runInNewContext(`(() => {
     let nativeNavigator = null, detachNativeNavigation = null, lastNativeLocation = null;
-    let active = false, destroyed = false, lastNativeThreadId = "", pendingPanelNavigation = false;
+    let active = false, destroyed = false, lastNativeThreadId = "", pendingPanelNavigation = false, pendingPanelClose = null;
     const panelLocationKeys = new Set();
     const PANEL_ROUTE_STATE = "__codexPanel";
     const normalizeThreadId = value => value;
@@ -152,6 +152,30 @@ test("rapid Panel clicks issue only one pending asynchronous native navigation",
     await flush();
     await back;
     assert.equal(api.active(), false);
+  });
+});
+
+test("closing Panel repeatedly before native Back commits returns to the original conversation once", async () => {
+  await withReactDom(async (dom) => {
+    const { api, flush, router } = await navigationHarness(dom, { deferred: true });
+    const conversation = router.navigate({ pathname: "/local/current", search: "", hash: "" });
+    await flush();
+    await conversation;
+    const opening = api.openPanel();
+    await flush();
+    await opening;
+    api.leavePanel();
+    api.leavePanel();
+    await flush();
+    assert.equal(router.state.location.pathname, "/local/current");
+    assert.equal(api.active(), false);
+    const forward = router.navigate(1);
+    await flush();
+    await forward;
+    assert.equal(api.active(), true);
+    api.leavePanel();
+    await flush();
+    assert.equal(router.state.location.pathname, "/local/current");
   });
 });
 
