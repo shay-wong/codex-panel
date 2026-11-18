@@ -9,6 +9,78 @@ import { parse } from "smol-toml";
 import { CodexAppServer } from "../server/codex-app-server.mjs";
 import { createUltrafastCatalogAdapter, modelContextSettings, readBundledModelCatalog, readModelDiscovery, setModelDiscovery, withUltrafastCatalog } from "../scripts/codex-provider-ultrafast-catalog.mjs";
 
+test("subscription catalog refresh uses the official endpoint and refreshed account credentials", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-subscription-catalog-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configFile = path.join(root, "config.toml");
+  const catalogPath = path.join(root, "model-context-catalog.json");
+  const statePath = path.join(root, "model-context.json");
+  const authPath = path.join(root, "auth.json");
+  const executable = path.join(root, "codex.mjs");
+  await writeFile(executable, 'console.log("codex-cli 0.169.0-alpha.11.1");');
+  await writeFile(configFile, "");
+  const old = { slug: "gpt-6.1-sol", context_window: 272000, max_context_window: 872000, base_instructions: "Old source" };
+  const latest = { models: [old, { ...old, slug: "gpt-6.2-sol", context_window: 500000, base_instructions: "Account-specific instructions" }] };
+  await writeFile(statePath, JSON.stringify({ catalog: { models: [old] }, catalogSource: "native", originalCatalog: null,
+    contextWindows: { [old.slug]: 600000 } }));
+  await writeFile(catalogPath, JSON.stringify({ models: [old] }));
+  await writeFile(authPath, JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "fixture-expired" } }));
+  let accountReads = 0, failAccount = false, downloads = 0, apiKeyMode = false;
+  const config = { model_catalog_json: catalogPath };
+  t.mock.method(CodexAppServer.prototype, "request", async (method, params) => {
+    if (method === "config/read") return { config, layers: [{ name: { type: "user", file: configFile }, version: "v1", config }] };
+    assert.equal(method, "account/read");
+    assert.deepEqual(params, { refreshToken: true });
+    accountReads++;
+    if (failAccount) throw new Error("Account refresh failed");
+    await writeFile(authPath, JSON.stringify(apiKeyMode ? { auth_mode: "apikey", OPENAI_API_KEY: "fixture-openai-key",
+      tokens: { access_token: "fixture-stale-subscription", account_id: "fixture-stale-account" } } : { auth_mode: "chatgpt", tokens: {
+      access_token: "fixture-subscription-token", account_id: "fixture-subscription-account",
+    } }));
+    return { account: apiKeyMode ? { type: "apiKey" } : { type: "chatgpt", planType: "pro" }, requiresOpenaiAuth: true };
+  });
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(url.origin, "https://chatgpt.com");
+    assert.equal(url.pathname, "/backend-api/codex/models");
+    assert.equal(url.searchParams.get("client_version"), "0.169.0");
+    assert.equal(options.headers.get("Authorization"), apiKeyMode ? "Bearer fixture-openai-key" : "Bearer fixture-subscription-token");
+    assert.equal(options.headers.get("ChatGPT-Account-Id"), apiKeyMode ? null : "fixture-subscription-account");
+    assert.equal(options.redirect, "error");
+    downloads++;
+    return new Response(JSON.stringify(latest));
+  });
+  const options = { executable, dataDirectory: root, refreshCatalog: true, cwd: root,
+    processEnv: { PATH: process.env.PATH, HOME: root, CODEX_HOME: root } };
+  const result = await modelContextSettings(options);
+  assert.deepEqual(result.models.map(model => model.slug), latest.models.map(model => model.slug));
+  assert.equal(result.catalogChanged, true);
+  assert.equal(accountReads, 1);
+  assert.equal(downloads, 1);
+  const generated = JSON.parse(await readFile(catalogPath));
+  assert.equal(generated.models[0].context_window, 600000);
+  assert.deepEqual(generated.models[1], latest.models[1]);
+  apiKeyMode = true;
+  assert.equal((await modelContextSettings(options)).catalogChanged, false);
+  assert.equal(downloads, 2);
+  apiKeyMode = false;
+  const saved = await readFile(statePath, "utf8");
+  failAccount = true;
+  await assert.rejects(modelContextSettings(options), /Account refresh failed/);
+  assert.equal(downloads, 2);
+  failAccount = false;
+  const readsBeforeUnsupported = accountReads;
+  config.cli_auth_credentials_store = "keyring";
+  await assert.rejects(modelContextSettings(options), /file 凭据存储/);
+  config.cli_auth_credentials_store = "file";
+  config.model_provider = "gateway";
+  config.model_providers = { gateway: { base_url: "https://gateway.example.invalid/v1", requires_openai_auth: true } };
+  await assert.rejects(modelContextSettings(options), /原生账号或命令认证/);
+  assert.equal(accountReads, readsBeforeUnsupported, "keyring and custom providers must not borrow the subscription auth file");
+  assert.equal(downloads, 2);
+  assert.equal(await readFile(statePath, "utf8"), saved);
+  assert.equal(await readFile(configFile, "utf8"), "");
+});
+
 test("manual catalog refresh requests the active provider and preserves saved settings", async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-catalog-refresh-")));
   t.after(() => rm(root, { recursive: true, force: true }));

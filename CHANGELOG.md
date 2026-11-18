@@ -6,7 +6,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
-- Fix model catalog refresh to fetch the current provider's complete catalog with its configured credentials, preserving provider metadata and saved model settings. Unchanged catalogs no longer prompt for a restart; failed refreshes keep the saved catalog and configuration.
+- Fix model catalog refresh to fetch the current provider's complete catalog, preserving provider metadata and saved model settings. Official OpenAI reuses the current Codex subscription or API-key account with file credential storage; custom providers use their own configured credentials. Unchanged catalogs no longer prompt for a restart; failed refreshes keep the saved catalog and configuration.
 
 ## 0.5.10-fork
 

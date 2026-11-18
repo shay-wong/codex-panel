@@ -56,9 +56,10 @@ function withCurrentModelDefaults(catalog) {
     ? { ...model, context_window: 500000 } : model) };
 }
 
-async function readProviderModelCatalog({ executable, processEnv, cwd, config, provider, sourceUrl }) {
+async function readProviderModelCatalog({ executable, processEnv, cwd, config, provider, sourceUrl, codexHome }, client) {
   const settings = config.model_providers?.[provider] ?? {};
-  const endpoint = sourceUrl ?? (settings.base_url && `${settings.base_url.replace(/\/+$/, "")}/models`);
+  const endpoint = sourceUrl ?? (settings.base_url ? `${settings.base_url.replace(/\/+$/, "")}/models`
+    : provider === "openai" ? "https://chatgpt.com/backend-api/codex/models" : null);
   if (!endpoint) throw new Error("当前 provider 未配置可直接请求的模型目录地址");
   const url = new URL(endpoint);
   if (!["http:", "https:"].includes(url.protocol)) throw new Error("Provider 模型目录地址必须使用 HTTP 或 HTTPS");
@@ -67,8 +68,22 @@ async function readProviderModelCatalog({ executable, processEnv, cwd, config, p
   for (const [name, variable] of Object.entries(settings.env_http_headers ?? {})) {
     if (env[variable]?.trim()) headers.set(name, env[variable]);
   }
-  const token = settings.env_key ? env[settings.env_key]?.trim() : settings.experimental_bearer_token;
+  let token = settings.env_key ? env[settings.env_key]?.trim() : settings.experimental_bearer_token;
   if (settings.env_key && !token) throw new Error(`未设置 provider 的 API Key 环境变量 ${settings.env_key}`);
+  if (!token && !headers.has("Authorization") && provider === "openai" && settings.requires_openai_auth !== false
+    && url.origin === "https://chatgpt.com" && url.pathname === "/backend-api/codex/models") {
+    if ((config.cli_auth_credentials_store ?? "file") !== "file") {
+      throw new Error("官方账号目录刷新目前仅支持 Codex 的 file 凭据存储，不能读取 keyring 或内存凭据");
+    }
+    // Codex refreshes and persists credentials; account/read does not return the token.
+    const { account } = await client.request("account/read", { refreshToken: true });
+    const auth = await readJson(path.join(codexHome, "auth.json"), null);
+    if (account?.type === "chatgpt") {
+      token = auth?.tokens?.access_token;
+      if (auth?.tokens?.account_id) headers.set("ChatGPT-Account-Id", auth.tokens.account_id);
+    } else if (account?.type === "apiKey") token = auth?.OPENAI_API_KEY;
+    if (!token) throw new Error("无法读取当前官方账号凭据，请先在 Codex 中登录");
+  }
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (!token && !headers.has("Authorization") && (settings.requires_openai_auth || settings.auth)) {
     throw new Error("当前 provider 使用原生账号或命令认证，尚不支持直接刷新其模型目录");
@@ -119,7 +134,8 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
   let catalogChanged = false;
   if (refreshCatalog) {
     const source = state.originalCatalog ? JSON.parse(await readFile(state.originalCatalog, "utf8"))
-      : await readProviderModelCatalog({ executable, processEnv, cwd, config, provider, sourceUrl });
+      : await readProviderModelCatalog({ executable, processEnv, cwd, config, provider, sourceUrl,
+        codexHome: path.dirname(userLayer.name.file) }, client);
     if (!Array.isArray(source?.models) || !source.models.length
       || source.models.some(model => typeof model?.slug !== "string" || !model.slug.trim())
       || new Set(source.models.map(model => model.slug)).size !== source.models.length) {
