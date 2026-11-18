@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Add **刷新模型目录** in model settings to load newly discovered Codex models without resetting saved context, compaction or subagent settings; restart Codex to apply the updated catalog.
+
 ## 0.5.9-fork
 
 - Restore Fast and Ultrafast selection for `gpt-6.2-astra` and `gpt-6.2-sol` on local custom providers by updating the native menu and model catalog adapters.

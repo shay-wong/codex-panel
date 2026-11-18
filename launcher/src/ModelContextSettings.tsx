@@ -55,12 +55,14 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
   const [tab, setTab] = useState("models");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [refreshMessage, setRefreshMessage] = useState("");
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setSettings(null);
     setError("");
+    setRefreshMessage("");
     setTab("models");
     window.__TAURI__.core.invoke<ModelContextSettings>("read_model_context_settings").then(result => {
       if (cancelled) return;
@@ -99,6 +101,19 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
     finally { setSaving(false); }
   }
 
+  async function refreshCatalog() {
+    setSaving(true);
+    setError("");
+    setRefreshMessage("");
+    try {
+      const result = await window.__TAURI__.core.invoke<ModelContextSettings>("refresh_model_catalog");
+      setSettings({ ...result, agents: result.agents ?? [] });
+      setRefreshMessage("模型目录已刷新，重启 Codex 后生效。");
+      onSaved();
+    } catch (cause) { setError(String(cause)); }
+    finally { setSaving(false); }
+  }
+
   function toggleCompactMode(model: ModelContextSettings["models"][number]) {
     const percentage = !percentageModes[model.slug];
     const value = compactValues[model.slug];
@@ -123,10 +138,14 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
       </Dialog.Description>
       <form onSubmit={save} style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
         <Tabs.Root value={tab} onValueChange={setTab} style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
-          <Tabs.List mt="2" style={{ flexShrink: 0 }}>
-            <Tabs.Trigger value="models">模型配置</Tabs.Trigger>
-            <Tabs.Trigger value="agents">子代理</Tabs.Trigger>
-          </Tabs.List>
+          <Flex align="center" justify="between" gap="3" mt="2" style={{ flexShrink: 0 }}>
+            <Tabs.List>
+              <Tabs.Trigger value="models">模型配置</Tabs.Trigger>
+              <Tabs.Trigger value="agents">子代理</Tabs.Trigger>
+            </Tabs.List>
+            <Button type="button" size="1" variant="soft" disabled={!settings || saving}
+              onClick={() => void refreshCatalog()}>刷新模型目录</Button>
+          </Flex>
           <Tabs.Content value="models" style={{ display: tab === "models" ? "flex" : "none", flexDirection: "column", minHeight: 0, flex: 1 }}>
             {settings && <Box mt="2" style={{ flexShrink: 0 }}>
               <Flex gap="3" aria-label="当前配置来源">
@@ -304,6 +323,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
             </>}
           </Tabs.Content>
         </Tabs.Root>
+        {refreshMessage && <Text as="p" size="2" color="green" role="status" mt="3">{refreshMessage}</Text>}
         {error && <Text as="p" size="2" color="red" role="alert" mt="3">{error}</Text>}
         <Flex justify="between" gap="3" mt="2" style={{ flexShrink: 0 }}>
           <Button type="button" variant="ghost" disabled={!settings || saving} onClick={() => {

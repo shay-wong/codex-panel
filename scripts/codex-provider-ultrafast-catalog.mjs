@@ -56,7 +56,7 @@ function withCurrentModelDefaults(catalog) {
     ? { ...model, context_window: 500000 } : model) };
 }
 
-async function modelContextState({ executable, dataDirectory, processEnv, cwd }, client) {
+async function modelContextState({ executable, dataDirectory, processEnv, cwd, refreshCatalog }, client) {
   const { config, layers, origins } = await client.request("config/read", { includeLayers: true });
   const userLayer = layers?.find(layer => layer.name?.type === "user" && !layer.name.profile);
   if (!userLayer?.name.file || !userLayer.version) throw new Error("无法定位 Codex 用户配置");
@@ -86,7 +86,15 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd },
     };
   }
   if (!Array.isArray(state.catalog?.models)) throw new Error("Codex 模型目录格式无效");
-  if (!state.catalogSource && !state.originalCatalog && !sourceUrl) {
+  if (refreshCatalog) {
+    const source = state.originalCatalog
+      ? JSON.parse(await readFile(state.originalCatalog, "utf8"))
+      : await readJson(path.join(path.dirname(userLayer.name.file), "models_cache.json"), null)
+        ?? await readBundledModelCatalog(executable);
+    if (!Array.isArray(source?.models) || !source.models.length) throw new Error("Codex 模型目录格式无效");
+    state.catalog = { models: source.models };
+    state.catalogSource = state.originalCatalog || sourceUrl ? "external" : "native";
+  } else if (!state.catalogSource && !state.originalCatalog && !sourceUrl) {
     // Refresh unclassified legacy defaults from the current native source, retaining saved overrides.
     state.catalog = await readBundledModelCatalog(executable);
     state.catalogSource = "native";
@@ -166,7 +174,7 @@ async function writeAgentSettings(agent, settings) {
 }
 
 export async function modelContextSettings({
-  executable, dataDirectory, processEnv = process.env, cwd,
+  executable, dataDirectory, processEnv = process.env, cwd, refreshCatalog = false,
 }, contextWindows, autoCompactTokenLimits, multiAgentReasoningEfforts, defaultSubagentModel, agentModels,
 defaultSubagentReasoningEffort, agentReasoningEfforts) {
   await mkdir(dataDirectory, { recursive: true });
@@ -174,13 +182,14 @@ defaultSubagentReasoningEffort, agentReasoningEfforts) {
   const client = new CodexAppServer({ executable, processEnv, cwd });
   try {
     const { config, userLayer, origins, state, statePath, catalogPath } = await modelContextState(
-      { executable, dataDirectory, processEnv, cwd }, client,
+      { executable, dataDirectory, processEnv, cwd, refreshCatalog }, client,
     );
     const defaults = state.useOfficialContextDefaults ? withCurrentModelDefaults(state.catalog) : state.catalog;
     const agents = await configuredAgentModels(userLayer);
     let subagentModel = config.agents?.default_subagent_model ?? null;
     let subagentReasoningEffort = config.agents?.default_subagent_reasoning_effort ?? null;
-    if (contextWindows !== undefined) {
+    if (contextWindows !== undefined || refreshCatalog) {
+      contextWindows ??= state.contextWindows;
       autoCompactTokenLimits ??= state.autoCompactTokenLimits;
       multiAgentReasoningEfforts ??= state.multiAgentReasoningEfforts;
       const slugs = new Set(state.catalog.models.map(model => model.slug));
@@ -251,7 +260,7 @@ defaultSubagentReasoningEffort, agentReasoningEfforts) {
         throw new Error("模型目录由更高优先级配置管理，无法保存上下文设置");
       }
       const hasDefaultCorrection = defaults.models.some((model, index) => model !== state.catalog.models[index]);
-      const hasOverrides = hasContexts || hasCompactLimits || hasEfforts || hasDefaultCorrection;
+      const hasOverrides = refreshCatalog || hasContexts || hasCompactLimits || hasEfforts || hasDefaultCorrection;
       state.contextWindows = contextWindows;
       state.autoCompactTokenLimits = autoCompactTokenLimits;
       state.multiAgentReasoningEfforts = multiAgentReasoningEfforts;
@@ -476,12 +485,12 @@ export function createUltrafastCatalogAdapter({
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [operation, appPath, dataDirectory] = process.argv.slice(2);
-  if (!["read-contexts", "write-contexts", "read-discovery", "enable-discovery", "remove-discovery"].includes(operation) || !appPath) {
+  if (!["read-contexts", "write-contexts", "refresh-catalog", "read-discovery", "enable-discovery", "remove-discovery"].includes(operation) || !appPath) {
     throw new Error("Expected a model configuration operation and a Codex application path");
   }
   const client = new CodexAppServer({ executable: codexExecutableInApp(appPath) });
   try {
-    if (operation === "read-contexts" || operation === "write-contexts") {
+    if (operation === "read-contexts" || operation === "write-contexts" || operation === "refresh-catalog") {
       if (!dataDirectory || !path.isAbsolute(dataDirectory)) throw new Error("需要绝对路径的 Panel 数据目录");
       let input;
       if (operation === "write-contexts") {
@@ -489,7 +498,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
         for await (const chunk of process.stdin) source += chunk;
         input = JSON.parse(source);
       }
-      console.log(JSON.stringify(await modelContextSettings({ executable: codexExecutableInApp(appPath), dataDirectory }, input?.contextWindows, input?.autoCompactTokenLimits, input?.multiAgentReasoningEfforts, input?.defaultSubagentModel, input?.agentModels, input?.defaultSubagentReasoningEffort, input?.agentReasoningEfforts)));
+      console.log(JSON.stringify(await modelContextSettings({ executable: codexExecutableInApp(appPath), dataDirectory, refreshCatalog: operation === "refresh-catalog" }, input?.contextWindows, input?.autoCompactTokenLimits, input?.multiAgentReasoningEfforts, input?.defaultSubagentModel, input?.agentModels, input?.defaultSubagentReasoningEffort, input?.agentReasoningEfforts)));
     } else if (operation === "read-discovery") console.log(JSON.stringify(await readModelDiscovery(client)));
     else await setModelDiscovery(client, operation === "enable-discovery");
   }

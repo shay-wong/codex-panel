@@ -1,5 +1,7 @@
 # Codex Panel
 
+在 **偏好设置 → 模型上下文 → 配置上下文 → 刷新模型目录** 中重新读取最新 Codex 模型缓存或原始目录文件，保留已保存的上下文、压缩阈值与子代理设置。列表立即更新，重启 Codex 后生效。详见[按模型配置上下文](docs/fork-capabilities.md#per-model-context-windows)。
+
 在 **偏好设置 → 连接行为 → 新聊天默认不带项目** 开启后，普通“新建聊天”和“最近”里的新建都不关联项目；从具体项目内新建时仍保留该项目。此开关默认关闭，不改变已有聊天；适配首次加载后，切换开关立即影响下一次新建。详见[无项目新建聊天](docs/codex-compatibility.md#new-chats-outside-projects)。
 
 macOS / Windows 新增默认关闭的 **App 与 CLI 共享会话**。在 Panel 已连接 Codex 时，打开 **偏好设置 → 连接行为 → App 与 CLI 共享会话**，点击 **复制共享 CLI 命令**，再到终端执行复制的命令，即可复用 App 当前后台，无需重启 Codex。普通 `codex` 命令仍使用独立后台，同一会话仍可能发生占用冲突。使用期间保持 Panel 和 Codex 运行，审批和问题提示在 App 中处理；关闭共享只断开共享终端视图，不取消 App 中的任务。新建或分叉会话请先在 App 完成。详见[共享会话指南](docs/shared-sessions.md)；macOS 隔离主流程已通过，Windows 实机验收待完成。
