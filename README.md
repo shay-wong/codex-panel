@@ -1,5 +1,7 @@
 # Codex Panel
 
+Use **Preferences → 模型上下文 → 配置上下文 → 刷新模型目录** to reload the latest Codex model cache or your original catalog file while keeping saved context, compaction and subagent settings. The list updates immediately; restart Codex to apply it. See [per-model context windows](docs/fork-capabilities.md#per-model-context-windows).
+
 Open **Preferences → Connection behavior → 新聊天默认不带项目** to start ordinary new chats and chats created from **Recent** without a project. This option is off by default. Starting a chat from a specific project keeps that project. Existing chats are unchanged; after the adapter's initial reload, changing the switch applies to the next new chat immediately. See [new chats outside projects](docs/codex-compatibility.md#new-chats-outside-projects).
 
 **App and CLI shared sessions** is an optional, default-off setting for macOS and Windows. In **Preferences → Connection behavior → App 与 CLI 共享会话**, enable it while Panel is connected to Codex, then choose **复制共享 CLI 命令** and run the copied command in your terminal. It connects the terminal to the App's existing backend without restarting Codex. Ordinary `codex` commands still use their own backend and can conflict on the same chat. Keep both Panel and Codex running; handle approval and question prompts in the App. Turning sharing off disconnects shared terminal views without canceling App tasks. Create or fork chats in the App first. See the [shared-session guide](docs/shared-sessions.md); the isolated macOS main flow passed, while Windows runtime acceptance is pending.

@@ -3399,6 +3399,17 @@ async fn read_model_context_settings(
 }
 
 #[tauri::command]
+async fn refresh_model_catalog(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+) -> Result<serde_json::Value, String> {
+    let output = run_model_configuration(app.clone(), "refresh-catalog", Some(state.data_directory.clone()), None).await?;
+    let result = serde_json::from_str(output.trim()).map_err(|error| error.to_string())?;
+    mark_codex_restart_required(&app, &state, "模型目录")?;
+    Ok(result)
+}
+
+#[tauri::command]
 async fn set_model_context_windows(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
@@ -3799,6 +3810,7 @@ fn main() {
             import_pet_animation,
             remove_pet_animation,
             read_model_context_settings,
+            refresh_model_catalog,
             set_model_context_windows,
             set_launcher_preference,
             copy_shared_cli_command,
