@@ -218,7 +218,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
                         </Button>
                       </TextField.Slot>
                     </TextField.Root>
-                    <Select.Root value={reasoningEfforts[model.slug] ?? "default"} disabled={saving || model.reasoningEfforts.length === 0}
+                    <Select.Root value={reasoningEfforts[model.slug] ?? "default"} disabled={saving || model.reasoningEfforts.length === 0 && !reasoningEfforts[model.slug]}
                       onValueChange={value => setReasoningEfforts(current => {
                         const next = { ...current };
                         if (value === "default") delete next[model.slug];
@@ -228,6 +228,8 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
                       <Select.Trigger id={`reasoning-${model.slug}`} aria-label={`${model.displayName} 子代理推理强度`} style={{ width: "100%" }} />
                       <Select.Content>
                         <Select.Item value="default">{model.multiAgentReasoningEffort ? `默认（${model.multiAgentReasoningEffort}）` : "默认（未指定）"}</Select.Item>
+                        {reasoningEfforts[model.slug] && !model.reasoningEfforts.includes(reasoningEfforts[model.slug])
+                          && <Select.Item value={reasoningEfforts[model.slug]}>{reasoningEfforts[model.slug]}</Select.Item>}
                         {model.reasoningEfforts.map(effort => <Select.Item key={effort} value={effort}>{effort}</Select.Item>)}
                       </Select.Content>
                     </Select.Root>

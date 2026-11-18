@@ -91,15 +91,15 @@ test("manual catalog refresh requests the active provider and preserves saved se
   const executable = path.join(root, "codex.mjs");
   await writeFile(executable, 'if (process.argv[2] !== "--version") throw Error("Unexpected CLI command"); console.log("codex-cli 0.169.0-alpha.11.1");');
   const old = { slug: "gpt-6.1-sol", context_window: 272000, max_context_window: 872000,
-    supported_reasoning_levels: [{ effort: "high" }], base_instructions: "Native instructions" };
+    supported_reasoning_levels: [{ effort: "high" }, { effort: "max" }], base_instructions: "Native instructions" };
   const stale = { models: [old, { ...old, slug: "not-offered-by-provider" }] };
-  const latest = { models: [old,
+  const latest = { models: [{ ...old, supported_reasoning_levels: [] },
     { ...old, slug: "gpt-6.2-astra", service_tiers: [{ id: "ultrafast" }] },
     { ...old, slug: "gpt-6.2-sol", context_window: 500000 },
   ] };
   const saved = { catalog: stale, contextWindows: { [old.slug]: 600000, "not-offered-by-provider": 96000 },
     autoCompactTokenLimits: { [old.slug]: "50%", "not-offered-by-provider": "25%" },
-    multiAgentReasoningEfforts: { [old.slug]: "high", "not-offered-by-provider": "high" },
+    multiAgentReasoningEfforts: { [old.slug]: "max", "not-offered-by-provider": "high" },
     originalCatalog: null, catalogSource: "native" };
   await writeFile(statePath, JSON.stringify(saved));
   await writeFile(catalogPath, JSON.stringify(stale));
@@ -153,7 +153,8 @@ test("manual catalog refresh requests the active provider and preserves saved se
   const catalog = JSON.parse(await readFile(catalogPath));
   assert.equal(catalog.models[0].context_window, 600000);
   assert.equal(catalog.models[0].auto_compact_token_limit, 300000);
-  assert.equal(catalog.models[0].multi_agent_reasoning_effort, "high");
+  assert.equal(catalog.models[0].multi_agent_reasoning_effort, "max");
+  assert.deepEqual(catalog.models[0].supported_reasoning_levels, []);
   assert.deepEqual(catalog.models.slice(1), latest.models.slice(1), "new models retain their full metadata");
   const resaved = await modelContextSettings({ ...options, refreshCatalog: false }, refreshed.contextWindows,
     refreshed.autoCompactTokenLimits, refreshed.multiAgentReasoningEfforts);
@@ -162,6 +163,8 @@ test("manual catalog refresh requests the active provider and preserves saved se
   assert.deepEqual(resaved.multiAgentReasoningEfforts, saved.multiAgentReasoningEfforts);
   await assert.rejects(modelContextSettings({ ...options, refreshCatalog: false },
     { ...saved.contextWindows, "new-unoffered-model": 64000 }, saved.autoCompactTokenLimits, saved.multiAgentReasoningEfforts), /模型目录中没有 new-unoffered-model/);
+  await assert.rejects(modelContextSettings({ ...options, refreshCatalog: false }, saved.contextWindows,
+    saved.autoCompactTokenLimits, { ...saved.multiAgentReasoningEfforts, [old.slug]: "ultra" }), /不支持子代理推理强度 ultra/);
   assert.equal((await modelContextSettings(options)).catalogChanged, false);
   assert.equal(downloads, 2, "each explicit refresh must request the provider rather than reuse a cache");
   const provider = config.model_providers.probe;
