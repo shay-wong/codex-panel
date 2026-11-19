@@ -1,5 +1,8 @@
 // Native confirmation and installation display adapted from upstream UpdateDialog.
 #[cfg(target_os = "macos")]
+mod markdown;
+
+#[cfg(target_os = "macos")]
 use dispatch2::{run_on_main, MainThreadBound};
 #[cfg(target_os = "macos")]
 use objc2::{
@@ -166,7 +169,7 @@ impl UpdateDialog {
                 );
                 text.setEditable(false);
                 text.setSelectable(true);
-                text.setRichText(false);
+                text.setRichText(true);
                 text.setDrawsBackground(false);
                 text.setFont(Some(&NSFont::systemFontOfSize(12.0)));
                 text.setTextContainerInset(NSSize::new(8.0, 8.0));
@@ -182,7 +185,12 @@ impl UpdateDialog {
                         container.setWidthTracksTextView(true);
                     }
                 }
-                text.setString(&NSString::from_str(&notes));
+                // 将说明写入原生富文本缓冲区，滚动区域和确认按钮仍由 AppKit 布局。
+                unsafe {
+                    if let Some(storage) = text.textStorage() {
+                        storage.setAttributedString(&markdown::release_notes(&notes, mtm));
+                    }
+                }
                 scroll.setDocumentView(Some(&text));
                 alert.setAccessoryView(Some(&scroll));
             }

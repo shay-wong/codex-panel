@@ -1,5 +1,7 @@
 # Fork 维护说明
 
+macOS 更新确认框 Markdown（等待上游吸收）。`src-tauri/src/update_dialog/markdown.rs` 用 CommonMark 解析器将发行版说明转换为原生富文本，兼容 macOS 11 的 AppKit API。说明在原滚动区域显示，链接保留文字，HTML 和图片地址不交给视图。进入安装时仍移除说明视图。针对性验证包括格式单测、隔离 AppKit 弹窗与 macOS 编译检查。用户说明见中英文 README、CHANGELOG 和 `docs/fork-capabilities.md#signed-in-app-updates`。上游具备等价显示后可移除。
+
 macOS 更新弹窗残留说明（等待上游吸收）。点击「安装并重启」后，`src-tauri/src/update_dialog.rs` 在替换原生 Sheet 的附件前先移除旧版本说明视图，避免长正文滚动后遮挡安装提示。说明仍可在确认阶段滚动。定向验证是在隔离 AppKit 窗口把长说明滚到底后切换进度，核对旧视图已脱离、新进度条已挂载。用户说明见中英文 CHANGELOG 的未发布条目。来源可用 `git log -S'removeFromSuperview' -- src-tauri/src/update_dialog.rs` 定位，上游提供等价修复后可移除。
 
 更新界面版本说明（2026-11-18，等待上游吸收）：GitHub 发行版正文随选中版本经过既有自动/手动检查、缓存与状态快照传到“关于 → 版本更新”，安装确认框显示同一说明；页面与 macOS 原生确认框中的长内容可滚动，没有正文时显示“该版本暂无版本说明。”。保留“查看发布说明”外链及现有下载、验签、安装与重启行为，不增加发行版请求。代码为 `src-tauri/src/main.rs`、`src-tauri/src/update_dialog.rs`、`launcher/src/App.tsx` 与 `launcher/src/launcher.css`；针对性验证入口为 `src-tauri/src/main.rs` 内版本选择/缓存测试及 `launcher/src/App.spec.tsx`，验证范围为所选版本正文传递、缓存回读及空正文显示、隔离更新页展示和原生确认框编译，实际安装与 Windows 实机效果仍待验收。用户入口同步中英文 README/CHANGELOG 与 `docs/fork-capabilities.md#signed-in-app-updates`。来源定位：`git log -S'update_notes' -- src-tauri/src/main.rs`；上游提供等价的更新说明展示后评估移除。
