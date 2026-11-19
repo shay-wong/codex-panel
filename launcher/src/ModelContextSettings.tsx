@@ -186,7 +186,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
             <Box pr="1" style={{ minHeight: 0, flex: 1, overflowY: "auto", scrollbarWidth: "none", overscrollBehavior: "contain" }}>
               {!settings && !error && <Text as="p" size="2" role="status" mt="4">正在读取模型目录…</Text>}
               {settings && <Box style={{ minWidth: 568 }}>
-                <Box mb="2" py="1" style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 128px 128px 136px", gap: 12,
+                <Box pt="1" pb="3" style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 128px 128px 136px", gap: 12,
                   position: "sticky", top: 0, zIndex: 1, background: "var(--color-panel-solid)" }}>
                   <Flex align="center" gap="2">
                     <Checkbox aria-label="选择全部模型" disabled={saving || !settings.models.length}
