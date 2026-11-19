@@ -6,7 +6,7 @@
 
 此选项适用于 macOS 和 Windows，默认关闭。Panel 与 Codex 必须保持运行，且 Panel 已连接到 Codex。
 
-1. 打开 Panel 的 **偏好设置 → 连接行为 → App 与 CLI 共享会话**。
+1. 打开 Panel 的 **偏好设置 → 模型与高级 → App 与 CLI 共享会话**。
 2. 开启后点击 **复制共享 CLI 命令**。
 3. 在 macOS 终端或 Windows PowerShell 中执行复制的完整命令。
 4. 在 CLI 的会话选择器中打开目标会话；审批、权限确认和需要回答的问题在 Codex App 中处理。新建或分叉请先在 App 完成，再从共享 CLI 中选择。
@@ -43,7 +43,7 @@ Panel 将请求和通知转发到现有的原生认证连接。CLI 查看会话�
 
 ## English
 
-This optional setting is off by default on macOS and Windows. Keep Panel connected to Codex, open **Preferences → Connection behavior → App 与 CLI 共享会话**, enable it, then choose **复制共享 CLI 命令** and run the complete copied command in a terminal. Select an existing chat in the CLI; create or fork chats in Codex App first. Answer approvals and questions in Codex App. No App restart is required.
+This optional setting is off by default on macOS and Windows. Keep Panel connected to Codex, open **Preferences → Models & advanced → App 与 CLI 共享会话**, enable it, then choose **复制共享 CLI 命令** and run the complete copied command in a terminal. Select an existing chat in the CLI; create or fork chats in Codex App first. Answer approvals and questions in Codex App. No App restart is required.
 
 Use the generated command rather than an ordinary `codex` launch. Ordinary CLI sessions use a separate backend and can still hold the writer lock. Close that independent session before opening the same chat through the shared command. Forking remains available when you want an independent chat.
 

@@ -234,7 +234,11 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(document.getElementById("embeddedStatus")?.textContent).toBe("尚未就绪");
   expect(button("panelAction").getAttribute("aria-label")).toContain("等待连接");
 
-  fireEvent.mouseDown(screen.getByRole("tab", { name: /偏好设置/ }), { button: 0, ctrlKey: false });
+  const selectTab = (name: string) => {
+    fireEvent.mouseDown(screen.getByRole("tab", { name: new RegExp(name) }), { button: 0, ctrlKey: false });
+  };
+  selectTab("偏好设置");
+  expect(screen.getByRole("tabpanel", { name: /常用/ })).toBeTruthy();
   const autoConnect = screen.getByRole("switch", { name: "启动时连接 Codex" });
   expect(autoConnect.getAttribute("aria-checked")).toBe("true");
   await click(autoConnect);
@@ -242,8 +246,15 @@ it("keeps launcher feedback, live status and global preferences working through 
   const autoOpen = screen.getByRole("switch", { name: "连接后打开任务面板" }) as HTMLButtonElement;
   expect(autoOpen.disabled).toBe(true);
   expect(autoOpen.getAttribute("aria-checked")).toBe("true");
-  await click(autoConnect);
-  expect(autoOpen.disabled).toBe(false);
+  selectTab("聊天");
+  expect(screen.queryByRole("switch", { name: "连接后打开任务面板" })).toBeNull();
+  selectTab("常用");
+  const reopenedAutoOpen = screen.getByRole("switch", { name: "连接后打开任务面板" }) as HTMLButtonElement;
+  expect(reopenedAutoOpen.disabled).toBe(true);
+  expect(reopenedAutoOpen.getAttribute("aria-checked")).toBe("true");
+  await click(screen.getByRole("switch", { name: "启动时连接 Codex" }));
+  expect(reopenedAutoOpen.disabled).toBe(false);
+  selectTab("聊天");
   const projectless = screen.getByRole("switch", { name: "新聊天默认不带项目" });
   expect(projectless.getAttribute("aria-checked")).toBe("false");
   await click(projectless);
@@ -251,9 +262,10 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(projectless.getAttribute("aria-checked")).toBe("true");
   await click(projectless);
   expect(projectless.getAttribute("aria-checked")).toBe("false");
+  selectTab("模型与高级");
   const sharedSession = screen.getByRole("switch", { name: "App 与 CLI 共享会话" });
   expect(sharedSession.getAttribute("aria-checked")).toBe("false");
-  expect(button("copySharedCliCommand").disabled).toBe(true);
+  expect(button("copySharedCliCommand")).toBeNull();
   await click(sharedSession);
   expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "sharedSessionBackend", enabled: true });
   expect(sharedSession.getAttribute("aria-checked")).toBe("true");
@@ -262,9 +274,11 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(writeClipboard).toHaveBeenCalledWith(sharedCliCommand);
   expect(button("copySharedCliCommand").textContent).toBe("已复制");
   await click(sharedSession);
-  expect(button("copySharedCliCommand").disabled).toBe(true);
+  expect(button("copySharedCliCommand")).toBeNull();
+  selectTab("聊天");
   await click(screen.getByRole("switch", { name: "隐藏额度耗尽提示" }));
   expect(current.preferences).toEqual({ defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true });
+  selectTab("模型与高级");
   const quotaFix = screen.getByRole("switch", { name: "移除账号额度不足时 API 发送限制" });
   const restartCount = invoke.mock.calls.filter(([command]) => command === "reconnect_codex").length;
   await click(quotaFix);
@@ -335,13 +349,19 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(invoke.mock.calls.filter(([command]) => command === "reconnect_codex")).toHaveLength(restartCount);
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(current.preferences.hideUsageBanner).toBe(true);
+  selectTab("常用");
   await click(screen.getByRole("switch", { name: "登录时启动" }));
   expect(invoke).toHaveBeenCalledWith("set_autostart", { enabled: false });
   expect(screen.getByRole("switch", { name: "登录时启动" }).getAttribute("aria-checked")).toBe("false");
+  selectTab("工作流");
   await click(button("configureWorkflows"));
   expect((screen.getByTitle("全局工作流设置") as HTMLIFrameElement).src).toBe(workflowUrl);
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(document.getElementById("preferencesView")?.contains(screen.getByTitle("全局工作流设置"))).toBe(true);
+  const frame = screen.getByTitle("全局工作流设置");
+  selectTab("聊天");
+  selectTab("工作流");
+  expect(screen.getByTitle("全局工作流设置")).toBe(frame);
   await advance(300);
   await act(async () => {
     window.dispatchEvent(new MessageEvent("message", {
@@ -351,6 +371,7 @@ it("keeps launcher feedback, live status and global preferences working through 
     }));
   });
   expect(screen.queryByTitle("全局工作流设置")).toBeNull();
+  expect(screen.getByRole("tabpanel", { name: /工作流/ })).toBeTruthy();
   expect(button("configureWorkflows")).toBeTruthy();
   if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
   else Reflect.deleteProperty(navigator, "clipboard");

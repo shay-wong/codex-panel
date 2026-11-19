@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Organize Preferences into General, Chat, Models & advanced, and Workflow tabs. Keep the Workflow editor within its tab so you can switch categories without losing your draft.
+
 ## 0.5.12-fork
 
 - Click the selected **Panel** entry in the Codex sidebar to hide the task panel and return to the previous page while the Panel app and background service keep running.

@@ -2,7 +2,7 @@
 
 ## New chats outside projects
 
-The optional **Preferences → Connection behavior → 新聊天默认不带项目** setting is off by default. Enable it to make ordinary **New chat** actions, including those in **Recent**, start without inheriting the current project's association. Use the new-chat action inside a specific project when the new chat should belong to that project. Turning the switch off restores Codex's native selection behavior. Existing chats and their project assignments are not changed.
+The optional **Preferences → Chat → 新聊天默认不带项目** setting is off by default. Enable it to make ordinary **New chat** actions, including those in **Recent**, start without inheriting the current project's association. Use the new-chat action inside a specific project when the new chat should belong to that project. Turning the switch off restores Codex's native selection behavior. Existing chats and their project assignments are not changed.
 
 The adapter covers the native default-target selector and the common new-chat action. Explicit project targets stay on the native project-creation path. Installing the adapter uses Panel's existing one-time renderer reload; once loaded, switching this preference applies immediately to the next new chat. Keep Panel connected for preference synchronization.
 
