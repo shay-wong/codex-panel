@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.5.14-fork
+
 - Restore the full-height workflow editor and return to the Workflow tab after saving or closing it.
 
 - Fix release notes overlapping the macOS update dialog after installation starts.
