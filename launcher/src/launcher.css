@@ -16,6 +16,7 @@ button, input { font: inherit; }
 .launcher-navigation .rt-TabsTrigger:hover .rt-TabsTriggerInner { background: transparent; }
 .launcher-main { min-width: 0; overflow-y: auto; padding: 34px 38px 28px; }
 .launcher-main { --page-enter-x: -10px; animation: launcher-page-enter 200ms cubic-bezier(.2, .8, .2, 1) both; }
+.launcher-main.workflow-page { --page-enter-x: 14px; }
 .update-notes { max-height: 240px; overflow-y: auto; overflow-wrap: anywhere; padding: 14px 16px; border: 1px solid var(--gray-5); border-radius: 10px; background: var(--gray-2); font-size: 13px; line-height: 1.65; }
 .update-notes :is(h1, h2, h3, h4) { margin: 16px 0 8px; font-size: 14px; line-height: 1.5; }
 .update-notes :is(p, ul, ol, pre, blockquote) { margin: 8px 0; }
@@ -81,7 +82,6 @@ button, input { font: inherit; }
 #preferencesView .preference-row { min-height: 52px; padding-block: 8px; }
 .preference-row .rt-SwitchRoot, .preference-row > .rt-Button { flex-shrink: 0; }
 .preference-row.is-disabled { opacity: .55; }
-#workflowFrame { display: block; width: 100%; height: max(320px, calc(100dvh - 170px)); border: 0; }
 .pet-page-toolbar { flex-wrap: wrap; }
 .pet-page-toolbar > .rt-Button { flex-shrink: 0; }
 .pet-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap: 16px; }
@@ -96,6 +96,9 @@ button, input { font: inherit; }
 .runtime-grid > div { min-width: 0; }
 .runtime-grid code { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .launcher button.is-success { box-shadow: inset 0 0 0 1px var(--green-8); }
+.launcher-main.workflow-page { padding: 0; overflow: hidden; }
+.workflow-page #preferencesView { height: 100%; }
+.workflow-page #workflowFrame { display: block; width: 100%; height: 100%; border: 0; }
 .launcher button.is-failed { box-shadow: inset 0 0 0 1px var(--red-8); }
 @media (max-width: 680px) {
   .launcher-layout { grid-template-columns: 148px minmax(0, 1fr); }

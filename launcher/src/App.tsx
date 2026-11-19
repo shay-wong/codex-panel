@@ -75,6 +75,7 @@ export function App() {
   const [modelContextOpen, setModelContextOpen] = useState(false);
   const [usageSettingsOpen, setUsageSettingsOpen] = useState(false);
   const [workflowUrl, setWorkflowUrl] = useState("");
+  // 编辑页会重新挂载正文，分类状态留在启动器以便返回原标签。
   const [preferenceTab, setPreferenceTab] = useState("general");
   const [view, setView] = useState("overview");
   const [petRefreshKey, setPetRefreshKey] = useState(0);
@@ -326,14 +327,14 @@ export function App() {
           <Tabs.Trigger value="about"><LinearIcon name="file" />关于</Tabs.Trigger>
         </Tabs.List>
       </aside>
-    <main key={view} className="launcher-main" style={modelContextOpen || usageSettingsOpen ? { overflowY: "hidden" } : undefined}>
-      <header className={`page-heading${view === "preferences" ? " preference-heading" : ""}`}>
+    <main key={workflowUrl ? "workflow" : view} className={`launcher-main${workflowUrl ? " workflow-page" : ""}`} style={modelContextOpen || usageSettingsOpen ? { overflowY: "hidden" } : undefined}>
+      {!workflowUrl && <header className={`page-heading${view === "preferences" ? " preference-heading" : ""}`}>
         <Box><Heading as="h2" size="5">{view === "overview" ? "运行概览" : view === "preferences" ? "偏好设置" : view === "pets" ? "宠物" : "关于"}</Heading><Text as="p" size="1" color="gray" mt="1">{view === "overview" ? "管理本机服务与 Codex 连接" : view === "preferences" ? "管理 Codex Panel 的连接与使用偏好" : view === "pets" ? "选择内置伙伴，导入新宠物与动画音乐" : "应用信息与版本更新"}</Text></Box>
         <Flex className="page-heading-actions" align="center" gap="2">
           {iconAction("refresh", "launcher_ui_state", "刷新状态", <span className="refresh-icon" aria-hidden="true">↻</span>)}
           {iconAction("browserPanel", "open_browser_panel", "在浏览器中打开", <LinearIcon name="openExternal" />, !hasProcess)}
         </Flex>
-      </header>
+      </header>}
       {error && !usageSettingsOpen && <Callout.Root id="errorNotice" color="red" size="1" role="alert" mb="4">
         <Callout.Icon><LinearIcon name="alert" /></Callout.Icon>
         <Callout.Text id="errorText" className="launcher-error">{error}</Callout.Text>
@@ -426,91 +427,90 @@ export function App() {
             ].map(([id, label, value]) => <Box key={id}><Text as="div" size="1" color="gray">{label}</Text><code id={id} title={value}>{value}</code></Box>)}</div></details>
           </Tabs.Content>
           <Tabs.Content value="preferences" id="preferencesView">
-            <Tabs.Root value={preferenceTab} onValueChange={setPreferenceTab}>
-              <Tabs.List aria-label="设置分类" highContrast size="2" className="preference-navigation">
-                <Tabs.Trigger value="general">常用</Tabs.Trigger>
-                <Tabs.Trigger value="chat">聊天</Tabs.Trigger>
-                <Tabs.Trigger value="advanced">模型与高级</Tabs.Trigger>
-                <Tabs.Trigger value="workflow">工作流</Tabs.Trigger>
-              </Tabs.List>
-              <Tabs.Content value="general">
-                <div className="preference-rows">
-                  <Setting id="autostart" title="登录时启动" detail="登录电脑后自动运行 Codex Panel" checked={state?.autostart ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("autostart", enabled)} />
-                  <Separator size="4" />
-                  <Setting id="autoConnectCodex" title="启动时连接 Codex" detail="打开启动器时，自动连接 Codex" checked={preferences?.autoConnectCodex ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("autoConnectCodex", enabled)} />
-                  <Separator size="4" />
-                  <Setting id="autoOpenPanel" title="连接后打开任务面板" detail={preferences?.autoConnectCodex ? "连接就绪后自动显示 Panel" : "需先开启“启动时连接 Codex”"} checked={preferences?.autoOpenPanel ?? false} disabled={!preferences?.autoConnectCodex || savingPreference} onChange={enabled => void savePreference("autoOpenPanel", enabled)} />
-                  <Separator size="4" />
-                  <Setting id="followSystemAppearance" title="跟随系统外观" detail="随系统在浅色与深色之间切换" checked={followSystemAppearance} onChange={enabled => { setFollowSystemAppearance(enabled); window.localStorage.setItem("codex-panel.follow-system-appearance", String(enabled)); window.dispatchEvent(new CustomEvent("codex-panel-appearance-preference", { detail: enabled })); }} />
-                  <Separator size="4" />
-                </div>
-              </Tabs.Content>
-              <Tabs.Content value="chat">
-                <div className="preference-rows">
-                  <Setting id="defaultProjectlessChat" title="新聊天默认不带项目" detail="普通新建和“最近”中新建的聊天不关联项目；从具体项目内新建时保留项目。" checked={preferences?.defaultProjectlessChat ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("defaultProjectlessChat", enabled)} />
-                  <Separator size="4" />
-                  <Flex className="preference-row" align="center" justify="between" gap="4">
-                    <Box><Text as="div" size="2" weight="medium">会话用量</Text><Text as="p" size="1" color="gray" mt="1">显示位置、数字样式与动画速度</Text></Box>
-                    <Button id="configureThreadUsage" variant="soft" disabled={!state || savingPreference} onClick={() => {
-                      setUsageMinimum(String(preferences?.usageAnimationMinSpeed ?? 5));
-                      setUsageMaximum(String(preferences?.usageAnimationMaxSpeed ?? 40));
-                      setError("");
-                      setUsageSettingsOpen(true);
-                    }}>配置会话用量<LinearIcon name="chevronRight" /></Button>
-                  </Flex>
-                  <Separator size="4" />
-                  <Setting id="hideUsageBanner" title="隐藏额度耗尽提示" detail="收起对话中的额度横幅，不改变实际额度" checked={preferences?.hideUsageBanner ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("hideUsageBanner", enabled)} />
-                  <Separator size="4" />
-                </div>
-              </Tabs.Content>
-              <Tabs.Content value="advanced">
-                <section className="preference-section" aria-labelledby="modelContextTitle">
-                  <Heading as="h3" size="2" id="modelContextTitle" mb="2">模型</Heading>
+            {workflowUrl ? (
+              <iframe ref={workflowFrame} id="workflowFrame" src={workflowUrl} title="全局工作流设置" sandbox="allow-scripts allow-same-origin allow-forms" referrerPolicy="no-referrer" />
+            ) : (
+              <Tabs.Root value={preferenceTab} onValueChange={setPreferenceTab}>
+                <Tabs.List aria-label="设置分类" highContrast size="2" className="preference-navigation">
+                  <Tabs.Trigger value="general">常用</Tabs.Trigger>
+                  <Tabs.Trigger value="chat">聊天</Tabs.Trigger>
+                  <Tabs.Trigger value="advanced">模型与高级</Tabs.Trigger>
+                  <Tabs.Trigger value="workflow">工作流</Tabs.Trigger>
+                </Tabs.List>
+                <Tabs.Content value="general">
                   <div className="preference-rows">
-                    <Flex className="preference-row" align="center" justify="between" gap="3">
-                      <Box><Text as="div" size="2" weight="medium">模型上下文与子代理</Text><Text as="p" size="1" color="gray" mt="1">配置上下文、自动压缩及子代理模型与推理强度</Text></Box>
-                      <Button variant="soft" disabled={!state || savingPreference} onClick={() => setModelContextOpen(true)}>配置上下文<LinearIcon name="chevronRight" /></Button>
-                    </Flex>
-                  </div>
-                </section>
-                <section className="preference-section" aria-labelledby="compatibilityTitle">
-                  <Heading as="h3" size="2" id="compatibilityTitle" mb="2">自定义 API 与兼容</Heading>
-                  <div className="preference-rows">
-                    <Setting id="customProviderUltrafast" title="显示自定义 API 的 Ultrafast 选项" detail={<>
-                      <span style={{ display: "block" }}>适用于本地自定义 API 的 GPT-6 Astra、GPT-6.1 Sol、GPT-6.2 Astra / Sol。</span>
-                      <span style={{ display: "block" }}>需启用 <code>features.api_key_model_discovery = true</code>。</span>
-                      <span style={{ display: "block" }}>保存后重启 Codex，使用时保持 Panel 运行。</span>
-                    </>} checked={preferences?.customProviderUltrafast ?? false} disabled={!state || savingPreference} onChange={enabled => void changeUltrafast(enabled)} />
+                    <Setting id="autostart" title="登录时启动" detail="登录电脑后自动运行 Codex Panel" checked={state?.autostart ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("autostart", enabled)} />
                     <Separator size="4" />
-                    <Setting id="customProviderQuotaFix" title="移除账号额度不足时 API 发送限制" detail="仅限自定义 API；首次安装适配时重载一次，之后开关即时生效" checked={preferences?.customProviderQuotaFix ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("customProviderQuotaFix", enabled)} />
+                    <Setting id="autoConnectCodex" title="启动时连接 Codex" detail="打开启动器时，自动连接 Codex" checked={preferences?.autoConnectCodex ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("autoConnectCodex", enabled)} />
                     <Separator size="4" />
-                    <Setting id="showCustomProviderDot" title="恢复 Dot 入口" detail="跳过 Dot 的客户端账号权限与 Provider 限制；连接 Panel 时生效，实际使用仍可能被服务端拒绝" checked={preferences?.showCustomProviderDot ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("showCustomProviderDot", enabled)} />
+                    <Setting id="autoOpenPanel" title="连接后打开任务面板" detail={preferences?.autoConnectCodex ? "连接就绪后自动显示 Panel" : "需先开启“启动时连接 Codex”"} checked={preferences?.autoOpenPanel ?? false} disabled={!preferences?.autoConnectCodex || savingPreference} onChange={enabled => void savePreference("autoOpenPanel", enabled)} />
+                    <Separator size="4" />
+                    <Setting id="followSystemAppearance" title="跟随系统外观" detail="随系统在浅色与深色之间切换" checked={followSystemAppearance} onChange={enabled => { setFollowSystemAppearance(enabled); window.localStorage.setItem("codex-panel.follow-system-appearance", String(enabled)); window.dispatchEvent(new CustomEvent("codex-panel-appearance-preference", { detail: enabled })); }} />
+                    <Separator size="4" />
                   </div>
-                </section>
-                <section className="preference-section" aria-labelledby="sharedSessionTitle">
-                  <Heading as="h3" size="2" id="sharedSessionTitle" mb="2">共享会话</Heading>
+                </Tabs.Content>
+                <Tabs.Content value="chat">
                   <div className="preference-rows">
-                    <Setting id="sharedSessionBackend" title="App 与 CLI 共享会话" detail="让终端通过共享 CLI 命令继续已有会话；新建与审批在 App 中完成。" checked={preferences?.sharedSessionBackend ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("sharedSessionBackend", enabled)} />
-                    {preferences?.sharedSessionBackend && <Flex justify="end" pb="2">
-                      <Button id="copySharedCliCommand" variant="soft" disabled={savingPreference || busy} onClick={() => void copySharedCliCommand()}>{sharedCliCopied ? "已复制" : "复制共享 CLI 命令"}</Button>
-                    </Flex>}
-                  </div>
-                </section>
-              </Tabs.Content>
-              {/* 保持编辑器挂载，切换分类时保留尚未保存的工作流。 */}
-              <Tabs.Content value="workflow" forceMount hidden={preferenceTab !== "workflow"}>
-                {workflowUrl ? (
-                  <iframe ref={workflowFrame} id="workflowFrame" src={workflowUrl} title="全局工作流设置" sandbox="allow-scripts allow-same-origin allow-forms" referrerPolicy="no-referrer" />
-                ) : (
-                  <div className="preference-rows">
-                    <Flex className="preference-row" align="center" justify="between" gap="3">
-                      <Box><Text as="div" size="2" weight="medium">全局工作流</Text><Text as="p" id="workflowDetail" size="1" color="gray" mt="1">{hasProcess ? "选择规划、执行、审核与交接的 Skill" : "启动 Panel 服务后可配置"}</Text></Box>
-                      <Button id="configureWorkflows" variant="soft" {...actionProps("workflow_settings_url", !hasProcess)}>配置工作流<LinearIcon name="chevronRight" /></Button>
+                    <Setting id="defaultProjectlessChat" title="新聊天默认不带项目" detail="普通新建和“最近”中新建的聊天不关联项目；从具体项目内新建时保留项目。" checked={preferences?.defaultProjectlessChat ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("defaultProjectlessChat", enabled)} />
+                    <Separator size="4" />
+                    <Flex className="preference-row" align="center" justify="between" gap="4">
+                      <Box><Text as="div" size="2" weight="medium">会话用量</Text><Text as="p" size="1" color="gray" mt="1">显示位置、数字样式与动画速度</Text></Box>
+                      <Button id="configureThreadUsage" variant="soft" disabled={!state || savingPreference} onClick={() => {
+                        setUsageMinimum(String(preferences?.usageAnimationMinSpeed ?? 5));
+                        setUsageMaximum(String(preferences?.usageAnimationMaxSpeed ?? 40));
+                        setError("");
+                        setUsageSettingsOpen(true);
+                      }}>配置会话用量<LinearIcon name="chevronRight" /></Button>
                     </Flex>
+                    <Separator size="4" />
+                    <Setting id="hideUsageBanner" title="隐藏额度耗尽提示" detail="收起对话中的额度横幅，不改变实际额度" checked={preferences?.hideUsageBanner ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("hideUsageBanner", enabled)} />
+                    <Separator size="4" />
                   </div>
-                )}
-              </Tabs.Content>
-            </Tabs.Root>
+                </Tabs.Content>
+                <Tabs.Content value="advanced">
+                  <section className="preference-section" aria-labelledby="modelContextTitle">
+                    <Heading as="h3" size="2" id="modelContextTitle" mb="2">模型</Heading>
+                    <div className="preference-rows">
+                      <Flex className="preference-row" align="center" justify="between" gap="3">
+                        <Box><Text as="div" size="2" weight="medium">模型上下文与子代理</Text><Text as="p" size="1" color="gray" mt="1">配置上下文、自动压缩及子代理模型与推理强度</Text></Box>
+                        <Button variant="soft" disabled={!state || savingPreference} onClick={() => setModelContextOpen(true)}>配置上下文<LinearIcon name="chevronRight" /></Button>
+                      </Flex>
+                    </div>
+                  </section>
+                  <section className="preference-section" aria-labelledby="compatibilityTitle">
+                    <Heading as="h3" size="2" id="compatibilityTitle" mb="2">自定义 API 与兼容</Heading>
+                    <div className="preference-rows">
+                      <Setting id="customProviderUltrafast" title="显示自定义 API 的 Ultrafast 选项" detail={<>
+                        <span style={{ display: "block" }}>适用于本地自定义 API 的 GPT-6 Astra、GPT-6.1 Sol、GPT-6.2 Astra / Sol。</span>
+                        <span style={{ display: "block" }}>需启用 <code>features.api_key_model_discovery = true</code>。</span>
+                        <span style={{ display: "block" }}>保存后重启 Codex，使用时保持 Panel 运行。</span>
+                      </>} checked={preferences?.customProviderUltrafast ?? false} disabled={!state || savingPreference} onChange={enabled => void changeUltrafast(enabled)} />
+                      <Separator size="4" />
+                      <Setting id="customProviderQuotaFix" title="移除账号额度不足时 API 发送限制" detail="仅限自定义 API；首次安装适配时重载一次，之后开关即时生效" checked={preferences?.customProviderQuotaFix ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("customProviderQuotaFix", enabled)} />
+                      <Separator size="4" />
+                      <Setting id="showCustomProviderDot" title="恢复 Dot 入口" detail="跳过 Dot 的客户端账号权限与 Provider 限制；连接 Panel 时生效，实际使用仍可能被服务端拒绝" checked={preferences?.showCustomProviderDot ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("showCustomProviderDot", enabled)} />
+                    </div>
+                  </section>
+                  <section className="preference-section" aria-labelledby="sharedSessionTitle">
+                    <Heading as="h3" size="2" id="sharedSessionTitle" mb="2">共享会话</Heading>
+                    <div className="preference-rows">
+                      <Setting id="sharedSessionBackend" title="App 与 CLI 共享会话" detail="让终端通过共享 CLI 命令继续已有会话；新建与审批在 App 中完成。" checked={preferences?.sharedSessionBackend ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("sharedSessionBackend", enabled)} />
+                      {preferences?.sharedSessionBackend && <Flex justify="end" pb="2">
+                        <Button id="copySharedCliCommand" variant="soft" disabled={savingPreference || busy} onClick={() => void copySharedCliCommand()}>{sharedCliCopied ? "已复制" : "复制共享 CLI 命令"}</Button>
+                      </Flex>}
+                    </div>
+                  </section>
+                </Tabs.Content>
+                <Tabs.Content value="workflow">
+                    <div className="preference-rows">
+                      <Flex className="preference-row" align="center" justify="between" gap="3">
+                        <Box><Text as="div" size="2" weight="medium">全局工作流</Text><Text as="p" id="workflowDetail" size="1" color="gray" mt="1">{hasProcess ? "选择规划、执行、审核与交接的 Skill" : "启动 Panel 服务后可配置"}</Text></Box>
+                        <Button id="configureWorkflows" variant="soft" {...actionProps("workflow_settings_url", !hasProcess)}>配置工作流<LinearIcon name="chevronRight" /></Button>
+                      </Flex>
+                    </div>
+                </Tabs.Content>
+              </Tabs.Root>
+            )}
           </Tabs.Content>
           <Tabs.Content value="pets" id="petsView">
             <PetAnimationSettings disabled={!state || savingPreference} connected={ready} refreshKey={petRefreshKey} soundsEnabled={preferences?.petSounds ?? true} onSoundsChange={enabled => void savePreference("petSounds", enabled)} />

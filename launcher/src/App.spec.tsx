@@ -358,10 +358,8 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect((screen.getByTitle("全局工作流设置") as HTMLIFrameElement).src).toBe(workflowUrl);
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(document.getElementById("preferencesView")?.contains(screen.getByTitle("全局工作流设置"))).toBe(true);
-  const frame = screen.getByTitle("全局工作流设置");
-  selectTab("聊天");
-  selectTab("工作流");
-  expect(screen.getByTitle("全局工作流设置")).toBe(frame);
+  expect(screen.queryByRole("tablist", { name: "设置分类" })).toBeNull();
+  expect(screen.getByTitle("全局工作流设置").closest(".workflow-page")).toBeTruthy();
   await advance(300);
   await act(async () => {
     window.dispatchEvent(new MessageEvent("message", {
@@ -371,6 +369,7 @@ it("keeps launcher feedback, live status and global preferences working through 
     }));
   });
   expect(screen.queryByTitle("全局工作流设置")).toBeNull();
+  expect(screen.getByRole("tab", { name: /工作流/, selected: true })).toBeTruthy();
   expect(screen.getByRole("tabpanel", { name: /工作流/ })).toBeTruthy();
   expect(button("configureWorkflows")).toBeTruthy();
   if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
