@@ -1,8 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Badge, Box, Button, Checkbox, Dialog, Flex, Select, Tabs, Text, TextField } from "@radix-ui/themes";
-import { AUTOMATION_MODELS } from "../../shared/panel-automation-options.mjs";
-
-const DEFAULT_REASONING_EFFORTS = [...new Set(AUTOMATION_MODELS.flatMap(model => model.efforts))];
 
 type ModelContextSettings = {
   models: Array<{ slug: string; displayName: string; contextWindow: number | null; autoCompactTokenLimit: number | null; multiAgentReasoningEffort: string | null; reasoningEfforts: string[] }>;
@@ -16,10 +13,6 @@ type ModelContextSettings = {
   globalContextWindow: number | null;
   globalAutoCompactTokenLimit: number | null;
 };
-
-function modelReasoningOptions(model: ModelContextSettings["models"][number]): string[] {
-  return model.reasoningEfforts.length ? model.reasoningEfforts : DEFAULT_REASONING_EFFORTS;
-}
 
 function contextWindowFor(model: ModelContextSettings["models"][number], contextValue: string | undefined) {
   const entered = Number(contextValue);
@@ -119,7 +112,10 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
     try {
       const result = await window.__TAURI__.core.invoke<ModelContextSettings & { catalogChanged: boolean }>("refresh_model_catalog");
       setSettings({ ...result, agents: result.agents ?? [] });
-      setRefreshMessage(result.catalogChanged ? "模型目录已刷新，现有模型的更新将在重启 Codex 后生效。" : "模型目录已刷新，勾选需要保留的模型后保存。");
+      setRefreshMessage(result.catalogChanged ? "模型目录已刷新，现有模型的更新将在重启 Codex 后生效。"
+        : result.models.some(model => result.selectedModels.includes(model.slug))
+          ? "模型目录已刷新，勾选需要保留的模型后保存。"
+          : "候选目录已刷新，当前生效目录未变。请选择并保存要保留的 GPT 模型。");
       if (result.catalogChanged) onSaved();
     } catch (cause) { setError(String(cause)); }
     finally { setSaving(false); }
@@ -261,9 +257,9 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
                       <Select.Trigger id={`reasoning-${model.slug}`} aria-label={`${model.displayName} 子代理推理强度`} style={{ width: "100%" }} />
                       <Select.Content>
                         <Select.Item value="default">{model.multiAgentReasoningEffort ? `默认（${model.multiAgentReasoningEffort}）` : "默认（未指定）"}</Select.Item>
-                        {reasoningEfforts[model.slug] && !modelReasoningOptions(model).includes(reasoningEfforts[model.slug])
+                        {reasoningEfforts[model.slug] && !model.reasoningEfforts.includes(reasoningEfforts[model.slug])
                           && <Select.Item value={reasoningEfforts[model.slug]}>{reasoningEfforts[model.slug]}</Select.Item>}
-                        {modelReasoningOptions(model).map(effort => <Select.Item key={effort} value={effort}>{effort}</Select.Item>)}
+                        {model.reasoningEfforts.map(effort => <Select.Item key={effort} value={effort}>{effort}</Select.Item>)}
                       </Select.Content>
                     </Select.Root>
                   </Box>

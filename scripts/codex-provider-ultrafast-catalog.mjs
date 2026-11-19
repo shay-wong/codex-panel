@@ -72,6 +72,21 @@ function compareModelSettings(left, right) {
     || modelNameOrder.compare(left.slug, right.slug);
 }
 
+function withOfficialModels(catalog, officialCatalog) {
+  const officialModels = new Map(officialCatalog.models.filter(model => /^gpt-/i.test(model.slug))
+    .map(model => [model.slug, model]));
+  return { ...catalog, models: catalog.models.filter(model => officialModels.has(model.slug)).map(model => {
+    const official = officialModels.get(model.slug);
+    const levels = model.supported_reasoning_levels?.length ? model.supported_reasoning_levels : official.supported_reasoning_levels;
+    const defaultEffort = model.default_reasoning_level || official.default_reasoning_level;
+    return { ...official, ...Object.fromEntries(Object.entries(model).filter(([, value]) => value != null)),
+      supported_reasoning_levels: levels,
+      default_reasoning_level: !model.default_reasoning_level && model.supported_reasoning_levels?.length
+        && !levels.some(level => level.effort === defaultEffort) ? levels[0].effort : defaultEffort,
+    };
+  }) };
+}
+
 async function readProviderModelCatalog({ executable, processEnv, cwd, config, provider, sourceUrl, codexHome }, client) {
   const settings = config.model_providers?.[provider] ?? {};
   const endpoint = sourceUrl ?? (settings.base_url ? `${settings.base_url.replace(/\/+$/, "")}/models`
@@ -121,6 +136,7 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
   const { config, layers, origins } = await client.request("config/read", { includeLayers: true });
   const userLayer = layers?.find(layer => layer.name?.type === "user" && !layer.name.profile);
   if (!userLayer?.name.file || !userLayer.version) throw new Error("无法定位 Codex 用户配置");
+  const officialCatalog = await readBundledModelCatalog(executable);
   const statePath = path.join(dataDirectory, "model-context.json");
   const catalogPath = path.join(dataDirectory, "model-context-catalog.json");
   const provider = config.model_provider ?? "openai";
@@ -150,9 +166,7 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
   let catalogChanged = false;
   if (refreshCatalog) {
     state.selectedModels ??= state.catalog.models.map(model => model.slug);
-    const previousModels = withModelContextSettings(state.catalog, {
-      ...state, useOfficialContextDefaults: state.catalogSource === "native",
-    }).models;
+    const previousModels = (await readJson(catalogPath, null))?.models;
     const source = state.originalCatalog ? JSON.parse(await readFile(state.originalCatalog, "utf8"))
       : await readProviderModelCatalog({ executable, processEnv, cwd, config, provider, sourceUrl,
         codexHome: path.dirname(userLayer.name.file) }, client);
@@ -163,21 +177,25 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
     }
     state.catalog = source;
     state.catalogSource = "external";
-    const nextModels = withModelContextSettings(source, { ...state, useOfficialContextDefaults: false }).models;
+    const nextModels = withModelContextSettings(source, { ...state, officialCatalog,
+      useOfficialContextDefaults: false }).models;
     catalogChanged = nextModels.length > 0 && (config.model_catalog_json !== catalogPath
       || JSON.stringify(previousModels) !== JSON.stringify(nextModels));
   } else if (!state.catalogSource && !state.originalCatalog && !sourceUrl) {
     // Refresh unclassified legacy defaults from the current native source, retaining saved overrides.
-    state.catalog = await readBundledModelCatalog(executable);
+    state.catalog = officialCatalog;
     state.catalogSource = "native";
   }
   state.autoCompactTokenLimits ??= {};
   state.multiAgentReasoningEfforts ??= {};
   state.useOfficialContextDefaults = state.catalogSource === "native";
-  return { config, userLayer, origins, state, statePath, catalogPath, catalogChanged };
+  const officialSlugs = new Set(officialCatalog.models.filter(model => /^gpt-/i.test(model.slug)).map(model => model.slug));
+  if (state.selectedModels) state.selectedModels = state.selectedModels.filter(slug => officialSlugs.has(slug));
+  return { config, userLayer, origins, state, statePath, catalogPath, catalogChanged, officialCatalog };
 }
 
-function withModelContextSettings(catalog, { contextWindows, autoCompactTokenLimits = {}, multiAgentReasoningEfforts = {}, selectedModels, useOfficialContextDefaults = false }) {
+function withModelContextSettings(catalog, { contextWindows, autoCompactTokenLimits = {}, multiAgentReasoningEfforts = {}, selectedModels, useOfficialContextDefaults = false, officialCatalog }) {
+  catalog = withOfficialModels(catalog, officialCatalog);
   if (useOfficialContextDefaults) catalog = withCurrentModelDefaults(catalog);
   return { ...catalog, models: catalog.models.filter(model => !selectedModels || selectedModels.includes(model.slug)).map(model => {
     const updated = { ...model,
@@ -199,7 +217,7 @@ function withModelContextSettings(catalog, { contextWindows, autoCompactTokenLim
       updated.multi_agent_reasoning_effort = multiAgentReasoningEfforts[model.slug];
     }
     return updated;
-  }) };
+  }).toSorted(compareModelSettings).map((model, priority) => ({ ...model, priority })) };
 }
 
 async function configuredAgentModels(userLayer) {
@@ -253,10 +271,12 @@ defaultSubagentReasoningEffort, agentReasoningEfforts, selectedModels) {
   dataDirectory = realpathSync(dataDirectory);
   const client = new CodexAppServer({ executable, processEnv, cwd });
   try {
-    const { config, userLayer, origins, state, statePath, catalogPath, catalogChanged } = await modelContextState(
+    const { config, userLayer, origins, state, statePath, catalogPath, catalogChanged, officialCatalog } = await modelContextState(
       { executable, dataDirectory, processEnv, cwd, refreshCatalog }, client,
     );
-    const defaults = state.useOfficialContextDefaults ? withCurrentModelDefaults(state.catalog) : state.catalog;
+    const compatible = withOfficialModels(state.catalog, officialCatalog);
+    if (refreshCatalog && !compatible.models.length) throw new Error("服务商目录中没有当前 Codex 支持的 GPT 模型，已保留原目录");
+    const defaults = state.useOfficialContextDefaults ? withCurrentModelDefaults(compatible) : compatible;
     const agents = await configuredAgentModels(userLayer);
     let subagentModel = config.agents?.default_subagent_model ?? null;
     let subagentReasoningEffort = config.agents?.default_subagent_reasoning_effort ?? null;
@@ -265,7 +285,7 @@ defaultSubagentReasoningEffort, agentReasoningEfforts, selectedModels) {
       autoCompactTokenLimits ??= state.autoCompactTokenLimits;
       multiAgentReasoningEfforts ??= state.multiAgentReasoningEfforts;
       selectedModels ??= state.selectedModels;
-      const slugs = new Set(state.catalog.models.map(model => model.slug));
+      const slugs = new Set(defaults.models.map(model => model.slug));
       if (selectedModels !== undefined) {
         if (!Array.isArray(selectedModels) || selectedModels.some(slug => typeof slug !== "string"
           || !slugs.has(slug) && !state.selectedModels?.includes(slug))) {
@@ -274,7 +294,7 @@ defaultSubagentReasoningEffort, agentReasoningEfforts, selectedModels) {
         if (!refreshCatalog && !selectedModels.some(slug => slugs.has(slug))) throw new Error("至少保留一个模型");
         selectedModels = [...new Set(selectedModels)];
       }
-      const efforts = new Set(state.catalog.models.flatMap(model => (model.supported_reasoning_levels ?? []).map(level => level.effort)));
+      const efforts = new Set(defaults.models.flatMap(model => (model.supported_reasoning_levels ?? []).map(level => level.effort)));
       for (const [label, values, savedValues] of [
         ["上下文", contextWindows, state.contextWindows],
         ["自动压缩阈值", autoCompactTokenLimits, state.autoCompactTokenLimits],
@@ -297,7 +317,7 @@ defaultSubagentReasoningEffort, agentReasoningEfforts, selectedModels) {
       for (const [slug, effort] of Object.entries(multiAgentReasoningEfforts)) {
         if (typeof effort !== "string" || !effort.trim()) throw new Error(`${slug} 的子代理推理强度必须为非空字符串`);
         if (selectedModels && !selectedModels.includes(slug) && state.multiAgentReasoningEfforts[slug] === effort) continue;
-        const model = state.catalog.models.find(model => model.slug === slug);
+        const model = defaults.models.find(model => model.slug === slug);
         if (!model) {
           if (Object.hasOwn(state.multiAgentReasoningEfforts, slug) && state.multiAgentReasoningEfforts[slug] === effort) continue;
           throw new Error(`模型目录中没有 ${slug}`);
@@ -351,7 +371,7 @@ defaultSubagentReasoningEffort, agentReasoningEfforts, selectedModels) {
         || origin.type === "user" && !origin.profile && origin.file === userLayer.name.file)) {
         throw new Error("模型目录由更高优先级配置管理，无法保存上下文设置");
       }
-      const hasDefaultCorrection = defaults.models.some((model, index) => model !== state.catalog.models[index]);
+      const hasDefaultCorrection = defaults.models.some((model, index) => model !== compatible.models[index]);
       const hasOverrides = refreshCatalog || selectedModels !== undefined || hasContexts || hasCompactLimits || hasEfforts || hasDefaultCorrection;
       state.contextWindows = contextWindows;
       state.autoCompactTokenLimits = autoCompactTokenLimits;
@@ -362,7 +382,7 @@ defaultSubagentReasoningEffort, agentReasoningEfforts, selectedModels) {
         await writeFile(statePath + ".tmp", JSON.stringify(state), { mode: 0o600 });
         await rename(statePath + ".tmp", statePath);
         if (hasSelectedModels) {
-          const catalog = withModelContextSettings(state.catalog, state);
+          const catalog = withModelContextSettings(state.catalog, { ...state, officialCatalog });
           await writeFile(catalogPath + ".tmp", JSON.stringify(catalog), { mode: 0o600 });
           await rename(catalogPath + ".tmp", catalogPath);
         }
@@ -388,7 +408,7 @@ defaultSubagentReasoningEffort, agentReasoningEfforts, selectedModels) {
     }
     return {
       catalogChanged,
-      selectedModels: state.selectedModels ?? state.catalog.models.map(model => model.slug),
+      selectedModels: state.selectedModels ?? defaults.models.map(model => model.slug),
       models: defaults.models.toSorted(compareModelSettings).map(model => ({
         slug: model.slug, displayName: model.display_name ?? model.slug,
         contextWindow: model.context_window ?? model.max_context_window ?? null,
@@ -477,7 +497,8 @@ export function createUltrafastCatalogAdapter({
           source = await result.json();
         }
         response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-        response.end(JSON.stringify(Object.values(state.providers).includes(entry) ? withUltrafastCatalog(source) : source));
+        const compatible = withModelContextSettings(source, { contextWindows: {}, officialCatalog: catalog });
+        response.end(JSON.stringify(Object.values(state.providers).includes(entry) ? withUltrafastCatalog(compatible) : compatible));
       } catch {
         // Never log request headers: the core includes the provider's bearer token.
         response.writeHead(502).end("Model catalog unavailable");
@@ -507,8 +528,9 @@ export function createUltrafastCatalogAdapter({
       const provider = config.model_provider ?? "openai";
       let active = enabled && provider !== "openai" && config.model_providers?.[provider];
       if (contexts && config.model_catalog_json === path.join(realpathSync(dataDirectory), "model-context-catalog.json")) {
+        catalog ??= await readBundledModelCatalog(executable);
         const source = active ? withUltrafastCatalog(contexts.catalog) : contexts.catalog;
-        const combined = withModelContextSettings(source, contexts);
+        const combined = withModelContextSettings(source, { ...contexts, officialCatalog: catalog });
         if (combined.models.length) {
           await writeFile(config.model_catalog_json + ".tmp", JSON.stringify(combined), { mode: 0o600 });
           await rename(config.model_catalog_json + ".tmp", config.model_catalog_json);
