@@ -111,10 +111,11 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
     setRefreshMessage("");
     try {
       const result = await window.__TAURI__.core.invoke<ModelContextSettings & { catalogChanged: boolean }>("refresh_model_catalog");
+      const candidatesChanged = JSON.stringify(settings?.models) !== JSON.stringify(result.models);
       setSettings({ ...result, agents: result.agents ?? [] });
-      setRefreshMessage(result.catalogChanged ? "模型目录已刷新，现有模型的更新将在重启 Codex 后生效。"
+      setRefreshMessage(result.catalogChanged ? "模型目录有更新，重启 Codex 后生效。"
         : result.models.some(model => result.selectedModels.includes(model.slug))
-          ? "模型目录已刷新，勾选需要保留的模型后保存。"
+          ? candidatesChanged ? "候选目录已更新，勾选需要保留的模型后保存。" : "模型目录已是最新，本次没有变化。"
           : "候选目录已刷新，当前生效目录未变。请选择并保存要保留的 GPT 模型。");
       if (result.catalogChanged) onSaved();
     } catch (cause) { setError(String(cause)); }

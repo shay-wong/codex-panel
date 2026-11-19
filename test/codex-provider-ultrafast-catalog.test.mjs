@@ -91,6 +91,33 @@ test("model settings group model series with newer versions first without changi
   assert.equal(await readFile(statePath, "utf8"), saved);
 });
 
+test("catalog refresh ignores JSON key order but detects changed model metadata", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-catalog-key-order-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const model = { slug: "gpt-6-astra", description: "Current model description", context_window: 128000,
+    default_reasoning_level: "low", supported_reasoning_levels: [{ effort: "low", description: "Low reasoning" }] };
+  const executable = await fixtureCodex(root, [model]);
+  const catalogPath = path.join(root, "model-context-catalog.json"), statePath = path.join(root, "model-context.json");
+  const generated = { ...model, priority: 0 };
+  const reordered = Object.fromEntries(Object.entries(generated).reverse());
+  assert.deepEqual(reordered, generated);
+  assert.notEqual(JSON.stringify(reordered), JSON.stringify(generated));
+  await writeFile(catalogPath, JSON.stringify({ models: [reordered] }));
+  await writeFile(statePath, JSON.stringify({ catalog: { models: [model] }, contextWindows: {},
+    selectedModels: [model.slug], catalogSource: "external", originalCatalog: null }));
+  const config = { model_catalog_json: catalogPath, model_provider: "fixture",
+    model_providers: { fixture: { base_url: "http://127.0.0.1:9/v1" } } };
+  t.mock.method(CodexAppServer.prototype, "request", async method => {
+    assert.equal(method, "config/read");
+    return { config, layers: [{ name: { type: "user", file: path.join(root, "config.toml") }, version: "v1", config }] };
+  });
+  t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({ models: [model] })));
+  const options = { executable, dataDirectory: root, refreshCatalog: true };
+  assert.equal((await modelContextSettings(options)).catalogChanged, false, "key order alone must not prompt for a restart");
+  model.description = "Updated model description";
+  assert.equal((await modelContextSettings(options)).catalogChanged, true, "a real metadata change must still require a restart");
+});
+
 test("official GPT intersection restores main reasoning metadata and native numeric order", async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-official-gpt-")));
   t.after(() => rm(root, { recursive: true, force: true }));

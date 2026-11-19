@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Distinguish unchanged model catalogs, updated candidates and active catalog changes after refresh. JSON field order no longer causes a false update or restart reminder.
+
 ## 0.5.16-fork
 
 - Restore sidebar focus and active-row highlighting for existing conversation tabs and split panes on Codex 26.1111.71704.

@@ -5,7 +5,7 @@ import { realpathSync } from "node:fs";
 import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 import { parse as parseToml } from "smol-toml";
 import { CodexAppServer } from "../server/codex-app-server.mjs";
 import { listConfiguredAgents } from "../server/ai-chat-catalog.mjs";
@@ -180,7 +180,7 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
     const nextModels = withModelContextSettings(source, { ...state, officialCatalog,
       useOfficialContextDefaults: false }).models;
     catalogChanged = nextModels.length > 0 && (config.model_catalog_json !== catalogPath
-      || JSON.stringify(previousModels) !== JSON.stringify(nextModels));
+      || !isDeepStrictEqual(previousModels, JSON.parse(JSON.stringify(nextModels))));
   } else if (!state.catalogSource && !state.originalCatalog && !sourceUrl) {
     // Refresh unclassified legacy defaults from the current native source, retaining saved overrides.
     state.catalog = officialCatalog;
