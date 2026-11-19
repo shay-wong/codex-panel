@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.5.15-fork
+
 - Render Markdown headings, lists, and inline formatting in the macOS update confirmation.
 
 ## 0.5.14-fork
