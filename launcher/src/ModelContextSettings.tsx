@@ -1,8 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Badge, Box, Button, Dialog, Flex, Select, Tabs, Text, TextField } from "@radix-ui/themes";
+import { Badge, Box, Button, Checkbox, Dialog, Flex, Select, Tabs, Text, TextField } from "@radix-ui/themes";
+import { AUTOMATION_MODELS } from "../../shared/panel-automation-options.mjs";
+
+const DEFAULT_REASONING_EFFORTS = [...new Set(AUTOMATION_MODELS.flatMap(model => model.efforts))];
 
 type ModelContextSettings = {
   models: Array<{ slug: string; displayName: string; contextWindow: number | null; autoCompactTokenLimit: number | null; multiAgentReasoningEffort: string | null; reasoningEfforts: string[] }>;
+  selectedModels: string[];
   contextWindows: Record<string, number>;
   autoCompactTokenLimits: Record<string, number | string>;
   multiAgentReasoningEfforts: Record<string, string>;
@@ -12,6 +16,10 @@ type ModelContextSettings = {
   globalContextWindow: number | null;
   globalAutoCompactTokenLimit: number | null;
 };
+
+function modelReasoningOptions(model: ModelContextSettings["models"][number]): string[] {
+  return model.reasoningEfforts.length ? model.reasoningEfforts : DEFAULT_REASONING_EFFORTS;
+}
 
 function contextWindowFor(model: ModelContextSettings["models"][number], contextValue: string | undefined) {
   const entered = Number(contextValue);
@@ -44,6 +52,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
   open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => void;
 }) {
   const [settings, setSettings] = useState<ModelContextSettings | null>(null);
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
   const [compactValues, setCompactValues] = useState<Record<string, string>>({});
   const [percentageModes, setPercentageModes] = useState<Record<string, boolean>>({});
@@ -67,6 +76,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
     window.__TAURI__.core.invoke<ModelContextSettings>("read_model_context_settings").then(result => {
       if (cancelled) return;
       setSettings({ ...result, agents: result.agents ?? [] });
+      setSelectedModels(result.selectedModels);
       setCompactValues(Object.fromEntries(Object.entries(result.autoCompactTokenLimits).map(([slug, size]) => [slug, String(size).replace(/%$/, "")])));
       setPercentageModes(Object.fromEntries(Object.entries(result.autoCompactTokenLimits).map(([slug, size]) => [slug, typeof size === "string"])));
       setValues(Object.fromEntries(Object.entries(result.contextWindows).map(([slug, size]) => [slug, String(size)])));
@@ -81,6 +91,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (!selectedModelOptions.length) { setError("至少选择一个模型"); return; }
     setSaving(true);
     setError("");
     try {
@@ -93,7 +104,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
       await window.__TAURI__.core.invoke("set_model_context_windows", {
         contextWindows, autoCompactTokenLimits, multiAgentReasoningEfforts: reasoningEfforts,
         defaultSubagentModel: subagentModel, defaultSubagentReasoningEffort: subagentReasoningEffort,
-        agentModels, agentReasoningEfforts,
+        agentModels, agentReasoningEfforts, selectedModels,
       });
       onSaved();
       onOpenChange(false);
@@ -106,10 +117,10 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
     setError("");
     setRefreshMessage("");
     try {
-      const result = await window.__TAURI__.core.invoke<ModelContextSettings>("refresh_model_catalog");
+      const result = await window.__TAURI__.core.invoke<ModelContextSettings & { catalogChanged: boolean }>("refresh_model_catalog");
       setSettings({ ...result, agents: result.agents ?? [] });
-      setRefreshMessage("模型目录已刷新，重启 Codex 后生效。");
-      onSaved();
+      setRefreshMessage(result.catalogChanged ? "模型目录已刷新，现有模型的更新将在重启 Codex 后生效。" : "模型目录已刷新，勾选需要保留的模型后保存。");
+      if (result.catalogChanged) onSaved();
     } catch (cause) { setError(String(cause)); }
     finally { setSaving(false); }
   }
@@ -128,7 +139,8 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
     setError("");
   }
 
-  const defaultReasoningOptions = settings ? reasoningOptionsFor(settings.models, subagentModel) : [];
+  const selectedModelOptions = settings?.models.filter(model => selectedModels.includes(model.slug)) ?? [];
+  const defaultReasoningOptions = reasoningOptionsFor(selectedModelOptions, subagentModel);
 
   return <Dialog.Root open={open} onOpenChange={value => { if (!saving) onOpenChange(value); }}>
     <Dialog.Content className="model-context-dialog" maxWidth="720px" size="2" style={{ display: "flex", flexDirection: "column", height: "min(680px, calc(100dvh - 24px))", overflow: "hidden" }}>
@@ -146,7 +158,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
             <Button type="button" size="1" variant="soft" disabled={!settings || saving}
               onClick={() => void refreshCatalog()}>刷新模型目录</Button>
           </Flex>
-          <Tabs.Content value="models" style={{ display: tab === "models" ? "flex" : "none", flexDirection: "column", minHeight: 0, flex: 1 }}>
+          <Tabs.Content value="models" style={{ display: tab === "models" ? "flex" : "none", flexDirection: "column", minHeight: 0, flex: 1, overflow: "hidden" }}>
             {settings && <Box mt="2" style={{ flexShrink: 0 }}>
               <Flex gap="3" aria-label="当前配置来源">
                 {[
@@ -166,31 +178,52 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
               <Text as="p" size="1" color="gray" mt="1">全局配置优先生效；下方设置可保存，不修改全局值。</Text>
               <Box my="2" pl="2" style={{ borderLeft: "2px solid var(--gray-6)" }}>
                 <Text as="p" size="1" color="gray">实际阈值 = min(设置值, 上下文 × 90%)</Text>
+                <Flex justify="between" align="center" gap="2" mt="1">
+                  <Text size="1" color={selectedModelOptions.length ? "gray" : "red"}>
+                    {selectedModelOptions.length ? "仅勾选的模型会保留；新模型需手动勾选。" : "至少选择一个要保留的模型。"}
+                  </Text>
+                  <Text size="1" color="gray" style={{ flexShrink: 0 }}>已选 {selectedModelOptions.length} / {settings.models.length}</Text>
+                </Flex>
               </Box>
             </Box>}
             <Box pr="1" style={{ minHeight: 0, flex: 1, overflowY: "auto", scrollbarWidth: "none", overscrollBehavior: "contain" }}>
               {!settings && !error && <Text as="p" size="2" role="status" mt="4">正在读取模型目录…</Text>}
               {settings && <Box style={{ minWidth: 568 }}>
-                <Box mb="2" style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 128px 128px 136px", gap: 12 }}>
-                  <Text size="1" color="gray">模型</Text>
+                <Box mb="2" py="1" style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 128px 128px 136px", gap: 12,
+                  position: "sticky", top: 0, zIndex: 1, background: "var(--color-panel-solid)" }}>
+                  <Flex align="center" gap="2">
+                    <Checkbox aria-label="选择全部模型" disabled={saving || !settings.models.length}
+                      checked={selectedModelOptions.length === settings.models.length ? true : selectedModelOptions.length ? "indeterminate" : false}
+                      onCheckedChange={checked => setSelectedModels(current => [
+                        ...current.filter(slug => !settings.models.some(model => model.slug === slug)),
+                        ...(checked === true ? settings.models.map(model => model.slug) : []),
+                      ])} />
+                    <Text size="1" color="gray">模型</Text>
+                  </Flex>
                   <Text size="1" color="gray">上下文大小</Text>
                   <Text size="1" color="gray">自动压缩阈值</Text>
                   <Text size="1" color="gray" title="multi_agent_reasoning_effort">子代理推理强度</Text>
                 </Box>
-                {settings.models.map(model => <Box key={model.slug} py="1">
+                {settings.models.map(model => {
+                  const selected = selectedModels.includes(model.slug);
+                  return <Box key={model.slug} py="1">
                   <Box style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 128px 128px 136px", gap: 12, alignItems: "center" }}>
-                    <Box tabIndex={0} title={`${model.displayName} (${model.slug})`}
-                      style={{ minWidth: 0, overflowX: "auto", whiteSpace: "nowrap", scrollbarWidth: "thin" }}>
-                      <Text size="2" weight="medium">{model.displayName}</Text>
-                      {model.displayName.toLowerCase().replaceAll(" ", "-") !== model.slug.toLowerCase()
-                        && <Text size="1" color="gray"> ({model.slug})</Text>}
-                    </Box>
+                    <Flex align="center" gap="2" style={{ minWidth: 0 }}>
+                      <Checkbox aria-label={`保留 ${model.displayName}`} checked={selected} disabled={saving} style={{ flexShrink: 0 }}
+                        onCheckedChange={checked => setSelectedModels(current => checked === true ? [...current, model.slug] : current.filter(slug => slug !== model.slug))} />
+                      <Box tabIndex={0} title={`${model.displayName} (${model.slug})`}
+                        style={{ minWidth: 0, overflowX: "auto", whiteSpace: "nowrap", scrollbarWidth: "thin" }}>
+                        <Text size="2" weight="medium">{model.displayName}</Text>
+                        {model.displayName.toLowerCase().replaceAll(" ", "-") !== model.slug.toLowerCase()
+                          && <Text size="1" color="gray"> ({model.slug})</Text>}
+                      </Box>
+                    </Flex>
                     <TextField.Root
                       id={`context-${model.slug}`} type="number" min="1" step="1"
                       aria-label={`${model.displayName} context tokens`}
                       value={values[model.slug] ?? ""}
                       placeholder={model.contextWindow === null ? "默认" : String(model.contextWindow)}
-                      disabled={saving}
+                      disabled={saving || !selected}
                       onChange={event => setValues(current => ({ ...current, [model.slug]: event.target.value }))}
                     >
                       <TextField.Slot side="right" px="2">
@@ -206,11 +239,11 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
                       aria-describedby={`compact-hint-${model.slug}`}
                       value={compactValues[model.slug] ?? ""}
                       placeholder={autoCompactPlaceholder(model, values[model.slug], percentageModes[model.slug])}
-                      disabled={saving}
+                      disabled={saving || !selected}
                       onChange={event => setCompactValues(current => ({ ...current, [model.slug]: event.target.value }))}
                     >
                       <TextField.Slot side="right" px="1">
-                        <Button type="button" variant="ghost" size="1" disabled={saving} style={{ margin: 0 }}
+                        <Button type="button" variant="ghost" size="1" disabled={saving || !selected} style={{ margin: 0 }}
                           aria-label={`${model.displayName} 切换为${percentageModes[model.slug] ? "token 数" : "百分比"}`}
                           title="点击切换 tokens / %；模型未提供默认阈值时使用上下文的 90%"
                           onClick={() => toggleCompactMode(model)}>
@@ -218,7 +251,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
                         </Button>
                       </TextField.Slot>
                     </TextField.Root>
-                    <Select.Root value={reasoningEfforts[model.slug] ?? "default"} disabled={saving || model.reasoningEfforts.length === 0}
+                    <Select.Root value={reasoningEfforts[model.slug] ?? "default"} disabled={saving || !selected}
                       onValueChange={value => setReasoningEfforts(current => {
                         const next = { ...current };
                         if (value === "default") delete next[model.slug];
@@ -228,14 +261,17 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
                       <Select.Trigger id={`reasoning-${model.slug}`} aria-label={`${model.displayName} 子代理推理强度`} style={{ width: "100%" }} />
                       <Select.Content>
                         <Select.Item value="default">{model.multiAgentReasoningEffort ? `默认（${model.multiAgentReasoningEffort}）` : "默认（未指定）"}</Select.Item>
-                        {model.reasoningEfforts.map(effort => <Select.Item key={effort} value={effort}>{effort}</Select.Item>)}
+                        {reasoningEfforts[model.slug] && !modelReasoningOptions(model).includes(reasoningEfforts[model.slug])
+                          && <Select.Item value={reasoningEfforts[model.slug]}>{reasoningEfforts[model.slug]}</Select.Item>}
+                        {modelReasoningOptions(model).map(effort => <Select.Item key={effort} value={effort}>{effort}</Select.Item>)}
                       </Select.Content>
                     </Select.Root>
                   </Box>
                   {percentageModes[model.slug] && <Text as="p" id={`compact-hint-${model.slug}`} size="1" color="gray" mt="1" align="right">
                     {percentageHint(model, values[model.slug], compactValues[model.slug])}
                   </Text>}
-                </Box>)}
+                </Box>;
+                })}
               </Box>}
             </Box>
           </Tabs.Content>
@@ -252,9 +288,9 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
                         <Select.Trigger id="defaultSubagentModel" aria-label="子代理默认模型" aria-describedby="subagentDefaultsHint" style={{ width: "100%", minWidth: 0 }} />
                         <Select.Content position="popper">
                           <Select.Item value="__default__">默认（跟随父代理）</Select.Item>
-                          {subagentModel && !settings.models.some(model => model.slug === subagentModel)
+                          {subagentModel && !selectedModelOptions.some(model => model.slug === subagentModel)
                             && <Select.Item value={subagentModel}>{subagentModel}</Select.Item>}
-                          {settings.models.map(model => <Select.Item key={model.slug} value={model.slug}>{model.displayName}</Select.Item>)}
+                          {selectedModelOptions.map(model => <Select.Item key={model.slug} value={model.slug}>{model.displayName}</Select.Item>)}
                         </Select.Content>
                       </Select.Root>
                     </Box>
@@ -290,7 +326,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
                       <Text size="1" color="gray">推理强度</Text>
                     </Box>
                     {settings.agents.map(agent => {
-                      const effortOptions = reasoningOptionsFor(settings.models, agentModels[agent.name] ?? "");
+                      const effortOptions = reasoningOptionsFor(selectedModelOptions, agentModels[agent.name] ?? "");
                       const selectedEffort = agentReasoningEfforts[agent.name] ?? "";
                       return <Box key={agent.name} py="2" style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) minmax(220px, 1.4fr) 156px", gap: 12, alignItems: "center" }}>
                         <Box title={agent.filePath} style={{ minWidth: 0 }}>
@@ -301,9 +337,9 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
                           <Select.Trigger aria-label={`${agent.name} 使用模型`} style={{ width: "100%", minWidth: 0 }} />
                           <Select.Content position="popper">
                             <Select.Item value="__default__">继承默认</Select.Item>
-                            {agentModels[agent.name] && !settings.models.some(model => model.slug === agentModels[agent.name])
+                            {agentModels[agent.name] && !selectedModelOptions.some(model => model.slug === agentModels[agent.name])
                               && <Select.Item value={agentModels[agent.name]}>{agentModels[agent.name]}</Select.Item>}
-                            {settings.models.map(model => <Select.Item key={model.slug} value={model.slug}>{model.displayName}</Select.Item>)}
+                            {selectedModelOptions.map(model => <Select.Item key={model.slug} value={model.slug}>{model.displayName}</Select.Item>)}
                           </Select.Content>
                         </Select.Root>
                         <Select.Root value={selectedEffort || "__default__"} disabled={saving}
@@ -333,7 +369,7 @@ export function ModelContextSettings({ open, onOpenChange, onSaved }: {
           }}>全部使用默认值</Button>
           <Flex gap="3">
             <Dialog.Close><Button type="button" variant="soft" disabled={saving}>取消</Button></Dialog.Close>
-            <Button type="submit" disabled={!settings || saving} loading={saving}>保存</Button>
+            <Button type="submit" disabled={!settings || !selectedModelOptions.length || saving} loading={saving}>保存</Button>
           </Flex>
         </Flex>
       </form>

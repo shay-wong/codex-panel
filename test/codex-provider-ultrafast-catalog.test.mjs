@@ -9,6 +9,304 @@ import { parse } from "smol-toml";
 import { CodexAppServer } from "../server/codex-app-server.mjs";
 import { createUltrafastCatalogAdapter, modelContextSettings, readBundledModelCatalog, readModelDiscovery, setModelDiscovery, withUltrafastCatalog } from "../scripts/codex-provider-ultrafast-catalog.mjs";
 
+test("model selection persists across refresh and Ultrafast catalog generation", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-selected-models-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const catalogPath = path.join(root, "model-context-catalog.json"), statePath = path.join(root, "model-context.json");
+  const configFile = path.join(root, "config.toml"), executable = path.join(root, "codex.mjs");
+  await writeFile(configFile, "");
+  await writeFile(executable, 'console.log("codex-cli 0.169.0-alpha.11.1");');
+  const astra = { slug: "gpt-6-astra", context_window: 272000, base_instructions: "Astra metadata" };
+  const sol = { slug: "gpt-6.1-sol", context_window: 500000, base_instructions: "Sol metadata" };
+  const newcomer = { ...sol, slug: "gpt-6.2-sol", base_instructions: "New model metadata" };
+  const contextWindows = { [astra.slug]: 400000, [sol.slug]: 600000 };
+  await writeFile(statePath, JSON.stringify({ catalog: { models: [astra, sol] }, catalogSource: "external", originalCatalog: null,
+    contextWindows, autoCompactTokenLimits: {}, multiAgentReasoningEfforts: {} }));
+  await writeFile(catalogPath, JSON.stringify({ models: [astra, sol] }));
+  const config = { model_catalog_json: catalogPath, model_provider: "fixture",
+    model_providers: { fixture: { base_url: "http://127.0.0.1:9/v1" } } };
+  t.mock.method(CodexAppServer.prototype, "request", async method => {
+    assert.equal(method, "config/read");
+    return { config, layers: [{ name: { type: "user", file: configFile }, version: "v1", config }] };
+  });
+  let remoteModels = [astra, sol, newcomer];
+  t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({ models: remoteModels })));
+  const options = { executable, dataDirectory: root };
+  assert.deepEqual((await modelContextSettings(options)).selectedModels, [astra.slug, sol.slug]);
+  const save = selection => modelContextSettings(options, contextWindows, {}, {}, undefined, undefined, undefined, undefined, selection);
+  await save([astra.slug]);
+  assert.deepEqual(JSON.parse(await readFile(catalogPath)).models, [{ ...astra, context_window: 400000 }]);
+  assert.deepEqual((await modelContextSettings(options)).selectedModels, [astra.slug]);
+  const refreshed = await modelContextSettings({ ...options, refreshCatalog: true });
+  assert.equal(refreshed.models.length, 3);
+  assert.deepEqual(refreshed.selectedModels, [astra.slug]);
+  assert.equal(refreshed.catalogChanged, false, "an unselected new model must not require a Codex restart");
+  assert.deepEqual(JSON.parse(await readFile(catalogPath)).models.map(model => model.slug), [astra.slug]);
+  assert.equal(JSON.parse(await readFile(statePath)).contextWindows[sol.slug], 600000);
+  await save([astra.slug, newcomer.slug]);
+  assert.deepEqual(JSON.parse(await readFile(catalogPath)).models, [{ ...astra, context_window: 400000 }, newcomer]);
+  const preferencesFile = path.join(root, "preferences.json");
+  await writeFile(preferencesFile, JSON.stringify({ customProviderUltrafast: true }));
+  const adapter = createUltrafastCatalogAdapter({ ...options, preferencesFile, report() {} });
+  t.after(() => adapter.close());
+  await adapter.sync();
+  const combined = JSON.parse(await readFile(catalogPath));
+  assert.deepEqual(combined.models.map(model => model.slug), [astra.slug, newcomer.slug]);
+  assert.ok(combined.models.every(model => model.service_tiers.some(tier => tier.id === "ultrafast")));
+  const before = await readFile(catalogPath, "utf8");
+  await assert.rejects(save([]), /至少保留一个模型/);
+  assert.equal(await readFile(catalogPath, "utf8"), before);
+  remoteModels = [{ ...newcomer, slug: "gpt-7-sol" }];
+  const unavailable = await modelContextSettings({ ...options, refreshCatalog: true });
+  assert.equal(unavailable.catalogChanged, false);
+  assert.deepEqual(unavailable.models.map(model => model.slug), ["gpt-7-sol"]);
+  assert.equal(await readFile(catalogPath, "utf8"), before, "a refresh must not install an empty catalog");
+  await adapter.sync();
+  assert.equal(await readFile(catalogPath, "utf8"), before, "catalog synchronization must also preserve the last non-empty selection");
+});
+
+test("model settings group model series with newer versions first without changing the source catalog", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-model-sort-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const statePath = path.join(root, "model-context.json");
+  const catalog = { models: ["gemini-3-flash", "gpt-6-sol", "claude-opus-4-7", "gpt-6.2-astra", "gemini-3.1-pro", "gpt-6.10-sol", "gpt-6.1-sol", "claude-opus-4-8", "gpt-6.2-sol"]
+    .map(slug => ({ slug })) };
+  const saved = JSON.stringify({ catalog, contextWindows: {}, catalogSource: "external", originalCatalog: null });
+  await writeFile(statePath, saved);
+  t.mock.method(CodexAppServer.prototype, "request", async method => {
+    assert.equal(method, "config/read");
+    return { config: { model_catalog_json: path.join(root, "model-context-catalog.json") },
+      layers: [{ name: { type: "user", file: path.join(root, "config.toml") }, version: "v1", config: {} }] };
+  });
+  const settings = await modelContextSettings({ executable: "/unused", dataDirectory: root });
+  assert.deepEqual(settings.models.map(model => model.slug), ["gpt-6.10-sol", "gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-sol", "claude-opus-4-8", "claude-opus-4-7", "gemini-3.1-pro", "gemini-3-flash"]);
+  assert.equal(await readFile(statePath, "utf8"), saved);
+});
+
+test("subscription catalog refresh uses the official endpoint and refreshed account credentials", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-subscription-catalog-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configFile = path.join(root, "config.toml");
+  const catalogPath = path.join(root, "model-context-catalog.json");
+  const statePath = path.join(root, "model-context.json");
+  const authPath = path.join(root, "auth.json");
+  const executable = path.join(root, "codex.mjs");
+  await writeFile(executable, 'console.log("codex-cli 0.169.0-alpha.11.1");');
+  await writeFile(configFile, "");
+  const old = { slug: "gpt-6.1-sol", context_window: 272000, max_context_window: 872000, base_instructions: "Old source" };
+  const latest = { models: [old, { ...old, slug: "gpt-6.2-sol", context_window: 500000, base_instructions: "Account-specific instructions" }] };
+  await writeFile(statePath, JSON.stringify({ catalog: { models: [old] }, catalogSource: "native", originalCatalog: null,
+    contextWindows: { [old.slug]: 600000 } }));
+  await writeFile(catalogPath, JSON.stringify({ models: [old] }));
+  await writeFile(authPath, JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "fixture-expired" } }));
+  let accountReads = 0, failAccount = false, downloads = 0, apiKeyMode = false;
+  const config = { model_catalog_json: catalogPath };
+  t.mock.method(CodexAppServer.prototype, "request", async (method, params) => {
+    if (method === "config/read") return { config, layers: [{ name: { type: "user", file: configFile }, version: "v1", config }] };
+    assert.equal(method, "account/read");
+    assert.deepEqual(params, { refreshToken: true });
+    accountReads++;
+    if (failAccount) throw new Error("Account refresh failed");
+    await writeFile(authPath, JSON.stringify(apiKeyMode ? { auth_mode: "apikey", OPENAI_API_KEY: "fixture-openai-key",
+      tokens: { access_token: "fixture-stale-subscription", account_id: "fixture-stale-account" } } : { auth_mode: "chatgpt", tokens: {
+      access_token: "fixture-subscription-token", account_id: "fixture-subscription-account",
+    } }));
+    return { account: apiKeyMode ? { type: "apiKey" } : { type: "chatgpt", planType: "pro" }, requiresOpenaiAuth: true };
+  });
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(url.origin, "https://chatgpt.com");
+    assert.equal(url.pathname, "/backend-api/codex/models");
+    assert.equal(url.searchParams.get("client_version"), "0.169.0");
+    assert.equal(options.headers.get("Authorization"), apiKeyMode ? "Bearer fixture-openai-key" : "Bearer fixture-subscription-token");
+    assert.equal(options.headers.get("ChatGPT-Account-Id"), apiKeyMode ? null : "fixture-subscription-account");
+    assert.equal(options.redirect, "error");
+    downloads++;
+    return new Response(JSON.stringify(latest));
+  });
+  const options = { executable, dataDirectory: root, refreshCatalog: true, cwd: root,
+    processEnv: { PATH: process.env.PATH, HOME: root, CODEX_HOME: root } };
+  const result = await modelContextSettings(options);
+  assert.deepEqual(result.models.map(model => model.slug).sort(), latest.models.map(model => model.slug).sort());
+  assert.equal(result.catalogChanged, false, "new candidates are not imported until selected");
+  assert.equal(accountReads, 1);
+  assert.equal(downloads, 1);
+  const generated = JSON.parse(await readFile(catalogPath));
+  assert.equal(generated.models[0].context_window, 600000);
+  assert.equal(generated.models.length, 1);
+  assert.deepEqual(JSON.parse(await readFile(statePath)).catalog.models[1], latest.models[1]);
+  apiKeyMode = true;
+  assert.equal((await modelContextSettings(options)).catalogChanged, false);
+  assert.equal(downloads, 2);
+  apiKeyMode = false;
+  const saved = await readFile(statePath, "utf8");
+  failAccount = true;
+  await assert.rejects(modelContextSettings(options), /Account refresh failed/);
+  assert.equal(downloads, 2);
+  failAccount = false;
+  const readsBeforeUnsupported = accountReads;
+  config.cli_auth_credentials_store = "keyring";
+  await assert.rejects(modelContextSettings(options), /file 凭据存储/);
+  config.cli_auth_credentials_store = "file";
+  config.model_provider = "gateway";
+  config.model_providers = { gateway: { base_url: "https://gateway.example.invalid/v1", requires_openai_auth: true } };
+  await assert.rejects(modelContextSettings(options), /原生账号或命令认证/);
+  assert.equal(accountReads, readsBeforeUnsupported, "keyring and custom providers must not borrow the subscription auth file");
+  assert.equal(downloads, 2);
+  assert.equal(await readFile(statePath, "utf8"), saved);
+  assert.equal(await readFile(configFile, "utf8"), "");
+});
+
+test("manual catalog refresh requests the active provider and preserves saved settings", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-catalog-refresh-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const catalogPath = path.join(root, "model-context-catalog.json");
+  const statePath = path.join(root, "model-context.json");
+  const configFile = path.join(root, "config.toml");
+  await writeFile(configFile, "");
+  const executable = path.join(root, "codex.mjs");
+  await writeFile(executable, 'if (process.argv[2] !== "--version") throw Error("Unexpected CLI command"); console.log("codex-cli 0.169.0-alpha.11.1");');
+  const old = { slug: "gpt-6.1-sol", context_window: 272000, max_context_window: 872000,
+    supported_reasoning_levels: [{ effort: "high" }, { effort: "max" }], base_instructions: "Native instructions" };
+  const stale = { models: [old, { ...old, slug: "not-offered-by-provider" }] };
+  const latest = { models: [{ ...old, supported_reasoning_levels: [] },
+    { ...old, slug: "gpt-6.2-astra", service_tiers: [{ id: "ultrafast" }] },
+    { ...old, slug: "gpt-6.2-sol", context_window: 500000 },
+  ] };
+  const saved = { catalog: stale, contextWindows: { [old.slug]: 600000, "not-offered-by-provider": 96000 },
+    autoCompactTokenLimits: { [old.slug]: "50%", "not-offered-by-provider": "25%" },
+    multiAgentReasoningEfforts: { [old.slug]: "max", "not-offered-by-provider": "high" },
+    originalCatalog: null, catalogSource: "native" };
+  await writeFile(statePath, JSON.stringify(saved));
+  await writeFile(catalogPath, JSON.stringify(stale));
+  await writeFile(path.join(root, "models_cache.json"), JSON.stringify(stale));
+  let downloads = 0, failure = "", expectedPath = "/v1/models", expectedToken = "fixture-provider-key";
+  const api = createServer((request, response) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    assert.equal(url.pathname, expectedPath);
+    assert.equal(url.searchParams.get("client_version"), "0.169.0");
+    assert.equal(url.searchParams.get("deployment"), "fixture");
+    if (expectedPath === "/catalog") assert.equal(url.searchParams.get("tenant"), "fixture");
+    assert.equal(request.headers.authorization, `Bearer ${expectedToken}`);
+    assert.equal(request.headers["x-openai-actor-authorization"], "fixture-actor");
+    assert.equal(request.headers["x-provider"], "fixture");
+    downloads++;
+    if (failure === "http") { response.writeHead(502).end("unavailable"); return; }
+    if (failure === "redirect") { response.writeHead(302, { Location: "/credential-leak" }).end(); return; }
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify(failure === "format" ? { data: [{ id: "gpt-6.2-sol" }] } : latest));
+  });
+  api.listen(0, "127.0.0.1"); await once(api, "listening");
+  t.after(() => { api.closeAllConnections(); api.close(); });
+  const origin = `http://127.0.0.1:${api.address().port}`;
+  const config = { model_provider: "probe", model_catalog_json: catalogPath, model_providers: { probe: {
+    base_url: `${origin}/v1/`, experimental_bearer_token: expectedToken, requires_openai_auth: true,
+    http_headers: { "x-provider": "fixture", "x-openai-actor-authorization": "old-actor" },
+    env_http_headers: { "x-openai-actor-authorization": "FIXTURE_ACTOR" }, query_params: { deployment: "fixture" },
+  } },
+    agents: { default_subagent_model: old.slug, default_subagent_reasoning_effort: "high" } };
+  t.mock.method(CodexAppServer.prototype, "request", async method => {
+    assert.equal(method, "config/read", "refreshing an active Panel catalog must preserve user configuration");
+    return { config, layers: [{ name: { type: "user", file: configFile }, version: "v1", config }] };
+  });
+  const localFetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", (url, options) => {
+    assert.equal(url.origin, origin, "refresh must contact only the configured provider");
+    assert.equal(options.redirect, "error");
+    return localFetch(url, options);
+  });
+  const options = { executable, dataDirectory: root, refreshCatalog: true,
+    processEnv: { PATH: process.env.PATH, HOME: root, CODEX_HOME: root, FIXTURE_ACTOR: "fixture-actor", FIXTURE_KEY: "fixture-env-key" }, cwd: root };
+  const refreshed = await modelContextSettings(options);
+  assert.deepEqual(refreshed.models.map(model => model.slug).sort(), latest.models.map(model => model.slug).sort());
+  assert.equal(refreshed.catalogChanged, true);
+  assert.deepEqual(refreshed.contextWindows, saved.contextWindows);
+  assert.deepEqual(refreshed.autoCompactTokenLimits, saved.autoCompactTokenLimits);
+  assert.deepEqual(refreshed.multiAgentReasoningEfforts, saved.multiAgentReasoningEfforts);
+  assert.equal(refreshed.defaultSubagentModel, old.slug);
+  assert.equal(refreshed.defaultSubagentReasoningEffort, "high");
+  assert.equal(refreshed.models.find(model => model.slug === old.slug).contextWindow, old.context_window, "provider defaults must not receive native Sol corrections");
+  const catalog = JSON.parse(await readFile(catalogPath));
+  assert.equal(catalog.models[0].context_window, 600000);
+  assert.equal(catalog.models[0].auto_compact_token_limit, 300000);
+  assert.equal(catalog.models[0].multi_agent_reasoning_effort, "max");
+  assert.deepEqual(catalog.models[0].supported_reasoning_levels, []);
+  assert.equal(catalog.models.length, 1, "new models are initially unselected");
+  assert.deepEqual(JSON.parse(await readFile(statePath)).catalog.models.slice(1), latest.models.slice(1), "new candidates retain their full metadata");
+  const resaved = await modelContextSettings({ ...options, refreshCatalog: false }, refreshed.contextWindows,
+    refreshed.autoCompactTokenLimits, refreshed.multiAgentReasoningEfforts);
+  assert.deepEqual(resaved.contextWindows, saved.contextWindows);
+  assert.deepEqual(resaved.autoCompactTokenLimits, saved.autoCompactTokenLimits);
+  assert.deepEqual(resaved.multiAgentReasoningEfforts, saved.multiAgentReasoningEfforts);
+  await assert.rejects(modelContextSettings({ ...options, refreshCatalog: false },
+    { ...saved.contextWindows, "new-unoffered-model": 64000 }, saved.autoCompactTokenLimits, saved.multiAgentReasoningEfforts), /模型目录中没有 new-unoffered-model/);
+  latest.models[0].supported_reasoning_levels = [{ effort: "high" }];
+  await assert.rejects(modelContextSettings(options), /不支持子代理推理强度 max/);
+  latest.models[0].supported_reasoning_levels = [];
+  assert.equal((await modelContextSettings(options)).catalogChanged, false);
+  assert.equal(downloads, 3, "each explicit refresh must request the provider rather than reuse a cache");
+  const provider = config.model_providers.probe;
+  provider.model_catalog_url = `${origin}/panel-proxy`;
+  provider.env_key = "FIXTURE_KEY";
+  await writeFile(path.join(root, "ultrafast-catalog.json"), JSON.stringify({ providers: { probe: {
+    url: provider.model_catalog_url, originalUrl: `${origin}/catalog?tenant=fixture`,
+  } } }));
+  expectedPath = "/catalog";
+  expectedToken = "fixture-env-key";
+  assert.equal((await modelContextSettings(options)).catalogChanged, false);
+  assert.equal(downloads, 4, "explicit catalogs use the original provider URL, not Panel's proxy");
+  delete options.processEnv.FIXTURE_KEY;
+  await assert.rejects(modelContextSettings(options), /FIXTURE_KEY/);
+  assert.equal(downloads, 4, "a missing env_key must not fall back to another credential");
+  options.processEnv.FIXTURE_KEY = expectedToken;
+  const beforeFailure = await readFile(statePath, "utf8");
+  const catalogBeforeFailure = await readFile(catalogPath, "utf8");
+  for (const [mode, error] of [["http", /502/], ["format", /Codex 完整模型目录/], ["redirect", /fetch failed/]]) {
+    failure = mode;
+    await assert.rejects(modelContextSettings(options), error);
+  }
+  assert.equal(await readFile(statePath, "utf8"), beforeFailure);
+  assert.equal(await readFile(catalogPath, "utf8"), catalogBeforeFailure);
+  assert.equal(await readFile(configFile, "utf8"), "");
+});
+
+test("reasoning overrides apply when capabilities are unspecified and reject explicit exclusions", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-reasoning-overrides-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const catalogPath = path.join(root, "model-context-catalog.json");
+  const statePath = path.join(root, "model-context.json");
+  const configFile = path.join(root, "config.toml");
+  const model = { slug: "gpt-6.1-sol", context_window: 128000, multi_agent_reasoning_effort: null, supported_reasoning_levels: [] };
+  const contexts = { [model.slug]: 128000 };
+  await writeFile(configFile, "");
+  await writeFile(catalogPath, JSON.stringify({ models: [model] }));
+  await writeFile(statePath, JSON.stringify({ catalog: { models: [model] }, catalogSource: "external",
+    originalCatalog: null, contextWindows: contexts, multiAgentReasoningEfforts: {} }));
+  const config = { model_catalog_json: catalogPath };
+  t.mock.method(CodexAppServer.prototype, "request", async method => {
+    assert.equal(method, "config/read");
+    return { config, layers: [{ name: { type: "user", file: configFile }, version: "v1", config }] };
+  });
+  const options = { executable: "/unused", dataDirectory: root };
+  for (const effort of ["max", "ultra"]) {
+    const result = await modelContextSettings(options, contexts, {}, { [model.slug]: effort });
+    assert.equal(result.multiAgentReasoningEfforts[model.slug], effort);
+    assert.equal(result.models[0].multiAgentReasoningEffort, null, "source default remains unspecified");
+    const catalog = JSON.parse(await readFile(catalogPath));
+    assert.equal(catalog.models[0].multi_agent_reasoning_effort, effort);
+    assert.deepEqual(catalog.models[0].supported_reasoning_levels, []);
+  }
+  await modelContextSettings(options, contexts, {}, { [model.slug]: "max" });
+  const state = JSON.parse(await readFile(statePath));
+  state.catalog.models[0].supported_reasoning_levels = [{ effort: "high" }];
+  await writeFile(statePath, JSON.stringify(state));
+  const before = await readFile(catalogPath, "utf8");
+  await assert.rejects(modelContextSettings(options, contexts, {}, { [model.slug]: "max" }), /不支持子代理推理强度 max/);
+  assert.equal(await readFile(catalogPath, "utf8"), before);
+  await modelContextSettings(options, contexts, {}, { [model.slug]: "high" });
+  assert.equal(JSON.parse(await readFile(catalogPath)).models[0].multi_agent_reasoning_effort, "high");
+  await assert.rejects(modelContextSettings(options, contexts, {}, { [model.slug]: null }), /必须为非空字符串/);
+});
+
 test("role models and reasoning update registered and standalone files without changing instructions", async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-role-model-")));
   t.after(() => rm(root, { recursive: true, force: true }));
