@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.5.13-fork
+
 - Organize Preferences into General, Chat, Models & advanced, and Workflow tabs. Keep the Workflow editor within its tab so you can switch categories without losing your draft.
 
 ## 0.5.12-fork
