@@ -66,7 +66,7 @@ jobs:
 
   build-macos:
     if: github.repository == 'shay-wong/codex-panel'
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     timeout-minutes: 90
     env:
       RELEASE_TAG: ${{ github.ref_name }}
@@ -100,6 +100,7 @@ jobs:
           workspaces: src-tauri -> target
           shared-key: macos-universal
           cache-bin: false
+          cache-on-failure: true
       - run: npm run app:prepare -- --target universal-apple-darwin
       - name: Build universal App without Apple credentials
         run: >-
@@ -135,7 +136,7 @@ jobs:
 
   release:
     needs: [build-macos, build-windows]
-    if: ${{ always() && !cancelled() && github.repository == 'shay-wong/codex-panel' }}
+    if: ${{ always() && !cancelled() && needs.build-macos.result == 'success' && needs.build-windows.result == 'success' && github.repository == 'shay-wong/codex-panel' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -328,6 +329,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
         with:
           targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: windows-x86_64
+          cache-bin: false
+          cache-on-failure: true
       - name: Resolve Windows signing configuration
         id: signing
         shell: pwsh
