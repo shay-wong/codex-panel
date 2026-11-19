@@ -12,6 +12,8 @@ This file records user-visible changes introduced by the fork.
 
 - Keep the model table header visible while scrolling and order model lists by family, with GPT first and newer versions first within each family, without changing the source catalog.
 
+- Choose which discovered models to keep in Codex. Save applies the selection; refresh retains it and leaves new models unchecked, while preserving the complete candidate catalog and existing settings.
+
 ## 0.5.10-fork
 
 - Add **刷新模型目录** in model settings to load newly discovered Codex models without resetting saved context, compaction or subagent settings; restart Codex to apply the updated catalog.

@@ -3413,6 +3413,7 @@ async fn set_model_context_windows(
     agent_models: Option<serde_json::Value>,
     default_subagent_reasoning_effort: Option<String>,
     agent_reasoning_efforts: Option<serde_json::Value>,
+    selected_models: Option<Vec<String>>,
 ) -> Result<serde_json::Value, String> {
     let mut input = serde_json::json!({ "contextWindows": context_windows, "autoCompactTokenLimits": auto_compact_token_limits, "multiAgentReasoningEfforts": multi_agent_reasoning_efforts });
     if let Some(model) = default_subagent_model {
@@ -3426,6 +3427,9 @@ async fn set_model_context_windows(
     }
     if let Some(efforts) = agent_reasoning_efforts {
         input["agentReasoningEfforts"] = efforts;
+    }
+    if let Some(models) = selected_models {
+        input["selectedModels"] = serde_json::json!(models);
     }
     let output = run_model_configuration(app.clone(), "write-contexts", Some(state.data_directory.clone()), Some(input)).await?;
     let result = serde_json::from_str(output.trim()).map_err(|error| error.to_string())?;

@@ -9,6 +9,62 @@ import { parse } from "smol-toml";
 import { CodexAppServer } from "../server/codex-app-server.mjs";
 import { createUltrafastCatalogAdapter, modelContextSettings, readBundledModelCatalog, readModelDiscovery, setModelDiscovery, withUltrafastCatalog } from "../scripts/codex-provider-ultrafast-catalog.mjs";
 
+test("model selection persists across refresh and Ultrafast catalog generation", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-selected-models-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const catalogPath = path.join(root, "model-context-catalog.json"), statePath = path.join(root, "model-context.json");
+  const configFile = path.join(root, "config.toml"), executable = path.join(root, "codex.mjs");
+  await writeFile(configFile, "");
+  await writeFile(executable, 'console.log("codex-cli 0.169.0-alpha.11.1");');
+  const astra = { slug: "gpt-6-astra", context_window: 272000, base_instructions: "Astra metadata" };
+  const sol = { slug: "gpt-6.1-sol", context_window: 500000, base_instructions: "Sol metadata" };
+  const newcomer = { ...sol, slug: "gpt-6.2-sol", base_instructions: "New model metadata" };
+  const contextWindows = { [astra.slug]: 400000, [sol.slug]: 600000 };
+  await writeFile(statePath, JSON.stringify({ catalog: { models: [astra, sol] }, catalogSource: "external", originalCatalog: null,
+    contextWindows, autoCompactTokenLimits: {}, multiAgentReasoningEfforts: {} }));
+  await writeFile(catalogPath, JSON.stringify({ models: [astra, sol] }));
+  const config = { model_catalog_json: catalogPath, model_provider: "fixture",
+    model_providers: { fixture: { base_url: "http://127.0.0.1:9/v1" } } };
+  t.mock.method(CodexAppServer.prototype, "request", async method => {
+    assert.equal(method, "config/read");
+    return { config, layers: [{ name: { type: "user", file: configFile }, version: "v1", config }] };
+  });
+  let remoteModels = [astra, sol, newcomer];
+  t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({ models: remoteModels })));
+  const options = { executable, dataDirectory: root };
+  assert.deepEqual((await modelContextSettings(options)).selectedModels, [astra.slug, sol.slug]);
+  const save = selection => modelContextSettings(options, contextWindows, {}, {}, undefined, undefined, undefined, undefined, selection);
+  await save([astra.slug]);
+  assert.deepEqual(JSON.parse(await readFile(catalogPath)).models, [{ ...astra, context_window: 400000 }]);
+  assert.deepEqual((await modelContextSettings(options)).selectedModels, [astra.slug]);
+  const refreshed = await modelContextSettings({ ...options, refreshCatalog: true });
+  assert.equal(refreshed.models.length, 3);
+  assert.deepEqual(refreshed.selectedModels, [astra.slug]);
+  assert.equal(refreshed.catalogChanged, false, "an unselected new model must not require a Codex restart");
+  assert.deepEqual(JSON.parse(await readFile(catalogPath)).models.map(model => model.slug), [astra.slug]);
+  assert.equal(JSON.parse(await readFile(statePath)).contextWindows[sol.slug], 600000);
+  await save([astra.slug, newcomer.slug]);
+  assert.deepEqual(JSON.parse(await readFile(catalogPath)).models, [{ ...astra, context_window: 400000 }, newcomer]);
+  const preferencesFile = path.join(root, "preferences.json");
+  await writeFile(preferencesFile, JSON.stringify({ customProviderUltrafast: true }));
+  const adapter = createUltrafastCatalogAdapter({ ...options, preferencesFile, report() {} });
+  t.after(() => adapter.close());
+  await adapter.sync();
+  const combined = JSON.parse(await readFile(catalogPath));
+  assert.deepEqual(combined.models.map(model => model.slug), [astra.slug, newcomer.slug]);
+  assert.ok(combined.models.every(model => model.service_tiers.some(tier => tier.id === "ultrafast")));
+  const before = await readFile(catalogPath, "utf8");
+  await assert.rejects(save([]), /至少保留一个模型/);
+  assert.equal(await readFile(catalogPath, "utf8"), before);
+  remoteModels = [{ ...newcomer, slug: "gpt-7-sol" }];
+  const unavailable = await modelContextSettings({ ...options, refreshCatalog: true });
+  assert.equal(unavailable.catalogChanged, false);
+  assert.deepEqual(unavailable.models.map(model => model.slug), ["gpt-7-sol"]);
+  assert.equal(await readFile(catalogPath, "utf8"), before, "a refresh must not install an empty catalog");
+  await adapter.sync();
+  assert.equal(await readFile(catalogPath, "utf8"), before, "catalog synchronization must also preserve the last non-empty selection");
+});
+
 test("model settings group model series with newer versions first without changing the source catalog", async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-model-sort-")));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -71,12 +127,13 @@ test("subscription catalog refresh uses the official endpoint and refreshed acco
     processEnv: { PATH: process.env.PATH, HOME: root, CODEX_HOME: root } };
   const result = await modelContextSettings(options);
   assert.deepEqual(result.models.map(model => model.slug).sort(), latest.models.map(model => model.slug).sort());
-  assert.equal(result.catalogChanged, true);
+  assert.equal(result.catalogChanged, false, "new candidates are not imported until selected");
   assert.equal(accountReads, 1);
   assert.equal(downloads, 1);
   const generated = JSON.parse(await readFile(catalogPath));
   assert.equal(generated.models[0].context_window, 600000);
-  assert.deepEqual(generated.models[1], latest.models[1]);
+  assert.equal(generated.models.length, 1);
+  assert.deepEqual(JSON.parse(await readFile(statePath)).catalog.models[1], latest.models[1]);
   apiKeyMode = true;
   assert.equal((await modelContextSettings(options)).catalogChanged, false);
   assert.equal(downloads, 2);
@@ -173,7 +230,8 @@ test("manual catalog refresh requests the active provider and preserves saved se
   assert.equal(catalog.models[0].auto_compact_token_limit, 300000);
   assert.equal(catalog.models[0].multi_agent_reasoning_effort, "max");
   assert.deepEqual(catalog.models[0].supported_reasoning_levels, []);
-  assert.deepEqual(catalog.models.slice(1), latest.models.slice(1), "new models retain their full metadata");
+  assert.equal(catalog.models.length, 1, "new models are initially unselected");
+  assert.deepEqual(JSON.parse(await readFile(statePath)).catalog.models.slice(1), latest.models.slice(1), "new candidates retain their full metadata");
   const resaved = await modelContextSettings({ ...options, refreshCatalog: false }, refreshed.contextWindows,
     refreshed.autoCompactTokenLimits, refreshed.multiAgentReasoningEfforts);
   assert.deepEqual(resaved.contextWindows, saved.contextWindows);
