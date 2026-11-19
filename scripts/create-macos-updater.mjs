@@ -7,12 +7,14 @@ import { releaseMetadata } from "./release-metadata.mjs";
 import { verifyUpdaterSignature } from "./verify-updater-signature.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const [appArgument, outputArgument, tag] = process.argv.slice(2);
+const [appArgument, outputArgument, tag, signerArgument] = process.argv.slice(2);
 if (!appArgument || !outputArgument || !tag) {
-  throw new Error("Usage: create-macos-updater.mjs <Codex Panel.app> <output-directory> <vX.Y.Z-fork>");
+  throw new Error("Usage: create-macos-updater.mjs <Codex Panel.app> <output-directory> <vX.Y.Z-fork> [tauri-signer]");
 }
 const app = path.resolve(appArgument);
 const output = path.resolve(outputArgument);
+const signer = signerArgument ? path.resolve(signerArgument) : path.join(root, "node_modules/.bin/tauri");
+const version = tag.replace(/^v/, "");
 const publicKey = process.env.CODEX_PANEL_UPDATER_PUBLIC_KEY?.trim();
 if (!publicKey || !process.env.TAURI_SIGNING_PRIVATE_KEY) {
   throw new Error("CODEX_PANEL_UPDATER_PUBLIC_KEY and TAURI_SIGNING_PRIVATE_KEY are required");
@@ -23,10 +25,9 @@ function run(command, args, options = {}) {
   return result.stdout.trim();
 }
 const plist = (field) => run("/usr/libexec/PlistBuddy", ["-c", `Print :${field}`, path.join(app, "Contents/Info.plist")]);
-const { version } = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 if (path.basename(app) !== "Codex Panel.app" || plist("CFBundleIdentifier") !== "com.shay.codex-panel"
   || plist("CFBundleShortVersionString") !== version) {
-  throw new Error("Updater bundle must be Codex Panel with the current package version");
+  throw new Error("Updater bundle must be Codex Panel with the release tag version");
 }
 const executable = plist("CFBundleExecutable");
 if (path.basename(executable) !== executable) throw new Error("Invalid bundle executable");
@@ -35,7 +36,7 @@ run(process.execPath, [path.join(root, "scripts/preflight-macos-app.mjs"), app])
 await mkdir(output, { recursive: true });
 const archive = path.join(output, metadata.archive);
 run("/usr/bin/tar", ["-czf", archive, path.basename(app)], { cwd: path.dirname(app) });
-run(path.join(root, "node_modules/.bin/tauri"), ["signer", "sign", archive]);
+run(signer, ["signer", "sign", archive]);
 const signature = (await readFile(`${archive}.sig`, "utf8")).trim();
 await verifyUpdaterSignature({ publicKey, artifactPath: archive, signature });
 await writeFile(path.join(output, "latest.json"), `${JSON.stringify({

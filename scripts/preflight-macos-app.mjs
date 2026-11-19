@@ -49,7 +49,7 @@ if (plistValue("CFBundleDisplayName") !== "Codex Panel") {
 const executableName = plistValue("CFBundleExecutable");
 const launcherPath = path.join(appPath, "Contents", "MacOS", executableName);
 const nodePath = path.join(appPath, "Contents", "MacOS", "node");
-for (const targetPath of [launcherPath, nodePath, appPath]) {
+for (const targetPath of [launcherPath, nodePath]) {
   run("/usr/bin/codesign", ["--verify", "--strict", "--verbose=2", targetPath]);
 }
 run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash, webcrypto } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -33,8 +34,9 @@ export async function verifyUpdaterSignature({ publicKey, artifactPath, signatur
 
   const algorithm = signatureRecord.subarray(0, 2).toString("ascii");
   if (algorithm !== "ED") throw new Error("Updater signature must use prehashed minisign");
-  const artifact = await readFile(artifactPath);
-  const digest = createHash("blake2b512").update(artifact).digest();
+  const hash = createHash("blake2b512");
+  for await (const chunk of createReadStream(artifactPath)) hash.update(chunk);
+  const digest = hash.digest();
   const verificationKey = await webcrypto.subtle.importKey(
     "raw",
     publicRecord.subarray(10),

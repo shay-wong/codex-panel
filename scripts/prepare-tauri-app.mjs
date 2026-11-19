@@ -142,20 +142,15 @@ async function runtimeIntegrityEntries(rootPath, relativePath = "") {
 }
 
 async function writeRuntimeIntegrityManifest() {
+  if (target !== windowsTarget && target !== linuxTarget) return;
   const manifestPath = path.join(resourcesDirectory, "runtime-integrity.json");
   await rm(manifestPath, { force: true });
   const files = await runtimeIntegrityEntries(resourcesDirectory);
   const nodePath = target === windowsTarget
     ? path.join(binariesDirectory, `node-${windowsTarget}.exe`)
-    : target === linuxTarget
-      ? path.join(binariesDirectory, `codex-panel-node-${linuxTarget}`)
-      : path.join(binariesDirectory, "node-universal-apple-darwin");
+    : path.join(binariesDirectory, `codex-panel-node-${linuxTarget}`);
   files.push({
-    path: target === windowsTarget
-      ? "node.exe"
-      : target === linuxTarget
-        ? "codex-panel-node"
-        : "node",
+    path: target === windowsTarget ? "node.exe" : "codex-panel-node",
     sha256: await sha256(nodePath),
   });
   files.sort((left, right) => left.path.localeCompare(right.path, "en"));
@@ -192,10 +187,9 @@ async function download(url, destination) {
 
 async function verifiedNodeArchive(archiveName, expectedChecksum) {
   const archivePath = path.join(runtimeCacheDirectory, archiveName);
-  if (!(await exists(archivePath)) || (await sha256(archivePath)) !== expectedChecksum) {
-    await rm(archivePath, { force: true });
-    await download(`https://nodejs.org/dist/v${nodeVersion}/${archiveName}`, archivePath);
-  }
+  if (await exists(archivePath) && (await sha256(archivePath)) === expectedChecksum) return { archiveName, archivePath };
+  await rm(archivePath, { force: true });
+  await download(`https://nodejs.org/dist/v${nodeVersion}/${archiveName}`, archivePath);
   if ((await sha256(archivePath)) !== expectedChecksum) {
     throw new Error(`Checksum verification failed for ${archiveName}`);
   }
@@ -203,7 +197,8 @@ async function verifiedNodeArchive(archiveName, expectedChecksum) {
 }
 
 async function extractNodeRuntime(architecture) {
-  const archiveName = `node-v${nodeVersion}-darwin-${architecture}.tar.gz`;
+  const runtimeName = `node-v${nodeVersion}-darwin-${architecture}`;
+  const archiveName = `${runtimeName}.tar.gz`;
   const { archivePath } = await verifiedNodeArchive(
     archiveName,
     nodeArchiveSha256[architecture],
@@ -211,15 +206,13 @@ async function extractNodeRuntime(architecture) {
   const destination = path.join(extractionDirectory, architecture);
   await rm(destination, { recursive: true, force: true });
   await mkdir(destination, { recursive: true });
-  run("/usr/bin/tar", ["-xzf", archivePath, "-C", destination]);
-  return path.join(destination, `node-v${nodeVersion}-darwin-${architecture}`);
+  run("/usr/bin/tar", ["-xzf", archivePath, "-C", destination, `${runtimeName}/bin/node`, `${runtimeName}/LICENSE`]);
+  return path.join(destination, runtimeName);
 }
 
 async function prepareMacNodeRuntime() {
-  const runtimes = new Map();
-  for (const architecture of nodeArchitectures) {
-    runtimes.set(architecture, await extractNodeRuntime(architecture));
-  }
+  const runtimes = new Map(await Promise.all(nodeArchitectures.map(async architecture =>
+    [architecture, await extractNodeRuntime(architecture)])));
 
   const universalNodePath = path.join(binariesDirectory, "node-universal-apple-darwin");
   await mkdir(binariesDirectory, { recursive: true });
@@ -254,6 +247,7 @@ async function prepareWindowsNodeRuntime() {
     windowsNodeArchiveSha256,
   );
   const destination = path.join(extractionDirectory, "win-x64");
+  const runtimeName = `node-v${nodeVersion}-win-x64`;
   await rm(destination, { recursive: true, force: true });
   await mkdir(destination, { recursive: true });
   run(path.join(process.env.SystemRoot, "System32", "tar.exe"), [
@@ -261,9 +255,11 @@ async function prepareWindowsNodeRuntime() {
     archivePath,
     "-C",
     destination,
+    `${runtimeName}/node.exe`,
+    `${runtimeName}/LICENSE`,
   ]);
 
-  const runtime = path.join(destination, `node-v${nodeVersion}-win-x64`);
+  const runtime = path.join(destination, runtimeName);
   const targetPath = path.join(binariesDirectory, `node-${windowsTarget}.exe`);
   await mkdir(binariesDirectory, { recursive: true });
   await rm(targetPath, { force: true });
@@ -281,11 +277,12 @@ async function prepareLinuxNodeRuntime() {
     linuxNodeArchiveSha256,
   );
   const destination = path.join(extractionDirectory, "linux-x64");
+  const runtimeName = `node-v${nodeVersion}-linux-x64`;
   await rm(destination, { recursive: true, force: true });
   await mkdir(destination, { recursive: true });
-  run("/usr/bin/tar", ["-xzf", archivePath, "-C", destination]);
+  run("/usr/bin/tar", ["-xzf", archivePath, "-C", destination, `${runtimeName}/bin/node`, `${runtimeName}/LICENSE`]);
 
-  const runtime = path.join(destination, `node-v${nodeVersion}-linux-x64`);
+  const runtime = path.join(destination, runtimeName);
   const targetPath = path.join(
     binariesDirectory,
     `codex-panel-node-${linuxTarget}`,

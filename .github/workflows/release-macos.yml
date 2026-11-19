@@ -32,8 +32,10 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+      - name: Install version sync dependency
+        run: |
+          npm install --prefix "$RUNNER_TEMP/version-tools" --no-audit --no-fund --ignore-scripts --package-lock=false "smol-toml@$(node -p 'require("./package-lock.json").packages["node_modules/smol-toml"].version')"
+          ln -s "$RUNNER_TEMP/version-tools/node_modules" node_modules
       - name: Commit published version to main
         run: |
           set -euo pipefail
@@ -66,7 +68,7 @@ jobs:
 
   build-macos:
     if: github.repository == 'shay-wong/codex-panel'
-    runs-on: macos-15-intel
+    runs-on: ${{ github.run_attempt == '1' && 'macos-15' || 'macos-15-intel' }}
     timeout-minutes: 90
     env:
       RELEASE_TAG: ${{ github.ref_name }}
@@ -81,12 +83,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Prepare version from tag and validate signing configuration
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      - name: Prepare version from tag
         run: |
           test -n "$CODEX_PANEL_UPDATER_PUBLIC_KEY"
-          test -n "$TAURI_SIGNING_PRIVATE_KEY"
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
           node scripts/prepare-fork-release.mjs "$RELEASE_TAG" "$RUNNER_TEMP/release-notes.md"
       - name: Check release metadata and updater signatures
@@ -106,44 +105,84 @@ jobs:
         run: >-
           npm run tauri -- build --target universal-apple-darwin --bundles app
           --no-sign --ci --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - name: Preserve unsigned App for packaging
+        run: |
+          mkdir -p "$RUNNER_TEMP/macos-build"
+          tar -czf "$RUNNER_TEMP/macos-build/unsigned-app.tar.gz" -C src-tauri/target/universal-apple-darwin/release/bundle/macos "Codex Panel.app"
+          cp "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/macos-build/release-notes.md"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-build-${{ github.sha }}
+          path: ${{ runner.temp }}/macos-build
+          compression-level: 0
+          overwrite: true
+          if-no-files-found: error
+
+  package-macos:
+    needs: build-macos
+    runs-on: ${{ github.run_attempt == '1' && 'macos-15' || 'macos-15-intel' }}
+    timeout-minutes: 30
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      CODEX_PANEL_UPDATER_PUBLIC_KEY: ${{ vars.CODEX_PANEL_UPDATER_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+      - name: Install updater signer
+        run: npm install --prefix "$RUNNER_TEMP/release-tools" --no-audit --no-fund --ignore-scripts --package-lock=false "@tauri-apps/cli@$(node -p 'require("./package.json").devDependencies["@tauri-apps/cli"]')"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: macos-build-${{ github.sha }}
+          path: ${{ runner.temp }}/macos-build
+      - name: Restore unsigned App and release notes
+        run: |
+          mkdir -p "$RUNNER_TEMP/dmg-content" "$RUNNER_TEMP/release-assets"
+          tar -xzf "$RUNNER_TEMP/macos-build/unsigned-app.tar.gz" -C "$RUNNER_TEMP/dmg-content"
+          cp "$RUNNER_TEMP/macos-build/release-notes.md" "$RUNNER_TEMP/release-assets/release-notes.md"
       - name: Ad-hoc sign and verify App
         run: |
-          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Panel.app"
+          APP="$RUNNER_TEMP/dmg-content/Codex Panel.app"
           EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
           codesign --force --options runtime --entitlements src-tauri/Entitlements.plist --sign - "$APP/Contents/MacOS/$EXECUTABLE"
           codesign --force --options runtime --entitlements src-tauri/Entitlements.plist --sign - "$APP"
-          npm run app:preflight -- "$APP"
-          npm run app:verify-packaged-panelctl -- "$APP"
+          node scripts/verify-packaged-taskctl.mjs "$APP"
       - name: Package DMG and sign updater
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Panel.app"
-          mkdir -p "$RUNNER_TEMP/dmg-content" "$RUNNER_TEMP/release-assets"
-          ditto "$APP" "$RUNNER_TEMP/dmg-content/Codex Panel.app"
+          test -n "$CODEX_PANEL_UPDATER_PUBLIC_KEY"
+          test -n "$TAURI_SIGNING_PRIVATE_KEY"
+          APP="$RUNNER_TEMP/dmg-content/Codex Panel.app"
+          RELEASE_DMG="Codex.Panel_${RELEASE_TAG#v}_universal.dmg"
+          RELEASE_ARCHIVE="Codex.Panel_${RELEASE_TAG#v}_universal.app.tar.gz"
           ln -s /Applications "$RUNNER_TEMP/dmg-content/Applications"
           hdiutil create -volname "Codex Panel" -srcfolder "$RUNNER_TEMP/dmg-content" -ov -format UDZO "$RUNNER_TEMP/release-assets/$RELEASE_DMG"
           hdiutil verify "$RUNNER_TEMP/release-assets/$RELEASE_DMG"
-          node scripts/create-macos-updater.mjs "$APP" "$RUNNER_TEMP/release-assets" "$RELEASE_TAG"
+          node scripts/create-macos-updater.mjs "$APP" "$RUNNER_TEMP/release-assets" "$RELEASE_TAG" "$RUNNER_TEMP/release-tools/node_modules/.bin/tauri"
           test -s "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE"
           test -s "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE.sig"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos-release-${{ github.sha }}
           path: ${{ runner.temp }}/release-assets
+          compression-level: 0
+          overwrite: true
           if-no-files-found: error
 
   release:
-    needs: [build-macos, build-windows]
-    if: ${{ always() && !cancelled() && needs['build-macos'].result == 'success' && needs['build-windows'].result == 'success' && github.repository == 'shay-wong/codex-panel' }}
+    needs: [package-macos, build-windows]
+    if: ${{ always() && !cancelled() && needs['package-macos'].result == 'success' && needs['build-windows'].result == 'success' && github.repository == 'shay-wong/codex-panel' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       RELEASE_TAG: ${{ github.ref_name }}
       CODEX_PANEL_UPDATER_PUBLIC_KEY: ${{ vars.CODEX_PANEL_UPDATER_PUBLIC_KEY }}
-      MACOS_RESULT: ${{ needs.build-macos.result }}
-      WINDOWS_RESULT: ${{ needs.build-windows.result }}
       WINDOWS_SIGNED: ${{ needs.build-windows.outputs.authenticode }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -153,77 +192,49 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: Prepare release notes
+      - name: Verify release source
         run: |
           set -euo pipefail
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-          node scripts/prepare-fork-release.mjs "$RELEASE_TAG" "$RUNNER_TEMP/release-notes.md"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        if: needs.build-macos.result == 'success'
         with:
-          name: macos-release-${{ github.sha }}
-          path: ${{ runner.temp }}/platform-assets/macos
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        if: needs.build-windows.result == 'success'
-        with:
-          name: windows-release-${{ github.sha }}
-          path: ${{ runner.temp }}/platform-assets/windows
-      - name: Prepare available release assets
+          pattern: '*-release-${{ github.sha }}'
+          merge-multiple: true
+          path: ${{ runner.temp }}/release-assets
+      - name: Merge platform updates
         run: |
           set -euo pipefail
-          printf 'macOS build: %s\nWindows build: %s\n' "$MACOS_RESULT" "$WINDOWS_RESULT" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$MACOS_RESULT" != success ] && [ "$WINDOWS_RESULT" != success ]; then
-            echo 'Neither platform produced release assets.' >&2
-            exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/release-assets"
-          if [ "$MACOS_RESULT" = success ]; then
-            cp "$RUNNER_TEMP/platform-assets/macos/"* "$RUNNER_TEMP/release-assets/"
-          fi
+          RELEASE_DMG="Codex.Panel_${RELEASE_TAG#v}_universal.dmg"
+          RELEASE_ARCHIVE="Codex.Panel_${RELEASE_TAG#v}_universal.app.tar.gz"
           RELEASE_WINDOWS="Codex.Panel_${RELEASE_TAG#v}_x86_64-setup.exe"
-          echo "RELEASE_WINDOWS=$RELEASE_WINDOWS" >> "$GITHUB_ENV"
-          if [ "$WINDOWS_RESULT" = success ]; then
-            cp "$RUNNER_TEMP/platform-assets/windows/"* "$RUNNER_TEMP/release-assets/"
-            node scripts/merge-windows-updater.mjs "$RUNNER_TEMP/release-assets/latest.json" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS" "$RELEASE_TAG"
-          fi
+          printf 'RELEASE_DMG=%s\nRELEASE_ARCHIVE=%s\nRELEASE_WINDOWS=%s\n' "$RELEASE_DMG" "$RELEASE_ARCHIVE" "$RELEASE_WINDOWS" >> "$GITHUB_ENV"
+          node scripts/merge-windows-updater.mjs "$RUNNER_TEMP/release-assets/latest.json" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS" "$RELEASE_TAG"
           test -s "$RUNNER_TEMP/release-assets/latest.json"
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          assets=("$RUNNER_TEMP/release-assets/latest.json")
-          if [ "$MACOS_RESULT" = success ]; then
-            assets+=("$RUNNER_TEMP/release-assets/$RELEASE_DMG" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE.sig")
-            printf '\nmacOS 通用版，支持 Apple Silicon 与 Intel。使用临时签名，未经 Apple 公证；首次打开可能需要在“隐私与安全性”中允许。\nUniversal macOS build for Apple Silicon and Intel. Ad-hoc signed, not Apple-notarized.\n' >> "$RUNNER_TEMP/release-notes.md"
-          else
-            printf '\n本次 macOS 构建未成功，未提供 macOS 安装包或更新。No macOS package or updater is available in this release.\n' >> "$RUNNER_TEMP/release-notes.md"
-          fi
-          if [ "$WINDOWS_RESULT" = success ]; then
-            assets+=("$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS.sig")
+          assets=("$RUNNER_TEMP/release-assets/latest.json" "$RUNNER_TEMP/release-assets/$RELEASE_DMG" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE.sig" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS.sig")
+          {
+            printf '\nmacOS 通用版，支持 Apple Silicon 与 Intel。使用临时签名，未经 Apple 公证；首次打开可能需要在“隐私与安全性”中允许。\nUniversal macOS build for Apple Silicon and Intel. Ad-hoc signed, not Apple-notarized.\n'
             if [ "$WINDOWS_SIGNED" = true ]; then
-              printf '\nWindows x64 安装器带 Authenticode 签名。The Windows x64 installer is Authenticode-signed.\n' >> "$RUNNER_TEMP/release-notes.md"
+              printf '\nWindows x64 安装器带 Authenticode 签名。The Windows x64 installer is Authenticode-signed.\n'
             else
-              printf '\nWindows x64 安装器未进行 Authenticode 签名，系统可能提示未知发布者或阻止运行。The Windows x64 installer is not Authenticode-signed; Windows may warn or block it.\n' >> "$RUNNER_TEMP/release-notes.md"
+              printf '\nWindows x64 安装器未进行 Authenticode 签名，系统可能提示未知发布者或阻止运行。The Windows x64 installer is not Authenticode-signed; Windows may warn or block it.\n'
             fi
-            printf '\nWindows 与 macOS 更新包均使用 Codex Panel 更新密钥验签。旧 Windows 测试版需先手动安装一次。Update packages use the Codex Panel verification key. Older Windows test builds require one manual installation.\n' >> "$RUNNER_TEMP/release-notes.md"
-          else
-            printf '\n本次 Windows 构建未成功，未提供 Windows 安装包或更新。No Windows package or updater is available in this release.\n' >> "$RUNNER_TEMP/release-notes.md"
-          fi
-          printf '\n已有本地 0.1.0 开发版需手动安装一次，以切换到独立 Fork 版本线。Local 0.1.0 development builds require a one-time manual installation.\n' >> "$RUNNER_TEMP/release-notes.md"
-          printf '\n[中文更新日志](https://github.com/%s/blob/%s/CHANGELOG.zh-CN.md) · [Changelog](https://github.com/%s/blob/%s/CHANGELOG.md)\n' "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$GITHUB_REPOSITORY" "$RELEASE_TAG" >> "$RUNNER_TEMP/release-notes.md"
-          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --draft --title "Codex Panel $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" "${assets[@]}"
+            printf '\nWindows 与 macOS 更新包均使用 Codex Panel 更新密钥验签。旧 Windows 测试版需先手动安装一次。Update packages use the Codex Panel verification key. Older Windows test builds require one manual installation.\n'
+            printf '\n已有本地 0.1.0 开发版需手动安装一次，以切换到独立 Fork 版本线。Local 0.1.0 development builds require a one-time manual installation.\n'
+            printf '\n[中文更新日志](https://github.com/%s/blob/%s/CHANGELOG.zh-CN.md) · [Changelog](https://github.com/%s/blob/%s/CHANGELOG.md)\n' "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$GITHUB_REPOSITORY" "$RELEASE_TAG"
+          } >> "$RUNNER_TEMP/release-assets/release-notes.md"
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --draft --title "Codex Panel $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-assets/release-notes.md" "${assets[@]}"
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[]' | jq -s --arg tag "$RELEASE_TAG" 'map(select(.tag_name == $tag and .draft == true)) | if length == 1 then .[0] else error("Expected one draft release") end' > "$RUNNER_TEMP/uploaded-assets.json"
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
           import fs from 'node:fs';
           const { assets } = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/uploaded-assets.json`, 'utf8'));
           const names = new Set(assets.map((asset) => asset.name));
-          const required = ['latest.json'];
-          if (process.env.MACOS_RESULT === 'success') required.push(process.env.RELEASE_DMG, process.env.RELEASE_ARCHIVE, `${process.env.RELEASE_ARCHIVE}.sig`);
-          if (process.env.WINDOWS_RESULT === 'success') required.push(process.env.RELEASE_WINDOWS, `${process.env.RELEASE_WINDOWS}.sig`);
+          const required = ['latest.json', process.env.RELEASE_DMG, process.env.RELEASE_ARCHIVE, `${process.env.RELEASE_ARCHIVE}.sig`, process.env.RELEASE_WINDOWS, `${process.env.RELEASE_WINDOWS}.sig`];
           for (const name of required) assert.ok(names.has(name), `Missing release asset: ${name}`);
           assert.ok(assets.every((asset) => asset.state === 'uploaded' && asset.size > 0));
           NODE
@@ -276,12 +287,8 @@ jobs:
 
           MESSAGE+="🔗 *相关链接:*"$'\n'
           MESSAGE+="• [GitHub Release](https://github.com/${REPO}/releases/tag/${TAG_NAME})"$'\n'
-          if [ "$MACOS_RESULT" = success ]; then
-            MESSAGE+="• [macOS 通用版下载](https://github.com/${REPO}/releases/download/${TAG_NAME}/${RELEASE_DMG})"$'\n'
-          fi
-          if [ "$WINDOWS_RESULT" = success ]; then
-            MESSAGE+="• [Windows x64 下载](https://github.com/${REPO}/releases/download/${TAG_NAME}/${RELEASE_WINDOWS})"$'\n'
-          fi
+          MESSAGE+="• [macOS 通用版下载](https://github.com/${REPO}/releases/download/${TAG_NAME}/${RELEASE_DMG})"$'\n'
+          MESSAGE+="• [Windows x64 下载](https://github.com/${REPO}/releases/download/${TAG_NAME}/${RELEASE_WINDOWS})"$'\n'
           MESSAGE+=$'\n'
           MESSAGE+="#CodexPanel #Release #${TAG_HASHTAG}"
 
@@ -400,4 +407,6 @@ jobs:
         with:
           name: windows-release-${{ github.sha }}
           path: ${{ runner.temp }}/windows-release/*
+          compression-level: 0
+          overwrite: true
           if-no-files-found: error
