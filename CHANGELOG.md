@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Restore sidebar focus and active-row highlighting for existing conversation tabs and split panes on Codex 26.1111.71704.
+
 - Fix model catalog refresh to fetch the current provider's complete catalog, preserving provider metadata and saved model settings. Official OpenAI reuses the current Codex subscription or API-key account with file credential storage; custom providers use their own configured credentials. Unchanged catalogs no longer prompt for a restart; failed refreshes keep the saved catalog and configuration.
 
 - Fill missing provider model defaults and reasoning capabilities from the same model in the current Codex CLI's official catalog, restoring editable main-agent reasoning levels while preserving user settings and explicit provider limits.

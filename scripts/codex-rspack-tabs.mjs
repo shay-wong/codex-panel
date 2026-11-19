@@ -176,7 +176,8 @@ export function rewriteRspackThreadTabs(source, context) {
     return source.replace(navigation[0], `${thread}&&null==${request}.state&&globalThis.__codexPanelRspackTabsV1__.focusExisting(${root},{conversationId:${thread}.threadId,hostId:${thread}.hostId})||${navigation[0]}`);
   }
   const menu = source.match(new RegExp(`async function ${id}\\(\\{scope:(${id}),target:(${id}),[^}]*surface:(${id}),[^}]*paneItems:(${id})[^}]*\\}\\)`));
-  const sidebar = source.includes('codex.localTaskRow.archiveTask') && source.includes('startTransition') && source.includes('isActive:');
+  const sidebar = (source.includes('codex.localTaskRow.archiveTask') || source.includes('archiveGroup:'))
+    && source.includes('startTransition') && source.includes('isActive:');
   if (!menu && !sidebar) return null;
   const find = needles => { const value = context.findModule(needles); if (!value) throw new Error(`Native thread factory missing: ${needles[0]}`); return value; };
   const aliases = text => {

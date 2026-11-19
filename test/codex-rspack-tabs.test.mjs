@@ -108,6 +108,45 @@ function harness(t, unified = false) {
   return { runtime, root, target, scope, actions, focus: () => focusId };
 }
 
+test('a detached archiveGroup sidebar keeps tab focus, row highlight and readiness', async t => {
+  const h = harness(t), child = h.target('second'), navigations = [];
+  await (await h.runtime.menu(h.root, child, 'sidebar')).find(item => item.id === 'panel-thread-split').onSelect();
+  h.runtime.mark('menu');
+  assert.equal(globalThis.__codexPanelThreadTabsReady__, false);
+  const source = fixtures.sidebar
+    .replace('let result=', 'const click=()=>{let result=')
+    .replace('React.startTransition(()=>{});let output=', 'React.startTransition(()=>{});return result;};let output=')
+    .replace('primaryAction:null,label:"codex.localTaskRow.archiveTask"', 'primaryAction:click,archiveGroup:props.archiveGroup')
+    .replace('return output}}', 'return output}t.row=row;}');
+  const patched = rewriteRspackThreadTabs(source, context());
+  assert.ok(patched, 'the sidebar no longer contains the archive action translation key');
+  const module = { exports: {} };
+  const sandbox = vm.createContext({ module, __codexPanelRspackTabsV1__: h.runtime,
+    provider: 'local', summary: null, fallback: null, id: 'second', state: null, access: null,
+    nav: { go(root, id, host) { navigations.push({ id, host }); return true; } },
+    load: () => ({ useSyncExternalStore: (_subscribe, snapshot) => snapshot(), startTransition: callback => callback() }),
+  });
+  vm.runInContext(`(${patched})(module,module.exports,load)`, sandbox);
+  assert.equal(globalThis.__codexPanelThreadTabsReady__, true, 'the independently loaded sidebar completes the native pair');
+  const row = () => module.exports.row({ root: h.root, isActive: false, archiveGroup: null, dataAttributes: { keep: 'original' } });
+  assert.equal(row().isActive, true);
+  assert.equal(row().dataAttributes.keep, 'original');
+  assert.equal(row().dataAttributes['data-app-action-sidebar-thread-active'], 'true');
+  h.runtime.focusExisting(h.root, h.target('first'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(row().isActive, false);
+  row().primaryAction();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.focus(), 'local:second');
+  assert.equal(h.root.location.pathname, '/local/first');
+  assert.equal(navigations.length, 0, 'an open tab is focused instead of navigating to another page');
+  assert.equal(row().dataAttributes['data-app-action-sidebar-thread-selected'], 'true');
+  assert.equal(h.scope('first').tabs.size, 1);
+  sandbox.id = 'third';
+  row().primaryAction();
+  assert.deepEqual(navigations, [{ id: 'third', host: 'local' }], 'unopened conversations retain native navigation');
+});
+
 test('a full-width tab offers split view when native layout mode remains split', async t => {
   const h = harness(t, true), child = h.target('second');
   await (await h.runtime.menu(h.root, child, 'sidebar')).find(item => item.id === 'panel-thread-tab').onSelect();
