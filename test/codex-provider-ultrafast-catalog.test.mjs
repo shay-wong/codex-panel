@@ -172,6 +172,83 @@ test("model refresh and context saves preserve enabled Ultrafast catalog metadat
   assert.deepEqual(JSON.parse(await readFile(statePath)).catalog, { models }, "saved provider metadata must not contain the added Ultrafast tier");
 });
 
+test("refresh requests the provider even when an original catalog file is retained", async t => {
+  for (const originalExists of [true, false]) await t.test(originalExists ? "original file exists" : "original file is missing", async t => {
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-refresh-original-catalog-")));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const home = path.join(root, "home"), codexHome = path.join(root, "codex"), dataDirectory = path.join(root, "data"), workspace = path.join(root, "workspace");
+    await Promise.all([home, codexHome, dataDirectory, workspace].map(directory => mkdir(directory)));
+    const old = { slug: "gpt-6-astra", context_window: 500000, description: "Old source",
+      supported_reasoning_levels: [{ effort: "high" }, { effort: "max" }] };
+    const latest = { models: [{ ...old, description: "Updated provider source" }, { ...old, slug: "gpt-6.2-sol" }] };
+    const executable = await fixtureCodex(root, [old, latest.models[1]]);
+    const originalCatalog = path.join(root, "original-catalog.json"), originalContents = JSON.stringify({ models: [old] });
+    if (originalExists) await writeFile(originalCatalog, originalContents);
+    const statePath = path.join(dataDirectory, "model-context.json"), catalogPath = path.join(dataDirectory, "model-context-catalog.json");
+    const configFile = path.join(codexHome, "config.toml"), preferencesFile = path.join(root, "preferences.json");
+    const contextWindows = { [old.slug]: 600000 }, autoCompactTokenLimits = { [old.slug]: "50%" }, multiAgentReasoningEfforts = { [old.slug]: "max" };
+    await writeFile(configFile, "");
+    await writeFile(preferencesFile, JSON.stringify({ customProviderUltrafast: true }));
+    await writeFile(statePath, JSON.stringify({ catalog: { models: [old] }, catalogSource: "external", originalCatalog,
+      contextWindows, autoCompactTokenLimits, multiAgentReasoningEfforts, selectedModels: [old.slug] }));
+    await writeFile(catalogPath, originalContents);
+    const endpoint = "http://127.0.0.1:9/provider-catalog?tenant=fixture";
+    const config = { model_catalog_json: catalogPath, model_provider: "fixture", model_providers: { fixture: {
+      model_catalog_url: endpoint, experimental_bearer_token: "fixture-provider-key",
+      query_params: { deployment: "fixture" }, env_http_headers: { "x-fixture-actor": "FIXTURE_ACTOR" },
+    } } };
+    t.mock.method(CodexAppServer.prototype, "request", async method => {
+      assert.equal(method, "config/read");
+      return { config, layers: [{ name: { type: "user", file: configFile }, version: "v1", config }] };
+    });
+    let requests = 0, unavailable = false;
+    t.mock.method(globalThis, "fetch", async (url, options) => {
+      requests++;
+      assert.equal(url.origin + url.pathname, "http://127.0.0.1:9/provider-catalog");
+      assert.equal(url.searchParams.get("tenant"), "fixture");
+      assert.equal(url.searchParams.get("deployment"), "fixture");
+      assert.equal(url.searchParams.get("client_version"), "0.169.0");
+      assert.equal(options.headers.get("Authorization"), "Bearer fixture-provider-key");
+      assert.equal(options.headers.get("x-fixture-actor"), "fixture-actor");
+      return unavailable ? new Response("Unavailable", { status: 503 }) : new Response(JSON.stringify(latest));
+    });
+    const processEnv = { PATH: process.env.PATH, HOME: home, CODEX_HOME: codexHome, TMPDIR: root,
+      CODEX_PANEL_PREFERENCES_FILE: preferencesFile, FIXTURE_ACTOR: "fixture-actor", OTEL_SDK_DISABLED: "true" };
+    const options = { executable, dataDirectory, processEnv, cwd: workspace };
+    const adapter = createUltrafastCatalogAdapter({ ...options, preferencesFile, report() {} });
+    t.after(() => adapter.close());
+    await adapter.sync();
+    const refreshed = await modelContextSettings({ ...options, refreshCatalog: true });
+    assert.equal(requests, 1, "a saved original file must not intercept provider refresh");
+    assert.equal(refreshed.catalogChanged, true);
+    assert.deepEqual(refreshed.models.map(model => model.slug), ["gpt-6.2-sol", old.slug]);
+    assert.deepEqual(refreshed.selectedModels, [old.slug]);
+    assert.deepEqual(refreshed.contextWindows, contextWindows);
+    assert.deepEqual(refreshed.autoCompactTokenLimits, autoCompactTokenLimits);
+    assert.deepEqual(refreshed.multiAgentReasoningEfforts, multiAgentReasoningEfforts);
+    const state = JSON.parse(await readFile(statePath));
+    assert.equal(state.originalCatalog, originalCatalog);
+    assert.deepEqual(state.catalog, latest);
+    const generated = JSON.parse(await readFile(catalogPath));
+    assert.equal(generated.models.length, 1, "new provider candidates remain unselected");
+    assert.equal(generated.models[0].description, "Updated provider source");
+    assert.equal(generated.models[0].context_window, 600000);
+    assert.equal(generated.models[0].auto_compact_token_limit, 300000);
+    assert.equal(generated.models[0].multi_agent_reasoning_effort, "max");
+    assert.ok(generated.models[0].service_tiers.some(tier => tier.id === "ultrafast"));
+    if (originalExists) assert.equal(await readFile(originalCatalog, "utf8"), originalContents);
+    else await assert.rejects(readFile(originalCatalog), { code: "ENOENT" });
+    const beforeState = await readFile(statePath, "utf8"), beforeCatalog = await readFile(catalogPath, "utf8");
+    unavailable = true;
+    await assert.rejects(modelContextSettings({ ...options, refreshCatalog: true }), /503/);
+    assert.equal(requests, 2);
+    assert.equal(await readFile(statePath, "utf8"), beforeState);
+    assert.equal(await readFile(catalogPath, "utf8"), beforeCatalog);
+    if (originalExists) assert.equal(await readFile(originalCatalog, "utf8"), originalContents);
+    else await assert.rejects(readFile(originalCatalog), { code: "ENOENT" });
+  });
+});
+
 test("official GPT intersection restores main reasoning metadata and native numeric order", async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-official-gpt-")));
   t.after(() => rm(root, { recursive: true, force: true }));

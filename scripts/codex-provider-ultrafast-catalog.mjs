@@ -171,9 +171,8 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
     state.selectedModels ??= state.catalog.models.map(model => model.slug);
     const previousModels = (await readJson(catalogPath, null))?.models;
     const orderedPreviousModels = Array.isArray(previousModels) ? previousModels.toSorted(compareModelSettings) : previousModels;
-    const source = state.originalCatalog ? JSON.parse(await readFile(state.originalCatalog, "utf8"))
-      : await readProviderModelCatalog({ executable, processEnv, cwd, config, provider, sourceUrl,
-        codexHome: path.dirname(userLayer.name.file) }, client);
+    const source = await readProviderModelCatalog({ executable, processEnv, cwd, config, provider, sourceUrl,
+      codexHome: path.dirname(userLayer.name.file) }, client);
     if (!Array.isArray(source?.models) || !source.models.length
       || source.models.some(model => typeof model?.slug !== "string" || !model.slug.trim())
       || new Set(source.models.map(model => model.slug)).size !== source.models.length) {
