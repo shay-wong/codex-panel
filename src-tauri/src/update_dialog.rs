@@ -228,6 +228,10 @@ impl UpdateDialog {
                 .setInformativeText(&NSString::from_str(&message));
             native.progress_indicator.setIndeterminate(false);
             native.progress_indicator.setDoubleValue(100.0);
+            // 已显示的 Sheet 更换附件时，AppKit 不会移除旧的版本说明视图。
+            if let Some(notes) = native.alert.accessoryView() {
+                notes.removeFromSuperview();
+            }
             native
                 .alert
                 .setAccessoryView(Some(&native.progress_indicator));
