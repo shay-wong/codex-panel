@@ -50,14 +50,14 @@ function run(script, directory, macos, windowsResult, extras = {}) {
   });
 }
 
-test("platform builds run independently and publication waits for both outcomes", () => {
+test("platform builds run independently and publication requires both to succeed", () => {
   assert.equal(workflow.jobs["build-macos"].needs, undefined);
   assert.equal(workflow.jobs["build-windows"].needs, undefined);
   assert.deepEqual(release.needs, ["build-macos", "build-windows"]);
-  for (const results of [["success", "success"], ["success", "failure"], ["failure", "success"], ["failure", "failure"]]) {
-    assert.equal(releaseRuns(...results), true);
+  for (const results of [["success", "success"], ["success", "failure"], ["failure", "success"], ["failure", "failure"], ["cancelled", "success"], ["success", "cancelled"]]) {
+    assert.equal(releaseRuns(...results), results.every(result => result === "success"));
   }
-  assert.equal(releaseRuns("success", "failure", true), false);
+  assert.equal(releaseRuns("success", "success", true), false);
 });
 
 test("Windows failure leaves macOS assets available, while two failed builds stop before publication", async () => {

@@ -136,7 +136,7 @@ jobs:
 
   release:
     needs: [build-macos, build-windows]
-    if: ${{ always() && !cancelled() && needs.build-macos.result == 'success' && needs.build-windows.result == 'success' && github.repository == 'shay-wong/codex-panel' }}
+    if: ${{ always() && !cancelled() && needs['build-macos'].result == 'success' && needs['build-windows'].result == 'success' && github.repository == 'shay-wong/codex-panel' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
