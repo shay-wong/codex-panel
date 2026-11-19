@@ -6,10 +6,6 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
-- Restore the full-height workflow editor and return to the Workflow tab after saving or closing it.
-
-- Fix release notes overlapping the macOS update dialog after installation starts.
-
 - Fix model catalog refresh to fetch the current provider's complete catalog, preserving provider metadata and saved model settings. Official OpenAI reuses the current Codex subscription or API-key account with file credential storage; custom providers use their own configured credentials. Unchanged catalogs no longer prompt for a restart; failed refreshes keep the saved catalog and configuration.
 
 - Treat missing or empty per-model reasoning capability lists as unknown, allowing explicit user choices to override an unspecified default. Reject an effort only when a non-empty provider list excludes it; keep source defaults separate from saved overrides.
@@ -17,6 +13,12 @@ This file records user-visible changes introduced by the fork.
 - Keep the model table header visible while scrolling and order model lists by family, with GPT first and newer versions first within each family, without changing the source catalog.
 
 - Choose which discovered models to keep in Codex. Save applies the selection; refresh retains it and leaves new models unchecked, while preserving the complete candidate catalog and existing settings.
+
+## 0.5.14-fork
+
+- Restore the full-height workflow editor and return to the Workflow tab after saving or closing it.
+
+- Fix release notes overlapping the macOS update dialog after installation starts.
 
 ## 0.5.13-fork
 
