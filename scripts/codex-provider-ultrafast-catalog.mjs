@@ -132,7 +132,7 @@ async function readProviderModelCatalog({ executable, processEnv, cwd, config, p
   return response.json();
 }
 
-async function modelContextState({ executable, dataDirectory, processEnv, cwd, refreshCatalog }, client) {
+async function modelContextState({ executable, dataDirectory, processEnv, cwd, refreshCatalog, preferencesFile }, client) {
   const { config, layers, origins } = await client.request("config/read", { includeLayers: true });
   const userLayer = layers?.find(layer => layer.name?.type === "user" && !layer.name.profile);
   if (!userLayer?.name.file || !userLayer.version) throw new Error("无法定位 Codex 用户配置");
@@ -140,6 +140,9 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
   const statePath = path.join(dataDirectory, "model-context.json");
   const catalogPath = path.join(dataDirectory, "model-context-catalog.json");
   const provider = config.model_provider ?? "openai";
+  const preferences = preferencesFile ? await readJson(preferencesFile, {}) : {};
+  const customProviderUltrafast = preferences.customProviderUltrafast === true
+    && provider !== "openai" && Boolean(config.model_providers?.[provider]);
   const providerUrl = config.model_providers?.[provider]?.model_catalog_url;
   const ultrafast = (await readJson(path.join(dataDirectory, "ultrafast-catalog.json"), null))?.providers?.[provider];
   const sourceUrl = ultrafast && ultrafast.url === providerUrl ? ultrafast.originalUrl : providerUrl;
@@ -167,6 +170,7 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
   if (refreshCatalog) {
     state.selectedModels ??= state.catalog.models.map(model => model.slug);
     const previousModels = (await readJson(catalogPath, null))?.models;
+    const orderedPreviousModels = Array.isArray(previousModels) ? previousModels.toSorted(compareModelSettings) : previousModels;
     const source = state.originalCatalog ? JSON.parse(await readFile(state.originalCatalog, "utf8"))
       : await readProviderModelCatalog({ executable, processEnv, cwd, config, provider, sourceUrl,
         codexHome: path.dirname(userLayer.name.file) }, client);
@@ -177,10 +181,10 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
     }
     state.catalog = source;
     state.catalogSource = "external";
-    const nextModels = withModelContextSettings(source, { ...state, officialCatalog,
+    const nextModels = withModelContextSettings(source, { ...state, officialCatalog, customProviderUltrafast,
       useOfficialContextDefaults: false }).models;
     catalogChanged = nextModels.length > 0 && (config.model_catalog_json !== catalogPath
-      || !isDeepStrictEqual(previousModels, JSON.parse(JSON.stringify(nextModels))));
+      || !isDeepStrictEqual(orderedPreviousModels, JSON.parse(JSON.stringify(nextModels))));
   } else if (!state.catalogSource && !state.originalCatalog && !sourceUrl) {
     // Refresh unclassified legacy defaults from the current native source, retaining saved overrides.
     state.catalog = officialCatalog;
@@ -191,10 +195,11 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
   state.useOfficialContextDefaults = state.catalogSource === "native";
   const officialSlugs = new Set(officialCatalog.models.filter(model => /^gpt-/i.test(model.slug)).map(model => model.slug));
   if (state.selectedModels) state.selectedModels = state.selectedModels.filter(slug => officialSlugs.has(slug));
-  return { config, userLayer, origins, state, statePath, catalogPath, catalogChanged, officialCatalog };
+  return { config, userLayer, origins, state, statePath, catalogPath, catalogChanged, officialCatalog, customProviderUltrafast };
 }
 
-function withModelContextSettings(catalog, { contextWindows, autoCompactTokenLimits = {}, multiAgentReasoningEfforts = {}, selectedModels, useOfficialContextDefaults = false, officialCatalog }) {
+function withModelContextSettings(catalog, { contextWindows, autoCompactTokenLimits = {}, multiAgentReasoningEfforts = {}, selectedModels, useOfficialContextDefaults = false, officialCatalog, customProviderUltrafast = false }) {
+  if (customProviderUltrafast) catalog = withUltrafastCatalog(catalog);
   catalog = withOfficialModels(catalog, officialCatalog);
   if (useOfficialContextDefaults) catalog = withCurrentModelDefaults(catalog);
   return { ...catalog, models: catalog.models.filter(model => !selectedModels || selectedModels.includes(model.slug)).map(model => {
@@ -265,14 +270,15 @@ async function writeAgentSettings(agent, settings) {
 
 export async function modelContextSettings({
   executable, dataDirectory, processEnv = process.env, cwd, refreshCatalog = false,
+  preferencesFile = processEnv.CODEX_PANEL_PREFERENCES_FILE,
 }, contextWindows, autoCompactTokenLimits, multiAgentReasoningEfforts, defaultSubagentModel, agentModels,
 defaultSubagentReasoningEffort, agentReasoningEfforts, selectedModels) {
   await mkdir(dataDirectory, { recursive: true });
   dataDirectory = realpathSync(dataDirectory);
   const client = new CodexAppServer({ executable, processEnv, cwd });
   try {
-    const { config, userLayer, origins, state, statePath, catalogPath, catalogChanged, officialCatalog } = await modelContextState(
-      { executable, dataDirectory, processEnv, cwd, refreshCatalog }, client,
+    const { config, userLayer, origins, state, statePath, catalogPath, catalogChanged, officialCatalog, customProviderUltrafast } = await modelContextState(
+      { executable, dataDirectory, processEnv, cwd, refreshCatalog, preferencesFile }, client,
     );
     const compatible = withOfficialModels(state.catalog, officialCatalog);
     if (refreshCatalog && !compatible.models.length) throw new Error("服务商目录中没有当前 Codex 支持的 GPT 模型，已保留原目录");
@@ -382,7 +388,7 @@ defaultSubagentReasoningEffort, agentReasoningEfforts, selectedModels) {
         await writeFile(statePath + ".tmp", JSON.stringify(state), { mode: 0o600 });
         await rename(statePath + ".tmp", statePath);
         if (hasSelectedModels) {
-          const catalog = withModelContextSettings(state.catalog, { ...state, officialCatalog });
+          const catalog = withModelContextSettings(state.catalog, { ...state, officialCatalog, customProviderUltrafast });
           await writeFile(catalogPath + ".tmp", JSON.stringify(catalog), { mode: 0o600 });
           await rename(catalogPath + ".tmp", catalogPath);
         }
@@ -529,8 +535,9 @@ export function createUltrafastCatalogAdapter({
       let active = enabled && provider !== "openai" && config.model_providers?.[provider];
       if (contexts && config.model_catalog_json === path.join(realpathSync(dataDirectory), "model-context-catalog.json")) {
         catalog ??= await readBundledModelCatalog(executable);
-        const source = active ? withUltrafastCatalog(contexts.catalog) : contexts.catalog;
-        const combined = withModelContextSettings(source, { ...contexts, officialCatalog: catalog });
+        const combined = withModelContextSettings(contexts.catalog, {
+          ...contexts, officialCatalog: catalog, customProviderUltrafast: Boolean(active),
+        });
         if (combined.models.length) {
           await writeFile(config.model_catalog_json + ".tmp", JSON.stringify(combined), { mode: 0o600 });
           await rename(config.model_catalog_json + ".tmp", config.model_catalog_json);

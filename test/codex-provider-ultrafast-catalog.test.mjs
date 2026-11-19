@@ -91,31 +91,85 @@ test("model settings group model series with newer versions first without changi
   assert.equal(await readFile(statePath, "utf8"), saved);
 });
 
-test("catalog refresh ignores JSON key order but detects changed model metadata", async t => {
+test("catalog refresh ignores JSON key and model array order but detects changed metadata", async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-catalog-key-order-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   const model = { slug: "gpt-6-astra", description: "Current model description", context_window: 128000,
     default_reasoning_level: "low", supported_reasoning_levels: [{ effort: "low", description: "Low reasoning" }] };
-  const executable = await fixtureCodex(root, [model]);
+  const companion = { ...model, slug: "gpt-6.1-sol" };
+  const executable = await fixtureCodex(root, [model, companion]);
   const catalogPath = path.join(root, "model-context-catalog.json"), statePath = path.join(root, "model-context.json");
-  const generated = { ...model, priority: 0 };
-  const reordered = Object.fromEntries(Object.entries(generated).reverse());
+  const generated = [{ ...companion, priority: 0 }, { ...model, priority: 1 }];
+  const reordered = generated.map(item => Object.fromEntries(Object.entries(item).reverse()));
   assert.deepEqual(reordered, generated);
   assert.notEqual(JSON.stringify(reordered), JSON.stringify(generated));
-  await writeFile(catalogPath, JSON.stringify({ models: [reordered] }));
-  await writeFile(statePath, JSON.stringify({ catalog: { models: [model] }, contextWindows: {},
-    selectedModels: [model.slug], catalogSource: "external", originalCatalog: null }));
+  await writeFile(catalogPath, JSON.stringify({ models: reordered }));
+  await writeFile(statePath, JSON.stringify({ catalog: { models: [model, companion] }, contextWindows: {},
+    selectedModels: [model.slug, companion.slug], catalogSource: "external", originalCatalog: null }));
   const config = { model_catalog_json: catalogPath, model_provider: "fixture",
     model_providers: { fixture: { base_url: "http://127.0.0.1:9/v1" } } };
   t.mock.method(CodexAppServer.prototype, "request", async method => {
     assert.equal(method, "config/read");
     return { config, layers: [{ name: { type: "user", file: path.join(root, "config.toml") }, version: "v1", config }] };
   });
-  t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({ models: [model] })));
+  t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({ models: [model, companion] })));
   const options = { executable, dataDirectory: root, refreshCatalog: true };
   assert.equal((await modelContextSettings(options)).catalogChanged, false, "key order alone must not prompt for a restart");
+  await writeFile(catalogPath, JSON.stringify({ models: generated.toReversed() }));
+  assert.equal((await modelContextSettings(options)).catalogChanged, false, "array order alone must not prompt when model priorities are unchanged");
+  await writeFile(catalogPath, JSON.stringify({ models: [{ ...generated[0], priority: 9 }, generated[1]] }));
+  assert.equal((await modelContextSettings(options)).catalogChanged, true, "priority changes must still require a restart");
   model.description = "Updated model description";
   assert.equal((await modelContextSettings(options)).catalogChanged, true, "a real metadata change must still require a restart");
+});
+
+test("model refresh and context saves preserve enabled Ultrafast catalog metadata", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-catalog-ultrafast-refresh-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const home = path.join(root, "home"), codexHome = path.join(root, "codex"), dataDirectory = path.join(root, "data"), workspace = path.join(root, "workspace");
+  await Promise.all([home, codexHome, dataDirectory, workspace].map(directory => mkdir(directory)));
+  const models = ["gpt-6-astra", "gpt-6.2-sol"].map(slug => ({ slug, context_window: 500000,
+    description: "Provider model", service_tiers: [{ id: "priority", name: "Fast", description: "" }] }));
+  const executable = await fixtureCodex(root, models);
+  const configFile = path.join(codexHome, "config.toml"), catalogPath = path.join(dataDirectory, "model-context-catalog.json");
+  const statePath = path.join(dataDirectory, "model-context.json"), preferencesFile = path.join(root, "preferences.json");
+  await writeFile(configFile, "");
+  await writeFile(preferencesFile, JSON.stringify({ customProviderUltrafast: true }));
+  await writeFile(statePath, JSON.stringify({ catalog: { models }, catalogSource: "external", originalCatalog: null,
+    contextWindows: {}, selectedModels: models.map(model => model.slug) }));
+  await writeFile(catalogPath, JSON.stringify({ models }));
+  const config = { model_catalog_json: catalogPath, model_provider: "fixture",
+    model_providers: { fixture: { base_url: "http://127.0.0.1:9/v1" } } };
+  t.mock.method(CodexAppServer.prototype, "request", async method => {
+    assert.equal(method, "config/read");
+    return { config, layers: [{ name: { type: "user", file: configFile }, version: "v1", config }] };
+  });
+  t.mock.method(globalThis, "fetch", async url => {
+    assert.equal(url.origin, "http://127.0.0.1:9");
+    return new Response(JSON.stringify({ models }));
+  });
+  const processEnv = { PATH: process.env.PATH, HOME: home, CODEX_HOME: codexHome, TMPDIR: root,
+    CODEX_PANEL_PREFERENCES_FILE: preferencesFile, OTEL_SDK_DISABLED: "true" };
+  const options = { executable, dataDirectory, processEnv, cwd: workspace };
+  const adapter = createUltrafastCatalogAdapter({ ...options, preferencesFile, report() {} });
+  t.after(() => adapter.close());
+  const assertUltrafast = async () => {
+    const generated = JSON.parse(await readFile(catalogPath));
+    assert.ok(generated.models.every(model => model.service_tiers.some(tier => tier.id === "ultrafast")));
+    return generated;
+  };
+  await adapter.sync();
+  await assertUltrafast();
+  assert.equal((await modelContextSettings({ ...options, refreshCatalog: true })).catalogChanged, false,
+    "an unchanged provider catalog must not lose the enabled Ultrafast tier or require a restart");
+  await assertUltrafast();
+  await modelContextSettings(options, { "gpt-6.2-sol": 600000 }, {}, {});
+  const saved = await assertUltrafast();
+  assert.equal(saved.models.find(model => model.slug === "gpt-6.2-sol").context_window, 600000);
+  models[0].description = "Updated provider model";
+  assert.equal((await modelContextSettings({ ...options, refreshCatalog: true })).catalogChanged, true);
+  await assertUltrafast();
+  assert.deepEqual(JSON.parse(await readFile(statePath)).catalog, { models }, "saved provider metadata must not contain the added Ultrafast tier");
 });
 
 test("official GPT intersection restores main reasoning metadata and native numeric order", async t => {

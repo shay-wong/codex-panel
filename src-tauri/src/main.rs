@@ -3145,6 +3145,7 @@ async fn run_model_configuration(
         command.arg(resources.join("app/scripts/codex-provider-ultrafast-catalog.mjs"))
             .arg(operation)
             .arg(codex_app)
+            .env("CODEX_PANEL_PREFERENCES_FILE", &app.state::<Arc<LauncherState>>().preferences_path)
             .current_dir(home)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
