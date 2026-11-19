@@ -229,7 +229,7 @@ Fork 从 `0.0.1-fork`（标签 `v0.0.1-fork`）开始独立版本，不再随上
 
 Panel 每次启动时检查 Fork 的 GitHub Releases；有效的成功结果缓存 24 小时，临时失败缓存 5 分钟，匿名 API 限流缓存到 GitHub 返回的重置时间，缓存会在下次启动时再次判断。手动检查始终绕过缓存。检查会优先使用本机已登录的 `gh` CLI，无法使用时才回退到匿名 GitHub API，并分别提示额度耗尽、网络失败、暂无 Release、已是最新版本或发现新版本。只有规范化的 `vX.Y.Z-fork` 标签会成为更新候选，发现新版本后会在应用内下载并验证签名，只有用户确认后才安装并重启 Panel。macOS 使用原生前台确认弹窗，其他平台继续使用 Tauri 对话框。官方 Fork 构建内置更新公钥，自定义构建可用 `CODEX_PANEL_UPDATER_PUBLIC_KEY` 覆盖。详见[更新包配置](docs/fork-capabilities.md#signed-in-app-updates)。
 
-发现新版本后，**关于 → 版本更新** 和安装确认框会直接显示该版本的说明；页面和 macOS 确认框中的长内容可滚动阅读。没有说明时显示“该版本暂无版本说明。”；“查看发布说明”仍可打开 GitHub 发行版。
+发现新版本后，**关于 → 版本更新** 和安装确认框会直接显示该版本的说明；macOS 确认框可显示 Markdown 标题、列表和行内格式，两处的长说明均可滚动阅读。没有说明时显示“该版本暂无版本说明。”；“查看发布说明”仍可打开 GitHub 发行版。
 
 App bundle 内包含 Panel runtime、`panelctl`、两个 Panel Skills，以及用于运行它们的官方签名 Node.js runtime。macOS 安装器优先使用 `CODEX_PANEL_CODESIGN_IDENTITY`，其次使用可复用的本机 Apple Development 身份；两者都不可用时回退到 ad-hoc 签名。Windows 的 Authenticode 签名可选：配置证书与 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` 时签名，全部留空时生成未签名的 NSIS 安装包；两种模式都保留 Tauri 更新包签名。macOS 与 Windows 并行打包，等待两边结束后统一发布成功平台的产物。
 

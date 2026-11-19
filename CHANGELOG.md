@@ -14,6 +14,10 @@ This file records user-visible changes introduced by the fork.
 
 - Choose which discovered models to keep in Codex. Save applies the selection; refresh retains it and leaves new models unchecked, while preserving the complete candidate catalog and existing settings.
 
+## 0.5.15-fork
+
+- Render Markdown headings, lists, and inline formatting in the macOS update confirmation.
+
 ## 0.5.14-fork
 
 - Restore the full-height workflow editor and return to the Workflow tab after saving or closing it.
