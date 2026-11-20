@@ -296,6 +296,10 @@
       .codex-panel-phrases-commands small { display: block; margin-top: 2px; color: var(--color-token-text-secondary, GrayText); font-size: 11px; }
       .codex-panel-phrases-commands p { margin: 8px; font-size: 12px; color: var(--color-token-text-secondary, GrayText); }
       .codex-panel-phrases-apply { margin-top: 10px; padding: 0; border: 0; background: transparent; color: var(--color-token-text-secondary, GrayText); font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+      .codex-panel-phrases-apply-options { display: grid; gap: 6px; max-height: 45vh; overflow-y: auto; }
+      .codex-panel-phrases-apply-options label, .codex-panel-phrases-dialog .codex-panel-phrases-select-all { display: flex; align-items: flex-start; gap: 10px; margin: 0; padding: 10px 12px; border-radius: 8px; overflow-wrap: anywhere; }
+      .codex-panel-phrases-apply-options label { background: var(--color-token-bg-secondary, light-dark(#f8f8f8, #292929)); }
+      .codex-panel-phrases-apply-options input, .codex-panel-phrases-select-all input { flex: none; margin-top: 3px; accent-color: var(--color-token-foreground, CanvasText); }
       .codex-panel-phrases-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
       .codex-panel-phrases-dialog footer button { padding: 7px 14px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 8px; background: transparent; color: inherit; font: inherit; }
       .codex-panel-phrases-dialog button[type="submit"] { background: var(--color-token-foreground, CanvasText); color: var(--color-token-main-surface-primary, Canvas); }
@@ -3122,38 +3126,8 @@
         buttons[next].focus();
       });
       const apply = dialog.querySelector(".codex-panel-phrases-apply");
-      apply.textContent = hostText("将当前行应用到所有自定义仓库", "Apply the current entry to all customized repositories");
-      apply.title = hostText("将光标放在需要应用的条目中，相同条目不会重复添加。", "Place the cursor in the entry to apply. Existing identical entries are not duplicated.");
-      apply.addEventListener("click", () => {
-        const status = dialog.querySelector('[role="alert"]');
-        const { view, controller } = quickPhrasesEditor;
-        const { $from, $to } = view.state.selection;
-        if (!$from.sameParent($to) || $from.parent.type.name !== "paragraph") {
-          status.textContent = hostText("请将光标放在需要应用的单条配置中。", "Place the cursor in a single entry to apply.");
-          return;
-        }
-        const doc = view.state.schema.topNodeType.create(null, $from.parent);
-        const phrase = controller.getPersistedText(doc, { format: "plain" }).trim();
-        if (!phrase) {
-          status.textContent = hostText("请将光标放在需要应用的条目中。", "Place the cursor in the entry to apply.");
-          return;
-        }
-        try {
-          const keys = Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index))
-            .filter(key => key?.startsWith(`${QUICK_PHRASES_KEY}.project.`));
-          for (const key of keys) {
-            const phrases = window.localStorage.getItem(key).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-            if (!phrases.includes(phrase)) window.localStorage.setItem(key, [...phrases, phrase].join("\n"));
-          }
-          renderQuickPhrases();
-          status.textContent = keys.length
-            ? hostText(`已应用到 ${keys.length} 个自定义仓库。`, `Applied to ${keys.length} customized repositories.`)
-            : hostText("还没有自定义过的仓库配置。", "No repositories have custom phrases yet.");
-        } catch {
-          renderQuickPhrases();
-          status.textContent = hostText("未能应用到全部自定义仓库，请重试。", "Could not apply to every customized repository. Please try again.");
-        }
-      });
+      apply.textContent = hostText("应用到所有自定义仓库…", "Apply to all customized repositories…");
+      apply.addEventListener("click", chooseQuickPhrasesToApply);
       reset.addEventListener("click", () => {
         try {
           window.localStorage.removeItem(quickPhrasesStorageKey(tabs.dataset.projectId));
@@ -3181,6 +3155,7 @@
       });
       dialog.addEventListener("close", () => {
         quickPhrasesRepositoryPicker?.close();
+        dialog.querySelector(".codex-panel-phrases-apply-dialog")?.close();
         quickPhrasesEditor?.commands.remove();
         quickPhrasesEditor?.view.destroy();
         quickPhrasesEditor = null;
@@ -3366,6 +3341,85 @@
     quickPhrasesDialog.querySelector('[role="alert"]').textContent = "";
     quickPhrasesDialog.showModal();
     tabs.querySelector('[aria-selected="true"]').focus();
+  }
+
+  function chooseQuickPhrasesToApply() {
+    const { view, controller } = quickPhrasesEditor;
+    const phrases = [...new Set(controller.getPersistedText(view.state.doc, { format: "plain" })
+      .split(/\r?\n/).map(line => line.trim()).filter(Boolean))];
+    const status = quickPhrasesDialog.querySelector('[role="alert"]');
+    status.textContent = "";
+    if (!phrases.length) {
+      status.textContent = hostText("请先填写需要应用的短语。", "Enter the phrases you want to apply first.");
+      return;
+    }
+    quickPhrasesEditor.closeCommands();
+    const picker = document.createElement("dialog");
+    picker.className = "codex-panel-phrases-dialog codex-panel-phrases-apply-dialog";
+    picker.setAttribute(OWNED_ATTRIBUTE, "true");
+    picker.setAttribute("aria-labelledby", "codex-panel-phrases-apply-title");
+    picker.innerHTML = '<form><h2 id="codex-panel-phrases-apply-title"></h2><p class="codex-panel-phrases-hint"></p><label class="codex-panel-phrases-select-all"><input type="checkbox"><span></span></label><div class="codex-panel-phrases-apply-options"></div><p role="alert" class="codex-panel-phrases-status"></p><footer><button type="button" class="cursor-interaction"></button><button type="submit" class="cursor-interaction" disabled></button></footer></form>';
+    picker.querySelector("h2").textContent = hostText("选择要应用的短语", "Choose phrases to apply");
+    picker.querySelector(".codex-panel-phrases-hint").textContent = hostText("应用后立即追加到所有已自定义的仓库，相同短语不会重复添加。", "Apply to add these phrases immediately to every customized repository. Existing identical entries are not duplicated.");
+    picker.querySelector(".codex-panel-phrases-select-all span").textContent = hostText("全选", "Select all");
+    const all = picker.querySelector(".codex-panel-phrases-select-all input");
+    const list = picker.querySelector(".codex-panel-phrases-apply-options");
+    for (const phrase of phrases) {
+      const label = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = phrase;
+      const text = document.createElement("span");
+      text.textContent = quickPhraseLabel(phrase);
+      label.append(input, text);
+      list.append(label);
+    }
+    const inputs = Array.from(list.querySelectorAll("input"));
+    const confirm = picker.querySelector('button[type="submit"]');
+    const updateSelection = () => {
+      const count = inputs.filter(input => input.checked).length;
+      all.checked = count === inputs.length;
+      all.indeterminate = count > 0 && count < inputs.length;
+      confirm.disabled = count === 0;
+      confirm.textContent = count ? hostText(`应用 ${count} 条短语`, `Apply ${count} phrases`) : hostText("应用", "Apply");
+    };
+    list.addEventListener("change", updateSelection);
+    all.addEventListener("change", () => {
+      for (const input of inputs) input.checked = all.checked;
+      updateSelection();
+    });
+    updateSelection();
+    const cancel = picker.querySelector('button[type="button"]');
+    cancel.textContent = hostText("取消", "Cancel");
+    cancel.addEventListener("click", () => picker.close());
+    picker.querySelector("form").addEventListener("submit", event => {
+      event.preventDefault();
+      const selected = inputs.filter(input => input.checked).map(input => input.value);
+      if (!selected.length) return;
+      try {
+        const keys = Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index))
+          .filter(key => key?.startsWith(`${QUICK_PHRASES_KEY}.project.`));
+        for (const key of keys) {
+          const saved = window.localStorage.getItem(key).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+          const additions = selected.filter(phrase => !saved.includes(phrase));
+          if (additions.length) window.localStorage.setItem(key, [...saved, ...additions].join("\n"));
+        }
+        renderQuickPhrases();
+        status.textContent = keys.length
+          ? hostText(`已将 ${selected.length} 条短语应用到 ${keys.length} 个自定义仓库。`, `Applied ${selected.length} phrases to ${keys.length} customized repositories.`)
+          : hostText("还没有自定义过的仓库配置。", "No repositories have custom phrases yet.");
+        picker.close();
+      } catch {
+        renderQuickPhrases();
+        picker.querySelector('[role="alert"]').textContent = hostText("未能应用到全部自定义仓库，请重试。", "Could not apply to every customized repository. Please try again.");
+      }
+    });
+    picker.addEventListener("close", () => {
+      picker.remove();
+      if (quickPhrasesDialog.open) quickPhrasesDialog.querySelector(".codex-panel-phrases-apply").focus();
+    });
+    quickPhrasesDialog.append(picker);
+    picker.showModal();
   }
 
   async function quickPhraseRepositories() {
