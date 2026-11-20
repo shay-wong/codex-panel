@@ -284,8 +284,8 @@
       .codex-panel-phrases-repositories button { display: grid; gap: 3px; padding: 10px 12px; border: 0; border-radius: 8px; background: var(--color-token-bg-secondary, light-dark(#f8f8f8, #292929)); color: inherit; font: inherit; text-align: left; overflow-wrap: anywhere; }
       .codex-panel-phrases-repositories small { color: var(--color-token-text-secondary, GrayText); font-size: 11px; }
       .codex-panel-phrases-dialog label { display: block; margin: 18px 0 8px; }
-      .codex-panel-phrases-tabs { display: flex; gap: 20px; margin: 16px 0 12px; border-bottom: 1px solid var(--color-token-border, light-dark(#ddd, #444)); }
-      .codex-panel-phrases-tabs button { flex: 0 1 auto; min-width: 0; margin-bottom: -1px; padding: 8px 0 10px; overflow: hidden; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--color-token-text-secondary, GrayText); font: inherit; white-space: nowrap; text-overflow: ellipsis; }
+      .codex-panel-phrases-tabs { display: flex; gap: 20px; margin: 16px 0 12px; overflow-x: auto; border-bottom: 1px solid var(--color-token-border, light-dark(#ddd, #444)); }
+      .codex-panel-phrases-tabs button { flex: 0 0 auto; max-width: 240px; min-width: 0; margin-bottom: -1px; padding: 8px 0 10px; overflow: hidden; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--color-token-text-secondary, GrayText); font: inherit; white-space: nowrap; text-overflow: ellipsis; }
       .codex-panel-phrases-tabs button[aria-selected="true"] { border-bottom-color: var(--color-token-foreground, CanvasText); color: var(--color-token-foreground, CanvasText); }
       .codex-panel-phrases-editor { box-sizing: border-box; min-height: 210px; max-height: 40vh; overflow-y: auto; padding: 12px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 10px; line-height: 1.9; }
       .codex-panel-phrases-editor > .ProseMirror { min-height: 184px; outline: none; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -3040,6 +3040,7 @@
         }));
         reset.hidden = !tabs.dataset.projectId;
         dialog.querySelector('[role="alert"]').textContent = "";
+        tab.scrollIntoView({ block: "nearest", inline: "nearest" });
       });
       tabs.addEventListener("keydown", event => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -3240,11 +3241,12 @@
         button.append(name, detail);
         button.addEventListener("click", () => {
           const tabs = quickPhrasesDialog.querySelector('[role="tablist"]');
-          let tab = tabs.querySelector('[data-other-repository]');
+          let tab = Array.from(tabs.querySelectorAll('[role="tab"]'))
+            .find(tab => tab.dataset.projectId === project.id);
           if (!tab) {
             tab = document.createElement("button");
             tab.type = "button";
-            tab.id = "codex-panel-phrases-tab-other";
+            tab.id = `codex-panel-phrases-tab-other-${encodeURIComponent(project.id)}`;
             tab.className = "cursor-interaction";
             tab.setAttribute("role", "tab");
             tab.setAttribute("aria-controls", "codex-panel-phrases-input");
