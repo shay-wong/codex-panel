@@ -19,7 +19,7 @@ if(config.requiresFirstPartyInference&&get(flag)){let provider=get(providerConfi
 return {isCapable:results.every(result=>result.isCapable)};
 });
 `;
-const url = "app://-/assets/app-initial-fixture.js";
+const url = "app://-/assets/capability-core.js";
 
 const layouts = [
   { name: "single capability", navigation: false, source: initial },
@@ -37,6 +37,10 @@ const layouts = [
       `'orbit': { requiresFirstPartyInference: true, description: "Dot", accessPolicy: "orbit" },
       'orbit.navigation': { requiresFirstPartyInference: true, accessPolicy: 'orbit-navigation' }`),
   },
+  { name: "nested functions and reordered subscription options", navigation: false, source: initial
+      .replace('let config=definitions[request.name];', 'function nested(){return "function fake(){requiresFirstPartyInference:true}"}const config=definitions[request.name];')
+      .replace('let n=signal(', 'const n=signal(')
+      .replace('{getServerSnapshot:()=>t,onMount(r,i){r(t)}}', '{onMount(r,i){r(t)},getServerSnapshot:()=>t}') },
   { name: "Dot absent", navigation: false, source: initial.replace('orbit:{accessPolicy:`orbit`,requiresFirstPartyInference:!0},', '') },
 ];
 

@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
-import { createPetAnimationRuntime, rewriteRspackPets, nativePetSelection, installPetAudioBinding } from '../scripts/codex-rspack-pets.mjs';
+import { buildNativeServiceBindings, createPetAnimationRuntime, rewriteRspackPets, nativePetSelection, installPetAudioBinding } from '../scripts/codex-rspack-pets.mjs';
+import { rspackSourceContext } from '../scripts/codex-rspack-source.mjs';
+import { sourceAst } from '../scripts/codex-source-ast.mjs';
 import { findCodexRspackRequire } from '../scripts/codex-update.mjs';
 
 // Captured native renderer from Codex 26.1106.51428; no application or user data is loaded.
@@ -18,6 +20,21 @@ const pack = {
   },
   lookFrames: Array.from({length: 16}, (_, index) => index % 12),
 };
+
+test('pet admission skips unrelated factories and admits each semantic marker independently', () => {
+  assert.equal(rewriteRspackPets('function(module,exports,load){exports.unrelated=true}', {
+    ast() { throw new Error('Unrelated factory must not be parsed'); },
+  }), null);
+  for (const marker of ['The original Codex companion.', '/settings/account_user_setting', 'data-codex-pet-state']) {
+    let parsed = 0;
+    const source = `function(module,exports,load){exports.marker=${JSON.stringify(marker)}}`;
+    assert.equal(rewriteRspackPets(source, { ast(value) {
+      parsed++;
+      return sourceAst(value, { factory: true });
+    } }), null);
+    assert.equal(parsed, 1, marker);
+  }
+});
 
 function render(source, packs, { petId = pack.petId, state = 'idle', hover = false, reduced = false, lookFrame } = {}) {
   const element = { style: {} }, effects = [], timers = new Map(), animationFrames = new Map(), hoverChanges = [];
@@ -106,6 +123,90 @@ test('imported pet clips use their own grid, states and idle timing with native 
     assert.deepEqual(after.element.style, before.element.style);
     before.cleanup?.(); after.cleanup?.();
   }
+});
+
+test('pet rendering follows bound props and effects across declaration and field reordering', () => {
+  const native = nativeSource
+    .replace('lookFrame:n,loop:o=!1,respondToHover:u=!1,size:d="default",source:c,state:p="idle"',
+      'state:p="idle",source:c,size:d="default",respondToHover:u=!1,loop:o=!1,lookFrame:n')
+    .replace('let[h,f]=(0,s.useState)(!1),_=(0,s.useRef)(null),y=(0,a.I)(),E=u&&h?"jumping":p,I=null==c.assetRef?c.spriteRowCount:l.rows;',
+      'const unused=(0,s.useState)(true);const _=(0,s.useRef)(null);let[h,f]=(0,s.useState)(!1);const I=null==c.assetRef?c.spriteRowCount:l.rows;const y=(0,a.I)();const E=u&&h?"jumping":p;(0,s.useEffect)(()=>{},[]);')
+    .replace('let e=_.current;if(null==e)return;', 'const current=_.current;const e=current;if(e===null){return;}')
+    .replace('let t=m(E,y,o),r=t.frames,i=0,a=null;', 'const t=m(E,y,o);let a=null;const r=t.frames;let i=0;')
+    .replace('[E,n,o,y,I]', '[I,y,o,n,E]')
+    .replace('style:{backgroundImage:`url(${c.spritesheetUrl??e[c.assetRef]})`,backgroundSize:null==I?void 0:`${100*l.columns}% ${100*I}%`}',
+      'style:{backgroundSize:null==I?void 0:`${100*l.columns}% ${100*I}%`,backgroundImage:`url(${c.spritesheetUrl??e[c.assetRef]})`}');
+  const patched = rewriteRspackPets(native);
+  const imported = render(patched, [pack], { hover: true });
+  assert.equal(imported.output.props.style.backgroundSize, '400% 300%');
+  assert.equal(imported.output.props.style.backgroundImage, `url(${pack.spritesheetUrl})`);
+  imported.advance(938);
+  assert.equal(imported.element.style.backgroundPosition, '0% 0%');
+  imported.cleanup();
+  const before = render(native, [], { petId: 'native-pet' });
+  const after = render(patched, [pack], { petId: 'native-pet' });
+  assert.deepEqual({ ...after.output.props.style }, { ...before.output.props.style });
+  assert.deepEqual(after.element.style, before.element.style);
+  before.cleanup?.();
+  after.cleanup?.();
+  assert.equal(rewriteRspackPets(patched), null);
+});
+
+test('pet catalogs and cloud predicates ignore property order and declaration placement', () => {
+  const catalog = `function(module,exports,load){
+    const unrelated=["not a pet", "];"];
+    function serialize(pet){return pet.id;}
+    const pets=[{id:"codex",spriteVersionNumber:2,displayName:"Codex",description:"The original Codex companion.",assetRef:"codex"}];
+    exports.serialize=serialize;exports.catalog=pets;
+  }`;
+  const cloud = `function(module,exports,load){
+    const catalog=load("catalog");
+    exports.select=id=>{if(eligible(id))load("account").safePatch("/settings/account_user_setting",{scope:"cloud-pet-selection",value:id});};
+    const eligible=id=>{
+      const builtin=catalog.catalog.some(({displayName,id:petId})=>id===petId);
+      const remote=id.startsWith("pet_")&&id.length>4;
+      return builtin||remote;
+    };
+  }`;
+  const builtin = { id: 'panel-lumi' };
+  const context = vm.createContext({ __codexPanelPetAnimations__: createPetAnimationRuntime([], builtin) });
+  const catalogExports = {}, cloudExports = {}, writes = [];
+  const load = id => id === 'catalog' ? catalogExports : { safePatch: (...args) => writes.push(args) };
+  const patchedCatalog = rewriteRspackPets(catalog), patchedCloud = rewriteRspackPets(cloud);
+  vm.runInContext(`(${patchedCatalog})`, context)({}, catalogExports, load);
+  vm.runInContext(`(${patchedCloud})`, context)({}, cloudExports, load);
+  assert.equal(catalogExports.catalog.at(-1), builtin);
+  assert.equal(catalogExports.serialize(builtin), 'panel-lumi');
+  cloudExports.select('panel-lumi');
+  assert.equal(writes.length, 0);
+  cloudExports.select('codex');
+  cloudExports.select('pet_cloud');
+  assert.equal(writes.length, 2);
+  assert.equal(rewriteRspackPets(patchedCatalog), null);
+  assert.equal(rewriteRspackPets(patchedCloud), null);
+});
+
+test('native service bindings follow exported assignments and the catalog array', () => {
+  const factories = new Map([
+    ['service-module', { id: 'service-module', source: `function(module,exports,load){
+      let current;
+      function publish(value){current=value;}
+      load.d(exports,{setAppServices:()=>publish,appServices:()=>current});
+    }` }],
+    ['catalog-module', { id: 'catalog-module', source: `function(module,exports,load){
+      const pets=[{description:"The original Codex companion.",id:"codex",assetRef:"codex"}];
+      const alias=pets;
+      load.d(exports,{}, {nativePets:alias,unrelated:"value"});
+    }` }],
+    ['unrelated', { id: 'unrelated', source: `function(module,exports,load){
+      const text="appServices setAppServices The original Codex companion.";
+      load.d(exports,{}, {text});
+    }` }],
+  ]);
+  assert.deepEqual(buildNativeServiceBindings(rspackSourceContext(factories)), {
+    desktopServices: { id: 'service-module', exportName: 'appServices' },
+    petCatalog: { id: 'catalog-module', exportName: 'nativePets' },
+  });
 });
 
 test('replacing and removing imported data notifies renderer subscriptions', () => {
@@ -300,7 +401,11 @@ test('packaged Lumi joins the native catalog and selection stays local', async (
   assert.equal(cloudWrites.length, 2);
   context.__codexPanelRspack__ = {
     require: load, prepared: { pets: true },
-    findModule: markers => ({ id: markers.includes('appServices:') ? 'services' : 'catalog' }),
+    nativeServices: {
+      desktopServices: { id: 'services', exportName: 'appServices' },
+      petCatalog: { id: 'catalog', exportName: 'B4' },
+    },
+    loadModule: async id => load(id),
   };
   const selection = vm.runInContext(`(${nativePetSelection})`, context);
   assert.equal((await selection(load, 'pet-selection')).petId, 'panel-lumi');
@@ -367,7 +472,11 @@ test('pet controls use trusted imports and synchronize both windows before selec
   const page = vm.createContext({
     __codexPanelPetAnimations__: petRuntime,
     __codexPanelRspack__: { require: load, prepared: { pets: true },
-      findModule: markers => ({ id: markers.includes('appServices:') ? 'services' : 'catalog' }) },
+      nativeServices: {
+        desktopServices: { id: 'services', exportName: 'appServices' },
+        petCatalog: { id: 'catalog', exportName: 'B4' },
+      },
+      loadModule: async id => load(id) },
   });
   const cdp = { async send(method, params) {
     assert.equal(method, 'Runtime.evaluate');

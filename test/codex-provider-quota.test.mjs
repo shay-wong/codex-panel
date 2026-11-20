@@ -5,7 +5,6 @@ import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  CODEX_PROVIDER_QUOTA_ASSET,
   createCodexProviderQuotaRuntime,
   watchCodexProviderQuotaPreferences,
   prepareCodexProviderQuotaFix,
@@ -53,7 +52,7 @@ const latestSource = currentSource.replace('const cn=ye||$e||ot||nt||Rt;', `
   const cn=ye||$e||sessionPending&&isNewSession||threadUnavailable||ot||settings?.isLoading===!0||nt||Rt;
 `);
 const builds = [
-  {asset: CODEX_PROVIDER_QUOTA_ASSET, composer: "m7", react: "h7", source},
+  {asset: "legacy-chunk.js", composer: "h7", react: "g7", source: currentSource},
   {asset: "app-primary-d66705000d76.js", composer: "h7", react: "g7", source: currentSource},
   {asset: "app-primary-92c16ff2fe4e.js", composer: "h7", react: "g7", source: latestSource, sessionChecks: true},
   {asset: "app-primary-renamed.js", composer: renamed.h7, react: renamed.g7,
@@ -73,7 +72,7 @@ for (const build of builds) {
     assert.equal(original({threadProvider: "custom"}).submit(), false);
     assert.equal(patched({threadProvider: "custom"}).submit(), "hello");
     assert.equal(patched({configProvider: "custom"}).submitDisabled, false);
-    if (build.asset !== CODEX_PROVIDER_QUOTA_ASSET) assert.equal(patched({threadProvider: "custom", policy: true}).submit(), false);
+    assert.equal(patched({threadProvider: "custom", policy: true}).submit(), false);
     if (build.sessionChecks) {
       for (const blockers of [
         {sessionPending: true, isNewSession: true},
@@ -116,7 +115,7 @@ for (const build of builds) {
             const value = await vm.runInNewContext(params.expression, {
               URL, location: {href: "app://-/index.html"},
               performance: {getEntriesByType: () => enabled ? [{name: sourceUrl}] : []},
-              document: {querySelectorAll: () => enabled === false ? [{src: sourceUrl}] : build.asset === CODEX_PROVIDER_QUOTA_ASSET ? [] : [{href: sourceUrl}]},
+              document: {querySelectorAll: () => enabled === false ? [{src: sourceUrl}] : [{href: sourceUrl}]},
               async fetch(url) {
                 if (url !== sourceUrl) {
                   if (enabled) throw new Error("asset unavailable");
@@ -198,11 +197,11 @@ test("atomic preference saves notify the running injector without a service rest
 });
 
 test("the replacement retains relative imports and import.meta.url from the original module", () => {
-  const module = `import { value } from"./shared.js"; ${source}; const lazy = import(\`./lazy.js\`); export const url = import.meta.url;`;
-  const patched = rewriteCodexProviderQuota(module, `app://-/assets/${CODEX_PROVIDER_QUOTA_ASSET}`);
+  const module = `import { value } from"./shared.js"; ${currentSource}; const lazy = import(\`./lazy.js\`); export const url = import.meta.url;`;
+  const patched = rewriteCodexProviderQuota(module, "app://-/assets/arbitrary-chunk.js");
   assert.match(patched, /from"app:\/\/-\/assets\/shared\.js"/);
   assert.match(patched, /import\("app:\/\/-\/assets\/lazy\.js"\)/);
-  assert.match(patched, /export const url = "app:\/\/-\/assets\/app-primary-aaee46b7f0ce\.js"/);
+  assert.match(patched, /export const url = "app:\/\/-\/assets\/arbitrary-chunk\.js"/);
 });
 
 // Changed semantics must not be treated as a routine minifier rename.
@@ -245,9 +244,9 @@ test("reinstallation discovers the original composer from import maps after blob
 });
 
 // 26.1021 moves the native submit gate into a lazy composer adapter.
-const splitProviderSource = `import{target as Target,config as Config,provider as Provider}from"./app-initial-fixture.js";
+const splitProviderSource = `const unrelatedMessage="submitDisabled model_provider";import{target as Target,config as Config,provider as Provider}from"./app-initial-fixture.js";
 function providerQuota(e,t,n=\x60fresh\x60){let{cwd:r,hostId:i}=e.get(Target,t);if(i!==\x60local\x60)return null;let{data:a}=e.get(Config,{cwd:r,hostId:i});return a==null||(e.get(Provider,t)??a.model_provider??\x60openai\x60)!==\x60openai\x60?null:quotaStatus(e,n)}
-const adapter = "./codex-composer-adapter-fixture.js";`;
+const adapter = () => import("./codex-composer-adapter-fixture.js");`;
 const splitSource = `function composer(e){
   const read=(atom,key)=>atom==="host"?(e.host??"local"):atom===panelQuotaTargetAtom?{hostId:e.host??"local",cwd:"/disposable/project"}:atom===panelQuotaProviderAtom?e.threadProvider:atom===panelQuotaConfigAtom?{data:{model_provider:e.configProvider}}:e.quota;
   const thread="fixture",Host="host",Quota="quota",host=read(Host,thread),quota=read(Quota,host),state=e.policy?"failed":"idle",error={codexErrorInfo:"misalignmentPolicyViolation"};
@@ -288,7 +287,7 @@ test("split composer discovery installs its adapter and reports quota applicatio
   for(const supported of [true,false]) {
     const cdp={on(){},async send(_,params){return {result:{value:await vm.runInNewContext(params.expression,{
       URL,location:{href:"app://-/index.html"},performance:{getEntriesByType:()=>[{name:primaryUrl}]},document:{querySelectorAll:()=>[]},
-      fetch:async url=>({ok:true,text:async()=>url===primaryUrl?splitProviderSource:supported?splitSource:"unsupported"}),
+      fetch:async url=>({ok:url===primaryUrl||url===adapterUrl,text:async()=>url===primaryUrl?splitProviderSource:supported?splitSource:"unsupported"}),
     })}};}};
     const bootstrap=await prepareCodexProviderQuotaFix(cdp,preferencesFile,()=>{},[{url:"app://-/assets/dot.js",source:"void 0;"}],true,false);
     const window={};window.top=window;
@@ -301,4 +300,53 @@ test("split composer discovery installs its adapter and reports quota applicatio
     assert.equal(context.__codexPanelProviderQuotaV1__.applied,false,"Dot execution does not prove quota applied");
     if(supported){assert.ok(bootstrap.includes(adapterUrl));vm.runInContext(blobs[1].replace(/^import[^;]+;/,""),context);assert.equal(context.__codexPanelProviderQuotaV1__.applied,true);}
   }
+});
+
+test("quota matching follows bindings through reordered declarations, blockers, nested functions and arbitrary filenames", () => {
+  const readerAt=latestSource.indexOf("\nfunction providerQuota");
+  const rearranged=(latestSource.slice(readerAt)+latestSource.slice(0,readerAt))
+    .replace('let{cwd:r,hostId:i}', 'const{hostId:i,cwd:r}')
+    .replace('{cwd:r,hostId:i}', '{hostId:i,cwd:r}')
+    .replace('(0,g7.useState)(null);', 'function nested(){return "function fake(){submitDisabled:wrong}"}(0,g7.useState)(null);')
+    .replace('cn=ye||$e||sessionPending&&isNewSession||threadUnavailable||ot||settings?.isLoading===!0||nt||Rt',
+      'cn=Rt||settings?.isLoading===!0||ot||nt||threadUnavailable||sessionPending&&isNewSession||$e||ye')
+    .replaceAll('`','"');
+  const runtime=createCodexProviderQuotaRuntime(true);
+  const patched=rewriteCodexProviderQuota(rearranged,"app://-/assets/renamed-renderer.js");
+  assert.ok(patched);
+  const composer=vm.runInNewContext(patched+';h7',{g7:{useState:()=>[],useSyncExternalStore:(_,get)=>get()},__codexPanelProviderQuotaV1__:runtime});
+  assert.equal(composer({threadProvider:"custom"}).submit(),"hello");
+  for(const extra of [{threadProvider:""},{policy:true},{settings:{isLoading:true}},{host:"remote"},{threadProvider:"openai"}]){
+    assert.equal(composer({threadProvider:"custom",...extra}).submit(),false);
+  }
+  runtime.setEnabled(false);
+  assert.equal(composer({threadProvider:"custom"}).submit(),false);
+});
+
+test("module relocation rewrites syntax while leaving strings and comments untouched", () => {
+  const decoy='const text=\'from"./comment.js" import("./comment.js") import.meta.url\';/* from"./comment.js" */';
+  const patched=rewriteCodexProviderQuota('import "./shared.js";export {value} from "./other.js";'+decoy+currentSource,"app://-/assets/entry.js");
+  assert.ok(patched);
+  assert.ok(patched.includes(decoy));
+  assert.ok(patched.includes('import "app://-/assets/shared.js"'));
+  assert.ok(patched.includes('from "app://-/assets/other.js"'));
+  assert.equal(rewriteCodexProviderQuota(source,"app://-/assets/app-primary-aaee46b7f0ce.js"),null,"a historical filename does not authorize an unproved source shape");
+});
+
+test("split composer query subscriptions stay unconditional across quota and native blocker changes", () => {
+  const instrumented=splitSource.replace('const read=(atom,key)=>','const read=(atom,key)=>{reads.push(atom);return ').replace(':e.quota;',':e.quota};');
+  const patched=rewriteCodexProviderQuota(instrumented,"app://-/assets/composer.js",splitProviderSource);
+  assert.ok(patched);
+  const runtime=createCodexProviderQuotaRuntime(true),reads=[];
+  const composer=vm.runInNewContext(patched.replace(/^import[^;]+;/,"")+";composer",{
+    reads,panelQuotaTargetAtom:"target",panelQuotaConfigAtom:"config",panelQuotaProviderAtom:"provider",
+    React:{useState:()=>[],useSyncExternalStore:(_,get)=>get()},__codexPanelProviderQuotaV1__:runtime,
+  });
+  for(const options of [{disabled:true,quota:true},{policy:true,quota:true},{quota:false,workQuota:false},{quota:true,workQuota:true}]){
+    reads.length=0;
+    composer({...options,threadProvider:"custom"});
+    assert.deepEqual(reads,["host","quota","target","provider","config"]);
+  }
+  runtime.setEnabled(false);reads.length=0;composer({disabled:true});
+  assert.deepEqual(reads,["host","quota","target","provider","config"]);
 });

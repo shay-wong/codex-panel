@@ -284,8 +284,8 @@
       .codex-panel-phrases-repositories button { display: grid; gap: 3px; padding: 10px 12px; border: 0; border-radius: 8px; background: var(--color-token-bg-secondary, light-dark(#f8f8f8, #292929)); color: inherit; font: inherit; text-align: left; overflow-wrap: anywhere; }
       .codex-panel-phrases-repositories small { color: var(--color-token-text-secondary, GrayText); font-size: 11px; }
       .codex-panel-phrases-dialog label { display: block; margin: 18px 0 8px; }
-      .codex-panel-phrases-tabs { display: flex; gap: 20px; margin: 16px 0 12px; border-bottom: 1px solid var(--color-token-border, light-dark(#ddd, #444)); }
-      .codex-panel-phrases-tabs button { flex: 0 1 auto; min-width: 0; margin-bottom: -1px; padding: 8px 0 10px; overflow: hidden; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--color-token-text-secondary, GrayText); font: inherit; white-space: nowrap; text-overflow: ellipsis; }
+      .codex-panel-phrases-tabs { display: flex; gap: 20px; margin: 16px 0 12px; overflow-x: auto; border-bottom: 1px solid var(--color-token-border, light-dark(#ddd, #444)); }
+      .codex-panel-phrases-tabs button { flex: 0 0 auto; max-width: 240px; min-width: 0; margin-bottom: -1px; padding: 8px 0 10px; overflow: hidden; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--color-token-text-secondary, GrayText); font: inherit; white-space: nowrap; text-overflow: ellipsis; }
       .codex-panel-phrases-tabs button[aria-selected="true"] { border-bottom-color: var(--color-token-foreground, CanvasText); color: var(--color-token-foreground, CanvasText); }
       .codex-panel-phrases-editor { box-sizing: border-box; min-height: 210px; max-height: 40vh; overflow-y: auto; padding: 12px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 10px; line-height: 1.9; }
       .codex-panel-phrases-editor > .ProseMirror { min-height: 184px; outline: none; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -725,25 +725,31 @@
     if (!nativeDesktopServicesPromise) {
       nativeDesktopServicesPromise = (async () => {
         const runtime = window.__codexPanelRspack__;
-        const module = runtime?.findModule(["setAppHost", "setAppServices", "appServices:"]);
-        const services = module && runtime.require(module.id).appServices;
-        if (services?.projectCatalog) return services;
+        const reference = runtime?.nativeServices?.desktopServices;
+        const isService = value => typeof value?.projectCatalog?.readSelection === "function"
+          && typeof value.projectCatalog?.readLocalProjects === "function"
+          && typeof value.projectCatalog?.readRemoteProjects === "function";
+        const serviceFromExports = exports => [exports?.appServices, exports, ...Object.values(exports ?? {})].find(isService);
+        if (reference) {
+          const module = await runtime.loadModule(reference.id);
+          const services = module[reference.exportName];
+          if (isService(services)) return services;
+        }
+        const cached = Object.values(runtime?.require?.c ?? {})
+          .map(module => serviceFromExports(module?.exports)).find(Boolean);
+        if (cached) return cached;
         const urls = new Set([
-          ...performance.getEntriesByType("resource").map((entry) => entry.name),
-          ...Array.from(document.querySelectorAll('script[src],link[rel="modulepreload"][href]'))
+          ...Array.from(document.querySelectorAll('script[type="module"][src],link[rel="modulepreload"][href]'))
             .map((node) => node.src || node.href),
         ]);
         const current = new URL(location.href);
         for (const url of urls) {
           const parsed = new URL(url, location.href);
-          if (parsed.protocol !== current.protocol || parsed.host !== current.host || !/\/app-shared-[\w-]+\.js$/.test(parsed.pathname)) continue;
-          const module = await import(url);
-          const service = Object.values(module).find((value) => (
-            value && Object.hasOwn(value, "projectCatalog")
-            && typeof value.projectCatalog?.readSelection === "function"
-            && typeof value.projectCatalog?.readLocalProjects === "function"
-            && typeof value.projectCatalog?.readRemoteProjects === "function"
-          ));
+          if (parsed.protocol !== current.protocol || parsed.host !== current.host) continue;
+          let module;
+          try { module = await import(url); } catch { continue; }
+          const service = serviceFromExports(module) ?? Object.values(module.__webpack_require__?.c ?? {})
+            .map(cached => serviceFromExports(cached?.exports)).find(Boolean);
           if (service) return service;
         }
         return null;
@@ -3034,6 +3040,7 @@
         }));
         reset.hidden = !tabs.dataset.projectId;
         dialog.querySelector('[role="alert"]').textContent = "";
+        tab.scrollIntoView({ block: "nearest", inline: "nearest" });
       });
       tabs.addEventListener("keydown", event => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -3234,11 +3241,12 @@
         button.append(name, detail);
         button.addEventListener("click", () => {
           const tabs = quickPhrasesDialog.querySelector('[role="tablist"]');
-          let tab = tabs.querySelector('[data-other-repository]');
+          let tab = Array.from(tabs.querySelectorAll('[role="tab"]'))
+            .find(tab => tab.dataset.projectId === project.id);
           if (!tab) {
             tab = document.createElement("button");
             tab.type = "button";
-            tab.id = "codex-panel-phrases-tab-other";
+            tab.id = `codex-panel-phrases-tab-other-${encodeURIComponent(project.id)}`;
             tab.className = "cursor-interaction";
             tab.setAttribute("role", "tab");
             tab.setAttribute("aria-controls", "codex-panel-phrases-input");

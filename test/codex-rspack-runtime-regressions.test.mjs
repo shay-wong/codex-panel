@@ -3,16 +3,11 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { rewriteRspackDot, rewriteRspackUltrafast } from '../scripts/codex-rspack-capabilities.mjs';
 import { rewriteRspackQuota } from '../scripts/codex-rspack-quota.mjs';
+import { rspackSourceContext } from '../scripts/codex-rspack-source.mjs';
 
 function context(sources) {
-  return {
-    moduleSource: id => sources[id] ?? null,
-    findModule(markers) {
-      const terms = Array.isArray(markers) ? markers : [markers];
-      const found = Object.entries(sources).filter(([, source]) => terms.every(term => source.includes(term)));
-      return found.length === 1 ? { id: found[0][0], source: found[0][1] } : null;
-    },
-  };
+  const values = { target: 'function(){}', config: 'function(){}', provider: 'function(){}', ...sources };
+  return rspackSourceContext(new Map(Object.entries(values).map(([id, source]) => [id, { id, source }])));
 }
 
 function execute(source, modules, globals = {}) {
@@ -45,6 +40,7 @@ test('Dot reads the native scalar signal without entering the family-key branch'
   const source = 'function(module,exports,load){load.d(exports,{capability:()=>capability});var reactive=load("reactive"),scope=load("scope");const a="Duplicate capability name:",b="Explicit-host capability requires hostId:";let definitions={orbit:{},"orbit.navigation":{},other:{}},capability=(0,reactive.family)(scope.value,(request,{get:read})=>{var unused;let config=definitions[request.name];if(config==null)return{isLoading:false,isError:false,isCapable:false};return{isLoading:false,isError:false,isCapable:false}})}';
   let enabled = true;
   const { capability } = execute(rewriteRspackDot(source, context(sources)), {
+    state: { value: signal },
     reactive: { signal, family: (_scope, read) => request => read(request, { get: nativeGet }) },
     scope: { value: {} },
   }, { __codexPanelDotEntryV1__: { getSnapshot: () => enabled, subscribe() {} } });

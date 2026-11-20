@@ -9,6 +9,39 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("changes the quota restriction preference only through its switch", async () => {
+  vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  let quotaFix = false;
+  const invoke = vi.fn(async (command: string, args?: { key: string; enabled: boolean }) => {
+    if (command === "launcher_ui_state") return {
+      snapshot: { phase: "waiting", childPid: 1 }, preferences: { customProviderQuotaFix: quotaFix },
+      dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
+    };
+    if (command === "set_launcher_preference") return { customProviderQuotaFix: quotaFix = args!.enabled };
+    throw new Error(command);
+  });
+  vi.stubGlobal("__TAURI__", { core: { invoke }, event: { listen: async () => () => {} } });
+  render(<Theme><App /></Theme>);
+  await act(async () => {});
+  fireEvent.mouseDown(screen.getByRole("tab", { name: /偏好设置/ }), { button: 0, ctrlKey: false });
+  fireEvent.mouseDown(screen.getByRole("tab", { name: /模型与高级/ }), { button: 0, ctrlKey: false });
+  const toggle = screen.getByRole("switch", { name: "移除账号额度不足时 API 发送限制" });
+  const row = toggle.closest(".preference-row")!;
+  const saves = () => invoke.mock.calls.filter(([command]) => command === "set_launcher_preference");
+  for (const target of [within(row as HTMLElement).getByText("移除账号额度不足时 API 发送限制"), document.getElementById("customProviderQuotaFixDetail")!, row]) {
+    await act(async () => { fireEvent.click(target); });
+  }
+  expect(saves()).toHaveLength(0);
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
+  expect(toggle.getAttribute("aria-describedby")).toBe("customProviderQuotaFixDetail");
+  toggle.focus();
+  expect(document.activeElement).toBe(toggle);
+  await act(async () => { fireEvent.click(toggle); });
+  expect(saves()).toEqual([["set_launcher_preference", { key: "customProviderQuotaFix", enabled: true }]]);
+  expect(toggle.getAttribute("aria-checked")).toBe("true");
+});
+
 it("keeps launcher feedback, live status and global preferences working through the native bridge", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));

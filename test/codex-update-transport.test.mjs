@@ -86,6 +86,7 @@ test('system network errors show a short message and retain the original diagnos
   const log = t.mock.method(console, 'error', () => {});
   await assert.rejects(downloadCodexFile({ url: `${baseURL}/metadata`, destination: path.join(root, 'network-failed') }, { helperPath: failingHelper }), {
     message: '网络连接失败，请检查网络或代理后重试',
+    retryable: true,
   });
   assert.equal(log.mock.callCount(), 1);
   assert.equal(log.mock.calls[0].arguments[1], detail);

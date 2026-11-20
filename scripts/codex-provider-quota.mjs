@@ -1,73 +1,119 @@
-// Identify the native custom-provider composer by its source structure.
+// Resolve native ESM adapters through syntax and bindings, independent of bundle names.
 import { readFile } from "node:fs/promises";
 import { watch } from "node:fs";
 import path from "node:path";
+import { sourceAst, property, propertyName, propertyValue, unwrap, isFunction, applyEdits } from "./codex-source-ast.mjs";
 
-// Keep the previously verified build as a fallback for its older source shape.
-export const CODEX_PROVIDER_QUOTA_ASSET = "app-primary-aaee46b7f0ce.js";
-const identifier = "[A-Za-z_$][\\w$]*";
-const escapePattern = value => value.replaceAll("$", "\\$");
+export function esmFunction(ast, node) {
+  for (let current = node; current; current = ast.parent(current)) if (isFunction(current)) return current;
+  return null;
+}
 
-function composerSignature(source, sourceUrl) {
-  const functions = [...source.matchAll(/function [\w$]+\([^)]*\)\{/g)];
-  const composers = functions.map((entry, index) => ({
-    entry: entry[0],
-    body: source.slice(entry.index, functions[index + 1]?.index),
-  })).filter(({body}) => body.includes('"data-codex-composer-root"') && body.includes('`misalignmentPolicyViolation`'));
-  if (composers.length === 1) {
-    const {entry, body} = composers[0];
-    const gates = [...body.matchAll(new RegExp(`(${identifier})=(${identifier})\\|\\|(${identifier})\\|\\|((?:${identifier}&&${identifier}\\|\\|${identifier}\\|\\|)?)(${identifier})(\\|\\|${identifier}\\?\\.isLoading===!0)?\\|\\|(${identifier})\\|\\|(${identifier})(?=[,;])`, "g"))]
-      .filter(match => body.includes(`submitDisabled:${match[1]},`)
-        && body.includes(`${match[5]}=`) && body.includes('codexErrorInfo===`misalignmentPolicyViolation`'));
-    const readers = [...source.matchAll(/let\{cwd:([\w$]+),hostId:([\w$]+)\}=([\w$]+)\.get\(([\w$]+),([\w$]+)\);if\(\2!==`local`\)return null;let\{data:([\w$]+)\}=\3\.get\(([\w$]+),\{cwd:\1,hostId:\2\}\);return \6==null\|\|\(\3\.get\(([\w$]+),\5\)\?\?\6\.model_provider\?\?`openai`\)!==`openai`/g)];
-    const react = body.match(/\(0,([\w$]+)\.useState\)/)?.[1];
-    if (gates.length === 1 && readers.length === 1 && react) {
-      const gate = gates[0], reader = readers[0];
-      const host = body.match(new RegExp(`${escapePattern(gate[8])}=${identifier}\\(${identifier}\\)&&(${identifier})===\x60local\x60`))?.[1];
-      const thread = host && body.match(new RegExp(`${escapePattern(host)}=${identifier}\\(${identifier},(${identifier})\\)`))?.[1];
-      const stores = thread ? [...new Set([...body.matchAll(new RegExp(`(${identifier})\\.get\\(${identifier},${escapePattern(thread)}\\)`, "g"))].map(match => match[1]))] : [];
-      const hostQuota = host && body.includes(`${gate[7]}=`) && new RegExp(`${escapePattern(gate[7])}=${identifier}\\(${identifier},${escapePattern(host)}\\)`).test(body);
-      const policy = new RegExp(`${escapePattern(gate[5])}=${identifier}===\x60failed\x60&&${identifier}\\?\\.codexErrorInfo===\x60misalignmentPolicyViolation\x60`).test(body);
-      if (hostQuota && policy && thread && stores.length === 1) {
-        const blockers = `${gate[2]}||${gate[3]}||${gate[4]}${gate[5]}${gate[6] ?? ""}`;
-        return {entry, react, gate: gate[0], blockers, quotas: gate.slice(7, 9).join("||"), host, thread, store: stores[0], target: reader[4], provider: reader[8], config: reader[7]};
+const ownedNodeCache = new WeakMap();
+
+export function esmOwnNodes(ast, fn, predicate) {
+  let groups = ownedNodeCache.get(ast);
+  if (!groups) {
+    groups = new Map();
+    for (const node of ast.nodes) {
+      const owner = esmFunction(ast, node);
+      if (!groups.has(owner)) groups.set(owner, []);
+      groups.get(owner).push(node);
+    }
+    ownedNodeCache.set(ast, groups);
+  }
+  return (groups.get(fn) ?? []).filter(predicate);
+}
+
+export function esmSameBinding(ast, left, right) {
+  left = unwrap(left); right = unwrap(right);
+  if (left?.type !== "Identifier" || right?.type !== "Identifier") return false;
+  const binding = ast.binding(left);
+  return binding ? binding === ast.binding(right) : left.name === right.name;
+}
+
+const literal = (node, value) => unwrap(node)?.value === value
+  || (unwrap(node)?.type === "TemplateLiteral" && unwrap(node).expressions.length === 0 && unwrap(node).quasis[0].value.cooked === value);
+const callNamed = (node, name) => node?.type === "CallExpression" && propertyName(unwrap(node.callee)) === name;
+const orTerms = node => node?.type === "LogicalExpression" && node.operator === "||"
+  ? [...orTerms(node.left), ...orTerms(node.right)] : [node];
+
+// Both native consumers expose the provider/config relationship even when their local names change.
+export function esmProviderReader(ast, { store = true } = {}) {
+  const matches = [];
+  for (const fn of ast.all(isFunction)) {
+    const providerMembers = esmOwnNodes(ast, fn, node => node.type === "MemberExpression" && propertyName(node) === "model_provider");
+    if (!providerMembers.length || !esmOwnNodes(ast, fn, node => literal(node, "openai")).length) continue;
+    const calls = esmOwnNodes(ast, fn, node => node.type === "CallExpression");
+    if (store) {
+      for (const targetDecl of esmOwnNodes(ast, fn, node => node.type === "VariableDeclarator" && node.id.type === "ObjectPattern")) {
+        const cwd = propertyValue(targetDecl.id, "cwd"), host = propertyValue(targetDecl.id, "hostId"), targetCall = unwrap(targetDecl.init);
+        if (!cwd || !host || !callNamed(targetCall, "get") || targetCall.arguments.length !== 2) continue;
+        if (!esmOwnNodes(ast, fn, node => node.type === "BinaryExpression" && ["!==", "!=", "===", "=="].includes(node.operator)
+          && ((esmSameBinding(ast, node.left, host) && literal(node.right, "local")) || (esmSameBinding(ast, node.right, host) && literal(node.left, "local")))).length) continue;
+        const configCalls = calls.filter(call => callNamed(call, "get") && esmSameBinding(ast, call.callee.object, targetCall.callee.object)
+          && esmSameBinding(ast, propertyValue(call.arguments[1], "cwd"), cwd) && esmSameBinding(ast, propertyValue(call.arguments[1], "hostId"), host));
+        const providers = calls.filter(call => call !== targetCall && callNamed(call, "get")
+          && esmSameBinding(ast, call.callee.object, targetCall.callee.object) && esmSameBinding(ast, call.arguments[1], targetCall.arguments[1]));
+        if (configCalls.length === 1 && providers.length === 1) matches.push({
+          fn, target: targetCall.arguments[0], config: configCalls[0].arguments[0], provider: providers[0].arguments[0],
+        });
+      }
+    } else {
+      for (const member of providerMembers) {
+        const data = ast.value(member.object);
+        if (data?.type !== "MemberExpression" || propertyName(data) !== "data") continue;
+        const config = unwrap(data.object);
+        if (config?.type !== "CallExpression" || !property(config.arguments[1], "cwd") || !property(config.arguments[1], "hostId")) continue;
+        const providers = calls.filter(call => call !== config && esmSameBinding(ast, call.callee, config.callee)
+          && call.arguments.length === 2 && !property(call.arguments[1], "cwd"));
+        if (providers.length === 1) matches.push({ fn, config: config.arguments[0], provider: providers[0].arguments[0] });
       }
     }
   }
-  if ((!sourceUrl || new URL(sourceUrl).pathname.endsWith("/" + CODEX_PROVIDER_QUOTA_ASSET)) && source.includes("function m7(e){")) {
-    return {entry: "function m7(e){", react: "h7", gate: "cn=ye||$e||ot||nt||Rt", blockers: "ye||$e||ot", quotas: "nt||Rt", host: "et", thread: "Qe", store: "Me", target: "tv", provider: "zl", config: "Hf"};
-  }
-  return null;
+  return matches.length === 1 ? matches[0] : null;
 }
-// 新版将发送门控拆到独立模块；provider atom 仍从原生 primary 的读取器解析。
-function splitComposerSignature(source, providerSource, sourceUrl) {
-  if (!/\/codex-composer-adapter-[\w-]+\.js$/.test(new URL(sourceUrl).pathname)) return null;
-  const readers = [...providerSource.matchAll(/let\{cwd:([\w$]+),hostId:([\w$]+)\}=([\w$]+)\.get\(([\w$]+),([\w$]+)\);if\(\2!==`local`\)return null;let\{data:([\w$]+)\}=\3\.get\(([\w$]+),\{cwd:\1,hostId:\2\}\);return \6==null\|\|\(\3\.get\(([\w$]+),\5\)\?\?\6\.model_provider\?\?`openai`\)!==`openai`/g)];
-  const gates = [...source.matchAll(new RegExp(`let (${identifier})=([^;]+?)\\|\\|(${identifier})\\|\\|(${identifier}),`, "g"))]
-    .filter(match => source.includes(`submitDisabled:${match[1]},`) && match[2].includes("?.isLoading===!0"));
-  if (readers.length !== 1 || gates.length !== 1) return null;
-  const reader = readers[0], gate = gates[0];
-  const workQuota = source.match(new RegExp(`${escapePattern(gate[4])}=(${identifier})\\((${identifier})===\x60local\x60&&${identifier}\\)`));
-  if (!workQuota) return null;
-  const host = workQuota[2];
-  const context = source.match(new RegExp(`${escapePattern(host)}=(${identifier})\\(${identifier},(${identifier})\\)`));
-  if (!context || !new RegExp(`${escapePattern(gate[3])}=${escapePattern(context[1])}\\(${identifier},${escapePattern(host)}\\)`).test(source)) return null;
-  const policy = source.match(new RegExp(`(${identifier})=${identifier}===\x60failed\x60&&${identifier}\\?\\.codexErrorInfo===\x60misalignmentPolicyViolation\x60`));
-  if (!policy || !gate[2].split("||").includes(policy[1])) return null;
-  const functions = [...source.matchAll(/function [\w$]+\([^)]*\)\{/g)];
-  const containing = functions.findLast(entry => entry.index < gate.index);
-  const body = source.slice(containing?.index, gate.index);
-  const react = body.match(/\(0,([\w$]+)\.useState\)/)?.[1];
-  if (!react) return null;
-  const imports = [...providerSource.matchAll(/import\{([^}]+)\}from["`]([^"`]+)["`]/g)];
-  const atoms = [reader[4], reader[7], reader[8]].map(local => {
-    for (const entry of imports) {
-      const match = entry[1].match(new RegExp(`(?:^|,)(${identifier}) as ${escapePattern(local)}(?:,|$)`));
-      if (match) return { name: match[1], url: new URL(entry[2], sourceUrl).href };
+
+function composerSignature(ast) {
+  const candidates = [];
+  for (const prop of ast.all(node => node.type === "Property" && propertyName(node) === "submitDisabled")) {
+    const ref = unwrap(prop.value), binding = ref?.type === "Identifier" ? ast.binding(ref) : null;
+    const fn = esmFunction(ast, prop), init = binding?.init;
+    if (!fn || init?.type !== "LogicalExpression" || init.operator !== "||") continue;
+    const terms = orTerms(init);
+    if (!terms.some(term => {
+      const value = ast.value(term);
+      return value && ast.find(node => node.type === "MemberExpression" && propertyName(node) === "codexErrorInfo", value)
+        && ast.find(node => literal(node, "misalignmentPolicyViolation"), value);
+    })) continue;
+    const localQuotas = terms.map(term => ({term, value: ast.value(term)})).filter(({value}) => value && ast.all(node =>
+      node.type === "BinaryExpression" && ["===", "=="].includes(node.operator)
+      && (literal(node.left, "local") || literal(node.right, "local")), value).length);
+    for (const {term: work, value} of localQuotas) {
+      const local = ast.find(node => node.type === "BinaryExpression" && ["===", "=="].includes(node.operator)
+        && (literal(node.left, "local") || literal(node.right, "local")), value);
+      const host = literal(local.left, "local") ? local.right : local.left, hostCall = ast.value(host);
+      if (hostCall?.type !== "CallExpression" || hostCall.arguments.length !== 2 || !ast.find(node => node.type === "CallExpression", value)) continue;
+      const quotas = terms.filter(term => {
+        const call = ast.value(term);
+        return term !== work && call?.type === "CallExpression" && call.arguments.length === 2
+          && esmSameBinding(ast, call.callee, hostCall.callee) && esmSameBinding(ast, call.arguments[1], host);
+      });
+      const hooks = esmOwnNodes(ast, fn, node => callNamed(node, "useState") || callNamed(node, "useSyncExternalStore"));
+      const react = hooks[0] && unwrap(hooks[0].callee).object;
+      if (quotas.length === 1 && react) candidates.push({fn, binding, init, terms, quota: quotas[0], work, host, hostCall, react});
     }
-  });
-  if (atoms.some(atom => !atom) || new Set(atoms.map(atom => atom.url)).size !== 1) return null;
-  return { gate, host, hook: context[1], thread: context[2], react, atoms };
+  }
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function importedAtom(ast, node, sourceUrl) {
+  const binding = ast.binding(node), declaration = binding?.declaration;
+  if (declaration?.type !== "ImportSpecifier") return null;
+  const imported = declaration.imported.name ?? declaration.imported.value;
+  const statement = ast.parent(declaration);
+  if (statement?.type !== "ImportDeclaration") return null;
+  return {name: imported, url: new URL(statement.source.value, sourceUrl).href};
 }
 
 const appliedMessage = "Panel custom-provider quota fix: native module executed.";
@@ -100,98 +146,161 @@ export function watchCodexProviderQuotaPreferences(preferencesFile, onChange) {
   });
 }
 
-export function rewriteCodexProviderQuota(source, sourceUrl, providerSource = source) {
-  const split = sourceUrl && splitComposerSignature(source, providerSource, sourceUrl);
-  if (split) {
-    const { gate, host, hook, thread, react, atoms } = split;
-    const names = ["panelQuotaTargetAtom", "panelQuotaConfigAtom", "panelQuotaProviderAtom"];
-    const importLine = `import {${atoms.map((atom, index) => `${atom.name} as ${names[index]}`).join(",")}} from ${JSON.stringify(atoms[0].url)};`;
-    const read = `const panelQuotaEnabled=(0,${react}.useSyncExternalStore)(globalThis.__codexPanelProviderQuotaV1__.subscribe,globalThis.__codexPanelProviderQuotaV1__.getSnapshot);const panelQuotaTarget=${hook}(panelQuotaTargetAtom,${thread});const panelQuotaThreadProvider=${hook}(panelQuotaProviderAtom,${thread});const panelQuotaConfig=${hook}(panelQuotaConfigAtom,panelQuotaTarget);const panelQuotaProvider=panelQuotaThreadProvider??panelQuotaConfig.data?.model_provider;`;
-    const custom = `panelQuotaEnabled&&${host}==="local"&&typeof panelQuotaProvider==="string"&&panelQuotaProvider!==""&&panelQuotaProvider!=="openai"`;
-    source = importLine + source.replace(gate[0], `${read}let ${gate[1]}=${gate[2]}||((${gate[3]}||${gate[4]})&&!(${custom})),`);
-    return absoluteModuleImports(source, sourceUrl);
+export function rewriteCodexProviderQuota(source, sourceUrl, providerSource = source, providerUrl = sourceUrl) {
+  try {
+    const ast = sourceAst(source), signature = composerSignature(ast);
+    const providerAst = providerSource === source ? ast : sourceAst(providerSource);
+    const reader = esmProviderReader(providerAst);
+    if (!signature || !reader) return null;
+    const {fn, init, terms, quota, work, host, hostCall, react} = signature;
+    const thread = hostCall.arguments[1];
+    const runtime = "globalThis.__codexPanelProviderQuotaV1__";
+    const enabled = `const panelQuotaEnabled=(0,${ast.text(react)}.useSyncExternalStore)(${runtime}.subscribe,${runtime}.getSnapshot);`;
+    const blockers = terms.filter(term => term !== quota && term !== work).map(term => ast.text(term));
+    const quotas = `${ast.text(quota)}||${ast.text(work)}`;
+    let imports = "", read, provider, beforeGate = "";
+    if (providerSource === source) {
+      const stores = esmOwnNodes(ast, fn, node => callNamed(node, "get") && esmSameBinding(ast, node.arguments[1], thread))
+        .map(call => call.callee.object);
+      const store = stores[0];
+      if (!store || stores.some(candidate => !esmSameBinding(ast, store, candidate))) return null;
+      read = `const panelQuotaTarget=${ast.text(store)}.get(${ast.text(reader.target)},${ast.text(thread)});const panelQuotaProvider=${ast.text(store)}.get(${ast.text(reader.provider)},${ast.text(thread)})??${ast.text(store)}.get(${ast.text(reader.config)},panelQuotaTarget).data?.model_provider;`;
+      provider = `(()=>{${read}return ${ast.text(host)}==="local"&&typeof panelQuotaProvider==="string"&&panelQuotaProvider!==""&&panelQuotaProvider!=="openai"})()`;
+    } else {
+      const atoms = [reader.target, reader.config, reader.provider].map(node => importedAtom(providerAst, node, providerUrl));
+      if (atoms.some(atom => !atom) || new Set(atoms.map(atom => atom.url)).size !== 1) return null;
+      const names = ["panelQuotaTargetAtom", "panelQuotaConfigAtom", "panelQuotaProviderAtom"];
+      imports = `import {${atoms.map((atom, index) => `${atom.name} as ${names[index]}`).join(",")}} from ${JSON.stringify(atoms[0].url)};`;
+      read = `const panelQuotaTarget=${ast.text(hostCall.callee)}(panelQuotaTargetAtom,${ast.text(thread)});const panelQuotaThreadProvider=${ast.text(hostCall.callee)}(panelQuotaProviderAtom,${ast.text(thread)});const panelQuotaConfig=${ast.text(hostCall.callee)}(panelQuotaConfigAtom,panelQuotaTarget);const panelQuotaProvider=panelQuotaThreadProvider??panelQuotaConfig.data?.model_provider;`;
+      beforeGate = read;
+      provider = `${ast.text(host)}==="local"&&typeof panelQuotaProvider==="string"&&panelQuotaProvider!==""&&panelQuotaProvider!=="openai"`;
+    }
+    const gate = [...blockers, `((${quotas})&&!(panelQuotaEnabled&&${provider}))`].join("||");
+    const patched = imports + applyEdits(source, [
+      {start: fn.body.start + 1, end: fn.body.start + 1, text: enabled},
+      // Native query hooks must execute even when another submit blocker is already true.
+      {start: init.start, end: init.end, text: beforeGate ? `(()=>{${beforeGate}return ${gate}})()` : gate},
+    ]);
+    return sourceUrl ? absoluteModuleImports(patched, sourceUrl) : patched;
+  } catch { return null; }
+}
+
+export function absoluteModuleImports(source, sourceUrl) {
+  if (!sourceUrl) return source;
+  const ast = sourceAst(source), edits = [];
+  for (const node of ast.nodes) {
+    const specifier = node.type === "ImportDeclaration" || node.type === "ExportNamedDeclaration" || node.type === "ExportAllDeclaration"
+      ? node.source : node.type === "ImportExpression" ? node.source : null;
+    const value = specifier?.value ?? (specifier?.type === "TemplateLiteral" && specifier.expressions.length === 0 ? specifier.quasis[0].value.cooked : null);
+    if (typeof value === "string" && value.startsWith(".")) edits.push({start: specifier.start, end: specifier.end, text: JSON.stringify(new URL(value, sourceUrl).href)});
+    if (node.type === "MemberExpression" && propertyName(node) === "url" && node.object.type === "MetaProperty"
+      && node.object.meta.name === "import" && node.object.property.name === "meta") edits.push({start: node.start, end: node.end, text: JSON.stringify(sourceUrl)});
   }
-  const signature = composerSignature(source, sourceUrl);
-  if (!signature) return null;
-  const {entry, react, gate, blockers, quotas, host, thread, store, target, provider, config} = signature;
-  if (source.split(entry).length !== 2 || source.split(gate).length !== 2) return null;
-  const liveEntry = `${entry}const panelQuotaEnabled=(0,${react}.useSyncExternalStore)(globalThis.__codexPanelProviderQuotaV1__.subscribe,globalThis.__codexPanelProviderQuotaV1__.getSnapshot);`;
-  const replacement = `${gate.split("=")[0]}=${blockers}||((${quotas})&&!(panelQuotaEnabled&&(()=>{const target=${store}.get(${target},${thread});const provider=${store}.get(${provider},${thread})??${store}.get(${config},target).data?.model_provider;return ${host}===\x60local\x60&&typeof provider===\x60string\x60&&provider!==\x60openai\x60})()))`;
-  const patched = source.replace(entry, liveEntry).replace(gate, replacement);
-  if (!sourceUrl) return patched;
-  // The matched generated chunks use literal relative imports. Keep their
-  // targets and import.meta.url unchanged when the module itself moves to a blob.
-  return absoluteModuleImports(patched, sourceUrl);
+  return applyEdits(source, edits);
 }
 
-function absoluteModuleImports(source, sourceUrl) {
-  return source
-    .replace(/\bfrom(["'`])(\.\/?[^"'`\n]+)\1/g, (_, quote, specifier) => `from${JSON.stringify(new URL(specifier, sourceUrl).href)}`)
-    .replace(/\bimport\((["'`])(\.\/?[^"'`\n]+)\1\)/g, (_, quote, specifier) => `import(${JSON.stringify(new URL(specifier, sourceUrl).href)})`)
-    .replaceAll("import.meta.url", JSON.stringify(sourceUrl));
+export async function readNativeSourceEntries(cdp, expression, key = "url") {
+  const result = await cdp.send("Runtime.evaluate", {expression, awaitPromise: true, returnByValue: false});
+  if (result.exceptionDetails) throw Error("native source entries unreadable");
+  let loaded = result.result?.value;
+  const objectId = result.result?.objectId;
+  if (!Array.isArray(loaded) && objectId) {
+    loaded = [];
+    try {
+      const metadata = await cdp.send("Runtime.callFunctionOn", {objectId,
+        functionDeclaration:"function(key){return this.map(item=>({key:item[key],length:item.source.length}))}",
+        arguments:[{value:key}], returnByValue:true});
+      if (metadata.exceptionDetails || !Array.isArray(metadata.result?.value)) throw Error("native source metadata unreadable");
+      for (let index = 0; index < metadata.result.value.length; index++) {
+        const item = metadata.result.value[index];
+        if (typeof item.key !== "string" || !Number.isSafeInteger(item.length) || item.length < 0) throw Error("native source metadata unreadable");
+        let source = "";
+        for (let start = 0; start < item.length; start += 500_000) {
+          const chunk = await cdp.send("Runtime.callFunctionOn", {objectId,
+            functionDeclaration:"function(index,start){return this[index].source.slice(start,start+500000)}",
+            arguments:[{value:index},{value:start}],returnByValue:true});
+          if (chunk.exceptionDetails || typeof chunk.result?.value !== "string" || chunk.result.value.length !== Math.min(500_000,item.length-start)) throw Error("native source chunk unreadable");
+          source += chunk.result.value;
+        }
+        loaded.push({[key]:item.key,source});
+      }
+    } finally { await cdp.send("Runtime.releaseObject", {objectId}); }
+  }
+  return loaded;
 }
 
-export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report = console.error, modules = [], dotEntryPrepared = false, ultrafastPrepared = modules.length === 2) {
+// Fetch only discovered ESM URLs. Parsing imports on the host also handles renamed entry chunks.
+export async function readCodexEsmModules(cdp, modules = [], complete = () => false) {
+  const known = new Map(modules.map(module => [module.url, module]));
+  if (complete([...known.values()])) return [...known.values()];
+  const attempted = new Set(known.keys());
+  let requested = null;
+  for (;;) {
+    const loaded = await readNativeSourceEntries(cdp, `(async()=>{
+        const explicit=${JSON.stringify(requested)},ignored=new Set(${JSON.stringify([...known.keys()])});
+        const candidates=explicit??[...performance.getEntriesByType("resource").map(entry=>entry.name),
+          ...[...document.querySelectorAll('script[type="importmap"]')].flatMap(node=>{try{return Object.keys(JSON.parse(node.textContent).imports??{})}catch{return []}}),
+          ...[...document.querySelectorAll('script[src],link[rel="modulepreload"][href]')].map(node=>node.src||node.href)];
+        const urls=[...new Set(candidates.filter(Boolean).map(url=>new URL(url,location.href).href))].filter(url=>{const parsed=new URL(url);return !ignored.has(url)&&!["blob:","data:"].includes(parsed.protocol)&&parsed.pathname.endsWith(".js")});
+        return (await Promise.all(urls.map(async url=>{try{const response=await fetch(url,{cache:"no-store"});return response.ok?{url,source:await response.text()}:null}catch{return null}}))).filter(Boolean);
+      })()`);
+    if (!Array.isArray(loaded)) throw Error("native ESM modules unreadable");
+    for (const module of loaded) {
+      attempted.add(module.url);
+      if (!known.has(module.url)) known.set(module.url, module);
+    }
+    if (complete([...known.values()])) return [...known.values()];
+    const dependencies = [];
+    for (const module of known.values()) {
+      let ast;
+      try { ast = sourceAst(module.source); } catch { continue; }
+      for (const node of ast.nodes) {
+        const specifier = ["ImportDeclaration","ExportNamedDeclaration","ExportAllDeclaration","ImportExpression"].includes(node.type) ? node.source : null;
+        const value = specifier?.value ?? (specifier?.type === "TemplateLiteral" && specifier.expressions.length === 0 ? specifier.quasis[0].value.cooked : null);
+        if (typeof value !== "string" || !value.startsWith(".")) continue;
+        const url = new URL(value, module.url).href;
+        if (!attempted.has(url)) {attempted.add(url);dependencies.push(url);}
+      }
+    }
+    if (!dependencies.length) return [...known.values()];
+    requested = dependencies;
+  }
+}
+
+export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report = console.error, modules = [], dotEntryPrepared = false, ultrafastPrepared = modules.length > 0) {
   if (!preferencesFile) return "";
   try {
     let preferences = {};
-    try {
-      preferences = JSON.parse(await readFile(preferencesFile, "utf8"));
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
+    try { preferences = JSON.parse(await readFile(preferencesFile, "utf8")); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
     let replacements = modules;
     let quotaPrepared = false;
     let quotaModuleUrl = null;
     try {
-      const result = await cdp.send("Runtime.evaluate", {
-        expression: `(async () => {
-          const candidates = [...new Set([
-            ...performance.getEntriesByType("resource").map(entry => entry.name),
-            // 适配后的模块通过 blob 加载，资源列表可能不再包含原 URL；从已安装的映射找回当前模块。
-            ...[...document.querySelectorAll('script[type="importmap"]')].flatMap(node => {
-              try { return Object.keys(JSON.parse(node.textContent).imports ?? {}); }
-              catch { return []; }
-            }),
-            ...[...document.querySelectorAll("script[src],link[rel=modulepreload][href]")].map(node => node.src || node.href),
-          ].filter(url => /\\/app-primary-[\\w-]+\\.js$/.test(new URL(url, location.href).pathname)))];
-          if (candidates.length === 0) candidates.push(new URL(${JSON.stringify(`/assets/${CODEX_PROVIDER_QUOTA_ASSET}`)}, location.href).href);
-          for (const url of candidates) {
-            try {
-              const response = await fetch(url, { cache: "no-store" });
-              if (response.ok) {
-                const source = await response.text();
-                const adapterPath = source.match(/["'\x60](\\.\\/codex-composer-adapter-[\\w-]+\\.js)["'\x60]/)?.[1];
-                if (adapterPath) {
-                  const adapterUrl = new URL(adapterPath, url).href;
-                  const adapter = await fetch(adapterUrl, { cache: "no-store" });
-                  if (!adapter.ok) throw new Error("Native composer adapter unreadable");
-                  return { url: adapterUrl, source: await adapter.text(), providerSource: source };
-                }
-                return { url, source };
-              }
-            } catch {}
+      const prepare = entries => {
+        const prepared = [];
+        for (const module of entries) {
+          if (!module.source.includes("submitDisabled")) continue;
+          const direct = rewriteCodexProviderQuota(module.source, module.url);
+          if (direct) { prepared.push({url:module.url,source:direct}); continue; }
+          for (const provider of entries.filter(candidate => candidate !== module && candidate.source.includes("model_provider"))) {
+            const source = rewriteCodexProviderQuota(module.source, module.url, provider.source, provider.url);
+            if (source && !prepared.some(candidate => candidate.url === module.url && candidate.source === source)) prepared.push({url:module.url,source});
           }
-          throw new Error("No supported composer asset could be read");
-        })()`,
-        awaitPromise: true,
-        returnByValue: true,
-      });
-      if (result.exceptionDetails || typeof result.result?.value?.source !== "string") {
-        throw new Error("native composer source could not be read");
-      }
-      const { url, source, providerSource } = result.result.value;
-      const patched = rewriteCodexProviderQuota(modules.find(module => module.url === url)?.source ?? source, url, providerSource);
-      if (patched === null) throw new Error("unsupported composer source");
-      cdp.on("Runtime.consoleAPICalled", ({ args }) => {
-        if (args?.[0]?.value === appliedMessage) report(appliedMessage);
-      });
-      report(`Panel custom-provider quota module prepared for the next renderer load: ${url}`);
-      replacements = [...modules.filter(module => module.url !== url), {url, source: patched}];
+        }
+        return prepared;
+      };
+      const candidates = await readCodexEsmModules(cdp, modules, entries => prepare(entries).length === 1);
+      const prepared = prepare(candidates);
+      if (prepared.length !== 1) throw Error("unsupported or ambiguous native composer source");
+      const patched = prepared[0];
+      cdp.on("Runtime.consoleAPICalled", ({args}) => {if(args?.[0]?.value===appliedMessage)report(appliedMessage);});
+      report(`Panel custom-provider quota module prepared for the next renderer load: ${patched.url}`);
+      replacements = [...modules.filter(module => module.url !== patched.url), patched];
       quotaPrepared = true;
-      quotaModuleUrl = url;
+      quotaModuleUrl = patched.url;
     } catch (error) {
-      // 新版输入框不匹配时，Dot 等独立模块仍可安装，不能被额度适配连带禁用。
+      // An independent module remains installable if the composer structure changed.
       if (modules.length === 0) throw error;
       report(`Panel custom-provider quota fix unavailable: ${error.message}`);
     }

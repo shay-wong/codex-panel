@@ -1,6 +1,6 @@
 // Adapt native speed controls only for a known local custom provider.
-const id = "[A-Za-z_$][\\w$]*";
-const pattern = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+import { sourceAst, property, propertyName, propertyValue, unwrap, isFunction, applyEdits } from "./codex-source-ast.mjs";
+import { absoluteModuleImports, esmFunction, esmOwnNodes, esmSameBinding, esmProviderReader, readCodexEsmModules } from "./codex-provider-quota.mjs";
 
 export function customProviderUltrafastAccess(hostId, provider, access, model) {
   // 已支持的模型同时开放快速和超快；其他模型保留原生快速权限。
@@ -17,80 +17,106 @@ export function withUltrafastTier(model) {
   return missing.length ? { ...model, serviceTiers: [...(model.serviceTiers ?? []), ...missing] } : model;
 }
 
-function functions(source) {
-  const entries = [...source.matchAll(/function [\w$]+\([^)]*\)\{/g)];
-  return entries.map((entry, index) => ({ entry: entry[0], body: source.slice(entry.index, entries[index + 1]?.index) }));
+
+function settingsSignature(ast) {
+  const results = [];
+  for (const output of ast.all(node => node.type === "ObjectExpression" && property(node,"hasManagedNewThreadSettings") && property(node,"serviceTierSettings"))) {
+    const fn = esmFunction(ast,output);
+    if (!fn || !property(propertyValue(output,"serviceTierSettings"),"serviceTierForRequest")) continue;
+    const accesses = esmOwnNodes(ast,fn,node => node.type === "VariableDeclarator" && property(node.id,"serviceTierAccess"));
+    const selected = esmOwnNodes(ast,fn,node => node.type === "CallExpression" && propertyName(unwrap(node.arguments[0])) === "models"
+      && propertyName(unwrap(node.arguments[1])) === "model");
+    const contexts = esmOwnNodes(ast,fn,node => node.type === "MemberExpression" && propertyName(node) === "hostId")
+      .filter(member => {const value=ast.value(member.object);return value?.type === "CallExpression" && value.arguments.length === 1 && esmSameBinding(ast,value.arguments[0],fn.params[0]);});
+    const queries = esmOwnNodes(ast,fn,node => node.type === "CallExpression" && node.arguments.length === 2 && esmSameBinding(ast,node.arguments[1],fn.params[0]));
+    const hooks = esmOwnNodes(ast,fn,node => node.type === "CallExpression" && ["use","useState","useSyncExternalStore"].includes(propertyName(unwrap(node.callee))));
+    const context = contexts[0]?.object, query = queries[0]?.callee, react = hooks[0] && unwrap(hooks[0].callee).object;
+    const model = selected.length === 1 && ast.parent(selected[0]);
+    if (accesses.length !== 1 || selected.length !== 1 || model?.type !== "VariableDeclarator" || model.id.type !== "Identifier" || !context || !query || !react
+      || contexts.some(member=>!esmSameBinding(ast,member.object,context)) || queries.some(call=>!esmSameBinding(ast,call.callee,query))) continue;
+    const wrappers = ast.all(isFunction).filter(candidate => candidate !== fn && esmOwnNodes(ast,candidate,node => node.type === "CallExpression"
+      && node.callee.type === "Identifier" && esmSameBinding(ast,node.callee,fn.id)).length);
+    const wrapperMatches=[];
+    for(const wrapper of wrappers){
+      const patterns=esmOwnNodes(ast,wrapper,node=>node.type === "ObjectPattern" && property(node,"serviceTierAccess") && node.properties.some(item=>item.type === "RestElement"));
+      for(const pattern of patterns){
+        const rest=pattern.properties.find(item=>item.type === "RestElement").argument;
+        const outputs=esmOwnNodes(ast,wrapper,node=>node.type === "ObjectExpression" && property(node,"setServiceTier")
+          && node.properties.some(item=>item.type === "SpreadElement" && esmSameBinding(ast,item.argument,rest)));
+        if(outputs.length === 1)wrapperMatches.push({output:outputs[0],access:propertyValue(pattern,"serviceTierAccess")});
+      }
+    }
+    if(wrapperMatches.length === 1)results.push({fn,access:accesses[0],selected:selected[0],model:model.id,context,query,react,wrapper:wrapperMatches[0]});
+  }
+  return results.length === 1 ? results[0] : null;
+}
+
+function menuSignature(ast) {
+  const results=[];
+  for(const fn of ast.all(isFunction)){
+    if(!esmOwnNodes(ast,fn,node=>node.value === "composer.openModelPicker" || node.type === "TemplateLiteral" && node.quasis[0]?.value.cooked === "composer.openModelPicker").length)continue;
+    const settings=esmOwnNodes(ast,fn,node=>node.type === "VariableDeclarator" && property(node.id,"serviceTierSettings") && property(node.id,"setServiceTier"));
+    const access=esmOwnNodes(ast,fn,node=>node.type === "VariableDeclarator" && property(node.id,"serviceTierAccess"));
+    if(settings.length !== 1 || access.length !== 1)continue;
+    const setting=propertyValue(settings[0].id,"serviceTierSettings");
+    const selected=esmOwnNodes(ast,fn,node=>node.type === "VariableDeclarator" && node.init?.type === "MemberExpression"
+      && propertyName(node.init) === "selectedServiceTier" && esmSameBinding(ast,node.init.object,setting));
+    if(selected.length !== 1)continue;
+    const icons=esmOwnNodes(ast,fn,node=>node.type === "CallExpression" && node.arguments.length === 2 && esmSameBinding(ast,node.arguments[1],selected[0].id)
+      && ast.parent(node)?.type === "LogicalExpression" && ast.parent(node).operator === "&&");
+    if(icons.length === 1)results.push({settings:settings[0],access:access[0],selected:selected[0].id,setting,icon:icons[0]});
+  }
+  return results.length === 1 ? results[0] : null;
+}
+
+function rewriteSettings(source) {
+  const ast=sourceAst(source),signature=settingsSignature(ast),reader=esmProviderReader(ast,{store:false});
+  if(!signature || !reader)return null;
+  const {fn,access,selected,model,context,query,react,wrapper}=signature;
+  const runtime="globalThis.__codexPanelProviderUltrafastV1__",native=ast.text(access.init);
+  const provider=`const panelEnabled=(0,${ast.text(react)}.useSyncExternalStore)(${runtime}.subscribe,${runtime}.getSnapshot);const panelThreadProvider=${ast.text(query)}(${ast.text(reader.provider)},${ast.text(fn.params[0])});const panelConfig=${ast.text(query)}(${ast.text(reader.config)},${ast.text(context)});const panelProvider=panelThreadProvider??panelConfig.data?.model_provider;`;
+  const wrapped=`(()=>{const panelNative=${native};${provider}const panelAccess=panelEnabled?(${customProviderUltrafastAccess.toString()})(${ast.text(context)}.hostId,panelProvider,panelNative.serviceTierAccess,${ast.text(selected.arguments[1])}):panelNative.serviceTierAccess;panelCustomUltrafast=panelAccess!==panelNative.serviceTierAccess&&panelAccess.ultrafast;return {...panelNative,serviceTierAccess:panelAccess};})()`;
+  return applyEdits(source,[
+    {start:fn.body.start+1,end:fn.body.start+1,text:`let panelCustomUltrafast=false;const panelUltrafastModel=model=>panelCustomUltrafast?(${withUltrafastTier.toString()})(model):model;`},
+    {start:access.init.start,end:access.init.end,text:wrapped},
+    // Resolve tiers at each native model consumer, even when selection was hoisted before access.
+    ...ast.references(ast.binding(model)).map(node=>({start:node.start,end:node.end,text:`panelUltrafastModel(${ast.text(node)})`})),
+    {start:wrapper.output.start+1,end:wrapper.output.start+1,text:`serviceTierAccess:${ast.text(wrapper.access)},`},
+  ]);
+}
+
+function rewriteMenu(source) {
+  const ast=sourceAst(source),signature=menuSignature(ast);
+  if(!signature)return null;
+  const {settings,access,selected,setting,icon}=signature;
+  return applyEdits(source,[
+    {start:settings.id.start+1,end:settings.id.start+1,text:"serviceTierAccess:panelServiceTierAccess,"},
+    {start:access.init.start,end:access.init.end,text:`({...${ast.text(access.init)},serviceTierAccess:panelServiceTierAccess})`},
+    {start:icon.start,end:icon.end,text:`(${ast.text(selected)}==="ultrafast"&&${ast.text(setting)}.availableOptions.some(option=>option.value==="ultrafast")||${ast.text(icon)})`},
+  ]);
+}
+
+function rewriteParts(source) {
+  try {
+    const settings=rewriteSettings(source),menu=rewriteMenu(settings??source);
+    return {source:menu??settings,settings:settings!==null,menu:menu!==null};
+  }catch{return {source:null,settings:false,menu:false};}
 }
 
 export function rewriteCodexProviderUltrafast(source, sourceUrl) {
-  let patched;
-  if (/\/app-initial-[\w-]+\.js$/.test(new URL(sourceUrl).pathname)) {
-    const hooks = functions(source).filter(({ body }) => body.includes("serviceTierForRequest:") && body.includes("hasManagedNewThreadSettings:"));
-    const readers = [...source.matchAll(new RegExp(`let (${id})=(${id})\\((${id}),\\{hostId:(${id}),cwd:(${id})\\}\\)\\.data;return \\1==null\\|\\|\\(\\2\\((${id}),(${id})\\)\\?\\?\\1\\.model_provider\\?\\?\x60openai\x60\\)!==\x60openai\x60`, "g"))];
-    if (hooks.length !== 1 || readers.length !== 1) return null;
-    const { entry, body } = hooks[0], reader = readers[0];
-    const thread = entry.match(/\(([^,]+)/)?.[1];
-    const context = body.match(new RegExp(`(${id})=(${id})\\(${pattern(thread)}\\),(${id})=`));
-    const access = body.match(new RegExp(`let\\{serviceTierAccess:(${id})\\}=(${id})\\((${id})\\),`));
-    const query = body.match(new RegExp(`=(${id})\\(${id},${pattern(thread)}\\)`))?.[1];
-    const selected = body.match(new RegExp(`let (${id})=(${id})\\((${id})\\?\\.models,(${id})\\.model\\),`));
-    const react = body.match(/\(0,([\w$]+)\.use\)\(/)?.[1];
-    if (!context || !access || !query || !selected || !react) return null;
-    const accessName = access[1];
-    // Subscribe through the native query hook so changing project/provider also recomputes memoized settings.
-    const replacement = `${access[0].slice(0, -1)};const panelEnabled=(0,${react}.useSyncExternalStore)(globalThis.__codexPanelProviderUltrafastV1__.subscribe,globalThis.__codexPanelProviderUltrafastV1__.getSnapshot);const panelThreadProvider=${query}(${reader[6]},${thread});const panelConfig=${query}(${reader[3]},${context[1]});const panelProvider=panelThreadProvider??panelConfig.data?.model_provider;const panelAccess=panelEnabled?(${customProviderUltrafastAccess.toString()})(${context[1]}.hostId,panelProvider,${accessName},${selected[4]}.model):${accessName};const panelCustomUltrafast=panelAccess!==${accessName}&&panelAccess.ultrafast;${accessName}=panelAccess;let `;
-    const modelCall = `${selected[2]}(${selected[3]}?.models,${selected[4]}.model)`;
-    const nextBody = body.replace(access[0], replacement).replace(modelCall, `(panelCustomUltrafast?(${withUltrafastTier.toString()})(${modelCall}):${modelCall})`);
-    // OWi consumes the access for its setter; expose the same access to the menu as well.
-    const wrappers = functions(source).filter(({body: candidate}) => candidate !== body && candidate.includes(`${entry.match(/function ([\w$]+)/)[1]}(`) && candidate.includes("serviceTierAccess:"));
-    if (wrappers.length !== 1) return null;
-    const wrapper = wrappers[0].body;
-    const fields = wrapper.match(new RegExp(`\\(\\{serviceTierAccess:(${id}),\\.\\.\\.(${id})\\}=`));
-    if (!fields) return null;
-    const output = new RegExp(`\\{\\.\\.\\.${pattern(fields[2])},setServiceTier:(${id})\\}`);
-    if (!output.test(wrapper)) return null;
-    patched = source.replace(body, nextBody).replace(wrapper, wrapper.replace(output, `{...${fields[2]},serviceTierAccess:${fields[1]},setServiceTier:$1}`));
-  } else if (/\/app-primary-[\w-]+\.js$/.test(new URL(sourceUrl).pathname)) {
-    const menus = functions(source).filter(({body}) => body.includes("availableOptions.length>1") && body.includes("composer.openModelPicker"));
-    if (menus.length !== 1) return null;
-    const body = menus[0].body;
-    const settings = body.match(new RegExp(`\\{serviceTierSettings:(${id}),setServiceTier:(${id})\\}=(${id})\\(([^)]*)\\)`));
-    const access = body.match(new RegExp(`let\\{serviceTierAccess:(${id})\\}=${id}\\(${id}\\),`));
-    const selected = body.match(new RegExp(`(${id})=${settings ? pattern(settings[1]) : "(?!)"}\\.selectedServiceTier`));
-    const icon = selected && body.match(new RegExp(`&&(${id})\\((${id}),${pattern(selected[1])}\\),`));
-    if (!settings || !access || !icon) return null;
-    const next = body.replace(settings[0], settings[0].replace("{serviceTierSettings:", "{serviceTierAccess:panelServiceTierAccess,serviceTierSettings:"))
-      .replace(access[0], `let ${access[1]}=panelServiceTierAccess,`)
-      .replace(icon[0], `&&(${selected[1]}===\x60ultrafast\x60&&${settings[1]}.availableOptions.some(option=>option.value===\x60ultrafast\x60)||${icon[1]}(${icon[2]},${selected[1]})),`);
-    patched = source.replace(body, next);
-  } else return null;
-  return patched
-    .replace(/\bfrom(["'`])(\.\/?[^"'`\n]+)\1/g, (_, quote, specifier) => `from${JSON.stringify(new URL(specifier, sourceUrl).href)}`)
-    .replace(/\bimport\((["'`])(\.\/?[^"'`\n]+)\1\)/g, (_, quote, specifier) => `import(${JSON.stringify(new URL(specifier, sourceUrl).href)})`)
-    .replaceAll("import.meta.url", JSON.stringify(sourceUrl));
+  const result=rewriteParts(source);
+  return result.source===null?null:absoluteModuleImports(result.source,sourceUrl);
 }
 
 export async function prepareCodexProviderUltrafast(cdp, report = console.error) {
   try {
-    const result = await cdp.send("Runtime.evaluate", {
-      expression: `(async()=>{
-        const urls=[...new Set([
-          ...performance.getEntriesByType("resource").map(e=>e.name),
-          ...[...document.querySelectorAll('script[type="importmap"]')].flatMap(e=>{try{return Object.keys(JSON.parse(e.textContent).imports??{})}catch{return []}}),
-          ...[...document.querySelectorAll("script[src],link[rel=modulepreload][href]")].map(e=>e.src||e.href)
-        ])];
-        return Promise.all(["initial","primary"].map(async kind=>{
-          const url=urls.find(url=>new RegExp("/app-"+kind+"-[\\\\w-]+\\\\.js$").test(new URL(url,location.href).pathname));
-          if(!url)throw Error("Native speed module missing: "+kind);
-          const response=await fetch(url,{cache:"no-store"});
-          if(!response.ok)throw Error("Native speed module unreadable: "+kind);
-          return {url,source:await response.text()};
-        }));
-      })()`, awaitPromise: true, returnByValue: true,
+    const sources=await readCodexEsmModules(cdp,[],modules=>{
+      const parts=modules.map(module=>rewriteParts(module.source));
+      return parts.filter(part=>part.settings).length===1&&parts.filter(part=>part.menu).length===1;
     });
-    if (result.exceptionDetails || !Array.isArray(result.result?.value)) throw Error("native speed modules could not be read");
-    const modules = result.result.value.map(({url, source}) => ({url, source: rewriteCodexProviderUltrafast(source, url)}));
-    if (modules.length !== 2 || modules.some(module => module.source === null)) throw Error("unsupported native speed controls");
+    const parts=sources.map(module=>({...module,...rewriteParts(module.source)}));
+    if(parts.filter(part=>part.settings).length!==1||parts.filter(part=>part.menu).length!==1)throw Error("unsupported or ambiguous native speed controls");
+    const modules=parts.filter(part=>part.source!==null).map(({url,source})=>({url,source:absoluteModuleImports(source,url)}));
     report("Panel custom-provider Ultrafast modules prepared for the next renderer load.");
     return modules;
   } catch (error) {

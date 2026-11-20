@@ -4,32 +4,33 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
-import { downloadCodexUpdate, readCodexUpdateChannel, readCodexUpdateState, readCodexUpdateStatus } from '../scripts/codex-update.mjs';
+import { buildCodexUpdateBindings, downloadCodexUpdate, readCodexUpdateChannel, readCodexUpdateState, readCodexUpdateStatus, readRuntimeFactories, updateSubscriptionExport } from '../scripts/codex-update.mjs';
 
 test('reads cached update state when resource timings have been cleared', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'panel-update-state-'));
   try {
-    const entry = pathToFileURL(path.join(directory, 'index-fixture.js')).href;
-    const runtime = new URL('./app-runtime-fixture.js', entry).href;
-    const url = new URL('./initialize-app-host-services-fixture.js', entry).href;
+    const entry = pathToFileURL(path.join(directory, 'shell.js')).href;
+    const runtime = new URL('./renamed-bridge.js', entry).href;
+    const url = new URL('./renamed-state.js', entry).href;
     await writeFile(path.join(directory, 'package.json'), '{"type":"module"}');
-    const source = 'const listeners=new Set(),state={isUpdateReady:true,lifecycleState:"ready",downloadedUpdateAppBrand:"codex"};function subscribe(e){return listeners.add(e),state!=null&&e(state),()=>{listeners.delete(e)}}function stateChanged(){}export{subscribe as N}';
-    await writeFile(new URL(url), source);
-    const sources = new Map([[entry, 'import "./app-runtime-fixture.js";'], [runtime, 'import "./initialize-app-host-services-fixture.js";'], [url, source]]);
+    const source = 'export{subscribe as N,publish};function subscribe(callback){const stop=()=>listeners.delete(callback);listeners.add(callback);if(state!=null)callback(state);return stop;}function publish(value){state=value;for(const listener of listeners)listener(value)}let state=null;const listeners=new Set();export const unrelated=42;';
+    const bridge = 'import {publish} from "./renamed-state.js";const updater={stateChanged(value){publish(value)},getRestartBlockers(){return []}};updater.stateChanged({lifecycleState:"ready",downloadedUpdateAppBrand:"codex",isUpdateReady:true});export {N} from "./renamed-state.js";';
+    const sources = new Map([[entry, 'import "./renamed-bridge.js";'], [runtime, bridge], [url, source]]);
+    for (const [target,content] of sources) await writeFile(new URL(target),content);
     for (const resources of [[{ name: url }], []]) {
       const reads = [];
       const cdp = { send: async (_method, params) => {
-        const evaluate = new Function('performance', 'document', 'fetch', 'location', `return ${params.expression}`);
+        const evaluate = new Function('performance', 'document', 'fetch', 'location', 'globalThis', `return ${params.expression}`);
         const value = await evaluate(
           { getEntriesByType: () => resources },
-          { querySelectorAll: () => [{ src: entry }] },
+          { querySelectorAll: selector => selector.includes('importmap') ? [] : [{ src: entry }] },
           async target => { reads.push(target); assert.ok(sources.has(target)); return { ok: true, text: async () => sources.get(target) }; },
-          { href: entry },
+          { href: entry }, {},
         );
         return { result: { value } };
       } };
       assert.deepEqual(await readCodexUpdateState(cdp), { ready: true, downloading: false, progress: null });
-      assert.deepEqual(reads, resources.length ? [url] : [entry, runtime, url]);
+      assert.deepEqual(reads, resources.length ? [url, entry, runtime] : [entry, runtime, url]);
       reads.length = 0;
       assert.deepEqual(await readCodexUpdateState(cdp), { ready: true, downloading: false, progress: null });
       assert.deepEqual(reads, []);
@@ -45,8 +46,51 @@ test('does not offer installation for idle, offered-only or downloading updates'
   ]) assert.deepEqual(await readCodexUpdateState({ send: async () => ({ result: { value } }) }), { ready: false, downloading: value.lifecycleState === 'downloading', progress: null });
 });
 
+test('update subscription follows bindings across declaration and export ordering', () => {
+  const sources = [
+    'export {subscribe as changed}; const unused=1; const updater={getRestartBlockers(){return []},stateChanged(value){snapshot=value}};function subscribe(callback){const cleanup=()=>listeners.delete(callback);listeners.add(callback);if(snapshot)callback(snapshot);return cleanup} let snapshot=null; const listeners=new Set();export {unused};',
+    'const subscribers=new Set(); export const other=0; export function watch(listener){subscribers.add(listener);current!=null&&listener(current);return ()=>{subscribers.delete(listener)}} let current=null;const updater={stateChanged(next){current=next},getRestartBlockers(){return []}}',
+  ];
+  assert.equal(updateSubscriptionExport(sources[0]), 'changed');
+  assert.equal(updateSubscriptionExport(sources[1]), 'watch');
+  assert.throws(() => updateSubscriptionExport(sources[0].replace('listeners.delete(callback)','new Set().delete(callback)')), /无法识别/);
+});
+
+test('native update bindings follow subscription and channel functions moved into separate modules', () => {
+  const factories = new Map(Object.entries({
+    feed: 'function(module,exports,load){load.d(exports,{watch:()=>subscribe,publish:()=>changed});const listeners=new Set();let state=null;function changed(value){state=value;for(const listener of listeners)listener(value)}function subscribe(callback){const cleanup=()=>listeners.delete(callback);listeners.add(callback);state!=null&&callback(state);return cleanup}}',
+    service: 'function(module,exports,load){const feed=load("feed");const bridge={getRestartBlockers(){return []},stateChanged(next){feed.publish(next)}};load.d(exports,{bridge:()=>bridge})}',
+    policy: 'function(module,exports,load){function read(get){const settings={appBetaPreferencesByAccountId:"beta"};return {isLoading:false,enabled:get(settings.appBetaPreferencesByAccountId)}}load.d(exports,{read:()=>read})}',
+    channel: 'function(module,exports,load){load.d(exports,{selected:()=>choice});const policy=load("policy");const choice=makeAtom(AppScope,({get})=>policy.read(get));}',
+    fileDownloads: 'function(module,exports,load){let snapshot=null;const listeners=new Set();class Files{stateChanged(value){snapshot=value;for(const listener of listeners)listener(value)}}function watch(callback){listeners.add(callback);snapshot!=null&&callback(snapshot);return ()=>listeners.delete(callback)}load.d(exports,{watch:()=>watch})}',
+  }).map(([id,source]) => [id,{id,source}]));
+  assert.deepEqual(buildCodexUpdateBindings(factories), {subscription:{id:'feed',name:'watch'},channel:{id:'channel',name:'selected'}});
+  factories.set('feed', {id:'feed',source:factories.get('feed').source.replace('listeners.delete(callback)','new Set().delete(callback)')});
+  assert.equal(buildCodexUpdateBindings(factories).subscription,null);
+});
+
+test('runtime factory reading transfers complete source and releases the CDP object', async () => {
+  const source='function(module,exports,load){/*'+'x'.repeat(500_050)+'*/}';
+  let released=false, chunks=0;
+  const cdp={async send(method,params){
+    if(method==='Runtime.evaluate')return {result:{objectId:'factories'}};
+    assert.equal(params.objectId,'factories');
+    if(method==='Runtime.releaseObject'){released=true;return {};}
+    assert.equal(method,'Runtime.callFunctionOn');
+    if(params.arguments.length===1){assert.equal(params.arguments[0].value,'id');return {result:{value:[{key:'renamed',length:source.length}]}};}
+    chunks++;
+    assert.equal(params.arguments[0].value,0);
+    const start=params.arguments[1].value;
+    return {result:{value:source.slice(start,start+500_000)}};
+  }};
+  const factories=await readRuntimeFactories(cdp,'stateChanged');
+  assert.equal(factories.get('renamed').source,source);
+  assert.equal(chunks,2);
+  assert.equal(released,true);
+});
+
 function idleCdp() {
-  return { send: async (_method, params) => ({ result: { value: params.expression.includes('appBetaPreferencesByAccountId')
+  return { send: async (_method, params) => ({ result: { value: params.expression.includes('})("channel",')
     ? { beta: false } : { isUpdateReady: false, lifecycleState: 'idle', downloadedUpdateAppBrand: null } } }) };
 }
 
@@ -168,19 +212,25 @@ async function rspackFixture(t) {
     export function setChannel(value) { channelState = value; }
     export let nativeState = {isUpdateReady:false,lifecycleState:'idle',downloadedUpdateAppBrand:null,downloadProgressPercent:null};
     const factories = {
-      changedState(module, exports) {
+      changedState(module, exports, load) {
         const listeners = new Set(); let state = nativeState;
         const bridge = {async getRestartBlockers(){return []}, stateChanged(value){state=value; for(const listener of listeners)listener(value)}};
-        Object.assign(exports, {N:function(callback){return listeners.add(callback),state!=null&&callback(state),()=>{listeners.delete(callback)}}, bridge});
+        load.d(exports, {}, {N:function(callback){return listeners.add(callback),state!=null&&callback(state),()=>{listeners.delete(callback)}}, bridge});
       },
-      betaSettings(module, exports) {
-        void 'appBetaPreferencesByAccountId desktop_app_beta_policy';
-        Object.assign(exports, {H: {scope: {__scopeBrand: 'AppScope', id: Symbol()}, resolve() { return 'beta'; }}});
+      betaSettings(module, exports, load) {
+        const signal = (scope, callback) => ({scope, callback, resolve() {return 'beta'}});
+        const settings = {appBetaPreferencesByAccountId: null};
+        const atom = signal({__scopeBrand: 'AppScope', id: Symbol()}, () => {
+          const preference = settings.appBetaPreferencesByAccountId;
+          return {enabled: Boolean(preference), isLoading: false};
+        });
+        load.d(exports, {}, {H: atom});
       }
     };
     const cache = {};
     function load(id){if(!cache[id]){const module={exports:{}};factories[id](module,module.exports,load);cache[id]=module.exports;}return cache[id];}
     load.m=factories;
+    load.d=(target,getters,values={})=>{for(const [name,get] of Object.entries(getters))Object.defineProperty(target,name,{get});Object.assign(target,values);};
     export {load as __webpack_require__};
   `;
   await writeFile(path.join(directory, 'package.json'), '{"type":"module"}');
@@ -212,20 +262,20 @@ test('Rspack reads native update state without a check and reuses the current do
   assert.deepEqual(await readCodexUpdateState(fixture.cdp), {ready:false,downloading:true,progress:42});
   fixture.native.__webpack_require__('changedState').bridge.stateChanged({isUpdateReady:true,lifecycleState:'ready',downloadedUpdateAppBrand:'codex',downloadProgressPercent:100});
   assert.deepEqual(await readCodexUpdateState(fixture.cdp), {ready:true,downloading:false,progress:100});
-  assert.equal(fixture.reads.length,1);
+  assert.equal(fixture.reads.length,0);
 });
 
 test('reads the effective native update channel without invoking the updater', async t => {
   const fixture = await rspackFixture(t);
   const load = fixture.native.__webpack_require__;
-  fixture.page.__codexPanelRspack__ = {require:load,findModule(markers){
-    const matches = Object.entries(load.m).filter(([,factory])=>markers.every(marker=>factory.toString().includes(marker)));
-    return matches.length===1 ? {id:matches[0][0],source:matches[0][1].toString()} : null;
-  }};
+  const factories=new Map(Object.entries(load.m).map(([id,factory])=>[id,{id,source:factory.toString().replace(/^\w+\(/,'function(')}]));
+  const loaded=[];
+  fixture.page.__codexPanelRspack__ = {require:load,nativeUpdate:buildCodexUpdateBindings(factories),async loadModule(id){loaded.push(id);return load(id)},findModule(){assert.fail('must use semantic update bindings');}};
   assert.deepEqual(await readCodexUpdateChannel(fixture.cdp), {beta:false});
   fixture.native.setChannel({enabled:true,isLoading:false,policy:'required'});
   assert.deepEqual(await readCodexUpdateChannel(fixture.cdp), {beta:true});
   fixture.native.setChannel({enabled:false,isLoading:true});
   await assert.rejects(readCodexUpdateChannel(fixture.cdp), /尚未就绪/);
+  assert.deepEqual(loaded,['betaSettings','betaSettings','betaSettings']);
   assert.equal(fixture.reads.length,0);
 });

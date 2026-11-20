@@ -20,8 +20,8 @@ function execute(source, modules, enabled) {
   return exports;
 }
 
-function selector(enabled) {
-  return execute(selectorSource, {
+function selector(enabled, source = selectorSource) {
+  return execute(source, {
     tl5a: { EL: 'workspaceKind', hD: 'executionTarget' },
     ndjw: { Gm: 'assignments' }, V3rO: { ic: 'conversationId' },
     d6Ff: { OC: value => value }, QGyr: { T8: 'threadProject' },
@@ -46,7 +46,7 @@ test('ordinary and recent new-chat targets stop inheriting projects only while e
   assert.deepEqual(current, { projectId: 'existing-project', projectKind: 'local' });
 });
 
-function actionHarness(enabled) {
+function actionHarness(enabled, source = actionSource) {
   const current = { projectId: 'existing-project', projectKind: 'local' };
   const originalThread = Object.freeze({ id: 'existing-thread', cwd: '/original/project' });
   const values = new Map([
@@ -72,7 +72,7 @@ function actionHarness(enabled) {
     AGHv: { dismissStaticEnterpriseOnboarding() {} }, uwwd: { dr() {} },
     gPv1: { Ix: 'list' }, pasN: { l: 'productMode' }, OMIV: { M9: 'workGate' },
   };
-  const action = execute(actionSource, modules, enabled).startNewConversation;
+  const action = execute(source, modules, enabled).startNewConversation;
   return { run: options => action(scope, options), current, originalThread, navigation, assignments, workspaceSelections };
 }
 
@@ -100,4 +100,23 @@ test('native new-chat action clears only an omitted project and preserves explic
     assert.equal(inProject.workspaceSelections.at(-1), project);
     assert.deepEqual(project, { projectId: `${projectKind}-project`, projectKind });
   }
+});
+
+
+test('projectless selection and new-chat actions follow fields instead of their order', () => {
+  const enabled = { value: true };
+  const selection = selectorSource
+    .replace('canStartProjectlessChat:t,currentThreadKey:n,localProjectActionsEnabled:d,projectless:s=!1', 'projectless:s=!1,localProjectActionsEnabled:d,currentThreadKey:n,canStartProjectlessChat:t')
+    .replace('if(s)return{assignment:null,kind:"projectless"};', 'if(s){const target={kind:"projectless",assignment:null};return target}');
+  const selected = selector(enabled, selection)(() => null, { canStartProjectlessChat: true });
+  assert.equal(selected.kind, 'projectless');
+  assert.equal(selected.assignment, null);
+  const shuffledAction = actionSource
+    .replace('activeProject:n,defaultCloudEnvironment:r,', 'defaultCloudEnvironment:r,')
+    .replace('onFreshChatDraftCreated:w,...O', 'onFreshChatDraftCreated:w,activeProject:n,...O')
+    .replace('startNewConversation:N', 'startNewConversation:N,alternateNewChat:N');
+  const harness = actionHarness(enabled, shuffledAction);
+  harness.run({ prefillPrompt: 'retained' });
+  assert.equal(harness.assignments.at(-1), null);
+  assert.equal(harness.navigation.at(-1).options.state.prefillPrompt, 'retained');
 });

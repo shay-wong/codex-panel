@@ -51,6 +51,7 @@ async function fixture(t, { badSignature = false, downloadError, downloadArchive
   const signature = sign(null, archive, privateKey).toString('base64');
   const rawPublicKey = publicKey.export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64');
   let installedBuild = '24141';
+  let offeredTarget = target;
   const commands = [];
   const requests = [];
   const applied = [];
@@ -60,8 +61,8 @@ async function fixture(t, { badSignature = false, downloadError, downloadArchive
     if (command.endsWith('/xmllint')) return execute(command, args);
     if (command.endsWith('/plutil')) {
       const installed = args.at(-1).startsWith(appPath);
-      return { stdout: JSON.stringify({ CFBundleShortVersionString: installed ? '26.1027.61615' : target.availableVersion,
-        CFBundleVersion: installed ? installedBuild : target.availableBuildVersion, CFBundleExecutable: 'ChatGPT', SUPublicEDKey: rawPublicKey }), stderr: '' };
+      return { stdout: JSON.stringify({ CFBundleShortVersionString: installed ? '26.1027.61615' : offeredTarget.availableVersion,
+        CFBundleVersion: installed ? installedBuild : offeredTarget.availableBuildVersion, CFBundleExecutable: 'ChatGPT', SUPublicEDKey: rawPublicKey }), stderr: '' };
     }
     if (command.endsWith('/lipo')) return { stdout: 'arm64\n', stderr: '' };
     if (command.endsWith('/codesign')) {
@@ -86,7 +87,7 @@ async function fixture(t, { badSignature = false, downloadError, downloadArchive
   const options = { appPath, dataDirectory };
   const dependencies = { platform: 'darwin', architecture: 'arm64', run, downloadFile,
     selectArchive: async (_file, selectedTarget, architecture, sourceBuild) => {
-      assert.deepEqual(selectedTarget, target);
+      assert.deepEqual(selectedTarget, offeredTarget);
       assert.equal(architecture, 'arm64');
       assert.equal(sourceBuild, installedBuild);
       return { url: 'https://persistent.oaistatic.com/codex-app-prod/fixture.delta', length: archive.length,
@@ -100,7 +101,7 @@ async function fixture(t, { badSignature = false, downloadError, downloadArchive
       await mkdir(path.join(destination, 'Contents/Resources'), { recursive: true });
       await writeFile(path.join(destination, 'Contents/Resources/codex'), 'fixture CLI');
     } };
-  return { options, dependencies, commands, requests, applied, archive, installedBuild: value => { installedBuild = value; } };
+  return { options, dependencies, commands, requests, applied, archive, installedBuild: value => { installedBuild = value; }, offeredTarget: value => { offeredTarget = value; } };
 }
 
 test('checks the official feed despite a skipped native update and preserves the selected channel', { skip: process.platform !== 'darwin' }, async t => {
@@ -108,7 +109,7 @@ test('checks the official feed despite a skipped native update and preserves the
   const download = createCodexUpdateDownload({ ...setup.options, getPlanType: async () => 'pro' }, setup.dependencies);
   const cdp = { send: async (_method, params) => {
     assert.ok(!params.expression.includes('checkForUpdateInformation'), 'never ask the updater to filter skipped versions');
-    return { result: { value: params.expression.includes('appBetaPreferencesByAccountId')
+    return { result: { value: params.expression.includes('})("channel",')
       ? { beta: true } : { isUpdateReady: false, lifecycleState: 'idle' } } };
   } };
   assert.equal((await readCodexUpdateStatus(cdp, { download })).checking, true);
@@ -131,7 +132,7 @@ test('checks the official feed despite a skipped native update and preserves the
 test('an invalid official feed reports an error rather than the latest version', { skip: process.platform !== 'darwin' }, async t => {
   const setup = await fixture(t, { feed: '' });
   const download = createCodexUpdateDownload(setup.options, setup.dependencies);
-  const cdp = { send: async (_method, params) => ({ result: { value: params.expression.includes('appBetaPreferencesByAccountId')
+  const cdp = { send: async (_method, params) => ({ result: { value: params.expression.includes('})("channel",')
     ? { beta: false } : { isUpdateReady: false, lifecycleState: 'idle' } } }) };
   await readCodexUpdateStatus(cdp, { download });
   await waitFor(async () => !(await readCodexUpdateStatus(cdp, { download })).checking);
@@ -183,6 +184,7 @@ test('rejects invalid archive signatures before extraction and allows retry', as
   assert.equal(download.status().downloading, false);
   assert.match(download.status().message, /Ed25519 签名验证失败/);
   assert.equal(setup.applied.length, 0);
+  assert.equal(await partialFile(setup), undefined);
   download.clearFailure();
   assert.equal(download.status(), null);
   download.start({ ...target, planType: 'pro' });
@@ -221,6 +223,76 @@ async function pauseAfterChunk(archive, { destination, signal, onProgress }) {
   signal.throwIfAborted();
   await new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
 }
+
+for (const failure of ['network', 'timeout']) {
+  test(`retries a failed ${failure} download from its saved offset`, async t => {
+    const offsets = [];
+    const setup = await fixture(t, { downloadArchive: async (archive, options) => {
+      offsets.push(options.offset);
+      if (offsets.length === 1) {
+        await writeFile(options.destination, archive.subarray(0, 9));
+        options.onProgress?.(9);
+        throw failure === 'network'
+          ? Object.assign(new Error('网络连接失败，请检查网络或代理后重试'), { retryable: true })
+          : new DOMException('Download timed out', 'TimeoutError');
+      }
+      await writeFile(options.destination, archive.subarray(options.offset), { flag: 'a', signal: options.signal });
+      options.onProgress?.(archive.length);
+    } });
+    const download = createCodexUpdateDownload(setup.options, setup.dependencies);
+    download.start({ ...target, planType: 'pro' });
+    await download.wait();
+    assert.equal(download.status().phase, 'failed');
+    const file = await partialFile(setup);
+    assert.ok(file, 'failed transfer must retain its partial file for retry');
+    assert.equal((await stat(file)).size, 9);
+    download.start({ ...target, planType: 'pro' });
+    await download.wait();
+    assert.equal(download.status().phase, 'ready');
+    assert.deepEqual(offsets, [0, 9]);
+    assert.equal(setup.requests.filter(url => url.pathname.endsWith('/appcast')).length, 1);
+    assert.equal(setup.applied.length, 1);
+  });
+}
+
+test('cancels a failed download and discards the retained partial file', async t => {
+  const setup = await fixture(t, { downloadArchive: async (archive, options) => {
+    await writeFile(options.destination, archive.subarray(0, 9));
+    throw Object.assign(new Error('Network interrupted'), { retryable: true });
+  } });
+  const download = createCodexUpdateDownload(setup.options, setup.dependencies);
+  download.start({ ...target, planType: 'pro' });
+  await download.wait();
+  assert.ok(await partialFile(setup));
+  assert.equal(download.cancel().phase, 'cancelled');
+  await download.wait();
+  assert.equal(await partialFile(setup), undefined);
+});
+
+test('discards failed partial bytes when downloading a different target version', async t => {
+  const offsets = [];
+  const setup = await fixture(t, { downloadArchive: async (archive, options) => {
+    offsets.push(options.offset);
+    if (offsets.length === 1) {
+      await writeFile(options.destination, archive.subarray(0, 9));
+      throw Object.assign(new Error('Network interrupted'), { retryable: true });
+    }
+    await writeFile(options.destination, archive, { signal: options.signal });
+  } });
+  const download = createCodexUpdateDownload(setup.options, setup.dependencies);
+  download.start(target);
+  await download.wait();
+  const previousFile = await partialFile(setup);
+  assert.ok(previousFile);
+  const next = { availableVersion: '26.1029.61004', availableBuildVersion: '24615' };
+  setup.offeredTarget(next);
+  download.start(next);
+  await download.wait();
+  assert.equal(download.status().phase, 'ready');
+  assert.deepEqual(offsets, [0, 0]);
+  await assert.rejects(stat(previousFile), { code: 'ENOENT' });
+  assert.equal(setup.requests.filter(url => url.pathname.endsWith('/appcast')).length, 2);
+});
 
 for (const nativeResumeMode of ['append', 'overwrite']) {
   test(`resumes native transfer at the saved offset when transport uses ${nativeResumeMode}`, async t => {
@@ -268,6 +340,7 @@ test('propagates native resume validation failure without applying corrupt bytes
   assert.equal(download.status().phase, 'failed');
   assert.match(download.status().message, /续传范围/);
   assert.equal(setup.applied.length, 0);
+  assert.equal(await partialFile(setup), undefined);
 });
 
 test('cancels a partial download, cleans it after abort settles, and retries after reconnect', async t => {
@@ -290,7 +363,7 @@ test('cancels a partial download, cleans it after abort settles, and retries aft
   assert.equal(await partialFile(setup), undefined);
   assert.equal(setup.applied.length, 0);
   const cdp = { send: async (_method, params) => {
-    if (params.expression.includes('appBetaPreferencesByAccountId')) return { result: { value: { beta: false } } };
+    if (params.expression.includes('})("channel",')) return { result: { value: { beta: false } } };
     return { result: { value: { isUpdateReady: false, lifecycleState: 'idle' } } };
   } };
   let checks = 0;

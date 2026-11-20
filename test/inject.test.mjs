@@ -1998,13 +1998,10 @@ test("native project reads use Rspack services without legacy asset names", asyn
   })()`, {
     window: {
       __codexPanelRspack__: {
-        findModule(markers) {
-          assert.deepEqual([...markers], ["setAppHost", "setAppServices", "appServices:"]);
-          return { id: "native-services" };
-        },
-        require(id) {
+        nativeServices: { desktopServices: { id: "native-services", exportName: "renamedServiceExport" } },
+        async loadModule(id) {
           assert.equal(id, "native-services");
-          return { appServices: services };
+          return { renamedServiceExport: services };
         },
       },
     },
@@ -2038,10 +2035,21 @@ test("native project reads use the live catalog when legacy fetch handlers were 
     return { requestNativeFetch, selectedNativeProjectId };
   })()`, {
     URL, crypto, setTimeout, clearTimeout,
-    performance: { getEntriesByType: () => [{ name: "app://-/assets/app-shared-fixture.js" }] },
-    document: { querySelectorAll: () => [] },
+    performance: { getEntriesByType: () => [
+      { name: "app://-/classic-script.js" },
+    ] },
+    document: { querySelectorAll: () => [
+      { src: "https://unrelated.example/ignore.js" },
+      { src: "app://-/modules/unavailable" },
+      { src: "app://-/modules/current-services?v=fixture" },
+    ] },
     location: { href: "app://-/index.html", origin: "app://-" },
-    importModule: async () => { imports++; return { changedExportName: { projectCatalog: catalog, workspaceRoots } }; },
+    importModule: async url => {
+      if (url === "app://-/modules/unavailable") throw new Error("Fixture module unavailable");
+      assert.equal(url, "app://-/modules/current-services?v=fixture");
+      imports++;
+      return { changedExportName: { projectCatalog: catalog, workspaceRoots } };
+    },
     window: {
       setTimeout, clearTimeout,
       electronBridge: { sendMessageFromView: message => listener({ data: {
@@ -2064,4 +2072,22 @@ test("native project reads use the live catalog when legacy fetch handlers were 
   assert.equal(roots.canonicalPathByRoot["/disposable/link"], "/disposable/project");
   assert.equal(rootCalls[0], body);
   assert.equal(imports, 1, "cache the service, not its selection or roots");
+});
+
+test("native project reads discover cached exports without executing other factories", async () => {
+  const start = source.indexOf("  let nativeDesktopServicesPromise;");
+  const code = source.slice(start, source.indexOf("  async function readCodexProjectMetadata(", start));
+  const services = { projectCatalog: {
+    readSelection: async () => ({ type: "local", projectId: "cached-project" }),
+    readLocalProjects: async () => ({}),
+    readRemoteProjects: async () => [],
+  } };
+  const load = () => { throw new Error("Unrequested factory executed"); };
+  load.c = { initialized: { exports: { appServices: services } } };
+  load.m = { unrelated() { throw new Error("Unrequested factory executed"); } };
+  const api = vm.runInNewContext(`(() => {
+    ${code}
+    return { selectedNativeProjectId };
+  })()`, { window: { __codexPanelRspack__: { require: load } } });
+  assert.equal(await api.selectedNativeProjectId(), "cached-project");
 });

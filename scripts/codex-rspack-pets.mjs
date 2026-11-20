@@ -1,3 +1,5 @@
+import { applyEdits, isFunction, propertyName, propertyValue, sourceAst, unique, unwrap } from './codex-source-ast.mjs';
+
 // Serialized into the renderer; imported packs contain data, never executable code.
 export function createPetAnimationRuntime(initialPacks = [], builtinPet) {
   let packs = initialPacks;
@@ -142,15 +144,17 @@ export async function nativePetSelection(load, action, lumiPetIds = [], targetPe
   }
   const selectedPetId = action === 'use-lumi' ? 'panel-lumi' : targetPetId;
   if (action === 'use-lumi' || action === 'use-pet') {
-    const catalog = runtime.prepared.pets && runtime.findModule(['The original Codex companion.', 'spritesheetUrl', 'custom:']);
-    const available = catalog && Object.values(load(catalog.id)).some(value => Array.isArray(value)
-      && value.some(pet => pet?.id === selectedPetId));
+    const catalog = runtime.prepared.pets && runtime.nativeServices?.petCatalog;
+    const pets = catalog && (await runtime.loadModule(catalog.id))[catalog.exportName];
+    const available = Array.isArray(pets) && pets.some(pet => pet?.id === selectedPetId);
     if (!available) throw Error(action === 'use-lumi' ? '当前 Codex 尚未载入内置 Lumi，请重启 Codex' : '该资源用于已有宠物，请在 Codex 原生选择器中选择');
   }
+  const reference = runtime.nativeServices?.desktopServices;
+  if (!reference) throw Error('当前 Codex 未提供可识别的原生宠物设置');
+  const nativeModule = await runtime.loadModule(reference.id);
   const deadline = Date.now() + 10_000;
   for (;;) {
-    const module = runtime.findModule(['setAppHost', 'setAppServices', 'appServices:']);
-    const settings = module && load(module.id).appServices?.settings;
+    const settings = nativeModule[reference.exportName]?.settings;
     if (settings) {
       let current = await settings.read('selected-avatar-id');
       if (action === 'use-lumi' || action === 'use-pet'
@@ -167,47 +171,208 @@ export async function nativePetSelection(load, action, lumiPetIds = [], targetPe
   }
 }
 
-export function rewriteRspackPets(source, context) {
-  const id = '[A-Za-z_$][\\w$]*';
-  if (source.includes('The original Codex companion.') && source.includes('custom:') && !source.includes('__codexPanelPetAnimations__.bindCatalog')) {
-    if (context && !context.findModule(['data-codex-pet-state', 'requiredFramesByRow'])) throw new Error('Native pet renderer is unsupported');
-    const catalog = source.match(new RegExp(`let (${id})=\\[\\{assetRef:"codex",description:"The original Codex companion\\."`));
-    const end = catalog && source.indexOf('];', catalog.index);
-    if (!catalog || end < 0) throw new Error('Native built-in pet catalog is unsupported');
-    return `${source.slice(0, end + 2)}globalThis.__codexPanelPetAnimations__.bindCatalog(${catalog[1]});${source.slice(end + 2)}`;
-  }
-  if (source.includes('cloud-pet-selection') && source.includes('/settings/account_user_setting') && !source.includes('__codexPanelPetAnimations__.isLocalPet')) {
-    const predicate = source.match(new RegExp(`function (${id})\\((${id})\\)\\{return \\2\\.startsWith\\("pet_"\\)&&\\2\\.length>4\\|\\|${id}\\.${id}\\.some\\(\\(\\{id:${id}\\}\\)=>${id}===\\2\\)\\}`));
-    if (!predicate) throw new Error('Native cloud pet selection is unsupported');
-    // Panel pets are local and must never be written to the official account.
-    return source.replace(predicate[0], predicate[0].replace('return ', `return !globalThis.__codexPanelPetAnimations__.isLocalPet(${predicate[2]})&&(`).replace(/}$/, ')}'));
-  }
-  if (!source.includes('data-codex-pet-state') || !source.includes('requiredFramesByRow') || source.includes('panelPetAnimation')) return null;
-  if (context && (!context.findModule(['The original Codex companion.', 'spritesheetUrl', 'custom:'])
-    || !context.findModule(['cloud-pet-selection', '/settings/account_user_setting']))) {
-    throw new Error('Native built-in pet selection is unsupported');
-  }
-  const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const state = source.match(new RegExp(`(${id})=${id}&&${id}\\?"jumping":${id},(${id})=null==(${id})\\.assetRef\\?\\3\\.spriteRowCount:(${id})\\.rows;`));
-  const look = source.match(new RegExp(`lookFrame:(${id})[,}]`))?.[1];
-  const sequence = state && source.match(new RegExp(`let (${id})=(${id})\\(${escape(state[1])},(${id}),(${id})\\),(${id})=\\1\\.frames`));
-  const hooks = source.match(new RegExp(`\\(0,(${id})\\.useState\\)`))?.[1];
-  const firstHook = source.match(new RegExp(`let\\[${id},${id}\\]=\\(0,${id}\\.useState\\)`))?.[0];
-  const element = source.match(new RegExp(`let (${id})=(${id})\\.current;if\\(null==\\1\\)return;`));
-  if (!state || !look || !sequence || !hooks || !firstHook || !element) throw new Error('Native pet animation structure is unsupported');
-  const [, activeState, rows, petSource, layout] = state;
-  const [, , , reduced, loop] = sequence;
-  const dependencies = `},[${activeState},${look},${loop},${reduced},${rows}]),`;
-  const background = `backgroundImage:\`url(\${${petSource}.spritesheetUrl??`;
-  const replace = (before, after) => {
-    if (source.split(before).length !== 2) throw new Error('Native pet animation anchor is not unique');
-    source = source.replace(before, after);
+export function buildNativeServiceBindings(context) {
+  const services = context.modulesExporting('appServices').flatMap(module => {
+    const ast = context.moduleAst(module.id);
+    const exports = ast.exports();
+    const value = exports.get('appServices'), setter = ast.value(exports.get('setAppServices'));
+    if (!value || !isFunction(setter) || setter.params.length !== 1) return [];
+    const assignsService = ast.all(node => node.type === 'AssignmentExpression'
+      && node.operator === '=' && samePetValue(ast, node.left, value)
+      && samePetValue(ast, node.right, setter.params[0]), setter.body).length > 0;
+    return assignsService ? [{ id: module.id, exportName: 'appServices' }] : [];
+  });
+  const catalogs = context.modulesContaining('The original Codex companion.').flatMap(module => {
+    const ast = context.moduleAst(module.id);
+    return petCatalogs(ast).map(catalog => context.exportOf(ast, catalog)).filter(Boolean);
+  });
+  return {
+    desktopServices: services.length ? unique(services, 'Native desktop service export is ambiguous') : null,
+    petCatalog: catalogs.length ? unique(catalogs, 'Native pet catalog export is ambiguous') : null,
   };
-  replace(firstHook, `let panelPetRuntime=globalThis.__codexPanelPetAnimations__,panelPetSnapshot=(0,${hooks}.useSyncExternalStore)(panelPetRuntime.subscribe,panelPetRuntime.getSnapshot);${firstHook}`);
-  replace(state[0], state[0].replace(`${rows}=`, `panelPetAnimation=panelPetRuntime.resolve(panelPetSnapshot,${petSource},${activeState},${look}),${rows}=panelPetAnimation?panelPetAnimation.pack.rows:`));
-  replace(element[0], `${element[0]}if(panelPetAnimation)return panelPetRuntime.play(${element[1]},panelPetAnimation,${reduced},${loop});`);
-  replace(dependencies, `},[${activeState},${look},${loop},${reduced},${rows},panelPetSnapshot,${petSource}.petId,${petSource}.assetRef]),`);
-  replace(background, `backgroundImage:\`url(\${panelPetAnimation?.pack.spritesheetUrl??${petSource}.spritesheetUrl??`);
-  replace(`100*${layout}.columns`, `100*(panelPetAnimation?.pack.columns??${layout}.columns)`);
-  return source;
+}
+
+function samePetValue(ast, left, right) {
+  left = unwrap(left);
+  right = unwrap(right);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  if (left.type === 'Identifier' && right.type === 'Identifier') {
+    const binding = ast.binding(left);
+    if (binding && binding === ast.binding(right)) return true;
+  }
+  const leftValue = ast.value(left), rightValue = ast.value(right);
+  if (leftValue !== left || rightValue !== right) return samePetValue(ast, leftValue, rightValue);
+  return left.type === 'MemberExpression' && right.type === 'MemberExpression'
+    && propertyName(left) === propertyName(right) && samePetValue(ast, left.object, right.object);
+}
+
+function petCall(ast, node, method) {
+  if (node.type !== 'CallExpression') return false;
+  const callee = unwrap(node.callee);
+  return callee?.type === 'MemberExpression' && propertyName(callee) === method;
+}
+
+function usesPetRuntime(ast, method) {
+  return ast.all(node => petCall(ast, node, method)).some(node => {
+    const owner = unwrap(ast.value(unwrap(node.callee).object));
+    return owner?.type === 'MemberExpression' && propertyName(owner) === '__codexPanelPetAnimations__';
+  });
+}
+
+function petCatalogs(ast) {
+  return ast.all(node => node.type === 'ArrayExpression' && node.elements.some(element => (
+    element?.type === 'ObjectExpression'
+    && propertyValue(element, 'assetRef')?.value === 'codex'
+    && propertyValue(element, 'description')?.value === 'The original Codex companion.'
+  )));
+}
+
+function cloudPetPredicates(ast) {
+  if (!ast.all(node => petCall(ast, node, 'safePatch')
+    && node.arguments[0]?.value === '/settings/account_user_setting').length) return [];
+  return ast.all(isFunction).filter(fn => {
+    const parameter = fn.params[0];
+    if (fn.params.length !== 1 || parameter?.type !== 'Identifier') return false;
+    const calls = ast.all(node => node.type === 'CallExpression'
+      && ast.enclosing(node, isFunction) === fn, fn.body);
+    return calls.some(node => petCall(ast, node, 'startsWith')
+      && node.arguments[0]?.value === 'pet_'
+      && samePetValue(ast, unwrap(node.callee).object, parameter))
+      && calls.some(node => {
+        if (!petCall(ast, node, 'some')) return false;
+        const predicate = ast.value(node.arguments[0]);
+        if (!isFunction(predicate)) return false;
+        const pet = predicate.params[0];
+        const id = propertyValue(pet, 'id');
+        return ast.all(value => value.type === 'BinaryExpression'
+          && ['===', '=='].includes(value.operator), predicate.body).some(value => {
+          const matches = (left, right) => samePetValue(ast, right, parameter)
+            && (id ? samePetValue(ast, left, id) : left.type === 'MemberExpression'
+              && propertyName(left) === 'id' && samePetValue(ast, left.object, pet));
+          return matches(value.left, value.right) || matches(value.right, value.left);
+        });
+      });
+  });
+}
+
+function hasPetModule(context, term, predicate) {
+  return context.modulesContaining(term).some(module => predicate(context.moduleAst(module.id)));
+}
+
+function petPropertyInput(ast, fn, source, name) {
+  const pattern = ast.all(node => node.type === 'ObjectPattern'
+    && samePetValue(ast, propertyValue(node, 'source'), source), fn)
+    .filter(node => propertyValue(node, name));
+  if (pattern.length === 1) {
+    const value = propertyValue(pattern[0], name);
+    return value.type === 'AssignmentPattern' ? value.left : value;
+  }
+  const resolved = unwrap(ast.value(source));
+  if (resolved?.type === 'MemberExpression' && propertyName(resolved) === 'source') {
+    return { source: `${ast.text(resolved.object)}.${name}` };
+  }
+  throw new Error(`Native pet ${name} input is unsupported`);
+}
+
+function petRendererEdits(ast, props) {
+  const component = ast.enclosing(props, isFunction);
+  const source = unwrap(propertyValue(props, 'data-codex-pet-asset-ref'))?.object;
+  const state = propertyValue(props, 'data-codex-pet-state');
+  const ref = propertyValue(props, 'ref');
+  const style = ast.value(propertyValue(props, 'style'));
+  if (!component || !source || !state || !ref || style?.type !== 'ObjectExpression') {
+    throw new Error('Native pet animation structure is unsupported');
+  }
+  const look = petPropertyInput(ast, component, source, 'lookFrame');
+  const loop = petPropertyInput(ast, component, source, 'loop');
+  const inputText = node => node.source ?? ast.text(node);
+  const effect = unique(ast.all(node => petCall(ast, node, 'useEffect')
+    && ast.enclosing(node, isFunction) === component, component.body).filter(node => {
+    const callback = ast.value(node.arguments[0]);
+    return isFunction(callback) && ast.all(member => member.type === 'MemberExpression'
+      && propertyName(member) === 'current' && samePetValue(ast, member.object, ref), callback.body).length > 0;
+  }), 'Native pet animation effect is unsupported');
+  const callback = ast.value(effect.arguments[0]);
+  const dependencies = ast.value(effect.arguments[1]);
+  const sequences = ast.all(node => node.type === 'MemberExpression' && propertyName(node) === 'frames', callback.body)
+    .map(node => ast.value(node.object))
+    .filter(node => node?.type === 'CallExpression' && node.arguments.length === 3
+      && node.arguments.some(argument => samePetValue(ast, argument, state))
+      && node.arguments.some(argument => samePetValue(ast, argument, loop)));
+  const sequence = unique([...new Set(sequences)], 'Native pet animation sequence is unsupported');
+  const reduced = unique(sequence.arguments.filter(argument => !samePetValue(ast, argument, state)
+    && !samePetValue(ast, argument, loop)), 'Native pet reduced-motion input is unsupported');
+  const hooks = unwrap(effect.callee).object;
+  const backgroundImage = propertyValue(style, 'backgroundImage');
+  const backgroundSize = propertyValue(style, 'backgroundSize');
+  if (dependencies?.type !== 'ArrayExpression' || !backgroundImage || !backgroundSize) {
+    throw new Error('Native pet animation appearance is unsupported');
+  }
+  const resolve = `panelPetRuntime.resolve(panelPetSnapshot,${ast.text(source)},${ast.text(state)},${inputText(look)})`;
+  const declarations = `let panelPetRuntime=globalThis.__codexPanelPetAnimations__,panelPetSnapshot=(0,${ast.text(hooks)}.useSyncExternalStore)(panelPetRuntime.subscribe,panelPetRuntime.getSnapshot);`;
+  const playback = `const panelPetAnimation=${resolve};if(panelPetAnimation){const panelPetElement=${ast.text(ref)}.current;if(panelPetElement!=null)return panelPetRuntime.play(panelPetElement,panelPetAnimation,${ast.text(reduced)},${inputText(loop)});}`;
+  const styleSource = applyEdits(ast.text(style), [
+    { start: backgroundImage.start - style.start, end: backgroundImage.end - style.start,
+      text: `panelPetAnimation?\`url(\${panelPetAnimation.pack.spritesheetUrl})\`:(${ast.text(backgroundImage)})` },
+    { start: backgroundSize.start - style.start, end: backgroundSize.end - style.start,
+      text: `panelPetAnimation?\`\${100*panelPetAnimation.pack.columns}% \${100*panelPetAnimation.pack.rows}%\`:(${ast.text(backgroundSize)})` },
+  ]);
+  const edits = [
+    { start: style.start, end: style.end, text: `((panelPetAnimation)=>(${styleSource}))(${resolve})` },
+    { start: dependencies.start, end: dependencies.end,
+      text: `[...(${ast.text(dependencies)}),panelPetSnapshot,${ast.text(source)}.petId,${ast.text(source)}.assetRef]` },
+  ];
+  for (const [fn, prefix] of [[component, declarations], [callback, playback]]) {
+    const body = fn.body;
+    if (body.type === 'BlockStatement') {
+      const statement = body.body.find(node => !node.directive);
+      const start = statement?.start ?? body.end - 1;
+      edits.push({ start, end: start, text: prefix });
+    } else {
+      edits.push({ start: body.start, end: body.start, text: `{${prefix}return (` });
+      edits.push({ start: body.end, end: body.end, text: ');}' });
+    }
+  }
+  return edits;
+}
+
+export function rewriteRspackPets(source, context) {
+  // Admit each native pet capability independently; AST relationships decide the actual patch.
+  if (!['The original Codex companion.', '/settings/account_user_setting', 'data-codex-pet-state']
+    .some(term => source.includes(term))) return null;
+  const ast = context?.ast(source) ?? sourceAst(source, { factory: true });
+  const edits = [];
+  const catalogs = petCatalogs(ast);
+  if (catalogs.length && !usesPetRuntime(ast, 'bindCatalog')) {
+    if (context && !hasPetModule(context, 'data-codex-pet-state', module => module.all(node => node.type === 'Property'
+      && propertyName(node) === 'data-codex-pet-state').length > 0)) {
+      throw new Error('Native pet renderer is unsupported');
+    }
+    const catalog = unique(catalogs, 'Native built-in pet catalog is unsupported');
+    edits.push({ start: catalog.start, end: catalog.end,
+      text: `((panelPetCatalog)=>(globalThis.__codexPanelPetAnimations__.bindCatalog(panelPetCatalog),panelPetCatalog))(${ast.text(catalog)})` });
+  }
+  const predicates = cloudPetPredicates(ast);
+  if (predicates.length && !usesPetRuntime(ast, 'isLocalPet')) {
+    const predicate = unique(predicates, 'Native cloud pet selection is unsupported');
+    const parameter = ast.text(predicate.params[0]);
+    const returns = predicate.body.type === 'BlockStatement'
+      ? ast.all(node => node.type === 'ReturnStatement' && node.argument && ast.enclosing(node, isFunction) === predicate, predicate.body).map(node => node.argument)
+      : [predicate.body];
+    for (const value of returns) {
+      // Panel pets are local and must never be written to the official account.
+      edits.push({ start: value.start, end: value.end,
+        text: `(!globalThis.__codexPanelPetAnimations__.isLocalPet(${parameter})&&(${ast.text(value)}))` });
+    }
+  }
+  const renderers = ast.all(node => node.type === 'ObjectExpression' && propertyValue(node, 'data-codex-pet-state'));
+  if (renderers.length && !usesPetRuntime(ast, 'resolve')) {
+    if (context && (!hasPetModule(context, 'The original Codex companion.', module => petCatalogs(module).length > 0)
+      || !hasPetModule(context, 'cloud-pet-selection', module => cloudPetPredicates(module).length > 0))) {
+      throw new Error('Native built-in pet selection is unsupported');
+    }
+    edits.push(...petRendererEdits(ast, unique(renderers, 'Native pet renderer is unsupported')));
+  }
+  return edits.length ? applyEdits(source, edits) : null;
 }

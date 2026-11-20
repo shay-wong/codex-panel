@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
 import { rewriteRspackDot, rewriteRspackUltrafast } from '../scripts/codex-rspack-capabilities.mjs';
+import { rspackSourceContext } from '../scripts/codex-rspack-source.mjs';
 
 const providerSource = `function(module,exports,load){var target=load("target-module"),config=load("config-module"),provider=load("provider-module");const marker="model_picker_upsell";function read(store,thread){let{cwd:cwd,hostId:host}=store.get(target.atom,thread);if("local"!==host)return null;let{data:data}=store.get(config.atom,{cwd:cwd,hostId:host});return null==data||(store.get(provider.atom,thread)??data.model_provider??"openai")!=="openai"?null:quota(store)}}`;
 const hookSource = `function(module,exports,load){
@@ -18,16 +19,23 @@ const hookSource = `function(module,exports,load){
     let set=value=>value!=="ultrafast"||chosen.ultrafast;return {...rest,setServiceTier:set};
   }
 }`;
+const projectedHookSource = hookSource
+  .replace('let result=function(e,selection,load){', 'function readSettings(e,selection,load){')
+  .replace('}(thread,options,options.serviceTier);', '}let{serviceTierAccess:chosen,serviceTierSettings:tier,hasManagedNewThreadSettings:managed}=readSettings(thread,options,options.serviceTier);')
+  .replace('let{serviceTierAccess:chosen,...rest}=result;', '')
+  .replace('return {...rest,setServiceTier:set};', 'return {serviceTierSettings:tier,setServiceTier:set};');
+const reorderedHookSource = projectedHookSource
+    .replace('load.d(exports,{settings:()=>settings});', '')
+    .replace('let{serviceTierAccess:chosen,serviceTierSettings:tier,hasManagedNewThreadSettings:managed}', 'const{hasManagedNewThreadSettings:managed,serviceTierSettings:tier,serviceTierAccess:chosen}')
+    .replace('return {serviceTierSettings:tier,setServiceTier:set};', 'return {setServiceTier:set,serviceTierSettings:tier};')
+    .replace('let host=context.hostId;', 'const host=context.hostId;const unrelated=0;')
+    .replace('let selected=(0,model.select)(options?.models,selection.model),other=null;', 'const selected=(0,model.select)(options?.models,selection.model);let other=null;')
+    .replace(/}\s*}$/, '}load.d(exports,{settings:()=>settings});}');
+
 
 function context(sources) {
-  return {
-    moduleSource: id => sources[id] ?? null,
-    findModule(needle) {
-      const needles = Array.isArray(needle) ? needle : [needle];
-      const matches = Object.entries(sources).filter(([, source]) => needles.every(value => source.includes(value)));
-      return matches.length === 1 ? { id: matches[0][0], source: matches[0][1] } : null;
-    },
-  };
+  const values = { 'target-module': 'function(){}', 'config-module': 'function(){}', 'provider-module': 'function(){}', ...sources };
+  return rspackSourceContext(new Map(Object.entries(values).map(([id, source]) => [id, { id, source }])));
 }
 
 function execute(source, dependencies, globals = {}) {
@@ -43,7 +51,8 @@ function execute(source, dependencies, globals = {}) {
   return module.exports;
 }
 
-test('Rspack Ultrafast keeps model/provider boundaries and uses the same access for its setter', () => {
+for (const [shape, source] of [['spread', hookSource], ['projected', projectedHookSource], ['reordered', reorderedHookSource]]) {
+test(`Rspack Ultrafast ${shape} results keep model/provider boundaries and the same setter access`, () => {
   let enabled = true;
   const options = { model: 'gpt-6-astra', hostId: 'local', threadProvider: 'custom', configProvider: 'custom', models: [
     { model: 'gpt-6-astra', serviceTiers: [{ id: 'standard' }] },
@@ -56,7 +65,8 @@ test('Rspack Ultrafast keeps model/provider boundaries and uses the same access 
     { model: 'GPT-6.2 Sol', serviceTiers: [{ id: 'standard' }] },
     { model: 'unsupported', serviceTiers: [{ id: 'standard' }, { id: 'ultrafast' }] },
   ] };
-  const rewritten = rewriteRspackUltrafast(hookSource, context({ provider: providerSource }));
+  const provider = shape === 'reordered' ? providerSource.replace('let{cwd:cwd,hostId:host}', 'const{hostId:host,cwd:cwd}').replace('{cwd:cwd,hostId:host}', '{hostId:host,cwd:cwd}') : providerSource;
+  const rewritten = rewriteRspackUltrafast(source, context({ provider }));
   const settings = execute(rewritten, {
     react: { use() {}, useSyncExternalStore: (_, read) => read() },
     signal: { read(atom) {
@@ -93,6 +103,7 @@ test('Rspack Ultrafast keeps model/provider boundaries and uses the same access 
   options.hostId = 'local'; enabled = false;
   assert.equal(settings('thread', options).setServiceTier('ultrafast'), false);
 });
+}
 
 test('Rspack model menu gets adapted access in standalone and comma declarations', () => {
   const source = `function(module,exports,load){load.d(exports,{menu:()=>menu});var settings=load("settings"),access=load("access"),native=load("native");function menu(){let{serviceTierSettings:tier,setServiceTier:set}=(0,settings.read)("thread",null);let target="host";let{serviceTierAccess:allowed}=(0,access.read)(target),other=null;let visible=tier.availableOptions.length>1;let chosen=tier.selectedServiceTier;let icon=true&&(0,native.icon)(null,chosen);const command="composer.openModelPicker";return {allowed,icon,visible}}}`;
@@ -115,6 +126,7 @@ test('Rspack Dot changes only existing orbit capabilities and tracks the prefere
   const rewritten = rewriteRspackDot(source, context({ reactive: native, state: implementation }));
   let enabled = true;
   const capability = execute(rewritten, {
+    state: { value: (_, read) => ({ read }) },
     reactive: { family: (_, read) => request => read(request, { get(atom, ...keys) { assert.equal(keys.length, 0, 'scalar signals use a single argument'); return atom.read(); } }), signal: (_, read) => ({ read }) },
     scope: { value: 'scope' },
   }, { __codexPanelDotEntryV1__: { getSnapshot: () => enabled, subscribe() {} } }).capability;
@@ -124,11 +136,25 @@ test('Rspack Dot changes only existing orbit capabilities and tracks the prefere
   assert.equal(capability({ name: 'orbit' }).isCapable, false);
 });
 
-test('serialized rewriters have no dependency on the module closure and reject incomplete matches', () => {
-  for (const rewrite of [rewriteRspackUltrafast, rewriteRspackDot]) {
-    const copied = vm.runInNewContext('(' + rewrite.toString() + ')');
-    assert.equal(copied('function(a,b,c){}', context({})), null);
-  }
-  assert.throws(() => rewriteRspackUltrafast(hookSource, context({})), /Unsupported/);
-  assert.throws(() => rewriteRspackDot('function(a,b,c){"Duplicate capability name:";"Explicit-host capability requires hostId:"}', context({})), /Unsupported/);
+test('structural rewriters reject unsupported native candidates', () => {
+  for (const rewrite of [rewriteRspackUltrafast, rewriteRspackDot]) assert.equal(rewrite('function(a,b,c){}', context({})), null);
+  assert.throws(() => rewriteRspackUltrafast(hookSource, context({})), /provider reader is unavailable/);
+});
+
+test('Dot follows capability and signal data without diagnostic strings or declaration adjacency', () => {
+  const sources = {
+    reactive: 'function(module,exports,load){var forwarded=load("bridge");load.d(exports,{signal:()=>forwarded.forward});}',
+    bridge: 'function(module,exports,load){var state=load("state");load.d(exports,{forward:()=>state.value});}',
+    state: 'function(module,exports,load){function create(scope,read,options){const unrelated=0;const result=(0,other.build)("signal",scope,read);return result}load.d(exports,{value:()=>create});}',
+    unrelated: 'function(module,exports,load){load.d(exports,{create:()=>create});function create(scope,read){return other.build("signal",scope,read)}}',
+  };
+  const source = 'function(module,exports,load){var reactive=load("reactive"),scope=load("scope");const definitions={orbit:{},"orbit.navigation":{},other:{}};const capability=(0,reactive.family)(scope.value,(request,{get:read})=>{const unrelated=0;const config=definitions[request.name];if(config==null)return{isCapable:false,isError:false,isLoading:false};return{isCapable:false,isError:false,isLoading:false}});load.d(exports,{capability:()=>capability})}';
+  const rewritten = rewriteRspackDot(source, context(sources));
+  const capability = execute(rewritten, {
+    state: { value: (_, read) => ({ read }) },
+    reactive: { signal: (_, read) => ({ read }), family: (_, read) => request => read(request, { get: atom => atom.read() }) },
+    scope: { value: 'scope' },
+  }, { __codexPanelDotEntryV1__: { getSnapshot: () => true } }).capability;
+  assert.equal(capability({ name: 'orbit' }).isCapable, true);
+  assert.equal(capability({ name: 'missing' }).isCapable, false);
 });

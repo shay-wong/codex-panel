@@ -15,10 +15,12 @@ async function fixture(t, fetch, timeout = AbortSignal.timeout) {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const logs = [];
   const hashed = [];
-  const api = vm.runInNewContext(`${functions}; ({download, verifiedNodeArchive})`, {
-    fetch, AbortSignal: { timeout }, Buffer, writeFile, rename, rm, path,
+  const api = vm.runInNewContext(`${functions}; ({download, verifiedNodeArchive, prepareRuntimePackage})`, {
+    fetch, AbortSignal: { timeout }, Buffer, createHash, mkdir, process, readFile, writeFile, rename, rm, path,
     console: { log: value => logs.push(value), error: value => logs.push(value) },
     runtimeCacheDirectory: directory, nodeVersion: "fixture",
+    projectRoot: directory, extractionDirectory: path.join(directory, "extracted"),
+    run: (command, args) => execFileSync(command, args),
     exists: async filename => { try { await readFile(filename); return true; } catch { return false; } },
     sha256: async filename => {
       hashed.push(filename);
@@ -149,4 +151,33 @@ test("runtime integrity manifests remain enabled only for Windows and Linux", as
       { path: "payload.txt", sha256: createHash("sha256").update("runtime payload").digest("hex") },
     ] });
   });
+});
+
+test("missing native bindings use the locked archive and verify integrity before extraction", async t => {
+  let archive;
+  let downloads = 0;
+  const f = await fixture(t, async url => {
+    assert.equal(url, "https://fixture.invalid/binding.tgz");
+    downloads++;
+    return { ok: true, arrayBuffer: async () => archive };
+  });
+  const name = "@oxc-parser/binding-darwin-x64";
+  const packageDirectory = path.join(f.directory, "fixture", "package");
+  await mkdir(packageDirectory, { recursive: true });
+  await writeFile(path.join(packageDirectory, "package.json"), JSON.stringify({ name, version: "0.153.0" }));
+  const archivePath = path.join(f.directory, "fixture.tgz");
+  execFileSync("tar", ["-czf", archivePath, "-C", path.dirname(packageDirectory), "package"]);
+  archive = await readFile(archivePath);
+  const lockPath = path.join(f.directory, "package-lock.json");
+  const entry = { version: "0.153.0", resolved: "https://fixture.invalid/binding.tgz", integrity: `sha512-${createHash("sha512").update(archive).digest("base64")}` };
+  const writeLock = () => writeFile(lockPath, JSON.stringify({ packages: { [`node_modules/${name}`]: entry } }));
+  await writeLock();
+  const extracted = await f.prepareRuntimePackage(name, "0.153.0");
+  assert.equal(JSON.parse(await readFile(path.join(extracted, "package.json"), "utf8")).name, name);
+  await f.prepareRuntimePackage(name, "0.153.0");
+  assert.equal(downloads, 1);
+  await assert.rejects(f.prepareRuntimePackage(name, "0.152.0"), /Missing locked runtime dependency/);
+  entry.integrity = `sha512-${Buffer.alloc(64).toString("base64")}`;
+  await writeLock();
+  await assert.rejects(f.prepareRuntimePackage(name, "0.153.0"), /Integrity verification failed/);
 });

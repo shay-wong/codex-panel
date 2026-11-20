@@ -1,60 +1,102 @@
-const identifier = "[A-Za-z_$][\\w$]*";
+import { sourceAst, property, propertyName, propertyValue, unwrap, isFunction, returnValue, applyEdits } from "./codex-source-ast.mjs";
+import { absoluteModuleImports, esmFunction, esmOwnNodes, esmSameBinding, readCodexEsmModules } from "./codex-provider-quota.mjs";
 
-// 复用原生已有会话标签，不使用会在关闭时丢弃会话的临时侧聊。
+const literal = (node, value) => unwrap(node)?.value === value || (unwrap(node)?.type === "TemplateLiteral"
+  && unwrap(node).expressions.length === 0 && unwrap(node).quasis[0].value.cooked === value);
+const member = (node,name) => node?.type === "MemberExpression" && propertyName(node) === name;
+const equals = (node,name,value) => node?.type === "BinaryExpression" && ["===","=="].includes(node.operator)
+  && (member(node.left,name) && literal(node.right,value) || member(node.right,name) && literal(node.left,value));
+const one = items => items.length === 1 ? items[0] : null;
+
+function exportedOwner(ast,node) {
+  for(let parent=ast.parent(node);parent;parent=ast.parent(parent))if(isFunction(parent)&&ast.exportName(parent))return parent;
+  return null;
+}
+
+function nativeTabs(ast) {
+  const registration=one(ast.all(node=>node.type === "CallExpression" && literal(node.arguments[0],"orbit-activity") && property(node.arguments[2],"open")));
+  if(!registration)return null;
+  const open=ast.value(propertyValue(registration.arguments[2],"open"));
+  if(!isFunction(open))return null;
+  const controllerCall=one(esmOwnNodes(ast,open,node=>node.type === "CallExpression" && member(unwrap(node.callee),"openTab")));
+  if(!controllerCall)return null;
+  const init=exportedOwner(ast,registration),controller=unwrap(controllerCall.callee).object;
+  const layout=one(ast.all(isFunction).filter(fn=>fn.params.length === 3 && esmOwnNodes(ast,fn,node=>equals(node,"mode","full")).length
+    && esmOwnNodes(ast,fn,node=>equals(node,"kind","chat")).length));
+  const focus=one(ast.all(isFunction).filter(fn=>fn.params.length === 2 && esmOwnNodes(ast,fn,node=>equals(node,"kind","chat")).length
+    && esmOwnNodes(ast,fn,node=>member(node,"tabId")).length));
+  const navigate=one(ast.all(isFunction).filter(fn=>fn.params.length === 2 && fn.params[1].type === "RestElement"
+    && esmOwnNodes(ast,fn,node=>node.type === "CallExpression" && member(unwrap(node.callee),"navigate")).length));
+  const hostCalls=ast.all(node=>node.type === "CallExpression" && isFunction(node.arguments[1])
+    && member(returnValue(node.arguments[1]),"hostId"));
+  const host=one(hostCalls.map(call=>ast.parent(call)).filter(node=>node?.type === "VariableDeclarator" || node?.type === "AssignmentExpression"));
+  const layoutCalls=ast.all(node=>node.type === "CallExpression" && isFunction(node.arguments[1])
+    && esmOwnNodes(ast,node.arguments[1],candidate=>candidate.type === "ObjectExpression" && literal(propertyValue(candidate,"mode"),"full")).length
+    && esmOwnNodes(ast,node.arguments[1],candidate=>candidate.type === "ObjectExpression" && literal(propertyValue(candidate,"mode"),"split")).length);
+  const layoutState=one(layoutCalls.map(call=>ast.parent(call)).filter(node=>node?.type === "VariableDeclarator" || node?.type === "AssignmentExpression"));
+  const layoutInit=layoutState&&exportedOwner(ast,layoutState);
+  // Top-level state is already initialized by importing this module.
+  if(layoutState&&!layoutInit&&esmFunction(ast,layoutState))return null;
+  const input=one(ast.all(isFunction).filter(fn=>esmOwnNodes(ast,fn,node=>node.type === "ObjectExpression" && property(node,"composerId")
+    && property(node,"expiresTimeoutId") && property(node,"focusAnimationFrameId")).length));
+  const snapshot=one(ast.all(isFunction).filter(fn=>fn.params.length===0&&esmOwnNodes(ast,fn,node=>member(node,"composerId")).length));
+  const subscribe=one(ast.all(isFunction).filter(fn=>fn.params.length===1&&esmOwnNodes(ast,fn,node=>node.type === "CallExpression" && member(unwrap(node.callee),"add")
+    && esmSameBinding(ast,node.arguments[0],fn.params[0])).length&&ast.all(node=>node.type === "CallExpression" && member(unwrap(node.callee),"delete")
+    && esmSameBinding(ast,node.arguments[0],fn.params[0]),fn).length));
+  const client=one(ast.all(isFunction).filter(fn=>{
+    const value=returnValue(fn);
+    return fn.params.length===2&&value?.type === "CallExpression"&&member(unwrap(value.callee),"get")
+      && esmSameBinding(ast,unwrap(value.callee).object,fn.params[0])&&value.arguments[1]?.type === "CallExpression"
+      && esmSameBinding(ast,value.arguments[1].arguments[0],fn.params[1]);
+  }));
+  const local=client&&returnValue(client).arguments[1].callee;
+  const nodes=[init,open,controller,layoutInit,layout,focus,host?.id??host?.left,navigate,layoutState?.id??layoutState?.left,input,snapshot,subscribe,client,local];
+  const names=nodes.map(node=>node&&ast.exportName(node));
+  return names.every((name,index)=>index===3||Boolean(name))?names:null;
+}
+
+function sidebarSource(ast) {
+  const active=one(ast.all(isFunction).filter(fn=>fn.params.length===1&&esmOwnNodes(ast,fn,node=>equals(node,"routeKind","other")).length
+    && esmOwnNodes(ast,fn,node=>node.type === "ObjectExpression" && property(node,"pathname")).length));
+  const menu=one(ast.all(isFunction).filter(fn=>fn.async&&fn.params.length===1&&["scope","target","surface","paneItems"].every(name=>property(fn.params[0],name))));
+  if(!active||!menu)return null;
+  const paneItems=propertyValue(menu.params[0],"paneItems");
+  const push=one(esmOwnNodes(ast,menu,node=>node.type === "CallExpression"&&member(unwrap(node.callee),"push")&&node.arguments.length===1
+    &&node.arguments[0].type === "SpreadElement"&&node.arguments[0].argument.type === "LogicalExpression"
+    &&node.arguments[0].argument.operator === "??"&&esmSameBinding(ast,node.arguments[0].argument.left,paneItems)));
+  const navigation=one(ast.all(node=>node.type === "CallExpression"&&node.arguments.length===4
+    &&ast.all(candidate=>candidate.type === "ObjectExpression"&&property(candidate,"state")&&property(candidate,"threadAccess"),node.arguments[3]).length));
+  if(!push||!navigation)return null;
+  const row=esmFunction(ast,navigation),root=navigation.arguments[0],conversation=navigation.arguments[1];
+  if(!row)return null;
+  const nativeActive=one(esmOwnNodes(ast,row,node=>node.type === "ObjectPattern"&&property(node,"isActive")));
+  const activeRef=nativeActive&&propertyValue(nativeActive,"isActive");
+  const highlighted=activeRef&&one(esmOwnNodes(ast,row,node=>node.type === "VariableDeclarator"&&node.init?.type === "LogicalExpression"
+    &&node.init.operator==="&&"&&esmSameBinding(ast,node.init.right,activeRef)&&node.init.left.type === "BinaryExpression"
+    &&esmSameBinding(ast,node.init.left.left,activeRef)));
+  const resolved=one(esmOwnNodes(ast,row,node=>node.type === "VariableDeclarator"&&node.init?.type === "LogicalExpression"&&node.init.operator==="??"
+    &&ast.all(candidate=>member(candidate,"hostId"),node.init).length));
+  const react=one(esmOwnNodes(ast,row,node=>node.type === "CallExpression"&&member(unwrap(node.callee),"startTransition")));
+  const presentation=highlighted&&one(esmOwnNodes(ast,row,node=>node.type === "ObjectExpression"&&esmSameBinding(ast,propertyValue(node,"isActive"),highlighted.id)
+    &&property(node,"dataAttributes")));
+  if(!highlighted||!resolved||!react||!presentation)return null;
+  const declaration=ast.parent(resolved);
+  if(declaration?.type!=="VariableDeclaration")return null;
+  const statement=ast.enclosing(presentation,node=>node.type === "ReturnStatement"||node.type === "VariableDeclaration"||node.type === "ExpressionStatement");
+  if(!statement)return null;
+  return {active,menu,push,navigation,row,root,conversation,highlighted,resolved,react:unwrap(react.callee).object,presentation,declaration,statement};
+}
+
+// Reuse native persistent conversation tabs and scope ownership.
 export function rewriteCodexThreadTabs(source, initialSource, initialUrl) {
-  const registration = initialSource.match(new RegExp(`(${identifier})=(${identifier})\\(\x60orbit-activity\x60,[^;]+?open:(${identifier})\\}\\)`));
-  if (!registration) return null;
-  const openName = registration[3];
-  const openStart = initialSource.indexOf(`function ${openName}(`);
-  const openBody = initialSource.slice(openStart, initialSource.indexOf("var ", openStart));
-  const controller = openBody.match(new RegExp(`(${identifier})\\.openTab\\(`))?.[1];
-  const init = initialSource.slice(openStart).match(new RegExp(`function (${identifier})\\(\\)\\{return\\(\\1=`))?.[1];
-  const layout = initialSource.match(new RegExp(`function (${identifier})\\((${identifier}),(${identifier}),(${identifier})\\)\\{if\\(\\4\\.mode===\x60full\x60&&\\3\\.kind===\x60chat\x60`))?.[1];
-  const layoutStart = initialSource.indexOf(`function ${layout}(`);
-  const layoutInit = initialSource.slice(layoutStart).match(new RegExp(`function (${identifier})\\(\\)\\{return\\(\\1=`))?.[1];
-  // 同名标识符也可能出现在 import 中，必须只读取模块自己的导出表。
-  const exports = initialSource.slice(initialSource.lastIndexOf("export{"));
-  const exported = name => exports.match(new RegExp(`(?:,|\\{)${name?.replace(/\$/g, "\\$")} as (${identifier})(?=,|\\})`))?.[1];
-  const focus = initialSource.match(new RegExp(`function (${identifier})\\((${identifier}),(${identifier})\\)\\{(?:if\\(\\3\\.kind===\x60chat\x60\\)\\{${identifier}\\(\\2\\);return\\}${identifier}\\(\\2,\\3\\.tab\\.tabId\\)|\\3\\.kind===\x60chat\x60\\?${identifier}\\(\\2\\):${identifier}\\(\\2,\\3\\.tab\\.tabId\\))`))?.[1];
-  const host = initialSource.match(new RegExp(`(${identifier})=${identifier}\\(${identifier},\\(\\{get:(${identifier})\\}\\)=>\\2\\(${identifier}\\)\\.hostId\\)`))?.[1];
-  const navigateRoute = initialSource.match(new RegExp(`function (${identifier})\\((${identifier}),\\.\\.\\.(${identifier})\\)\\{return \\2\\.get\\(${identifier}\\)\\.navigate\\(\\.\\.\\.\\3\\)`))?.[1];
-  const layoutState = initialSource.match(new RegExp(`(${identifier})=${identifier}\\(${identifier},\\(\\{get:(${identifier})\\}\\)=>\\2\\(${identifier}\\)===\x60full\x60\\?\\{mode:\x60full\x60\\}:\\{contentSide:\\2\\(${identifier}\\),mode:\x60split\x60\\}\\)`))?.[1];
-  const composerFocus = initialSource.match(/function ([\w$]+)\(([\w$]+)\)\{[\w$]+\(\);let [\w$]+=\{composerId:\2,expiresTimeoutId:0,focusAnimationFrameId:null\}/);
-  const composerSnapshot = initialSource.match(/function ([\w$]+)\(\)\{let ([\w$]+)=[\w$]+\(\);return \2==null\?null:[\w$]+\.get\(\2\)\?\.composerId\?\?null\}/);
-  const composerSubscribe = initialSource.slice(composerFocus?.index, composerSnapshot?.index).match(/function ([\w$]+)\(([\w$]+)\)\{return ([\w$]+)\.add\(\2\),\(\)=>\{\3\.delete\(\2\)\}\}/)?.[1];
-  const composerId = initialSource.match(/function ([\w$]+)\(([\w$]+),([\w$]+)\)\{return \2\.get\([\w$]+,([\w$]+)\(\3\)\)\}/);
-  const names = [init, openName, controller, layoutInit, layout, focus, host, navigateRoute, layoutState, composerFocus?.[1], composerSnapshot?.[1], composerSubscribe, composerId?.[1], composerId?.[4]].map(exported);
-  if (!controller || !init || !layout || !layoutInit || names.some(name => !name)) return null;
-  const activeScope = source.match(new RegExp(`function (${identifier})\\((${identifier})\\)\\{let ${identifier}=\\2\\.get\\(${identifier}\\);if\\(${identifier}==null\\)return null;let ${identifier}=${identifier}\\(\\{pathname:[^}]+\\}\\);if\\(${identifier}\\.routeKind===\x60other\x60`))?.[1];
-  const menus = [...source.matchAll(new RegExp(`async function ${identifier}\\(\\{scope:(${identifier}),target:(${identifier}),[^}]+surface:(${identifier}),[^}]+paneItems:(${identifier})\\}\\)`, "g"))];
-  if (!activeScope || menus.length !== 1) return null;
-  const [, scope, target, surface, paneItems] = menus[0];
-  const insertion = new RegExp(`(${identifier})\\.push\\(\\.\\.\\.${paneItems}\\?\\?\\[\\]\\)`);
-  const match = source.match(insertion);
-  if (!match || source.match(new RegExp(insertion.source, "g"))?.length !== 1) return null;
-  // 只拦截侧栏会话行的导航，不改变深链、工具调用或其他原生导航。
-  const navigations = [...source.matchAll(new RegExp(`(${identifier})=(${identifier})\\((${identifier}),(${identifier}),(${identifier})(?:===\x60local\x60\\?void 0:\\5)?,(${identifier})==null&&!(${identifier})\\?void 0:\\{state:\\6,threadAccess:\\7\\?\x60shared\x60:void 0\\}\\)`, "g"))];
-  if (navigations.length !== 1) return null;
-  const [navigation, result, navigate, root, conversation, hostId] = navigations[0];
-  const rowStart = source.lastIndexOf("function ", navigations[0].index);
-  const rowEnd = source.indexOf("function ", navigations[0].index);
-  const row = source.slice(rowStart, rowEnd < 0 ? source.length : rowEnd);
-  const activeProp = row.match(/isActive:([\w$]+)/)?.[1];
-  const activeValue = row.match(new RegExp(`(${identifier})=${activeProp}!==void 0&&${activeProp},`));
-  const resolvedHost = row.match(new RegExp(`(${identifier})=${hostId}\\?\\?${identifier}\\?\\.hostId\\?\\?${identifier}\\?\\?null,`));
-  const react = row.match(/\(0,([\w$]+)\.startTransition\)/)?.[1];
-  if (!activeValue || !resolvedHost || !react) return null;
-  const presentationStart = row.lastIndexOf(";let ", row.lastIndexOf(`isActive:${activeValue[1]}`));
-  if (presentationStart < 0) return null;
-  // 只替换最终行样式与 React 缓存依赖，保留归档等操作对主页面状态的判断。
-  const presentation = row.slice(presentationStart).replace(new RegExp(`\\b${activeValue[1].replace(/\$/g, "\\$")}\\b`, "g"), "panelThreadRowActive");
-  const attributes = presentation.match(/dataAttributes:([\w$]+)/)?.[1];
-  if (!attributes) return null;
-  // 原生样式也读取 selected 属性；视觉焦点变化时必须和 isActive 同步。
-  const activePresentation = presentation.replace(`dataAttributes:${attributes}`, `dataAttributes:panelThreadRowActive===${activeValue[1]}?${attributes}:{...${attributes},"data-app-action-sidebar-thread-active":String(panelThreadRowActive),"data-app-action-sidebar-thread-selected":String(panelThreadRowActive)}`);
-  const activeRow = (row.slice(0,presentationStart) + activePresentation).replace(resolvedHost[0], resolvedHost[0] + `panelThreadRowActive=panelThreadIsActive(${root},{conversationId:${conversation},hostId:${resolvedHost[1]}??"local"},${activeValue[1]},(0,${react}.useSyncExternalStore)(panelThreadTabs11,panelThreadTabs10,panelThreadTabs10)),`);
-  source = source.slice(0,rowStart) + activeRow + source.slice(rowEnd < 0 ? source.length : rowEnd);
-  const imports = `import {${names.map((name, index) => `${name} as panelThreadTabs${index}`).join(",")}} from ${JSON.stringify(initialUrl)};`;
+  let ast,initial,names,signature;
+  try{ast=sourceAst(source);initial=sourceAst(initialSource);names=nativeTabs(initial);signature=sidebarSource(ast);}catch{return null;}
+  if(!names||!signature)return null;
+  const {active,menu,push,navigation,root,conversation,highlighted,resolved,react,presentation,declaration,statement}=signature;
+  const activeScope=ast.text(active.id),navigate=ast.text(navigation.callee);
+  const scope=ast.text(propertyValue(menu.params[0],"scope")),target=ast.text(propertyValue(menu.params[0],"target")),surface=ast.text(propertyValue(menu.params[0],"surface"));
+  const match=[ast.text(push),ast.text(unwrap(push.callee).object)];
+  const imports=`import {${names.map((name,index)=>name&&`${name} as panelThreadTabs${index}`).filter(Boolean).join(",")}} from ${JSON.stringify(initialUrl)};`;
   const helper = `
 globalThis.__codexPanelThreadTabsReady__=true;
 const panelThreadOwners=new Map();
@@ -176,93 +218,34 @@ async function panelRestoreThread(root,target){
     '<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M10 4v12"/>',
     '<rect x="3" y="3" width="14" height="14" rx="1.5"/><path d="M3 7h14"/>',
   ].map(paths => "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`));
-  const items = `${surface}===\`sidebar\`&&${activeScope}(${scope})&&${match[1]}.push(...[false,true].filter(split=>panelThreadModeAvailable(${scope},${target},split)).map(split=>({id:split?"panel-thread-split":"panel-thread-tab",icon:split?${JSON.stringify(icons[1])}:${JSON.stringify(icons[0])},message:{id:split?"panel.thread.openSplit":"panel.thread.openTab",defaultMessage:document.documentElement.lang.startsWith("zh")?(split?"在右侧并排打开":"在新标签页中打开"):(split?"Open side by side":"Open in new tab")},selectAfterClose:true,onSelect:()=>panelOpenThreadTab(${scope},${target},split)}))),`;
-  const restore = `${surface}===\x60sidebar\x60&&panelThreadCanRestore(${scope},${target})&&${match[1]}.push({id:"panel-thread-restore",icon:${JSON.stringify(icons[2])},message:{id:"panel.thread.restore",defaultMessage:document.documentElement.lang.startsWith("zh")?"恢复为独立页面":"Restore as standalone page"},selectAfterClose:true,onSelect:()=>panelRestoreThread(${scope},${target})}),`;
-  const focusNavigation = `${result}=panelFocusThread(${root},{conversationId:${conversation},hostId:${resolvedHost[1]}??"local"})||${navigation.slice(result.length + 1)}`;
-  return imports + source.replace(match[0], items + restore + match[0]).replace(navigation, focusNavigation) + "\n" + helper;
+  const items = `${surface}==="sidebar"&&${activeScope}(${scope})&&${match[1]}.push(...[false,true].filter(split=>panelThreadModeAvailable(${scope},${target},split)).map(split=>({id:split?"panel-thread-split":"panel-thread-tab",icon:split?${JSON.stringify(icons[1])}:${JSON.stringify(icons[0])},message:{id:split?"panel.thread.openSplit":"panel.thread.openTab",defaultMessage:document.documentElement.lang.startsWith("zh")?(split?"在右侧并排打开":"在新标签页中打开"):(split?"Open side by side":"Open in new tab")},selectAfterClose:true,onSelect:()=>panelOpenThreadTab(${scope},${target},split)})))`;
+  const restore = `${surface}==="sidebar"&&panelThreadCanRestore(${scope},${target})&&${match[1]}.push({id:"panel-thread-restore",icon:${JSON.stringify(icons[2])},message:{id:"panel.thread.restore",defaultMessage:document.documentElement.lang.startsWith("zh")?"恢复为独立页面":"Restore as standalone page"},selectAfterClose:true,onSelect:()=>panelRestoreThread(${scope},${target})})`;
+  const attr=propertyValue(presentation,"dataAttributes"),activeName=ast.text(highlighted.id);
+  const edits=[
+    {start:declaration.end,end:declaration.end,text:`;const panelThreadRowActive=panelThreadIsActive(${ast.text(root)},{conversationId:${ast.text(conversation)},hostId:${ast.text(resolved.id)}??"local"},${activeName},(0,${ast.text(react)}.useSyncExternalStore)(panelThreadTabs11,panelThreadTabs10,panelThreadTabs10));`},
+    {start:attr.start,end:attr.end,text:`panelThreadRowActive===${activeName}?${ast.text(attr)}:{...${ast.text(attr)},"data-app-action-sidebar-thread-active":String(panelThreadRowActive),"data-app-action-sidebar-thread-selected":String(panelThreadRowActive)}`},
+    {start:push.start,end:push.end,text:`(${items},${restore},${ast.text(push)})`},
+    {start:navigation.start,end:navigation.end,text:`(panelFocusThread(${ast.text(root)},{conversationId:${ast.text(conversation)},hostId:${ast.text(resolved.id)}??"local"})||${ast.text(navigation)})`},
+    ...ast.references(ast.binding(highlighted.id)).filter(node=>node.start>=statement.start&&node.end<=statement.end).map(node=>({start:node.start,end:node.end,text:"panelThreadRowActive"})),
+  ];
+  try{return imports+(names[3]?"":"function panelThreadTabs3(){}")+applyEdits(source,edits)+"\n"+helper;}catch{return null;}
 }
 
 export async function prepareCodexThreadTabs(cdp, modules, report = console.error) {
   try {
-    // 前面的适配器已读取当前模块时直接复用，避免页面重载后再次发现、读取失败。
-    const nativeModules = new Map(["initial", "primary"].map(kind => [kind,
-      modules.find(module => new RegExp(`/app-${kind}-[\\w-]+\\.js$`).test(module.url)),
-    ]));
-    const missing = [...nativeModules].filter(([, module]) => !module).map(([kind]) => kind);
-    if (missing.length) {
-      const loaded = await cdp.send("Runtime.evaluate", {
-        expression: String.raw`(async()=>{
-          const scripts=[...document.querySelectorAll("script[src],link[rel=modulepreload][href]")].map(e=>e.src||e.href);
-          const urls=[...performance.getEntriesByType("resource").map(e=>e.name),
-            ...[...document.querySelectorAll('script[type="importmap"]')].flatMap(e=>{try{return Object.keys(JSON.parse(e.textContent).imports??{})}catch{return []}}),...scripts];
-          const sources=new Map();
-          const read=async url=>{
-            if(sources.has(url))return sources.get(url);
-            const response=await fetch(url,{cache:"no-store"});
-            if(!response.ok)throw Error("Native thread module unreadable: "+url+" (HTTP "+response.status+")");
-            const source=await response.text();sources.set(url,source);return source;
-          };
-          const find=kind=>urls.find(url=>new RegExp("/app-"+kind+"-[\\w-]+\\.js$").test(new URL(url,location.href).pathname));
-          // 新版入口经 app-main/app-runtime 间接加载模块，资源记录清空后沿这些引用查找。
-          const queue=[...document.querySelectorAll('script[type="module"][src]')].map(e=>e.src);
-          queue.push(...urls.filter(url=>/\/app-(?:main|runtime|initial|primary)-[\w-]+\.js$/.test(new URL(url,location.href).pathname)));
-          for(const url of queue){
-            if(${JSON.stringify(missing)}.every(kind=>find(kind)))break;
-            if(sources.has(url))continue;
-            const source=await read(url);
-            for(const match of source.matchAll(/["'\x60](\.\/app-(?:main|runtime|initial|primary)-[\w-]+\.js)["'\x60]/g)){
-              const dependency=new URL(match[1],url).href;
-              urls.push(dependency);queue.push(dependency);
-            }
-          }
-          return await Promise.all(${JSON.stringify(missing)}.map(async kind=>{
-            const url=find(kind);if(!url)throw Error("Native thread module missing: "+kind);
-            return{url,source:await read(url)};
-          }));
-        })()`,
-        awaitPromise: true, returnByValue: false,
-      });
-      const objectId = loaded.result?.objectId;
-      if (loaded.exceptionDetails || !objectId) throw Error(loaded.exceptionDetails?.exception?.description || loaded.exceptionDetails?.text || "native thread modules unreadable");
-      try {
-        // 原生模块合计超过十余 MB，整包返回会断开 CDP；保留远端对象并分块读取。
-        for (let index = 0; index < missing.length; index++) {
-          const metadata = await cdp.send("Runtime.callFunctionOn", {
-            objectId, functionDeclaration: "function(index){return {url:this[index].url,length:this[index].source.length}}",
-            arguments: [{ value: index }], returnByValue: true,
-          });
-          const value = metadata.result?.value;
-          if (metadata.exceptionDetails || typeof value?.url !== "string" || !Number.isSafeInteger(value.length) || value.length <= 0) {
-            throw Error("native thread module metadata unreadable");
-          }
-          let source = "";
-          for (let start = 0; start < value.length; start += 500_000) {
-            const chunk = await cdp.send("Runtime.callFunctionOn", {
-              objectId, functionDeclaration: "function(index,start){return this[index].source.slice(start,start+500000)}",
-              arguments: [{ value: index }, { value: start }], returnByValue: true,
-            });
-            if (chunk.exceptionDetails || typeof chunk.result?.value !== "string"
-              || chunk.result.value.length !== Math.min(500_000, value.length - start)) {
-              throw Error("native thread module chunk unreadable");
-            }
-            source += chunk.result.value;
-          }
-          nativeModules.set(missing[index], { url: value.url, source });
-        }
-      } finally {
-        await cdp.send("Runtime.releaseObject", { objectId });
-      }
-    }
-    const [initial, original] = [nativeModules.get("initial"), nativeModules.get("primary")];
-    const primary = modules.find(module => module.url === original.url) ?? original;
-    let source = rewriteCodexThreadTabs(primary.source, initial.source, initial.url);
-    if (!source) throw Error("unsupported native thread tabs structure");
-    source = source.replace(/\bfrom(["'\x60])(\.\/?[^"'`\n]+)\1/g, (_, quote, value) => `from${JSON.stringify(new URL(value, primary.url).href)}`)
-      .replace(/\bimport\((["'\x60])(\.\/?[^"'`\n]+)\1\)/g, (_, quote, value) => `import(${JSON.stringify(new URL(value, primary.url).href)})`)
-      .replaceAll("import.meta.url", JSON.stringify(primary.url));
+    const hasNative=entries=>entries.some(module=>{try{return nativeTabs(sourceAst(module.source))!==null;}catch{return false;}})
+      &&entries.some(module=>{try{return sidebarSource(sourceAst(module.source))!==null;}catch{return false;}});
+    const sources=hasNative(modules)?modules:await readCodexEsmModules(cdp,modules,hasNative);
+    const initials=sources.filter(module=>{try{return nativeTabs(sourceAst(module.source))!==null;}catch{return false;}});
+    const primaries=sources.filter(module=>{try{return sidebarSource(sourceAst(module.source))!==null;}catch{return false;}});
+    if(initials.length!==1||primaries.length!==1)throw Error("unsupported or ambiguous native thread tabs structure");
+    const [initial,primary]=[initials[0],primaries[0]];
+    const rewritten=rewriteCodexThreadTabs(primary.source,initial.source,initial.url);
+    if(!rewritten)throw Error("unsupported native thread tabs structure");
+    const source=absoluteModuleImports(rewritten,primary.url);
     report("Panel native conversation tabs prepared.");
-    return [...modules.filter(module => module.url !== primary.url), { url: primary.url, source }];
-  } catch (error) {
+    return [...modules.filter(module=>module.url!==primary.url),{url:primary.url,source}];
+  }catch(error){
     report(`Panel conversation tabs unavailable: ${error.message}`);
     return modules;
   }
