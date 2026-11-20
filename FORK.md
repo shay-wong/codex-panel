@@ -6,7 +6,7 @@
 
 下载失败后续传（2026-11-20，等待上游吸收）：`codex-update-transport.mjs` 将网络失败标记为可重试；`codex-update-download.mjs` 在网络中断/超时后保留大小有效的部分内容，同进程重试相同目标版本/构建复用会话及 HTTP Range。取消、更换目标、无效范围和验签失败保留清理流程，服务退出后不恢复续传；不改变官方签名验证和安装时机。定向验证为 download/transport 测试，不修改生产下载。用户说明同步中英文 README/CHANGELOG 与能力索引；定位 `git log -S'failure.retryable' -- scripts/codex-update-transport.mjs`。上游提供等价续传后评估移除。
 
-额度开关交互（2026-11-20，等待上游吸收）：`launcher/src/App.tsx` 仅对“移除账号额度不足时 API 发送限制”使用 switchOnly，标题、说明和空白不切换，键盘与开关本身继续可操作。定向验证为 `launcher/src/App.spec.tsx` 与隔离浏览器直接操作，不修改当前账号配置。用户说明同步中英文 README/CHANGELOG 与能力索引；定位 `git log -S'switchOnly' -- launcher/src/App.tsx`。上游提供等价交互后评估移除。
+设置开关交互（2026-11-20，等待上游吸收）：`launcher/src/App.tsx` 公共 Setting 和 `PetAnimationSettings.tsx` 声音设置统一仅开关本身及键盘激活切换，标题、说明和空白不切换；保留无障碍名称、说明关联和依赖禁用。Web 设置已使用独立开关按钮。定向验证为 `launcher/src/App.spec.tsx` 与隔离浏览器直接操作，不修改当前账号配置。用户说明同步中英文 README/CHANGELOG 与能力索引；定位 `git log -S'aria-label={title}' -- launcher/src/App.tsx`。上游提供等价交互后评估移除。
 
 发布完整性与构建缓存（2026-11-19，长期保留）：`.github/workflows/release-macos.yml` 固定使用 `macos-15-intel` 执行 macOS 通用版构建，避开 `macos-latest` 当前 ARM 执行机的容量限制；产物仍包含 Apple Silicon 与 Intel。两个平台均使用 Rust 缓存，并开启 `cache-on-failure`，使后续校验或打包失败时保留已编译的依赖缓存。仅当 macOS 与 Windows 构建都成功时才发布 Release，避免单平台失败后发布不完整版本；保留 tag 驱动版本、更新签名及发布后回写规则。变更仅涉及维护者的发布流程，不新增应用设置。验证为 `actionlint` 及 `test/release-workflow.test.mjs`、`test/prepare-fork-release.test.mjs`、`test/release-metadata.test.mjs`、`test/updater-signature.test.mjs`；执行机镜像迁移前需重新验证两种架构，缓存与完整发布门槛长期保留。来源定位：`git log -S'cache-on-failure' -- .github/workflows/release-macos.yml`。
 

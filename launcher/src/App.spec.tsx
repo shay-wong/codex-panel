@@ -9,37 +9,44 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("changes the quota restriction preference only through its switch", async () => {
+it("changes launcher preferences only through their switches", async () => {
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
-  let quotaFix = false;
+  let preferences = { autoConnectCodex: false, customProviderQuotaFix: false };
   const invoke = vi.fn(async (command: string, args?: { key: string; enabled: boolean }) => {
     if (command === "launcher_ui_state") return {
-      snapshot: { phase: "waiting", childPid: 1 }, preferences: { customProviderQuotaFix: quotaFix },
+      snapshot: { phase: "waiting", childPid: 1 }, preferences,
       dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
     };
-    if (command === "set_launcher_preference") return { customProviderQuotaFix: quotaFix = args!.enabled };
+    if (command === "set_launcher_preference") return preferences = { ...preferences, [args!.key]: args!.enabled };
     throw new Error(command);
   });
   vi.stubGlobal("__TAURI__", { core: { invoke }, event: { listen: async () => () => {} } });
   render(<Theme><App /></Theme>);
   await act(async () => {});
   fireEvent.mouseDown(screen.getByRole("tab", { name: /偏好设置/ }), { button: 0, ctrlKey: false });
-  fireEvent.mouseDown(screen.getByRole("tab", { name: /模型与高级/ }), { button: 0, ctrlKey: false });
-  const toggle = screen.getByRole("switch", { name: "移除账号额度不足时 API 发送限制" });
-  const row = toggle.closest(".preference-row")!;
   const saves = () => invoke.mock.calls.filter(([command]) => command === "set_launcher_preference");
-  for (const target of [within(row as HTMLElement).getByText("移除账号额度不足时 API 发送限制"), document.getElementById("customProviderQuotaFixDetail")!, row]) {
-    await act(async () => { fireEvent.click(target); });
+  for (const [id, title, tab] of [
+    ["autoConnectCodex", "启动时连接 Codex", "常用"],
+    ["customProviderQuotaFix", "移除账号额度不足时 API 发送限制", "模型与高级"],
+  ]) {
+    fireEvent.mouseDown(screen.getByRole("tab", { name: new RegExp(tab) }), { button: 0, ctrlKey: false });
+    const toggle = screen.getByRole("switch", { name: title });
+    const row = toggle.closest(".preference-row")!;
+    const previousSaves = saves().length;
+    for (const target of [within(row as HTMLElement).getByText(title), document.getElementById(`${id}Detail`)!, row]) {
+      await act(async () => { fireEvent.click(target); });
+    }
+    expect(saves()).toHaveLength(previousSaves);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(toggle.getAttribute("aria-describedby")).toBe(`${id}Detail`);
+    toggle.focus();
+    expect(document.activeElement).toBe(toggle);
+    await act(async () => { fireEvent.click(toggle); });
+    expect(saves()).toHaveLength(previousSaves + 1);
+    expect(saves().at(-1)).toEqual(["set_launcher_preference", { key: id, enabled: true }]);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
   }
-  expect(saves()).toHaveLength(0);
-  expect(toggle.getAttribute("aria-checked")).toBe("false");
-  expect(toggle.getAttribute("aria-describedby")).toBe("customProviderQuotaFixDetail");
-  toggle.focus();
-  expect(document.activeElement).toBe(toggle);
-  await act(async () => { fireEvent.click(toggle); });
-  expect(saves()).toEqual([["set_launcher_preference", { key: "customProviderQuotaFix", enabled: true }]]);
-  expect(toggle.getAttribute("aria-checked")).toBe("true");
 });
 
 it("keeps launcher feedback, live status and global preferences working through the native bridge", async () => {
@@ -508,6 +515,12 @@ it("opens pets from its own navigation page and refreshes the real selection whe
   expect(screen.getByRole("heading", { name: "宠物" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "导入宠物包" })).toBeTruthy();
   const sounds = screen.getByRole("switch", { name: "播放宠物声音" });
+  expect(sounds.getAttribute("aria-checked")).toBe("true");
+  await act(async () => {
+    fireEvent.click(screen.getByText("播放宠物声音"));
+    fireEvent.click(sounds.parentElement!);
+  });
+  expect(invoke).not.toHaveBeenCalledWith("set_launcher_preference", expect.anything());
   expect(sounds.getAttribute("aria-checked")).toBe("true");
   await act(async () => { fireEvent.click(sounds); });
   expect(invoke).toHaveBeenCalledWith("set_launcher_preference", { key: "petSounds", enabled: false });
