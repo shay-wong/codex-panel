@@ -86,8 +86,8 @@ export function PetAnimationSettings({ disabled = false, connected = false, refr
       <Button variant="soft" disabled={disabled || busy} onClick={() => void updateAnimations("import_pet_animation")}>导入宠物包</Button>
     </Flex>
     <Flex align="center" gap="3" mb="4">
-      <Text as="label" htmlFor="petSounds" size="2">播放宠物声音</Text>
-      <Switch id="petSounds" checked={soundsEnabled} disabled={disabled || !onSoundsChange} onCheckedChange={onSoundsChange} highContrast size="1" />
+      <Text as="div" size="2">播放宠物声音</Text>
+      <Switch id="petSounds" aria-label="播放宠物声音" checked={soundsEnabled} disabled={disabled || !onSoundsChange} onCheckedChange={onSoundsChange} highContrast size="1" />
     </Flex>
     {!connected && <Text as="p" size="1" color="gray" mb="4">连接 Codex 后可查看使用状态并选择宠物。</Text>}
     {error && <Text as="p" size="1" color="red" role="alert" mb="4">{error}</Text>}

@@ -145,12 +145,24 @@ struct LauncherSnapshot {
     embedded_visible: bool,
     thread_tabs_phase: String,
     thread_tabs_message: String,
+    native_adapters_phase: String,
+    native_adapters_message: String,
+    native_adapters_features: Vec<NativeAdapterFeatureStatus>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+struct NativeAdapterFeatureStatus {
+    feature: String,
+    phase: String,
+    message: String,
 }
 
 #[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RendererStatus {
     ready: bool,
+    #[serde(default)]
+    applying_native_adapters: bool,
     page_visible: bool,
     #[serde(default)]
     codex_update_native_ready: bool,
@@ -184,6 +196,11 @@ enum LauncherEvent {
     ThreadTabsStatus {
         phase: String,
         message: String,
+    },
+    NativeAdaptersStatus {
+        phase: String,
+        message: String,
+        features: Vec<NativeAdapterFeatureStatus>,
     },
     ManagedStatus {
         #[serde(rename = "panelManagedStatus")]
@@ -540,6 +557,9 @@ impl LauncherState {
                 embedded_visible: false,
                 thread_tabs_phase: "waiting".into(),
                 thread_tabs_message: String::new(),
+                native_adapters_phase: "waiting".into(),
+                native_adapters_message: String::new(),
+                native_adapters_features: Vec::new(),
             }),
             status_menu: Mutex::new(None),
             service_control_menu: Mutex::new(None),
@@ -1777,8 +1797,29 @@ fn signal_pending_panel_open(app: &AppHandle, state: &Arc<LauncherState>) -> Res
     Ok(())
 }
 
+fn reset_native_adapters_status(snapshot: &mut LauncherSnapshot) {
+    snapshot.native_adapters_phase = "waiting".into();
+    snapshot.native_adapters_message.clear();
+    snapshot.native_adapters_features.clear();
+}
+
+fn apply_native_adapters_status(
+    snapshot: &mut LauncherSnapshot,
+    phase: String,
+    message: String,
+    features: Vec<NativeAdapterFeatureStatus>,
+) {
+    snapshot.native_adapters_phase = phase;
+    snapshot.native_adapters_message = message;
+    snapshot.native_adapters_features = features;
+}
+
 fn apply_renderer_status(snapshot: &mut LauncherSnapshot, pid: u32, status: RendererStatus) {
     snapshot.embedded_visible = status.ready && status.page_visible;
+    // 同一受管 CDP 连接应用适配时会短暂重载；连接失效后不再带此标记。
+    if !status.ready && status.applying_native_adapters {
+        return;
+    }
     snapshot.codex_update_ready = status.ready && status.codex_update_ready;
     snapshot.codex_update_available = status.ready && status.codex_update_available;
     snapshot.codex_update_downloading = status.ready && status.codex_update_downloading;
@@ -1792,6 +1833,7 @@ fn apply_renderer_status(snapshot: &mut LauncherSnapshot, pid: u32, status: Rend
     } else if snapshot.phase == "running" || snapshot.open_signal_pid == Some(pid) {
         snapshot.thread_tabs_phase = "waiting".into();
         snapshot.thread_tabs_message.clear();
+        reset_native_adapters_status(snapshot);
         snapshot.phase = "waiting".into();
         snapshot.message = "Panel 服务已启动，正在等待 Codex 连接。".into();
         snapshot.open_signal_pid = None;
@@ -1812,6 +1854,7 @@ fn apply_waiting_for_codex(snapshot: &mut LauncherSnapshot) {
                 snapshot.codex_update_phase.clear();
     snapshot.thread_tabs_phase = "waiting".into();
     snapshot.thread_tabs_message.clear();
+    reset_native_adapters_status(snapshot);
 }
 
 fn apply_codex_restart_required(snapshot: &mut LauncherSnapshot) {
@@ -1825,6 +1868,7 @@ fn apply_codex_restart_required(snapshot: &mut LauncherSnapshot) {
                 snapshot.codex_update_phase.clear();
     snapshot.thread_tabs_phase = "waiting".into();
     snapshot.thread_tabs_message.clear();
+    reset_native_adapters_status(snapshot);
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -1845,7 +1889,7 @@ fn monitor_renderer_readiness(
         // 更新器可能以普通方式重开 Codex。按实际启动参数检测，不绑定版本号，
         // 也不自动退出用户正在工作的 Codex；仅在状态首次变化时显示管理窗口。
         #[cfg(target_os = "macos")]
-        let restart_required = !status.ready && {
+        let restart_required = !status.ready && !status.applying_native_adapters && {
             let app_path = state.snapshot.lock().unwrap().app_path.clone();
             app_path.as_deref().is_some_and(|path| {
                 codex_process(Path::new(path), &state.data_directory.join("codex-profile"), false)
@@ -1860,6 +1904,8 @@ fn monitor_renderer_readiness(
             let snapshot = state.snapshot.lock().unwrap();
             if restart_required {
                 snapshot.phase != "restart_required"
+            } else if !status.ready && status.applying_native_adapters {
+                snapshot.embedded_visible
             } else if snapshot.phase == "restart_required" {
                 true
             } else if status.ready {
@@ -1971,6 +2017,7 @@ fn send_injector_control_request(
                 .and_then(|value| value.get("ready"))
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
+            applying_native_adapters: result.and_then(|value| value.get("applyingNativeAdapters")).and_then(serde_json::Value::as_bool).unwrap_or(false),
             codex_update_native_ready: result.and_then(|value| value.get("codexUpdateNativeReady")).and_then(serde_json::Value::as_bool).unwrap_or(false),
             codex_update_native_downloading: result.and_then(|value| value.get("codexUpdateNativeDownloading")).and_then(serde_json::Value::as_bool).unwrap_or(false),
             codex_update_checking: result.and_then(|value| value.get("codexUpdateChecking")).and_then(serde_json::Value::as_bool).unwrap_or(false),
@@ -2197,6 +2244,7 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
                 snapshot.codex_update_phase.clear();
         snapshot.thread_tabs_phase = "waiting".into();
         snapshot.thread_tabs_message.clear();
+        reset_native_adapters_status(snapshot);
     });
 }
 
@@ -2255,6 +2303,9 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                         snapshot.thread_tabs_phase = phase;
                         snapshot.thread_tabs_message = message;
                     }
+                    LauncherEvent::NativeAdaptersStatus { phase, message, features } => {
+                        apply_native_adapters_status(snapshot, phase, message, features);
+                    }
                     LauncherEvent::ManagedStatus { status } => {
                         #[cfg(target_os = "windows")]
                         {
@@ -2268,6 +2319,7 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                             pid,
                             RendererStatus {
                                 ready: true,
+                                applying_native_adapters: false,
                                 page_visible: snapshot.embedded_visible,
                                 codex_update_native_ready: false,
                                 codex_update_native_downloading: false,
@@ -2383,6 +2435,7 @@ fn start_launcher_locked(
                 snapshot.codex_update_phase.clear();
         snapshot.thread_tabs_phase = "waiting".into();
         snapshot.thread_tabs_message.clear();
+        reset_native_adapters_status(snapshot);
     });
 
     #[cfg(target_os = "macos")]
@@ -2590,6 +2643,7 @@ fn start_launcher_locked(
                 snapshot.codex_update_phase.clear();
                 snapshot.thread_tabs_phase = "waiting".into();
                 snapshot.thread_tabs_message.clear();
+                reset_native_adapters_status(snapshot);
                 if !intentional {
                     snapshot.phase = "error".into();
                     snapshot.message = "任务面板进程已退出，正在恢复…".into();
@@ -4524,12 +4578,16 @@ mod tests {
             embedded_visible: false,
             thread_tabs_phase: "waiting".into(),
             thread_tabs_message: String::new(),
+            native_adapters_phase: "waiting".into(),
+            native_adapters_message: String::new(),
+            native_adapters_features: Vec::new(),
         };
         apply_renderer_status(
             &mut snapshot,
             42,
             RendererStatus {
                 ready: true,
+                applying_native_adapters: false,
                 page_visible: false,
                 codex_update_native_ready: false,
                 codex_update_native_downloading: false,
@@ -4543,10 +4601,36 @@ mod tests {
         assert_eq!(snapshot.phase, "running");
         assert_eq!(snapshot.open_signal_pid, Some(42));
         assert!(!snapshot.embedded_visible);
+        let connection_message = snapshot.message.clone();
+        let progress = serde_json::from_str::<super::LauncherEvent>(
+            r#"{"launcherEvent":"nativeAdaptersStatus","phase":"adapting","message":"正在适配 Codex 模块 42 · 2/10","features":[{"feature":"quota","phase":"loading","message":"模块 42 · 2/10"},{"feature":"tabs","phase":"loading","message":"模块 75 · 3/10"}]}"#,
+        ).unwrap();
+        let super::LauncherEvent::NativeAdaptersStatus { phase, message, features } = progress else {
+            panic!("expected native adapter progress");
+        };
+        super::apply_native_adapters_status(&mut snapshot, phase, message, features);
+        assert_eq!(snapshot.phase, "running");
+        assert_eq!(snapshot.message, connection_message);
+        assert_eq!(snapshot.open_signal_pid, Some(42));
+        assert_eq!(snapshot.native_adapters_phase, "adapting");
+        assert!(snapshot.native_adapters_message.contains("模块 42"));
+        assert_eq!(snapshot.native_adapters_features.len(), 2);
+        assert!(snapshot.native_adapters_features.iter().all(|feature| feature.phase == "loading"));
+        snapshot.native_adapters_phase = "applying".into();
+        let applying = serde_json::from_str::<RendererStatus>(
+            r#"{"ready":false,"pageVisible":false,"applyingNativeAdapters":true}"#,
+        ).unwrap();
+        apply_renderer_status(&mut snapshot, 42, applying);
+        assert_eq!(snapshot.phase, "running");
+        assert_eq!(snapshot.open_signal_pid, Some(42));
+        assert_eq!(snapshot.native_adapters_phase, "applying");
+        assert_eq!(snapshot.native_adapters_features.len(), 2);
         apply_renderer_status(&mut snapshot, 42, RendererStatus::default());
         assert_eq!(snapshot.phase, "waiting");
         assert_eq!(snapshot.open_signal_pid, None);
         assert!(snapshot.open_request_pending);
+        assert_eq!(snapshot.native_adapters_phase, "waiting");
+        assert!(snapshot.native_adapters_features.is_empty());
 
         // 更新后的普通进程需要用户确认；后续轮询不能把提示冲掉。
         super::apply_codex_restart_required(&mut snapshot);
@@ -4563,6 +4647,7 @@ mod tests {
             42,
             RendererStatus {
                 ready: true,
+                applying_native_adapters: false,
                 page_visible: true,
                 codex_update_native_ready: false,
                 codex_update_native_downloading: false,
@@ -4600,6 +4685,9 @@ mod tests {
             embedded_visible: true,
             thread_tabs_phase: "waiting".into(),
             thread_tabs_message: String::new(),
+            native_adapters_phase: "waiting".into(),
+            native_adapters_message: String::new(),
+            native_adapters_features: Vec::new(),
         };
 
         apply_waiting_for_codex(&mut snapshot);

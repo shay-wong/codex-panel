@@ -267,7 +267,7 @@ export async function readCodexEsmModules(cdp, modules = [], complete = () => fa
   }
 }
 
-export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report = console.error, modules = [], dotEntryPrepared = false, ultrafastPrepared = modules.length > 0) {
+export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report = console.error, modules = [], dotEntryPrepared = false, ultrafastPrepared = modules.length > 0, onPrepared) {
   if (!preferencesFile) return "";
   try {
     let preferences = {};
@@ -304,6 +304,7 @@ export async function prepareCodexProviderQuotaFix(cdp, preferencesFile, report 
       if (modules.length === 0) throw error;
       report(`Panel custom-provider quota fix unavailable: ${error.message}`);
     }
+    onPrepared?.(quotaPrepared);
     return `(() => {
       if (window !== window.top) return;
       window.__codexPanelQuotaBootstrapPrepared__ = ${quotaPrepared};

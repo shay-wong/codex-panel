@@ -289,7 +289,9 @@ test("split composer discovery installs its adapter and reports quota applicatio
       URL,location:{href:"app://-/index.html"},performance:{getEntriesByType:()=>[{name:primaryUrl}]},document:{querySelectorAll:()=>[]},
       fetch:async url=>({ok:url===primaryUrl||url===adapterUrl,text:async()=>url===primaryUrl?splitProviderSource:supported?splitSource:"unsupported"}),
     })}};}};
-    const bootstrap=await prepareCodexProviderQuotaFix(cdp,preferencesFile,()=>{},[{url:"app://-/assets/dot.js",source:"void 0;"}],true,false);
+    let quotaPrepared;
+    const bootstrap=await prepareCodexProviderQuotaFix(cdp,preferencesFile,()=>{},[{url:"app://-/assets/dot.js",source:"void 0;"}],true,false,prepared=>{quotaPrepared=prepared;});
+    assert.equal(quotaPrepared,supported,"readiness distinguishes quota from other installed adapters");
     const window={};window.top=window;
     const blobs=[];
     const context=vm.createContext({window,document:{documentElement:{prepend(){}},createElement:()=>({})},MutationObserver:class{observe(){}disconnect(){}},URL:{createObjectURL:()=>"blob:fixture"},Blob:class{constructor(parts){blobs.push(parts.join(""));}}});

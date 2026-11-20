@@ -13,6 +13,9 @@ export type LauncherSnapshot = {
   embeddedVisible: boolean;
   threadTabsPhase: string;
   threadTabsMessage: string;
+  nativeAdaptersPhase: string;
+  nativeAdaptersMessage: string;
+  nativeAdaptersFeatures: { feature: string; phase: string; message: string }[];
   openRequestPending: boolean;
   updateMessage: string;
   updateNotes: string | null;
@@ -46,15 +49,16 @@ const titles: Record<string, string> = { running: "Panel 已就绪", waiting: "�
 const initialSnapshot: LauncherSnapshot = {
   phase: "starting", version: "—", message: "正在读取服务状态…", childPid: null,
   embeddedVisible: false, threadTabsPhase: "waiting", threadTabsMessage: "", openRequestPending: false, updateMessage: "尚未检查更新。", updateNotes: null,
+  nativeAdaptersPhase: "waiting", nativeAdaptersMessage: "", nativeAdaptersFeatures: [],
   updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false, appPath: null,
 };
 
-function Setting({ id, title, detail, checked, disabled, switchOnly = false, onChange }: {
-  id: string; title: string; detail: ReactNode; checked: boolean; disabled?: boolean; switchOnly?: boolean; onChange: (checked: boolean) => void;
+function Setting({ id, title, detail, checked, disabled, onChange }: {
+  id: string; title: string; detail: ReactNode; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void;
 }) {
   return <Flex className={`preference-row${disabled ? " is-disabled" : ""}`} align="center" justify="between" gap="4">
-    <Box><Text as="label" htmlFor={switchOnly ? undefined : id} size="2" weight="medium">{title}</Text><Text as="p" size="1" color="gray" mt="1" id={`${id}Detail`}>{detail}</Text></Box>
-    <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onChange} aria-label={switchOnly ? title : undefined} aria-describedby={`${id}Detail`} highContrast size="1" />
+    <Box><Text as="div" size="2" weight="medium">{title}</Text><Text as="p" size="1" color="gray" mt="1" id={`${id}Detail`}>{detail}</Text></Box>
+    <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onChange} aria-label={title} aria-describedby={`${id}Detail`} highContrast size="1" />
   </Flex>;
 }
 
@@ -306,6 +310,9 @@ export function App() {
   }
 
   const threadTabsLabels: Record<string, string> = { waiting: "等待连接", loading: "加载中", prepared: "已准备，等待页面加载", ready: "已加载", failed: "加载失败" };
+  const nativeAdaptersLabels: Record<string, string> = { idle: "未开始", waiting: "等待连接", reading: "读取中", adapting: "适配中", prepared: "等待应用", applying: "应用中", ready: "已就绪", partial: "部分可用", failed: "适配失败" };
+  const adapterFeatureLabels: Record<string, string> = { quota: "API 发送限制", ultrafast: "Ultrafast", dot: "Dot 入口", tabs: "会话菜单", queue: "排队消息", pets: "宠物", projectlessChat: "无项目聊天", nativeUpdate: "Codex 更新", nativeServices: "原生服务" };
+  const adapterFeaturePhases: Record<string, string> = { loading: "适配中", prepared: "已准备", ready: "已启用", failed: "失败" };
 
   const componentStates = [
     { id: "panel", label: "Panel 服务", text: snapshot.phase === "error" ? "启动异常" : hasProcess ? `运行中 · PID ${snapshot.childPid}` : "未启动", tone: snapshot.phase === "error" ? "error" : hasProcess ? "running" : "stopped" },
@@ -382,11 +389,21 @@ export function App() {
             <section className="overview-section" aria-labelledby="extensionStatusTitle">
               <Heading as="h3" size="2" id="extensionStatusTitle" mb="3">功能与维护</Heading>
               <div className="maintenance-card-grid">
+                <div className="maintenance-card" id="nativeAdaptersComponent">
+                  <div className="status-row-copy" aria-live="polite">
+                    <Flex align="center" gap="2"><Text size="2" weight="medium">Codex 适配</Text><Badge id="nativeAdaptersPhase" size="1" color={snapshot.nativeAdaptersPhase === "failed" ? "red" : snapshot.nativeAdaptersPhase === "partial" ? "amber" : snapshot.nativeAdaptersPhase === "ready" ? "green" : "gray"}>{nativeAdaptersLabels[snapshot.nativeAdaptersPhase] || "等待连接"}</Badge></Flex>
+                    <Text as="p" id="nativeAdaptersMessage" size="1" color="gray" mt="1">{snapshot.nativeAdaptersMessage || "连接 Codex 后准备原生功能"}</Text>
+                    <Flex direction="column" gap="2" mt="3" role="list" aria-label="功能适配进度">{snapshot.nativeAdaptersFeatures?.map(feature => <Box key={feature.feature} role="listitem">
+                      <Flex align="center" gap="2"><Text size="1" weight="medium">{adapterFeatureLabels[feature.feature] || feature.feature}</Text><Badge size="1" color={feature.phase === "failed" ? "red" : feature.phase === "ready" ? "green" : "gray"}>{adapterFeaturePhases[feature.phase] || feature.phase}</Badge></Flex>
+                      {feature.message && <Text as="p" size="1" color="gray" mt="1">{feature.message}</Text>}
+                    </Box>)}</Flex>
+                  </div>
+                </div>
                 <div className="maintenance-card" id="threadTabsComponent">
                   <div className="status-row-copy" aria-live="polite">
                     <Flex align="center" gap="2"><Text size="2" weight="medium">会话菜单</Text><Badge size="1" color={snapshot.threadTabsPhase === "failed" ? "red" : snapshot.threadTabsPhase === "ready" ? "green" : "gray"}>{threadTabsLabels[snapshot.threadTabsPhase] || "等待连接"}</Badge></Flex>
                     <Text as="p" size="1" color="gray" mt="1">新标签页与并排会话</Text>
-                    {snapshot.threadTabsMessage && <details className="menu-diagnostics"><summary>加载详情</summary><Text as="p" size="1" color="gray" mt="2">{snapshot.threadTabsMessage}</Text></details>}
+                    {snapshot.threadTabsMessage && <Text as="p" size="1" color="gray" mt="2">{snapshot.threadTabsMessage}</Text>}
                     {snapshot.threadTabsPhase !== "ready" && <Text as="p" size="1" color="gray" mt="1">加载成功时可能刷新一次 Codex 界面。</Text>}
                   </div>
                   {snapshot.threadTabsPhase !== "ready" && <Flex className="card-actions">{cardAction("retryThreadTabs", "retry_thread_tabs", "重试加载", <span className="action-icon" aria-hidden="true">↻</span>, !ready || snapshot.threadTabsPhase === "loading")}</Flex>}
@@ -486,7 +503,7 @@ export function App() {
                         <span style={{ display: "block" }}>保存后重启 Codex，使用时保持 Panel 运行。</span>
                       </>} checked={preferences?.customProviderUltrafast ?? false} disabled={!state || savingPreference} onChange={enabled => void changeUltrafast(enabled)} />
                       <Separator size="4" />
-                      <Setting id="customProviderQuotaFix" title="移除账号额度不足时 API 发送限制" detail="仅限自定义 API；首次安装适配时重载一次，之后开关即时生效" checked={preferences?.customProviderQuotaFix ?? false} disabled={!state || savingPreference} switchOnly onChange={enabled => void savePreference("customProviderQuotaFix", enabled)} />
+                      <Setting id="customProviderQuotaFix" title="移除账号额度不足时 API 发送限制" detail="仅限自定义 API；首次安装适配时重载一次，之后开关即时生效" checked={preferences?.customProviderQuotaFix ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("customProviderQuotaFix", enabled)} />
                       <Separator size="4" />
                       <Setting id="showCustomProviderDot" title="恢复 Dot 入口" detail="跳过 Dot 的客户端账号权限与 Provider 限制；连接 Panel 时生效，实际使用仍可能被服务端拒绝" checked={preferences?.showCustomProviderDot ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("showCustomProviderDot", enabled)} />
                     </div>

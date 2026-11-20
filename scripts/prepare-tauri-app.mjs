@@ -346,6 +346,7 @@ async function copyApplicationResources() {
     "codex-update-transport.mjs",
     "codex-rspack.mjs",
     "codex-rspack-source.mjs",
+    "codex-rspack-worker.mjs",
     "codex-source-ast.mjs",
     "codex-rspack-quota.mjs",
     "codex-rspack-tabs.mjs",

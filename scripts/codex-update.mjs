@@ -76,7 +76,7 @@ function subscriptionSignature(context, ast, fn, changes) {
 function locateUpdateBindings(modules, context, moduleAst) {
   const related = new Set(), changes = [];
   for (const module of modules) {
-    if (!module.source.includes("stateChanged")) continue;
+    if (!(module.contains?.("stateChanged") ?? module.source.includes("stateChanged"))) continue;
     const ast = moduleAst(module);
     for (const fn of ast.all(node => isFunction(node) && functionName(ast, node) === "stateChanged")) {
       const owner = ast.parent(ast.parent(fn));
@@ -95,7 +95,7 @@ function locateUpdateBindings(modules, context, moduleAst) {
       if (signature) subscriptions.set(signature.fn, context.exportOf(signature.ast, signature.fn) ?? context.exportOf(ast, value) ?? {id:context.id(ast),exportName:name});
     }
   }
-  const channels = new Map(), channelModules = new Set(modules.filter(module => module.source.includes("appBetaPreferencesByAccountId")));
+  const channels = new Map(), channelModules = new Set(modules.filter(module => module.contains?.("appBetaPreferencesByAccountId") ?? module.source.includes("appBetaPreferencesByAccountId")));
   let pending = [...channelModules];
   while (pending.length) {
     for (const module of pending) {
@@ -114,7 +114,7 @@ function locateUpdateBindings(modules, context, moduleAst) {
     if (channels.size) break;
     const targets = new Set(pending.map(module => module.id ?? module.url));
     pending = modules.filter(module => {
-      if (channelModules.has(module) || module.id && ![...targets].some(id => module.source.includes(id))) return false;
+      if (channelModules.has(module) || module.id && ![...targets].some(id => module.contains?.(id) ?? module.source.includes(id))) return false;
       const ast = moduleAst(module);
       const imports = ast.factory ? ast.all(node => node.type === "CallExpression"
         && ast.binding(unwrap(node.callee)) === ast.binding(ast.factory.params[2]) && node.arguments[0]?.type === "Literal")

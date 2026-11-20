@@ -43,7 +43,7 @@ import { createUltrafastCatalogAdapter } from "./codex-provider-ultrafast-catalo
 import { startSharedSessionGateway } from "./codex-shared-session.mjs";
 import { readSharedSessionInitialization, retainSharedConversation } from "./codex-shared-session-native.mjs";
 import { prepareCodexProviderQuotaFix, watchCodexProviderQuotaPreferences } from "./codex-provider-quota.mjs";
-import { prepareCodexRspack } from "./codex-rspack.mjs";
+import { prepareCodexRspack, applyCodexRspackFeature } from "./codex-rspack.mjs";
 import { nativePetSelection } from "./codex-rspack-pets.mjs";
 import { listPetAnimations, readPetAnimations } from "./pet-animations.mjs";
 import { createPanelSupervisor } from "./panel-supervisor.mjs";
@@ -2441,6 +2441,8 @@ async function readInjectionStatus(cdp) {
       quotaBootstrapPrepared: window.__codexPanelQuotaBootstrapPrepared__ === true,
       quotaApplied: window.__codexPanelProviderQuotaV1__?.applied === true,
       providerModulesPrepared: window.__codexPanelProviderQuotaV1__?.prepared === true,
+      nativeAdaptersRevision: window.__codexPanelNativeAdaptersRevision__ || null,
+      nativeAdaptersPrepared: window.__codexPanelNativeAdaptersPrepared__ || window.__codexPanelRspack__?.prepared || {},
       scriptIdentifier: window[${JSON.stringify(injectionScriptIdentifierName)}] || null,
       entryMounted: Boolean(document.getElementById("codex-panel-entry")),
       pageMounted: Boolean(document.getElementById("codex-panel-page")),
@@ -2581,16 +2583,18 @@ async function readAvatarInjectionStatus(cdp) {
   return result.result?.value ?? {};
 }
 
-async function injectAvatarTarget(runtime, target, sourceHash, appPath, keepAlive) {
+async function injectAvatarTarget(runtime, target, sourceHash, appPath, keepAlive, onConnected) {
   const cdp = await runtime.connect(target);
   let retained = false;
   try {
+    cdp.petAnimationsSourceHash = sourceHash;
+    onConnected?.(cdp);
     await cdp.send("Page.enable");
     await cdp.send("Runtime.enable");
     await waitForRendererReady(cdp, 15_000);
     const petAnimations = await readPetAnimations(panelDataDirectory);
     const adapters = await prepareCodexRspack(cdp, appPath, panelEnvironment("PREFERENCES_FILE"), console.error, {
-      petsOnly: true, petAnimations, cacheDirectory: path.join(panelDataDirectory, "codex-adapters"), adapterRevision: sourceHash,
+      petsOnly: true, petAnimations, cacheDirectory: path.join(panelDataDirectory, "codex-adapters"), adapterRevision: sourceHash, unrefWorkers: keepAlive,
     });
     if (!adapters?.prepared.pets) throw new Error("Pet animation module is unavailable");
     const currentStatus = await readAvatarInjectionStatus(cdp);
@@ -2620,7 +2624,7 @@ async function injectAvatarTarget(runtime, target, sourceHash, appPath, keepAliv
         console.error(`Pet animation registration failed: ${error.message}`);
       });
     });
-    cdp.petAnimationsSourceHash = sourceHash;
+    if (cdp.closed) throw new Error("Pet animation connection was closed");
     retained = keepAlive;
     return retained ? cdp : null;
   } finally {
@@ -2628,7 +2632,7 @@ async function injectAvatarTarget(runtime, target, sourceHash, appPath, keepAliv
   }
 }
 
-async function injectAvatarTargets(runtime, sourceHash, connections, appPath, keepAlive) {
+async function injectAvatarTargets(runtime, sourceHash, connections, appPath, keepAlive, isActive = () => true) {
   const targets = await runtime.avatarTargets();
   const activeIds = new Set(targets.map(target => target.id));
   for (const [id, connection] of connections) {
@@ -2640,11 +2644,18 @@ async function injectAvatarTargets(runtime, sourceHash, connections, appPath, ke
   const results = [];
   for (const target of targets) {
     if (connections.has(target.id)) continue;
+    let pending;
     try {
-      const connection = await injectAvatarTarget(runtime, target, sourceHash, appPath, keepAlive);
+      const connection = await injectAvatarTarget(runtime, target, sourceHash, appPath, keepAlive, cdp => {
+        if (!isActive()) throw new Error("Pet animation runtime was closed");
+        pending = cdp;
+        connections.set(target.id, cdp);
+      });
       if (connection) connections.set(target.id, connection);
+      else connections.delete(target.id);
       results.push({ targetId: target.id, url: target.url, petsPrepared: true });
     } catch (error) {
+      if (connections.get(target.id) === pending) connections.delete(target.id);
       console.error(`Pet avatar window ${target.id} is not ready: ${error.message}`);
     }
   }
@@ -2688,29 +2699,30 @@ async function syncPetAnimations(dataDirectory, connections) {
   }
 }
 
-async function prepareNativeAdapters(cdp, appPath, reportThreadTabs, sourceHash) {
+async function prepareNativeAdapters(cdp, appPath, reportThreadTabs, sourceHash, onProgress, onFeaturePrepared) {
   const preferences = panelEnvironment("PREFERENCES_FILE");
   try {
     let petAnimations = [];
     try { petAnimations = await readPetAnimations(panelDataDirectory); }
     catch (error) { console.error(`Pet animation configuration is unavailable: ${error.message}`); }
     const rspack = await prepareCodexRspack(cdp, appPath, preferences, console.error, {
-      petAnimations, cacheDirectory: path.join(panelDataDirectory, "codex-adapters"), adapterRevision: sourceHash,
+      petAnimations, cacheDirectory: path.join(panelDataDirectory, "codex-adapters"), adapterRevision: sourceHash, onProgress, onFeaturePrepared, unrefWorkers: true,
     });
     if (rspack) {
       if (!rspack.prepared.tabs) reportThreadTabs(`Panel conversation tabs unavailable: ${rspack.errors.tabs}`);
-      return { source: rspack.source, threadTabsPrepared: rspack.prepared.tabs,
+      return { source: rspack.source, prepared: rspack.prepared, errors: rspack.errors, threadTabsPrepared: rspack.prepared.tabs,
         ultrafastPrepared: rspack.prepared.ultrafast, dotPrepared: rspack.prepared.dot };
     }
   } catch (error) {
     reportThreadTabs(`Panel conversation tabs unavailable: ${error.message}`);
-    return { source: "", threadTabsPrepared: false };
+    return { source: "", prepared: {}, errors: { tabs: error.message }, threadTabsPrepared: false };
   }
   const ultrafast = await prepareCodexProviderUltrafast(cdp);
   const dot = await prepareCodexDotEntry(cdp, ultrafast);
   const modules = await prepareCodexThreadTabs(cdp, dot.modules, reportThreadTabs);
-  const source = await prepareCodexProviderQuotaFix(cdp, preferences, console.error, modules, dot.prepared, ultrafast.length > 0);
-  return { source, threadTabsPrepared: modules !== dot.modules && Boolean(source),
+  let quotaPrepared = false;
+  const source = await prepareCodexProviderQuotaFix(cdp, preferences, console.error, modules, dot.prepared, ultrafast.length > 0, prepared => { quotaPrepared = prepared; });
+  return { source, prepared: { quota: quotaPrepared, tabs: modules !== dot.modules && Boolean(source), ultrafast: ultrafast.length > 0, dot: dot.prepared }, errors: {}, threadTabsPrepared: modules !== dot.modules && Boolean(source),
     ultrafastPrepared: ultrafast.length > 0, dotPrepared: dot.prepared };
 }
 
@@ -2753,50 +2765,119 @@ async function injectTarget(
       console.error(message);
       if (message.startsWith("Panel conversation tabs unavailable:")) cdp.threadTabsError = message.slice(message.indexOf(":") + 1).trim();
     };
-    const adapters = keepAlive ? await prepareNativeAdapters(cdp, appPath, reportThreadTabs, sourceHash) : { source: "", threadTabsPrepared: false };
-    const quotaSource = adapters.source;
-    if (quotaSource) source = `${quotaSource}\n${source}`;
-    // 已连接不等于菜单加载成功；失败留给后台巡检重试，只有准备成功才重载应用。
-    cdp.threadTabsPhase = adapters.threadTabsPrepared ? "prepared" : "failed";
-    cdp.threadTabsError ||= cdp.threadTabsPhase === "failed" ? "会话菜单尚未准备成功" : "";
-    const retryThreadTabs = keepAlive ? async () => {
+    cdp.threadTabsPhase = "loading";
+    cdp.threadTabsError = "";
+    const featureLabels = { quota: "账号额度限制", ultrafast: "Ultrafast", dot: "Dot 入口", tabs: "会话菜单", queue: "排队消息", pets: "宠物动画", projectlessChat: "无项目聊天", nativeUpdate: "Codex 更新", nativeServices: "原生服务" };
+    const features = new Map();
+    const publishAdapters = (phase, message) => {
+      cdp.nativeAdaptersStatus = { phase, message, features: [...features.values()] };
+      cdp.onNativeAdaptersStatus?.();
+    };
+    const reportProgress = progress => {
+      if (cdp.closed) return;
+      const count = progress.total == null ? "" : `（${progress.completed ?? 0}/${progress.total}）`;
+      const module = progress.moduleId == null ? "" : ` · 模块 ${progress.moduleId}`;
+      if (progress.feature) {
+        const feature = progress.feature;
+        features.set(feature, { feature, phase: "loading", message: `正在识别${featureLabels[feature] ?? feature}${count}${module}` });
+      }
+      const messages = {
+        cache: "正在检查此版本的适配缓存…",
+        read: `正在读取 Codex 资源${count}${progress.asset ? ` · ${progress.asset}` : ""}`,
+        adapt: "正在并发适配原生模块；Panel 已连接。",
+        compose: `正在合并已完成的模块${count}${module}`,
+        write: "正在保存此版本的适配缓存…",
+        prepared: "适配已准备，正在应用…",
+      };
+      publishAdapters(progress.phase === "read" || progress.phase === "cache" ? "reading" : "adapting", messages[progress.phase] ?? "正在适配原生模块…");
+    };
+    const retryThreadTabs = keepAlive ? () => {
+      if (cdp.nativeAdaptersTask) return cdp.nativeAdaptersTask;
       cdp.threadTabsPhase = "loading";
       cdp.threadTabsError = "";
+      features.clear();
+      publishAdapters("reading", "Panel 已连接，正在后台准备原生模块…");
       void cdp.onThreadTabsStatus?.();
-      // 手动重试和后台重试都读取当前模块，不能沿用首次失败时的空快照。
-      const refreshed = await prepareNativeAdapters(cdp, appPath, reportThreadTabs, sourceHash);
-      if (!refreshed.threadTabsPrepared) { cdp.threadTabsPhase = "failed"; return false; }
-      const bootstrap = refreshed.source;
-      if (!bootstrap) { cdp.threadTabsPhase = "failed"; cdp.threadTabsError = "菜单注入脚本未准备成功"; return false; }
-      const currentStatus = await readInjectionStatus(cdp);
-      const reconciled = await reconcileInjectionRuntime({
-        currentStatus,
-        source: `${bootstrap}\n${baseSource}`,
-        sourceHash,
-        reloadRequired: true,
-        removeRegisteredSource: identifier => cdp.send("Page.removeScriptToEvaluateOnNewDocument", { identifier }),
-        registerCurrentSource: currentSource => registerInjectionSource(cdp, currentSource),
-        reloadRenderer: () => reloadRenderer(cdp, 15_000),
-        evaluateCurrentSource: currentSource => evaluateInjectionSource(cdp, currentSource),
-        publishRegistration: identifier => publishInjectionScriptIdentifier(cdp, identifier),
-        reopen: () => cdp.send("Runtime.evaluate", { expression: "window.__codexPanelInjection__?.open()", returnByValue: true }),
+      const liveApplications = [];
+      cdp.nativeAdaptersTask = (async () => {
+        const adapters = await prepareNativeAdapters(cdp, appPath, reportThreadTabs, sourceHash, reportProgress, result => {
+          if (cdp.closed) return;
+          const feature = result.feature;
+          const prepared = feature === "nativeUpdate" ? Object.values(result.plan.nativeUpdate ?? {}).some(Boolean) : result.plan.prepared[feature] === true;
+          features.set(feature, { feature, phase: prepared ? "prepared" : "failed", message: prepared ? "已适配，等待统一应用" : result.plan.errors[feature] || "未找到兼容的原生模块" });
+          const application = applyCodexRspackFeature(cdp, result.plan).then(applied => {
+            if (!applied?.length || cdp.closed) return;
+            for (const name of applied) features.set(name, { feature: name, phase: "ready", message: "已启用" });
+            if (applied.includes("nativeUpdate")) cdp.nativeUpdatePrepared = true;
+            publishAdapters("adapting", "已完成的原生服务已启用，其余模块继续适配。");
+          }).catch(error => {
+            console.error(`Panel live native services unavailable: ${error.message}`);
+          });
+          liveApplications.push(application);
+          publishAdapters("adapting", "正在并发适配原生模块；Panel 已连接。");
+        });
+        await Promise.all(liveApplications);
+        if (cdp.closed) return false;
+        for (const [feature, prepared] of Object.entries(adapters.prepared)) {
+          features.set(feature, { feature, phase: prepared ? "prepared" : "failed", message: prepared ? "已适配，等待统一应用" : adapters.errors[feature] || "未找到兼容的原生模块" });
+        }
+        if (!adapters.source) throw new Error(cdp.threadTabsError || "原生适配脚本未准备成功");
+        const currentStatus = await readInjectionStatus(cdp);
+        const reloadRequired = Object.values(adapters.prepared).some(Boolean) && (
+          currentStatus.nativeAdaptersRevision !== sourceHash
+          || Object.entries(adapters.prepared).some(([feature, prepared]) => prepared && currentStatus.nativeAdaptersPrepared?.[feature] !== true)
+        );
+        cdp.nativeAdaptersApplying = reloadRequired;
+        publishAdapters("applying", reloadRequired ? "正在统一应用适配，刷新 Codex 界面一次…" : "正在启用已缓存的原生适配…");
+        const reconciled = await reconcileInjectionRuntime({
+          currentStatus,
+          source: `${adapters.source}\nglobalThis.__codexPanelNativeAdaptersRevision__=${JSON.stringify(sourceHash)};globalThis.__codexPanelNativeAdaptersPrepared__=${JSON.stringify(adapters.prepared)};\n${baseSource}`,
+          sourceHash,
+          reloadRequired,
+          reloadOnSourceChange: false,
+          removeRegisteredSource: identifier => cdp.send("Page.removeScriptToEvaluateOnNewDocument", { identifier }),
+          registerCurrentSource: currentSource => registerInjectionSource(cdp, currentSource),
+          reloadRenderer: () => reloadRenderer(cdp, 15_000),
+          evaluateCurrentSource: currentSource => evaluateInjectionSource(cdp, currentSource),
+          publishRegistration: identifier => publishInjectionScriptIdentifier(cdp, identifier),
+          reopen: () => cdp.send("Runtime.evaluate", { expression: "window.__codexPanelInjection__?.open()", returnByValue: true }),
+        });
+        scriptIdentifier = reconciled.scriptIdentifier;
+        await hostBridge.publishHeartbeat();
+        const status = await waitForInjectionStatus(cdp, reconciled.shouldRemainOpen, sourceHash, 15_000);
+        if (!status.entryMounted || status.sourceHash !== sourceHash) throw new Error("应用原生适配后 Panel 入口尚未就绪");
+        cdp.threadTabsPhase = adapters.threadTabsPrepared ? "prepared" : "failed";
+        cdp.threadTabsError = adapters.threadTabsPrepared ? "" : cdp.threadTabsError || "会话菜单尚未准备成功";
+        for (const feature of features.values()) {
+          if (feature.phase === "prepared") { feature.phase = "ready"; feature.message = "已启用"; }
+        }
+        const partial = [...features.values()].some(feature => feature.phase === "failed");
+        publishAdapters(partial ? "partial" : "ready", partial ? "已启用适配成功的模块；部分模块适配失败。" : "原生模块已全部启用，适配缓存已就绪。");
+        return adapters.threadTabsPrepared;
+      })().catch(error => {
+        cdp.threadTabsPhase = "failed";
+        cdp.threadTabsError = error.message;
+        publishAdapters("failed", error.message);
+        console.error(`Panel native adaptation failed: ${error.message}`);
+        return false;
+      }).finally(() => {
+        cdp.nativeAdaptersApplying = false;
+        cdp.nativeAdaptersTask = null;
+        cdp.retryThreadTabs = cdp.closed || cdp.threadTabsPhase !== "failed" || cdp.threadTabsRetries >= 3 ? null : retryThreadTabs;
+        cdp.threadTabsRetryAt = Date.now() + 5_000;
+        void cdp.onThreadTabsStatus?.();
       });
-      scriptIdentifier = reconciled.scriptIdentifier;
-      await hostBridge.publishHeartbeat();
-      cdp.threadTabsPhase = "prepared";
-      console.error("Panel conversation tabs recovered.");
-      return true;
+      return cdp.nativeAdaptersTask;
     } : null;
     await cdp.send("Page.setBypassCSP", { enabled: true });
-    if (keepAlive && attachExisting) {
+    if (keepAlive) {
       const currentStatus = await readInjectionStatus(cdp);
       const reconciled = await reconcileInjectionRuntime({
         currentStatus,
         source,
         sourceHash,
-        reloadRequired: Boolean(quotaSource) && (currentStatus.providerModulesPrepared !== true
-          || adapters.ultrafastPrepared && currentStatus.ultrafastBootstrapPrepared !== true
-          || adapters.dotPrepared && currentStatus.dotBootstrapPrepared !== true),
+        reloadRequired: false,
+        reloadOnSourceChange: false,
         shouldOpen,
         removeRegisteredSource: (identifier) => cdp.send(
           "Page.removeScriptToEvaluateOnNewDocument",
@@ -2842,14 +2923,18 @@ async function injectTarget(
       if (shouldRemainOpen && (!status.pageVisible || !status.frameReady || !frameLoaded)) {
         throw new Error("Codex 中的任务面板尚未就绪，请稍后重试。");
       }
-      retained = true;
       cdp.prepareThreadTabs = retryThreadTabs;
-      cdp.retryThreadTabs = cdp.threadTabsPhase === "failed" ? retryThreadTabs : null;
+      cdp.startNativeAdapters = retryThreadTabs;
+      cdp.retryThreadTabs = null;
       cdp.threadTabsRetryAt = Date.now() + 5_000;
-      return {
-        result: { ...status, cspBypassed: true, frameLoaded },
-        connection: cdp,
-      };
+      const result = { ...status, cspBypassed: true, frameLoaded };
+      if (screenshotPath) {
+        const screenshot = await cdp.send("Page.captureScreenshot", { format: "png" });
+        await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
+        result.screenshot = screenshotPath;
+      }
+      retained = true;
+      return { result, connection: cdp };
     }
     scriptIdentifier = await registerInjectionSource(cdp, source);
     cdp.on("Page.loadEventFired", async () => {
@@ -2896,7 +2981,8 @@ async function injectTarget(
     }
     retained = keepAlive;
     cdp.prepareThreadTabs = retryThreadTabs;
-    cdp.retryThreadTabs = cdp.threadTabsPhase === "failed" ? retryThreadTabs : null;
+    cdp.startNativeAdapters = retryThreadTabs;
+    cdp.retryThreadTabs = null;
     cdp.threadTabsRetryAt = Date.now() + 5_000;
     return { result, connection: retained ? cdp : null };
   } finally {
@@ -2925,6 +3011,7 @@ async function injectAll(
   appPath,
 ) {
   const targets = await runtime.targets();
+  const previousPrimary = injectedTargets.values().next().value;
 
   const activeIds = new Set(targets.map((target) => target.id));
   for (const [id, connection] of injectedTargets) {
@@ -2945,20 +3032,28 @@ async function injectAll(
   for (const target of targets) {
     const existing = injectedTargets.get(target.id);
     if (existing) {
-      if (existing.retryThreadTabs && Date.now() >= existing.threadTabsRetryAt) {
+      if (!existing.nativeAdaptersTask && existing.retryThreadTabs && Date.now() >= existing.threadTabsRetryAt) {
         existing.threadTabsRetryAt = Date.now() + 5_000;
         existing.threadTabsRetries = (existing.threadTabsRetries ?? 0) + 1;
         try {
-          if (await existing.retryThreadTabs()) existing.retryThreadTabs = null;
+          void existing.retryThreadTabs().then(recovered => {
+            if (recovered) existing.retryThreadTabs = null;
+            else existing.threadTabsPhase = "failed";
+          }).catch(error => {
+            existing.threadTabsPhase = "failed";
+            existing.threadTabsError = error.message;
+            console.error(`Panel conversation tabs retry failed: ${error.message}`);
+          }).finally(() => {
+            if (existing.threadTabsPhase === "failed" && existing.threadTabsRetries >= 3) {
+              existing.retryThreadTabs = null;
+              console.error("Panel conversation tabs unavailable after 3 retries; stopped until manual retry or reconnect.");
+            }
+            void existing.onThreadTabsStatus?.();
+          });
         } catch (error) {
           existing.threadTabsPhase = "failed";
           existing.threadTabsError = error.message;
           console.error(`Panel conversation tabs retry failed: ${error.message}`);
-        }
-        if (existing.retryThreadTabs && existing.threadTabsRetries >= 3) {
-          existing.retryThreadTabs = null;
-          existing.threadTabsPhase = "failed";
-          console.error("Panel conversation tabs unavailable after 3 retries; stopped until manual retry or reconnect.");
         }
         void existing.onThreadTabsStatus?.();
       }
@@ -2982,7 +3077,15 @@ async function injectAll(
         onCodexAppServerUnavailable,
         appPath,
       );
-      if (connection) injectedTargets.set(target.id, connection);
+      if (connection) {
+        injectedTargets.set(target.id, connection);
+        connection.onNativeAdaptersStatus = () => {
+          if (connection.nativeAdaptersStatus && [...injectedTargets.values()].find(cdp => !cdp.closed) === connection) {
+            emitLauncherEvent("nativeAdaptersStatus", connection.nativeAdaptersStatus);
+          }
+        };
+        void connection.startNativeAdapters?.();
+      }
       results.push({ targetId: target.id, title: target.title, url: target.url, ...result });
     } catch (error) {
       lastError = error;
@@ -2992,6 +3095,8 @@ async function injectAll(
       console.error(`Panel window ${target.id} (${JSON.stringify(target.title || "")}, ${targetPath}) is not ready: ${error.message}`);
     }
   }
+  const primary = [...injectedTargets.values()].find(cdp => !cdp.closed);
+  if (previousPrimary && previousPrimary !== primary) primary?.onNativeAdaptersStatus?.();
   if (lastError && injectedTargets.size === 0 && results.length === 0) throw lastError;
   return results;
 }
@@ -3002,7 +3107,7 @@ async function currentInjectionSource() {
   const providerUltrafast = await readFile(new URL("./codex-provider-ultrafast.mjs", import.meta.url), "utf8");
   const dotEntry = await readFile(new URL("./codex-dot-entry.mjs", import.meta.url), "utf8");
   const threadTabs = await readFile(new URL("./codex-thread-tabs.mjs", import.meta.url), "utf8");
-  const rspack = await Promise.all(["codex-rspack.mjs", "codex-rspack-source.mjs", "codex-source-ast.mjs", "codex-update.mjs", "codex-rspack-quota.mjs", "codex-rspack-tabs.mjs", "codex-rspack-capabilities.mjs", "codex-rspack-pets.mjs", "pet-animations.mjs"]
+  const rspack = await Promise.all(["codex-rspack.mjs", "codex-rspack-source.mjs", "codex-rspack-worker.mjs", "codex-source-ast.mjs", "codex-update.mjs", "codex-rspack-quota.mjs", "codex-rspack-tabs.mjs", "codex-rspack-capabilities.mjs", "codex-rspack-pets.mjs", "pet-animations.mjs"]
     .map(file => readFile(new URL(file, import.meta.url), "utf8")));
   const lumi = await Promise.all(["pet.json", "spritesheet.webp", "animation.json", "hover.webp", "dance.m4a"]
     .map(async file => createHash("sha256").update(await readFile(path.join(projectRoot, "inject/pets/lumi", file))).digest("hex")));
@@ -3428,19 +3533,28 @@ async function main() {
     await supervisor.ensure({ force: true });
 
     const { source, sourceHash } = await currentInjectionSource();
-    const syncAvatarWindows = async keepAlive => {
-      if (!cdpRuntime) return;
-      try {
-        const results = await injectAvatarTargets(cdpRuntime, sourceHash, avatarConnections, options.appPath, keepAlive);
-        if (results.length > 0) console.log(JSON.stringify({ petsInjected: results }, null, 2));
-      } catch (error) {
-        console.error(`Pet avatar discovery failed: ${error.message}`);
-      }
-      try {
-        await syncPetAnimations(panelDataDirectory, [...injectedTargets.values(), ...avatarConnections.values()]);
-      } catch (error) {
-        console.error(`Pet animation configuration is unavailable: ${error.message}`);
-      }
+    let avatarSync;
+    const syncAvatarWindows = keepAlive => {
+      if (avatarSync) return avatarSync;
+      avatarSync = (async () => {
+        if (!cdpRuntime) return;
+        // Avoid two simultaneous archive/AST builds on the first connection.
+        await Promise.all([...injectedTargets.values()].map(connection => connection.nativeAdaptersTask).filter(Boolean));
+        if (stopping || !cdpRuntime) return;
+        try {
+          const runtime = cdpRuntime;
+          const results = await injectAvatarTargets(runtime, sourceHash, avatarConnections, options.appPath, keepAlive, () => !stopping && cdpRuntime === runtime);
+          if (results.length > 0) console.log(JSON.stringify({ petsInjected: results }, null, 2));
+        } catch (error) {
+          console.error(`Pet avatar discovery failed: ${error.message}`);
+        }
+        try {
+          await syncPetAnimations(panelDataDirectory, [...injectedTargets.values(), ...avatarConnections.values()]);
+        } catch (error) {
+          console.error(`Pet animation configuration is unavailable: ${error.message}`);
+        }
+      })().finally(() => { avatarSync = null; });
+      return avatarSync;
     };
     let lastThreadTabsStatus = "";
     const publishThreadTabsStatus = async () => {
@@ -3483,8 +3597,9 @@ async function main() {
       void publishThreadTabsStatus();
       return { queued: true };
     };
+    const applyingNativeAdapters = () => [...injectedTargets.values()].some(connection => !connection.closed && connection.nativeAdaptersApplying === true);
     const publishManagedStatus = async () => {
-      let status = { ready: false, pageVisible: false };
+      let status = { ready: false, pageVisible: false, applyingNativeAdapters: applyingNativeAdapters() };
       if (cdpRuntime) {
         try {
           const readiness = await inspectRuntimeInjectionReadiness(
@@ -3495,6 +3610,7 @@ async function main() {
           status = {
             ready: readiness.ready === true,
             pageVisible: readiness.ready === true && readiness.status?.pageVisible === true,
+            applyingNativeAdapters: applyingNativeAdapters(),
           };
         } catch (_) {}
       }
@@ -3610,12 +3726,16 @@ async function main() {
           "retry-thread-tabs": async () => requestThreadTabsRetry(),
           status: async () => {
             if (!cdpRuntime) throw new Error("Panel renderer injection is waiting for Codex");
-            const readiness = await inspectRuntimeInjectionReadiness(
-              cdpRuntime,
-              sourceHash,
-              options.startupToken,
-            );
-            if (!readiness.ready) { lastThreadTabsStatus = ""; throw new Error("Panel renderer injection is not ready"); }
+            let readiness;
+            try {
+              readiness = await inspectRuntimeInjectionReadiness(cdpRuntime, sourceHash, options.startupToken);
+            } catch (error) {
+              if (applyingNativeAdapters()) return { ready: false, applyingNativeAdapters: true };
+              throw error;
+            }
+            const applying = applyingNativeAdapters();
+            if (!readiness.ready && !applying) { lastThreadTabsStatus = ""; throw new Error("Panel renderer injection is not ready"); }
+            if (!readiness.ready) return { ...readiness, applyingNativeAdapters: true };
             let codexUpdateReady = false;
             let codexUpdateAvailable = false;
             let codexUpdateDownloading = false;
@@ -3624,7 +3744,7 @@ async function main() {
             let codexUpdateMessage = "暂时无法读取更新状态";
             if (process.platform === "darwin" && !options.cdpPipe) {
               const connection = [...injectedTargets.values()].find(cdp => !cdp.closed);
-              if (connection) {
+              if (connection && (!connection.nativeAdaptersTask || connection.nativeUpdatePrepared)) {
                 try {
                   const update = await readCodexUpdateStatus(connection, { download: codexUpdateDownload });
                   codexUpdateReady = update.ready;
@@ -3637,7 +3757,7 @@ async function main() {
                 catch { /* Unknown update state must not offer installation. */ }
               }
             }
-            return { ...readiness, codexUpdateReady, codexUpdateAvailable, codexUpdateDownloading, codexUpdatePhase, codexUpdateMessage, codexUpdateChecking };
+            return { ...readiness, applyingNativeAdapters: applyingNativeAdapters(), codexUpdateReady, codexUpdateAvailable, codexUpdateDownloading, codexUpdatePhase, codexUpdateMessage, codexUpdateChecking };
           },
           open: async () => {
             if (!cdpRuntime) throw new Error("Panel renderer injection is waiting for Codex");
@@ -3801,7 +3921,7 @@ async function main() {
       emitLauncherEvent("injected", { panelManagedReady: true });
       await publishManagedStatus();
     }
-    await syncAvatarWindows(options.watch);
+    void syncAvatarWindows(options.watch);
     if (!options.watch) {
       codexProcess?.unref?.();
       return;
@@ -4006,7 +4126,7 @@ async function main() {
         console.error(`Waiting for Codex renderer: ${error.message}`);
         emitLauncherEvent("waitingForCodex", { message: error.message });
       }
-      await syncAvatarWindows(true);
+      void syncAvatarWindows(true);
     }
   } finally {
     if (options.watch) {

@@ -122,6 +122,37 @@ test("avatar injection handles late windows and reconnects without mounting Pane
   assert.equal(preparations.at(-1)[4].adapterRevision, "updated");
 });
 
+test("stopping during avatar preparation closes its pending connection and cannot retain it later", async () => {
+  const start = source.indexOf("async function readAvatarInjectionStatus(");
+  const end = source.indexOf("async function prepareNativeAdapters(", start);
+  let finish, notify;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const started = new Promise(resolve => { notify = resolve; });
+  const cdp = { closed: false, on() {}, close() { this.closed = true; }, async send() {
+    if (this.closed) throw new Error("CDP closed");
+    return {};
+  } };
+  const inject = vm.runInNewContext(`${source.slice(start, end)}; injectAvatarTargets`, {
+    console: { error() {} }, path, panelDataDirectory: "/fixture/data", panelEnvironment: () => undefined,
+    waitForRendererReady: async () => {}, readPetAnimations: async () => [],
+    prepareCodexRspack: async () => { notify(); await pending; return { prepared: { pets: true }, source: "// pet" }; },
+  });
+  const connections = new Map();
+  const runtime = { avatarTargets: async () => [{ id: "pet" }], connect: async () => cdp };
+  const run = inject(runtime, "current", connections, "/fixture/ChatGPT.app", true);
+  await started;
+  assert.equal(connections.get("pet"), cdp, "cleanup owns CDP before preparation completes");
+  connections.forEach(connection => connection.close());
+  connections.clear();
+  finish();
+  assert.equal((await run).length, 0);
+  assert.equal(connections.size, 0);
+  assert.equal(cdp.closed, true);
+  const late = { ...cdp, closed: false };
+  assert.equal((await inject({ ...runtime, connect: async () => late }, "current", connections, "/fixture/ChatGPT.app", true, () => false)).length, 0);
+  assert.equal(late.closed, true, "a connection opening after shutdown is immediately closed");
+});
+
 test("imported pet packs and sound preferences update both windows without reloading animations", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "panel-pet-live-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -228,92 +259,216 @@ test("an unavailable secondary window cannot hide a connected main window", asyn
   }
 });
 
-test("quota preparation recovering on a mount retry reloads once before reusing the document", async () => {
-  const { reconcileInjectionRuntime } = await import("../scripts/codex-injector-runtime.mjs");
-  const start = source.indexOf("async function prepareNativeAdapters(");
-  const end = source.indexOf("async function injectAll(", start);
-  const page = { window: {} };
-  let reloads = 0;
-  const preparations = ["", "window.__codexPanelProviderQuotaV1__ = { prepared: true };", "window.__codexPanelProviderQuotaV1__ = { prepared: true };"];
-  const status = () => ({ sourceHash: "current", startupToken: "manager", entryMounted: true,
-    providerModulesPrepared: page.window.__codexPanelProviderQuotaV1__?.prepared === true });
-  const cdp = { send: async () => ({}), on() {}, close() {} };
-  const inject = vm.runInNewContext(`${source.slice(start, end)}; injectTarget`, {
-    installPanelHostBinding: () => ({ install: async () => {}, publishHeartbeat: async () => {} }),
-    path, panelDataDirectory: "/fixture/data",
-    prepareCodexRspack: async (_cdp, _appPath, _preferences, _report, options) => {
-      assert.equal(options.cacheDirectory, path.join("/fixture/data", "codex-adapters"));
-      assert.equal(options.adapterRevision, "current");
-      return null;
-    },
-    waitForRendererReady: async () => {}, panelEnvironment: () => "fixture",
-    prepareCodexProviderQuotaFix: async () => preparations.shift(),
-    prepareCodexProviderUltrafast: async () => [],
-    prepareCodexDotEntry: async (_cdp, modules) => ({ modules, prepared: false }),
-    prepareCodexThreadTabs: async (_cdp, modules) => modules,
-    readInjectionStatus: async () => status(), reconcileInjectionRuntime,
-    registerInjectionSource: async () => "registered",
-    reloadRenderer: async () => { reloads++; page.window = {}; },
-    evaluateInjectionSource: async (_cdp, currentSource) => vm.runInNewContext(currentSource, page),
-    publishInjectionScriptIdentifier: async () => {}, waitForInjectionStatus: async () => status(),
-    unregisterQuotaPolicyCdp() {}, console: { error() {} },
-  });
-  for (const expectedReloads of [0, 1, 1]) {
-    await inject({ connect: async () => cdp }, {}, "// panel source", "current", false, null, true, {}, true, "manager", () => {}, () => {}, () => {});
-    assert.equal(reloads, expectedReloads);
-  }
-});
-
-test("a connected window retries missing tabs and applies the recovered menu once", async () => {
+async function adapterHarness(prepare, initial = {}) {
   const { reconcileInjectionRuntime } = await import("../scripts/codex-injector-runtime.mjs");
   const start = source.indexOf("async function prepareNativeAdapters(");
   const end = source.indexOf("async function currentInjectionSource(", start);
-  let now = 0, attempts = 0, reloads = 0, registeredSource = "", registration = 0;
-  const events = new Map();
-  const published = [];
-  const cdp = { send: async () => ({}), on: (event, callback) => events.set(event, callback), close() {} };
-  const status = () => ({ sourceHash: "current", entryMounted: true, providerModulesPrepared: true, scriptIdentifier: String(registration) });
-  const { injectAll } = vm.runInNewContext(`${source.slice(start, end)}; ({injectAll})`, {
-    Date: { now: () => now }, URL, console: { error() {} },
+  const createPage = values => {
+    const context = vm.createContext(values);
+    context.window = context;
+    return context;
+  };
+  let page = createPage(initial), registeredSource = "", registration = 0, now = 0;
+  const events = new Map(), published = [], statuses = [], live = [], logs = [];
+  const result = { reloads: 0, preparations: 0 };
+  const status = () => ({ sourceHash: page.panelHash, entryMounted: page.entry === true, pageVisible: false,
+    scriptIdentifier: String(registration), nativeAdaptersRevision: page.__codexPanelNativeAdaptersRevision__,
+    nativeAdaptersPrepared: page.__codexPanelNativeAdaptersPrepared__ ?? page.__codexPanelRspack__?.prepared ?? {} });
+  const cdp = { closed: false, send: async () => ({}), on: (event, callback) => events.set(event, callback), close() { this.closed = true; } };
+  const injectAll = vm.runInNewContext(`${source.slice(start, end)}; injectAll`, {
+    Date: { now: () => now }, URL, path, Buffer, writeFile, console: { error: message => logs.push(message) },
+    panelDataDirectory: "/fixture/data", readPetAnimations: async () => [], panelEnvironment: () => undefined,
     installPanelHostBinding: () => ({ install: async () => {}, publishHeartbeat: async () => {} }),
-    path, panelDataDirectory: "/fixture/data",
-    prepareCodexRspack: async () => null,
-    waitForRendererReady: async () => {}, panelEnvironment: () => "fixture",
-    prepareCodexProviderUltrafast: async () => [],
-    prepareCodexDotEntry: async (_cdp, modules) => ({ modules, prepared: false }),
-    prepareCodexThreadTabs: async (_cdp, modules) => ++attempts < 3 ? modules : [{ url: "primary", source: "menu" }],
-    prepareCodexProviderQuotaFix: async (_cdp, _preferences, _report, modules) => modules.length ? "// recovered menu" : "// existing adapters",
-    readInjectionStatus: async () => status(), reconcileInjectionRuntime,
+    prepareCodexRspack: async (_cdp, appPath, _preferences, _report, options) => {
+      result.preparations++;
+      assert.equal(appPath, "/fixture/ChatGPT.app");
+      assert.equal(options.cacheDirectory, path.join("/fixture/data", "codex-adapters"));
+      assert.equal(options.adapterRevision, "current");
+      return prepare(options, result.preparations);
+    },
+    applyCodexRspackFeature: async (_cdp, plan) => { live.push(plan); return Object.keys(plan.nativeServices ?? {}).length ? ["nativeServices"] : []; },
+    waitForRendererReady: async () => {}, readInjectionStatus: async () => status(), reconcileInjectionRuntime,
     registerInjectionSource: async (_cdp, text) => { registeredSource = text; return String(++registration); },
-    reloadRenderer: async () => { reloads++; await events.get("Page.loadEventFired")?.(); },
-    evaluateInjectionSource: async () => {},
+    reloadRenderer: async () => { result.reloads++; page = createPage({}); vm.runInContext(registeredSource, page); await events.get("Page.loadEventFired")?.(); },
+    evaluateInjectionSource: async (_cdp, text) => vm.runInContext(text, page),
     publishInjectionScriptIdentifier: async (_cdp, identifier) => published.push(identifier),
     waitForInjectionStatus: async () => status(), unregisterQuotaPolicyCdp() {},
+    emitLauncherEvent: (event, details) => statuses.push(JSON.parse(JSON.stringify({ event, ...details }))),
   });
   const connections = new Map();
   const runtime = { targets: async () => [{ id: "main" }], connect: async () => cdp };
-  const run = () => injectAll(runtime, "// panel source", "current", false, null, connections, true, {}, true, "token", () => {}, () => {}, () => {});
+  return { ...result, result, cdp, live, logs, events, published, statuses, connections,
+    source: () => registeredSource, advance: value => { now = value; },
+    run: (screenshotPath = null, attachExisting = true) => injectAll(runtime, 'globalThis.panelHash="current";globalThis.entry=true;', "current", false, screenshotPath, connections, true, {}, attachExisting, "token", () => {}, () => {}, () => {}, "/fixture/ChatGPT.app"),
+  };
+}
+
+function adapterResult(prepared, errors = {}) {
+  return { source: `globalThis.__codexPanelRspack__={prepared:${JSON.stringify(prepared)}};`, prepared, errors };
+}
+
+test("a newly launched watched window writes its requested screenshot and releases the connection on write failure", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "panel-watch-screenshot-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const pngHeader = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const harness = await adapterHarness(async () => adapterResult({ tabs: true }));
+  harness.cdp.send = async (method, params) => {
+    if (method !== "Page.captureScreenshot") return {};
+    assert.equal(params.format, "png");
+    return { data: pngHeader.toString("base64") };
+  };
+  const filename = path.join(directory, "main.png");
+  const [result] = await harness.run(filename, false);
+  assert.equal(result.screenshot, filename);
+  assert.deepEqual(await readFile(filename), pngHeader);
+  await harness.cdp.nativeAdaptersTask;
+  harness.connections.clear();
+  await assert.rejects(harness.run(path.join(directory, "missing", "main.png"), false), { code: "ENOENT" });
+  assert.equal(harness.cdp.closed, true);
+  assert.equal(harness.connections.size, 0);
+});
+
+test("the status control preserves a controlled reload when CDP loses its execution context", async () => {
+  const start = source.indexOf("          status: async () => {");
+  const end = source.indexOf("          open: async () => {", start);
+  const lostContext = new Error("Execution context was destroyed");
+  let applying = true;
+  const query = vm.runInNewContext(`({${source.slice(start, end)}}).status`, {
+    cdpRuntime: {}, sourceHash: "current", options: { startupToken: "fixture" },
+    applyingNativeAdapters: () => applying,
+    inspectRuntimeInjectionReadiness: async () => { throw lostContext; },
+  });
+  assert.deepEqual({ ...await query() }, { ready: false, applyingNativeAdapters: true });
+  applying = false;
+  await assert.rejects(query(), error => error === lostContext);
+});
+
+test("Panel connects before adaptation, publishes feature progress, and applies successes with one final reload", async () => {
+  let finish, options;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const harness = await adapterHarness(async progress => { options = progress; return pending; });
+  assert.equal((await harness.run()).length, 1);
+  assert.equal(harness.connections.get("main"), harness.cdp);
+  assert.equal(harness.result.reloads, 0, "base connection must not reload while adaptation is pending");
+  await Promise.resolve();
+  options.onProgress({ phase: "adapt", feature: "quota", moduleId: "provider", completed: 2, total: 10 });
+  options.onProgress({ phase: "adapt", feature: "tabs", moduleId: "workspace", completed: 3, total: 10 });
+  const progress = harness.statuses.at(-1);
+  assert.equal(progress.event, "nativeAdaptersStatus");
+  assert.equal(progress.features.length, 2, "parallel modules retain their separate progress");
+  assert.match(progress.features[0].message, /2\/10.*provider/);
+  options.onFeaturePrepared({ feature: "pets", plan: { prepared: { pets: true }, errors: {}, nativeServices: { desktopServices: { id: "services", exportName: "app" } } } });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(harness.live.length, 1, "services become available before the entire plan finishes");
+  assert(harness.statuses.some(status => status.features.some(feature => feature.feature === "nativeServices" && feature.phase === "ready")));
+  assert.equal(harness.result.reloads, 0);
+  finish(adapterResult({ quota: true, tabs: false, pets: true }, { tabs: "Native thread factory missing" }));
+  await harness.cdp.nativeAdaptersTask;
+  assert.equal(harness.result.reloads, 1, "all completed patches share one final reload even when tabs fail");
+  assert.equal(harness.cdp.threadTabsPhase, "failed");
+  assert.equal(harness.statuses.at(-1).phase, "partial");
+  assert(harness.statuses.at(-1).features.some(feature => feature.feature === "quota" && feature.phase === "ready"));
+  assert.equal(harness.statuses.some(status => status.event === "waitingForCodex"), false);
+});
+
+test("reconnecting to an already adapted version reuses the document without another reload", async () => {
+  const prepared = { quota: true, tabs: true };
+  const harness = await adapterHarness(async () => adapterResult(prepared), {
+    __codexPanelNativeAdaptersRevision__: "current", __codexPanelRspack__: { prepared },
+  });
+  await harness.run();
+  await harness.cdp.nativeAdaptersTask;
+  assert.equal(harness.result.preparations, 1);
+  assert.equal(harness.result.reloads, 0);
+  assert.equal(harness.cdp.retryThreadTabs, null);
+  assert.equal(harness.statuses.at(-1).phase, "ready");
+});
+
+test("legacy ESM adapters retain their successful readiness across reconnection", async () => {
+  const prepared = { quota: false, tabs: true, dot: true };
+  const harness = await adapterHarness(async () => ({ source: "// ESM adapters without Rspack runtime", prepared, errors: {} }));
+  await harness.run();
+  await harness.cdp.nativeAdaptersTask;
+  assert.equal(harness.result.reloads, 1);
+  harness.connections.clear();
+  await harness.run();
+  await harness.cdp.nativeAdaptersTask;
+  assert.equal(harness.result.reloads, 1, "ESM readiness uses the common installed snapshot");
+});
+
+test("the third automatic retry stays loading until its actual result is known", async () => {
+  let finish;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const harness = await adapterHarness(async (_options, attempt) => attempt < 4
+    ? adapterResult({ tabs: false }, { tabs: "missing" }) : pending);
+  await harness.run();
+  await harness.cdp.nativeAdaptersTask;
+  for (const now of [5_000, 10_000]) {
+    harness.advance(now);
+    await harness.run();
+    await harness.cdp.nativeAdaptersTask;
+  }
+  harness.advance(15_000);
+  await harness.run();
+  assert.equal(harness.cdp.threadTabsRetries, 3);
+  assert.equal(harness.cdp.threadTabsPhase, "loading");
+  assert.equal(harness.logs.some(log => log.includes("after 3 retries")), false);
+  finish(adapterResult({ tabs: true }));
+  await harness.cdp.nativeAdaptersTask;
+  assert.equal(harness.cdp.threadTabsPhase, "prepared");
+  assert.equal(harness.cdp.retryThreadTabs, null);
+});
+
+test("closing the first main window publishes the surviving window’s completed adaptation", async () => {
+  const start = source.indexOf("async function injectAll(");
+  const end = source.indexOf("async function currentInjectionSource(", start);
+  const statuses = [], connections = new Map();
+  let targets = [{ id: "first" }, { id: "second" }];
+  const inject = vm.runInNewContext(`${source.slice(start, end)}; injectAll`, {
+    URL, console: { error() {} }, unregisterQuotaPolicyCdp() {},
+    emitLauncherEvent: (_event, status) => statuses.push(status.phase),
+    injectTarget: async (_runtime, target) => {
+      const connection = { closed: false, nativeAdaptersStatus: { phase: target.id === "first" ? "partial" : "ready", message: "", features: [] }, close() { this.closed = true; } };
+      connection.startNativeAdapters = () => connection.onNativeAdaptersStatus();
+      return { result: {}, connection };
+    },
+  });
+  const run = () => inject({ targets: async () => targets }, "", "current", false, null, connections, true, {}, true, "token", () => {}, () => {}, () => {});
   await run();
-  assert.equal(connections.get("main"), cdp, "Panel connects even when the tabs preparation fails");
-  assert.equal(attempts, 1);
+  assert.equal(statuses.at(-1), "partial");
+  targets = [{ id: "second" }];
   await run();
-  assert.equal(attempts, 1, "polls before the retry interval do not reread modules");
-  now = 5_000;
-  await run();
-  assert.equal(attempts, 2);
-  assert.equal(reloads, 0, "failed reads do not reload the page");
-  now = 10_000;
-  await run();
-  assert.equal(attempts, 3);
-  assert.equal(reloads, 1);
-  assert.match(registeredSource, /recovered menu\n\/\/ panel source/);
-  assert.equal(cdp.retryThreadTabs, null);
-  await events.get("Page.loadEventFired")();
-  assert.equal(published.at(-1), "2", "later loads publish the updated script registration");
-  now = 15_000;
-  await run();
-  assert.equal(attempts, 3, "successful recovery stops retries");
-  assert.equal(reloads, 1);
+  assert.equal(statuses.at(-1), "ready");
+});
+
+test("a connected window retries missing tabs without blocking polls and applies recovery once", async () => {
+  const harness = await adapterHarness(async (_options, attempt) => attempt < 3
+    ? adapterResult({ tabs: false }, { tabs: "Native thread module missing" })
+    : adapterResult({ tabs: true }));
+  await harness.run();
+  await harness.cdp.nativeAdaptersTask;
+  assert.equal(harness.result.preparations, 1);
+  assert.equal(harness.result.reloads, 0, "failed modules do not trigger a reload");
+  await harness.run();
+  assert.equal(harness.result.preparations, 1);
+  harness.advance(5_000);
+  await harness.run();
+  await harness.cdp.nativeAdaptersTask;
+  assert.equal(harness.result.preparations, 2);
+  assert.equal(harness.result.reloads, 0);
+  harness.advance(10_000);
+  await harness.run();
+  await harness.cdp.nativeAdaptersTask;
+  assert.equal(harness.result.preparations, 3);
+  assert.equal(harness.result.reloads, 1);
+  assert.equal(harness.cdp.retryThreadTabs, null);
+  await harness.events.get("Page.loadEventFired")();
+  assert.equal(harness.published.at(-1), "4", "later loads publish the final script registration");
+  harness.advance(15_000);
+  await harness.run();
+  assert.equal(harness.result.preparations, 3);
+  assert.equal(harness.result.reloads, 1);
 });
 
 
