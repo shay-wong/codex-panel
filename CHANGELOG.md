@@ -7,6 +7,7 @@ This file records user-visible changes introduced by the fork.
 ## Unreleased
 
 - Locate native adapters through syntax trees, exports and calls, removing generated-filename, module co-location, declaration-adjacency and field-order assumptions; support Codex 26.1117.31558 quota, speed settings, conversation menus and notification structures.
+- Resume valid partial Codex downloads after network interruptions or timeouts when retrying the same version during the current Panel run.
 
 - Configure a shared base quick-phrase list or a complete override per repository, restore base phrases, edit Skill links with native labels and icons, switch between base and current-repository underline tabs, edit other repositories without leaving the current chat, and apply one entry to all existing custom lists without duplicating identical entries.
 

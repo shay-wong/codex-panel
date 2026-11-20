@@ -195,10 +195,16 @@ export function createCodexUpdateDownload({ appPath, dataDirectory, getPlanType 
       if (downloaded < archive.length) {
         const downloadSignal = AbortSignal.any([signal, AbortSignal.timeout(30 * 60_000)]);
         state = status('downloading', `正在下载 Codex ${target.availableVersion} · ${Math.floor(downloaded / archive.length * 100)}%`);
-        await downloadFile({ url: archive.url, destination: archivePath, expectedLength: archive.length,
-          offset: downloaded, signal: downloadSignal, onProgress(bytes) {
-            if (!signal.aborted && active === session) state = status('downloading', `正在下载 Codex ${target.availableVersion} · ${Math.floor(bytes / archive.length * 100)}%`);
-          } });
+        try {
+          await downloadFile({ url: archive.url, destination: archivePath, expectedLength: archive.length,
+            offset: downloaded, signal: downloadSignal, onProgress(bytes) {
+              if (!signal.aborted && active === session) state = status('downloading', `正在下载 Codex ${target.availableVersion} · ${Math.floor(bytes / archive.length * 100)}%`);
+            } });
+        } catch (error) {
+          const size = await stat(archivePath).then(value => value.size).catch(() => 0);
+          session.retryable = (error.retryable === true || error.name === 'TimeoutError') && size > 0 && size <= archive.length;
+          throw error;
+        }
         if ((await stat(archivePath)).size !== archive.length) throw new Error('Codex 更新安装包下载不完整');
       }
       running();
@@ -226,7 +232,7 @@ export function createCodexUpdateDownload({ appPath, dataDirectory, getPlanType 
     } catch (error) {
       if (!session.paused && !session.cancelled && active === session) failed(error);
     } finally {
-      if (!session.paused && session.temporary) {
+      if (!session.paused && !session.retryable && session.temporary) {
         await rm(session.temporary, { recursive: true, force: true }).catch(() => {});
         session.temporary = null;
       }
@@ -259,10 +265,23 @@ export function createCodexUpdateDownload({ appPath, dataDirectory, getPlanType 
     },
     start(offer) {
       if (active && ['preparing', 'downloading', 'paused', 'verifying', 'ready'].includes(state?.phase)) return;
-      const session = { offer, controller: new AbortController(), paused: false, cancelled: false };
+      const previous = active;
+      // shortcut: reuse partials within this process; persist session metadata if cross-restart resume is needed.
+      const resume = previous?.retryable && previous.target.availableVersion === offer.availableVersion
+        && previous.target.availableBuildVersion === String(offer.availableBuildVersion);
+      const session = resume ? previous : { offer, controller: new AbortController(), paused: false, cancelled: false };
       active = session;
-      state = status('preparing', '正在准备下载 Codex 更新…');
-      task = task.then(() => download(session));
+      state = status('preparing', resume ? '正在继续下载 Codex 更新…' : '正在准备下载 Codex 更新…');
+      task = task.then(async () => {
+        if (previous?.retryable && previous !== session && previous.temporary) {
+          await rm(previous.temporary, { recursive: true, force: true }).catch(() => {});
+          previous.temporary = null;
+        }
+        if (session.cancelled || active !== session) return;
+        session.retryable = false;
+        session.controller = new AbortController();
+        return download(session);
+      });
     },
     pause() {
       if (active && state?.phase === 'downloading') {
@@ -286,7 +305,7 @@ export function createCodexUpdateDownload({ appPath, dataDirectory, getPlanType 
       return state && { ...state };
     },
     cancel() {
-      if (active && ['preparing', 'downloading', 'paused', 'verifying'].includes(state?.phase)) {
+      if (active && ['preparing', 'downloading', 'paused', 'verifying', 'failed'].includes(state?.phase)) {
         const session = active;
         session.cancelled = true;
         session.paused = false;
