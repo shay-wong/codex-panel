@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Configure a shared base quick-phrase list or a complete override per repository, restore base phrases, edit Skill links with native labels and icons, switch between base and current-repository underline tabs, edit other repositories without leaving the current chat, and apply one entry to all existing custom lists without duplicating identical entries.
+
 ## 0.5.17-fork
 
 - Keep scrolled model rows from showing through the gap below the fixed model table header.

@@ -32,7 +32,7 @@ test(`quick phrases stay available and send from ${placement} without a project 
     editor.parentElement.__reactFiber$fixture = { memoizedProps: { composerController: {
       view: { dom: editor },
       getText: () => editor.textContent,
-      setText: text => { editor.textContent = text; send.disabled = !text; },
+      setPromptText: text => { editor.textContent = text; send.disabled = !text; },
     } }, return: null };
     send.addEventListener("click", () => { submitted.push(editor.textContent); editor.textContent = ""; send.disabled = true; });
     window.__CODEX_PANEL_SOURCE_HASH__ = "independent-quick-phrases-test";

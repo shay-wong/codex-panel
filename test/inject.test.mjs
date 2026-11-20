@@ -1751,6 +1751,7 @@ test("Panel participates in the native memory router and restores its original m
     const PANEL_ROUTE_STATE = "__codexPanel";
     const normalizeThreadId = value => value;
     const publishPendingThreadAssociation = () => {};
+    const syncQuickPhrases = () => {};
     const showPanel = () => { active = true; panel.hidden = false; native.hidden = true; };
     const closePanel = () => { active = false; panel.hidden = true; native.hidden = false; };
     ${source.slice(start, end)}
@@ -1933,6 +1934,7 @@ test("Panel follows Data Router navigation without navigator.location and unsubs
     function showPanel() { active = true; }
     function closePanel() { active = false; }
     function publishPendingThreadAssociation() {}
+    function syncQuickPhrases() {}
     ${source.slice(start, end)}
     return { openPanel, leavePanel, visible: () => active, detach: () => detachNativeNavigation() };
   })()`, { document: { querySelector: () => surface } });

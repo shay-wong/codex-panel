@@ -78,6 +78,7 @@ async function navigationHarness({ root, document, window }, { deferred = false 
     const PANEL_ROUTE_STATE = "__codexPanel";
     const normalizeThreadId = value => value;
     const publishPendingThreadAssociation = () => {};
+    const syncQuickPhrases = () => {};
     const showPanel = () => { active = true; };
     const closePanel = () => { active = false; };
     ${source.slice(start, end)}
