@@ -112,8 +112,12 @@
   let usageAnimationMaxSpeed = 40;
   let quickPhrasesPanel = null;
   let quickPhrasesDialog = null;
+  let quickPhrasesRepositoryPicker = null;
+  let quickPhrasesEditor = null;
   let quickPhraseSending = false;
   let quickPhrasesSyncFrame = 0;
+  let quickPhrasesProjectId = "";
+  let quickPhrasesProjectRevision = 0;
 
   function isExhaustedUsageBanner(banner) {
     const fiberKey = Object.keys(banner).find((key) => key.startsWith("__reactFiber$"));
@@ -274,8 +278,19 @@
       .codex-panel-phrases-dialog { width: min(440px, calc(100vw - 32px)); margin: auto; padding: 24px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 18px; background: var(--color-token-main-surface-primary, Canvas); -webkit-app-region: no-drag; }
       .codex-panel-phrases-dialog::backdrop { background: rgb(0 0 0 / .3); }
       .codex-panel-phrases-dialog h2 { margin: 0 0 6px; font-size: 18px; font-weight: 500; }
+      .codex-panel-phrases-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .codex-panel-phrases-other { padding: 4px 0; border: 0; background: transparent; color: var(--color-token-text-secondary, GrayText); font: inherit; font-size: 12px; }
+      .codex-panel-phrases-repositories { display: grid; gap: 6px; max-height: 50vh; margin-top: 16px; overflow-y: auto; }
+      .codex-panel-phrases-repositories button { display: grid; gap: 3px; padding: 10px 12px; border: 0; border-radius: 8px; background: var(--color-token-bg-secondary, light-dark(#f8f8f8, #292929)); color: inherit; font: inherit; text-align: left; overflow-wrap: anywhere; }
+      .codex-panel-phrases-repositories small { color: var(--color-token-text-secondary, GrayText); font-size: 11px; }
       .codex-panel-phrases-dialog label { display: block; margin: 18px 0 8px; }
-      .codex-panel-phrases-dialog textarea { box-sizing: border-box; width: 100%; padding: 12px; resize: vertical; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 10px; background: inherit; color: inherit; font: inherit; line-height: 1.9; }
+      .codex-panel-phrases-tabs { display: flex; gap: 20px; margin: 16px 0 12px; border-bottom: 1px solid var(--color-token-border, light-dark(#ddd, #444)); }
+      .codex-panel-phrases-tabs button { flex: 0 1 auto; min-width: 0; margin-bottom: -1px; padding: 8px 0 10px; overflow: hidden; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--color-token-text-secondary, GrayText); font: inherit; white-space: nowrap; text-overflow: ellipsis; }
+      .codex-panel-phrases-tabs button[aria-selected="true"] { border-bottom-color: var(--color-token-foreground, CanvasText); color: var(--color-token-foreground, CanvasText); }
+      .codex-panel-phrases-editor { box-sizing: border-box; min-height: 210px; max-height: 40vh; overflow-y: auto; padding: 12px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 10px; line-height: 1.9; }
+      .codex-panel-phrases-editor > .ProseMirror { min-height: 184px; outline: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .codex-panel-phrases-editor p { margin: 0; }
+      .codex-panel-phrases-apply { margin-top: 10px; padding: 0; border: 0; background: transparent; color: var(--color-token-text-secondary, GrayText); font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
       .codex-panel-phrases-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
       .codex-panel-phrases-dialog footer button { padding: 7px 14px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 8px; background: transparent; color: inherit; font: inherit; }
       .codex-panel-phrases-dialog button[type="submit"] { background: var(--color-token-foreground, CanvasText); color: var(--color-token-main-surface-primary, Canvas); }
@@ -2839,6 +2854,7 @@
       closePanel(false);
     }
     void publishPendingThreadAssociation();
+    syncQuickPhrases();
   }
 
   async function openPanel() {
@@ -2909,8 +2925,13 @@
     syncQuickPhrases();
   }
 
-  function readQuickPhrases() {
-    const saved = window.localStorage.getItem(QUICK_PHRASES_KEY);
+  function quickPhrasesStorageKey(projectId) {
+    return projectId ? `${QUICK_PHRASES_KEY}.project.${encodeURIComponent(projectId)}` : QUICK_PHRASES_KEY;
+  }
+
+  function readQuickPhrases(projectId = quickPhrasesProjectId) {
+    const saved = window.localStorage.getItem(quickPhrasesStorageKey(projectId))
+      ?? window.localStorage.getItem(QUICK_PHRASES_KEY);
     return (saved ?? hostText(
       "继续\n按这个方案执行\n先给我一个 demo\n检查改动并说明影响\n运行相关检查\n总结当前进度",
       "Continue\nImplement this plan\nShow me a demo first\nReview the changes and their impact\nRun the relevant checks\nSummarize the current progress",
@@ -2927,6 +2948,31 @@
             ?.getAttribute('data-above-composer-conversation-id')) === threadId));
   }
 
+  function quickPhraseLabel(phrase) {
+    return phrase.replace(/\[(\$[^\]\r\n]+)\]\([^\r\n)]+\)/g, "$1");
+  }
+
+  function quickPhraseController(root = quickPhraseComposer()) {
+    const editor = root?.querySelector('[data-codex-composer="true"][contenteditable="true"]');
+    // shortcut: uses the native React composer contract; update when Codex changes its editor.
+    let owner = editor;
+    while (owner && !Object.keys(owner).some(key => key.startsWith("__reactFiber$"))) owner = owner.parentElement;
+    const fiberKey = owner && Object.keys(owner).find(key => key.startsWith("__reactFiber$"));
+    for (let fiber = owner?.[fiberKey]; fiber; fiber = fiber.return) {
+      const props = fiber.memoizedProps;
+      const candidate = props?.composerController ?? props?.input?.composerController;
+      if (candidate?.view?.dom === editor && typeof candidate.setPromptText === "function") return candidate;
+    }
+    return null;
+  }
+
+  function quickPhrasesDocument(controller, text) {
+    // Each saved line is one entry, regardless of the conversation's Markdown mode.
+    const parser = Object.create(controller);
+    parser.plainTextMode = true;
+    return parser.parsePromptText(text);
+  }
+
   function renderQuickPhrases() {
     if (!quickPhrasesPanel) return;
     const list = quickPhrasesPanel.querySelector(".codex-panel-phrases-list");
@@ -2937,9 +2983,10 @@
       button.type = "button";
       button.className = "codex-panel-phrase cursor-interaction";
       button.disabled = quickPhraseSending;
-      button.setAttribute("aria-label", hostText("发送：", "Send: ") + phrase);
+      button.setAttribute("aria-label", hostText("发送：", "Send: ") + quickPhraseLabel(phrase));
+      button.title = phrase;
       const label = document.createElement("span");
-      label.textContent = phrase;
+      label.textContent = quickPhraseLabel(phrase);
       button.append(label);
       button.insertAdjacentHTML("beforeend", '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg>');
       button.addEventListener("click", () => void sendQuickPhrase(phrase));
@@ -2949,36 +2996,306 @@
   }
 
   function configureQuickPhrases() {
+    const controller = quickPhraseController();
+    if (!controller) {
+      setQuickPhraseStatus(quickPhrasesPanel.querySelector('[role="status"]'), hostText("当前会话输入框尚未就绪", "The current composer is not ready"));
+      return;
+    }
     if (!quickPhrasesDialog) {
       const dialog = document.createElement("dialog");
       dialog.className = "codex-panel-phrases-dialog";
       dialog.setAttribute(OWNED_ATTRIBUTE, "true");
       dialog.setAttribute("aria-labelledby", "codex-panel-phrases-title");
-      dialog.innerHTML = `<form><h2 id="codex-panel-phrases-title"></h2><p class="codex-panel-phrases-hint"></p><label for="codex-panel-phrases-input"></label><textarea id="codex-panel-phrases-input" rows="8" spellcheck="false"></textarea><p role="alert" class="codex-panel-phrases-status"></p><footer><button type="button" class="cursor-interaction"></button><button type="submit" class="cursor-interaction"></button></footer></form>`;
+      dialog.innerHTML = `<form><header><h2 id="codex-panel-phrases-title"></h2><button type="button" class="codex-panel-phrases-other cursor-interaction"></button></header><div role="tablist" class="codex-panel-phrases-tabs"></div><p class="codex-panel-phrases-hint"></p><label id="codex-panel-phrases-input-label"></label><div id="codex-panel-phrases-input" class="codex-panel-phrases-editor" role="tabpanel"></div><button type="button" class="codex-panel-phrases-apply cursor-interaction"></button><p role="alert" class="codex-panel-phrases-status"></p><footer><button type="button" class="codex-panel-phrases-reset cursor-interaction"></button><button type="button" class="codex-panel-phrases-cancel cursor-interaction"></button><button type="submit" class="cursor-interaction"></button></footer></form>`;
       dialog.querySelector("h2").textContent = hostText("配置快捷短语", "Configure quick phrases");
-      dialog.querySelector(".codex-panel-phrases-hint").textContent = hostText("每行一条，保存后点击即可发送。", "One phrase per line. Save, then click a phrase to send it.");
-      dialog.querySelector("label").textContent = hostText("短语内容", "Phrases");
-      const cancel = dialog.querySelector('button[type="button"]');
-      cancel.textContent = hostText("取消", "Cancel");
-      cancel.addEventListener("click", () => dialog.close());
-      dialog.querySelector('button[type="submit"]').textContent = hostText("保存", "Save");
-      dialog.querySelector("form").addEventListener("submit", event => {
+      const other = dialog.querySelector(".codex-panel-phrases-other");
+      other.textContent = hostText("其他仓库…", "Other repositories…");
+      other.addEventListener("click", () => void chooseQuickPhrasesRepository());
+      dialog.querySelector(".codex-panel-phrases-hint").textContent = hostText("每行一条，支持文字或粘贴 Skill 引用，也可追加指令。仓库配置覆盖基础配置，未定制时使用基础配置。", "One entry per line. Type text or paste a Skill reference, optionally followed by instructions. Repository entries replace the base list; otherwise the base list applies.");
+      const tabs = dialog.querySelector('[role="tablist"]');
+      tabs.setAttribute("aria-label", hostText("配置范围", "Configure for"));
+      dialog.querySelector("#codex-panel-phrases-input-label").textContent = hostText("短语内容", "Phrases");
+      dialog.querySelector("#codex-panel-phrases-input-label").addEventListener("click", () => quickPhrasesEditor?.view.focus());
+      const reset = dialog.querySelector(".codex-panel-phrases-reset");
+      reset.textContent = hostText("恢复基础配置", "Use base phrases");
+      tabs.addEventListener("click", event => {
+        const tab = event.target.closest('[role="tab"]');
+        if (!tab) return;
+        tabs.dataset.projectId = tab.dataset.projectId;
+        for (const button of tabs.querySelectorAll("button")) {
+          button.setAttribute("aria-selected", String(button === tab));
+          button.tabIndex = button === tab ? 0 : -1;
+        }
+        dialog.querySelector('[role="tabpanel"]').setAttribute("aria-labelledby", tab.id);
+        quickPhrasesEditor.view.updateState(quickPhrasesEditor.view.state.constructor.create({
+          schema: quickPhrasesEditor.view.state.schema,
+          doc: quickPhrasesDocument(quickPhrasesEditor.controller, readQuickPhrases(tabs.dataset.projectId).join("\n")),
+          plugins: quickPhrasesEditor.view.state.plugins,
+        }));
+        reset.hidden = !tabs.dataset.projectId;
+        dialog.querySelector('[role="alert"]').textContent = "";
+      });
+      tabs.addEventListener("keydown", event => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        const buttons = Array.from(tabs.querySelectorAll("button"));
+        const index = buttons.indexOf(document.activeElement);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
+          : (index + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length;
         event.preventDefault();
+        buttons[next].click();
+        buttons[next].focus();
+      });
+      const apply = dialog.querySelector(".codex-panel-phrases-apply");
+      apply.textContent = hostText("将当前行应用到所有自定义仓库", "Apply the current entry to all customized repositories");
+      apply.title = hostText("将光标放在需要应用的条目中，相同条目不会重复添加。", "Place the cursor in the entry to apply. Existing identical entries are not duplicated.");
+      apply.addEventListener("click", () => {
+        const status = dialog.querySelector('[role="alert"]');
+        const { view, controller } = quickPhrasesEditor;
+        const { $from, $to } = view.state.selection;
+        if (!$from.sameParent($to) || $from.parent.type.name !== "paragraph") {
+          status.textContent = hostText("请将光标放在需要应用的单条配置中。", "Place the cursor in a single entry to apply.");
+          return;
+        }
+        const doc = view.state.schema.topNodeType.create(null, $from.parent);
+        const phrase = controller.getPersistedText(doc, { format: "plain" }).trim();
+        if (!phrase) {
+          status.textContent = hostText("请将光标放在需要应用的条目中。", "Place the cursor in the entry to apply.");
+          return;
+        }
         try {
-          const phrases = dialog.querySelector("textarea").value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-          window.localStorage.setItem(QUICK_PHRASES_KEY, phrases.join("\n"));
+          const keys = Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index))
+            .filter(key => key?.startsWith(`${QUICK_PHRASES_KEY}.project.`));
+          for (const key of keys) {
+            const phrases = window.localStorage.getItem(key).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+            if (!phrases.includes(phrase)) window.localStorage.setItem(key, [...phrases, phrase].join("\n"));
+          }
+          renderQuickPhrases();
+          status.textContent = keys.length
+            ? hostText(`已应用到 ${keys.length} 个自定义仓库。`, `Applied to ${keys.length} customized repositories.`)
+            : hostText("还没有自定义过的仓库配置。", "No repositories have custom phrases yet.");
+        } catch {
+          renderQuickPhrases();
+          status.textContent = hostText("未能应用到全部自定义仓库，请重试。", "Could not apply to every customized repository. Please try again.");
+        }
+      });
+      reset.addEventListener("click", () => {
+        try {
+          window.localStorage.removeItem(quickPhrasesStorageKey(tabs.dataset.projectId));
           renderQuickPhrases();
           dialog.close();
         } catch {
           dialog.querySelector('[role="alert"]').textContent = hostText("无法保存快捷短语，请重试。", "Could not save quick phrases. Please try again.");
         }
       });
+      const cancel = dialog.querySelector(".codex-panel-phrases-cancel");
+      cancel.textContent = hostText("取消", "Cancel");
+      cancel.addEventListener("click", () => dialog.close());
+      dialog.querySelector('button[type="submit"]').textContent = hostText("保存", "Save");
+      dialog.querySelector("form").addEventListener("submit", event => {
+        event.preventDefault();
+        try {
+          const phrases = quickPhrasesEditor.controller.getPersistedText(quickPhrasesEditor.view.state.doc, { format: "plain" })
+            .split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+          window.localStorage.setItem(quickPhrasesStorageKey(tabs.dataset.projectId), phrases.join("\n"));
+          renderQuickPhrases();
+          dialog.close();
+        } catch {
+          dialog.querySelector('[role="alert"]').textContent = hostText("无法保存快捷短语，请重试。", "Could not save quick phrases. Please try again.");
+        }
+      });
+      dialog.addEventListener("close", () => {
+        quickPhrasesRepositoryPicker?.close();
+        quickPhrasesEditor?.view.destroy();
+        quickPhrasesEditor = null;
+      });
       document.body.append(dialog);
       quickPhrasesDialog = dialog;
     }
-    quickPhrasesDialog.querySelector("textarea").value = readQuickPhrases().join("\n");
+    const tabs = quickPhrasesDialog.querySelector('[role="tablist"]');
+    tabs.replaceChildren();
+    tabs.dataset.projectId = quickPhrasesProjectId;
+    const name = projectRowById(quickPhrasesProjectId)?.getAttribute("data-app-action-sidebar-project-label") || quickPhrasesProjectId;
+    for (const [id, projectId, label] of [
+      ["base", "", hostText("基础配置", "Base phrases")],
+      ...(quickPhrasesProjectId ? [["repository", quickPhrasesProjectId, hostText("当前仓库：", "Current repository: ") + name]] : []),
+    ]) {
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.className = "cursor-interaction";
+      tab.id = `codex-panel-phrases-tab-${id}`;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", "codex-panel-phrases-input");
+      tab.setAttribute("aria-selected", String(projectId === quickPhrasesProjectId));
+      tab.tabIndex = projectId === quickPhrasesProjectId ? 0 : -1;
+      tab.dataset.projectId = projectId;
+      tab.textContent = label;
+      tab.title = label;
+      tabs.append(tab);
+    }
+    quickPhrasesDialog.querySelector('[role="tabpanel"]').setAttribute("aria-labelledby", tabs.querySelector('[aria-selected="true"]').id);
+    quickPhrasesDialog.querySelector(".codex-panel-phrases-reset").hidden = !quickPhrasesProjectId;
+    const nativeView = controller.view;
+    const view = new nativeView.constructor(quickPhrasesDialog.querySelector("#codex-panel-phrases-input"), {
+      state: nativeView.state.constructor.create({
+        schema: nativeView.state.schema,
+        doc: quickPhrasesDocument(controller, readQuickPhrases().join("\n")),
+        plugins: [controller.inlineMentionIconRegistry.createPlugin(nativeView.state.schema)],
+      }),
+      attributes: {
+        class: nativeView.dom.className,
+        role: "textbox",
+        "aria-labelledby": "codex-panel-phrases-input-label",
+        "aria-multiline": "true",
+        spellcheck: "false",
+      },
+      handleKeyDown(view, event) {
+        if (event.key !== "Enter" || event.isComposing) return false;
+        const transaction = view.state.tr.deleteSelection();
+        view.dispatch(transaction.split(transaction.selection.from).scrollIntoView());
+        return true;
+      },
+      handlePaste(view, event, slice) {
+        const text = event.clipboardData?.getData("text/plain");
+        if (!text?.includes("[$")) return false;
+        const doc = quickPhrasesDocument(controller, text);
+        view.dispatch(view.state.tr.replaceSelection(new slice.constructor(doc.content, 1, 1)).scrollIntoView());
+        return true;
+      },
+    });
+    quickPhrasesEditor = { view, controller };
     quickPhrasesDialog.querySelector('[role="alert"]').textContent = "";
     quickPhrasesDialog.showModal();
+    tabs.querySelector('[aria-selected="true"]').focus();
+  }
+
+  async function quickPhraseRepositories() {
+    const projects = new Map(readCodexProjects().map(project => [project.id, project]));
+    const [local, remote] = await Promise.all([
+      requestNativeFetch("get-global-state", { key: "local-projects" }),
+      requestNativeFetch("get-global-state", { key: "remote-projects" }),
+    ]);
+    for (const [id, project] of Object.entries(local?.value ?? {})) {
+      if (!id || typeof project?.name !== "string") continue;
+      projects.set(id, {
+        id,
+        name: projects.get(id)?.name || project.name || id,
+        workspacePath: Array.isArray(project.rootPaths) ? project.rootPaths.find(root => typeof root === "string" && root) : undefined,
+      });
+    }
+    for (const project of Array.isArray(remote?.value) ? remote.value : []) {
+      if (typeof project?.id !== "string" || !project.id) continue;
+      projects.set(project.id, {
+        id: project.id,
+        name: projects.get(project.id)?.name || (typeof project.label === "string" && project.label) || project.id,
+        workspacePath: project.remotePath,
+      });
+    }
+    const prefix = `${QUICK_PHRASES_KEY}.project.`;
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (!key?.startsWith(prefix)) continue;
+      const id = decodeURIComponent(key.slice(prefix.length));
+      if (id && !projects.has(id)) projects.set(id, { id, name: id });
+    }
+    return Array.from(projects.values()).sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async function chooseQuickPhrasesRepository() {
+    if (!quickPhrasesRepositoryPicker) {
+      const picker = document.createElement("dialog");
+      picker.className = "codex-panel-phrases-dialog";
+      picker.setAttribute(OWNED_ATTRIBUTE, "true");
+      picker.setAttribute("aria-labelledby", "codex-panel-phrases-repository-title");
+      picker.innerHTML = '<h2 id="codex-panel-phrases-repository-title"></h2><div class="codex-panel-phrases-repositories"></div><footer><button type="button" class="cursor-interaction"></button></footer>';
+      picker.querySelector("h2").textContent = hostText("选择其他仓库", "Choose another repository");
+      const back = picker.querySelector("button");
+      back.textContent = hostText("返回", "Back");
+      back.addEventListener("click", () => picker.close());
+      document.body.append(picker);
+      quickPhrasesRepositoryPicker = picker;
+    }
+    const picker = quickPhrasesRepositoryPicker;
+    const list = picker.querySelector(".codex-panel-phrases-repositories");
+    const editor = quickPhrasesEditor;
+    list.textContent = hostText("正在读取仓库…", "Loading repositories…");
+    picker.showModal();
+    try {
+      const projects = await quickPhraseRepositories();
+      if (!picker.open || quickPhrasesEditor !== editor) return;
+      list.replaceChildren();
+      for (const project of projects.filter(project => project.id !== quickPhrasesProjectId)) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "cursor-interaction";
+        const name = document.createElement("span");
+        name.textContent = project.name;
+        const detail = document.createElement("small");
+        detail.textContent = project.workspacePath || project.id;
+        button.append(name, detail);
+        button.addEventListener("click", () => {
+          const tabs = quickPhrasesDialog.querySelector('[role="tablist"]');
+          let tab = tabs.querySelector('[data-other-repository]');
+          if (!tab) {
+            tab = document.createElement("button");
+            tab.type = "button";
+            tab.id = "codex-panel-phrases-tab-other";
+            tab.className = "cursor-interaction";
+            tab.setAttribute("role", "tab");
+            tab.setAttribute("aria-controls", "codex-panel-phrases-input");
+            tab.setAttribute("data-other-repository", "");
+            tabs.append(tab);
+          }
+          tab.dataset.projectId = project.id;
+          tab.textContent = project.name;
+          tab.title = project.name;
+          picker.close();
+          tab.click();
+          tab.focus();
+        });
+        list.append(button);
+      }
+      if (!list.childElementCount) list.textContent = hostText("暂无其他仓库", "No other repositories");
+    } catch {
+      list.textContent = hostText("无法读取仓库，请稍后重试。", "Could not load repositories. Please try again.");
+    }
+  }
+
+  function quickPhraseThreadProjectId(threadId) {
+    const projectId = Array.from(document.querySelectorAll("[data-app-action-sidebar-thread-id]"))
+      .filter(row => normalizeThreadId(row.getAttribute("data-app-action-sidebar-thread-id")) === threadId)
+      .map(threadRowProjectId).find(Boolean);
+    if (projectId) return projectId;
+    // shortcut: native sidebar groups retain thread keys when collapsed; update if Codex changes these props.
+    for (const row of document.querySelectorAll("[data-app-action-sidebar-project-row]")) {
+      const fiberKey = Object.keys(row).find(key => key.startsWith("__reactFiber$"));
+      const propsKey = Object.keys(row).find(key => key.startsWith("__reactProps$"));
+      let owner = row[fiberKey];
+      if (owner?.alternate && owner.alternate.memoizedProps === row[propsKey]) owner = owner.alternate;
+      for (let fiber = owner; fiber; fiber = fiber.return) {
+        const group = fiber.memoizedProps?.group;
+        if (group?.projectId === row.getAttribute("data-app-action-sidebar-project-id")
+          && group.threadKeys?.some(key => normalizeThreadId(key) === threadId)) return group.projectId;
+      }
+    }
+    return "";
+  }
+
+  async function syncQuickPhrasesProject() {
+    const revision = ++quickPhrasesProjectRevision;
+    const composer = quickPhraseComposer();
+    const threadId = normalizeThreadId(composer?.querySelector("[data-above-composer-conversation-id]")?.getAttribute("data-above-composer-conversation-id"));
+    const threadProjectId = threadId && quickPhraseThreadProjectId(threadId);
+    const memberships = threadId && !threadProjectId
+      ? await (await nativeDesktopServices())?.threadProjectAssignments?.readMemberships()
+      : null;
+    const project = nativeNavigator?.location?.state?.project;
+    const projectId = threadId ? threadProjectId || memberships?.assignments?.[threadId]?.projectId || ""
+      : project === null ? "" : project?.projectId || await selectedNativeProjectId();
+    if (destroyed || revision !== quickPhrasesProjectRevision || quickPhraseComposer() !== composer) return;
+    if (projectId === quickPhrasesProjectId) return;
+    quickPhrasesProjectId = projectId;
+    quickPhrasesDialog?.close();
+    renderQuickPhrases();
   }
 
   function setQuickPhraseStatus(status, message) {
@@ -3002,17 +3319,7 @@
     const status = quickPhrasesPanel.querySelector('[role="status"]');
     try {
       const root = quickPhraseComposer();
-      const editor = root?.querySelector('[data-codex-composer="true"][contenteditable="true"]');
-      let controller;
-      // shortcut: uses the native React composer contract; update when Codex changes its editor.
-      let owner = editor;
-      while (owner && !Object.keys(owner).some(key => key.startsWith("__reactFiber$"))) owner = owner.parentElement;
-      const fiberKey = owner && Object.keys(owner).find(key => key.startsWith("__reactFiber$"));
-      for (let fiber = owner?.[fiberKey]; fiber; fiber = fiber.return) {
-        const props = fiber.memoizedProps;
-        const candidate = props?.composerController ?? props?.input?.composerController;
-        if (candidate?.view?.dom === editor && typeof candidate.setText === "function") { controller = candidate; break; }
-      }
+      const controller = quickPhraseController(root);
       if (!controller) throw new Error(hostText("当前会话输入框尚未就绪", "The current composer is not ready"));
       if (controller.getText().trim() || root.querySelector('[data-composer-attachment-pill]')) {
         throw new Error(hostText("输入框已有草稿或附件，请先发送或清空", "Send or clear the existing draft or attachments first"));
@@ -3020,7 +3327,7 @@
       quickPhraseSending = true;
       renderQuickPhrases();
       setQuickPhraseStatus(status, "");
-      controller.setText(phrase);
+      controller.setPromptText(phrase);
       await new Promise(resolve => window.requestAnimationFrame(resolve));
       if (quickPhraseComposer() !== root) throw new Error(hostText("会话已切换，短语保留在原输入框中", "The conversation changed. The phrase remains in the original composer."));
       const send = Array.from(root.querySelectorAll('button[aria-label]'))
@@ -3068,6 +3375,7 @@
       quickPhrasesPanel.querySelector(".codex-panel-phrases-hint").textContent = hostText("点击短语，直接发送", "Click a phrase to send it");
       renderQuickPhrases();
     }
+    void syncQuickPhrasesProject();
     // Share the summary animation when available; keep independent placement otherwise.
     if (container) {
       if (quickPhrasesPanel.parentElement !== container) container.append(quickPhrasesPanel);
@@ -3646,6 +3954,8 @@
   function destroy() {
     if (destroyed) return;
     destroyed = true;
+    quickPhrasesEditor?.view.destroy();
+    quickPhrasesEditor = null;
     for (const { line } of usageLines.values()) line.remove();
     usageLines.clear();
     if (reattachTimer !== null) window.clearTimeout(reattachTimer);
