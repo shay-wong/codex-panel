@@ -12,6 +12,10 @@ The macOS and Windows launcher offers **Preferences → Models & advanced → Ap
 
 ## Rspack-based Codex builds
 
+Successful adaptation plans are cached under the current Panel data directory and reused across process restarts. Cache lookup happens before native module extraction and analysis. The installed Codex archive, Panel adapter revision and adaptation mode identify the plan; changed inputs or an unreadable cache cause it to be rebuilt. Failed adaptations are not persisted. Preferences are read separately and still apply immediately. Main-window and pet-only plans have separate cache entries.
+
+成功方案缓存在当前 Panel 数据目录，跨进程重启复用，命中时跳过原生模块提取和分析。缓存按 Codex 安装包、Panel 适配代码版本和适配模式区分；输入变化或缓存不可读取时重建，不持久保存失败的方案。偏好仍独立读取并即时生效。主窗口与仅宠物模式分别缓存。
+
 Adapters now identify syntax nodes, lexical bindings, exports and calls across the complete native module catalog. Generated filenames, module co-location, adjacent declarations and object-field order are not locator contracts. The older ESM path uses the same syntax-based discovery. Native protocol or behavior changes can still require an adapter update; unsupported contracts retain native behavior. Codex 26.1117.31558 / build 29513 is the current source-validation target. Real account sends and installed-app interaction remain separate from isolated source and behavior checks.
 
 适配改为从完整原生模块目录追踪语法节点、词法绑定、导出和调用关系，旧 ESM 路径同样处理；不再以生成文件名、模块共现、声明相邻或对象字段顺序定位。原生协议或业务语义改变时仍需重新适配，无法确认的契约保留原生行为。当前源码验证目标为 Codex 26.1117.31558 / build 29513；真实账号发送和已安装应用交互与隔离验证分开记录。

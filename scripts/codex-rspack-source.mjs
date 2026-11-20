@@ -1,4 +1,4 @@
-import { open, stat } from 'node:fs/promises';
+import { open, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { parseSync, visitorKeys } from 'oxc-parser';
 import { sourceAst, unwrap, propertyName } from './codex-source-ast.mjs';
@@ -83,15 +83,24 @@ export function rspackSourceContext(factories, selected = new Set()) {
   return context;
 }
 
-export async function readCodexRspack(appPath) {
+export async function readCodexRspackIdentity(appPath) {
   if (!appPath) return null;
   const resources = appPath.endsWith('.app') ? path.join(appPath, 'Contents/Resources')
     : process.platform === 'linux' && appPath === '/usr/bin/chatgpt' ? '/usr/lib/chatgpt/resources'
       : path.join(path.dirname(appPath), 'resources');
-  const archive = path.join(resources, 'app.asar');
+  let archive = path.join(resources, 'app.asar');
   let details;
-  try { details = await stat(archive); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-  const key = `${archive}:${details.size}:${details.mtimeMs}`;
+  try { archive = await realpath(archive); details = await stat(archive); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  const key = JSON.stringify([archive, details.size, details.mtimeMs, details.ctimeMs, details.dev, details.ino]);
+  return { archive, key, size: details.size };
+}
+
+export async function readCodexRspack(appPath) {
+  const identity = await readCodexRspackIdentity(appPath);
+  if (!identity) return null;
+  const { archive, key } = identity;
+  const details = identity;
   if (catalogs.has(key)) return catalogs.get(key);
   const file = await open(archive, 'r');
   try {

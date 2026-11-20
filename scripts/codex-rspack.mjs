@@ -1,8 +1,10 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import path from 'node:path';
 import vm from 'node:vm';
 import { sourceAst, propertyName, propertyValue, unwrap, isFunction, returnValue, unique, applyEdits } from './codex-source-ast.mjs';
 import { createCodexProviderQuotaRuntime } from './codex-provider-quota.mjs';
-import { readCodexRspack, rspackSourceContext } from './codex-rspack-source.mjs';
+import { readCodexRspack, readCodexRspackIdentity, rspackSourceContext } from './codex-rspack-source.mjs';
 import { rewriteRspackQuota } from './codex-rspack-quota.mjs';
 import { rewriteRspackDot, rewriteRspackUltrafast, rewriteRspackProjectlessChat } from './codex-rspack-capabilities.mjs';
 import { createRspackThreadTabsRuntime, rewriteRspackThreadTabs } from './codex-rspack-tabs.mjs';
@@ -13,6 +15,8 @@ import { buildNativeServiceBindings } from './codex-rspack-pets.mjs';
 
 const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltrafast, dot: rewriteRspackDot, tabs: rewriteRspackThreadTabs, queue: rewriteRspackQueue, pets: rewriteRspackPets, projectlessChat: rewriteRspackProjectlessChat };
 const responsePatches = new WeakMap();
+const preparedPlans = new Map();
+const planCacheFormat = 1;
 
 export function rewriteRspackQueue(source, context) {
   if (source.includes('data-codex-panel-queued-messages') || source.includes('panelQueueRequire')) return null;
@@ -148,6 +152,72 @@ export function buildRspackPlan(catalog, adapters = transformers) {
   return { patches, prepared, errors, chunks, nativeUpdate, nativeServices };
 }
 
+function reusablePlan(value, features) {
+  const object = item => item !== null && typeof item === 'object' && !Array.isArray(item);
+  const plan = value?.plan;
+  return object(value?.main) && typeof value.main.source === 'string' && typeof value.main.urlPath === 'string'
+    && object(plan) && object(plan.prepared) && object(plan.errors) && Object.keys(plan.errors).length === 0
+    && features.every(feature => plan.prepared[feature] === true)
+    && object(plan.patches) && Object.values(plan.patches).every(variants => Array.isArray(variants)
+      && variants.every(variant => typeof variant.before === 'string' && typeof variant.after === 'string'
+        && Array.isArray(variant.features) && variant.features.every(feature => typeof feature === 'string')))
+    && object(plan.chunks) && Object.values(plan.chunks).every(Array.isArray)
+    && object(plan.nativeUpdate) && object(plan.nativeServices);
+}
+
+const planDigest = value => createHash('sha256').update(JSON.stringify([value.main, value.plan])).digest('hex');
+
+export async function prepareCodexRspackPlan(appPath, {
+  cacheDirectory, adapterRevision, petsOnly = false, report = console.error,
+  readCatalog = readCodexRspack, buildPlan = buildRspackPlan,
+} = {}) {
+  const adapters = petsOnly ? { pets: rewriteRspackPets } : transformers;
+  const features = Object.keys(adapters);
+  const build = async () => {
+    const catalog = await readCatalog(appPath);
+    if (!catalog) return null;
+    return { main: catalog.main, plan: buildPlan(catalog, adapters) };
+  };
+  if (!cacheDirectory || typeof adapterRevision !== 'string' || !adapterRevision) return build();
+  const identity = await readCodexRspackIdentity(appPath);
+  if (!identity) return null;
+  const key = createHash('sha256').update(JSON.stringify([planCacheFormat, identity.key, adapterRevision, petsOnly ? 'pets' : 'full'])).digest('hex');
+  const directory = path.resolve(cacheDirectory);
+  const memoryKey = `${directory}:${key}`;
+  if (preparedPlans.has(memoryKey)) return preparedPlans.get(memoryKey);
+  const pending = (async () => {
+    const file = path.join(directory, `${key}.json`);
+    try {
+      const cached = JSON.parse(await readFile(file, 'utf8'));
+      if (cached.format === planCacheFormat && cached.key === key && reusablePlan(cached, features) && cached.digest === planDigest(cached)) {
+        return { main: cached.main, plan: cached.plan };
+      }
+    } catch { /* Missing or damaged static caches are rebuilt from the installed archive. */ }
+    const result = await build();
+    if (!reusablePlan(result, features)) return result;
+    // An updater may replace the archive while its source is being analyzed.
+    if ((await readCodexRspackIdentity(appPath))?.key !== identity.key) return result;
+    let temporary;
+    try {
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      temporary = `${file}.${randomUUID()}.tmp`;
+      await writeFile(temporary, JSON.stringify({ format: planCacheFormat, key, digest: planDigest(result), ...result }), { flag: 'wx', mode: 0o600 });
+      await rename(temporary, file);
+    } catch (error) { report(`Panel Rspack cache unavailable: ${error.message}`); }
+    finally { if (temporary) await rm(temporary, { force: true }).catch(() => {}); }
+    return result;
+  })();
+  preparedPlans.set(memoryKey, pending);
+  try {
+    const result = await pending;
+    if (!reusablePlan(result, features) || (await readCodexRspackIdentity(appPath))?.key !== identity.key) preparedPlans.delete(memoryKey);
+    return result;
+  } catch (error) {
+    preparedPlans.delete(memoryKey);
+    throw error;
+  }
+}
+
 export function createCodexRspackRuntime(plan) {
   let nativeRequire;
   const runtime = {
@@ -230,15 +300,15 @@ export function rewriteRspackEntry(source, url) {
   }
   return applyEdits(source, edits);
 }
-export async function prepareCodexRspack(cdp, appPath, preferencesFile, report = console.error, { petsOnly = false, petAnimations = [] } = {}) {
-  const catalog = await readCodexRspack(appPath);
-  if (!catalog) return null;
+export async function prepareCodexRspack(cdp, appPath, preferencesFile, report = console.error, { petsOnly = false, petAnimations = [], cacheDirectory, adapterRevision } = {}) {
+  const prepared = await prepareCodexRspackPlan(appPath, { petsOnly, cacheDirectory, adapterRevision, report });
+  if (!prepared) return null;
+  const { main, plan } = prepared;
   const result = await cdp.send('Runtime.evaluate', {
     expression: `([...document.querySelectorAll('script[type="module"][src]')].map(script=>script.src))`, returnByValue: true,
   });
-  const url = result.result?.value?.find(candidate => new URL(candidate).pathname === catalog.main.urlPath);
+  const url = result.result?.value?.find(candidate => new URL(candidate).pathname === main.urlPath);
   if (!url) return null;
-  const plan = buildRspackPlan(catalog, petsOnly ? { pets: rewriteRspackPets } : transformers);
   for (const [feature, error] of Object.entries(plan.errors)) report(`Panel Rspack ${feature} unavailable: ${error}`);
   if (petsOnly && !plan.prepared.pets) return { source: '', prepared: plan.prepared, errors: plan.errors };
   if (plan.prepared.pets) await installPetAudioBinding(cdp);
@@ -248,7 +318,7 @@ export async function prepareCodexRspack(cdp, appPath, preferencesFile, report =
     catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
   const petSource = plan.prepared.pets ? `const pets=globalThis.__codexPanelPetAnimations__??=(${createPetAnimationRuntime})([],${JSON.stringify(await readBuiltinLumi())});pets.setSoundEnabled(${preferences.petSounds !== false});pets.setPacks(${JSON.stringify(petAnimations)});` : '';
-  const entry = rewriteRspackEntry(catalog.main.source, url);
+  const entry = rewriteRspackEntry(main.source, url);
   await installRspackResponse(cdp, url, entry, report);
   if (petsOnly) {
     return { source: `(() => {

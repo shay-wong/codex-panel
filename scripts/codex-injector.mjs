@@ -2589,7 +2589,9 @@ async function injectAvatarTarget(runtime, target, sourceHash, appPath, keepAliv
     await cdp.send("Runtime.enable");
     await waitForRendererReady(cdp, 15_000);
     const petAnimations = await readPetAnimations(panelDataDirectory);
-    const adapters = await prepareCodexRspack(cdp, appPath, panelEnvironment("PREFERENCES_FILE"), console.error, { petsOnly: true, petAnimations });
+    const adapters = await prepareCodexRspack(cdp, appPath, panelEnvironment("PREFERENCES_FILE"), console.error, {
+      petsOnly: true, petAnimations, cacheDirectory: path.join(panelDataDirectory, "codex-adapters"), adapterRevision: sourceHash,
+    });
     if (!adapters?.prepared.pets) throw new Error("Pet animation module is unavailable");
     const currentStatus = await readAvatarInjectionStatus(cdp);
     const source = `${adapters.source}\nglobalThis.__codexPanelPetAnimationsInjectionHash__ = ${JSON.stringify(sourceHash)};`;
@@ -2686,13 +2688,15 @@ async function syncPetAnimations(dataDirectory, connections) {
   }
 }
 
-async function prepareNativeAdapters(cdp, appPath, reportThreadTabs) {
+async function prepareNativeAdapters(cdp, appPath, reportThreadTabs, sourceHash) {
   const preferences = panelEnvironment("PREFERENCES_FILE");
   try {
     let petAnimations = [];
     try { petAnimations = await readPetAnimations(panelDataDirectory); }
     catch (error) { console.error(`Pet animation configuration is unavailable: ${error.message}`); }
-    const rspack = await prepareCodexRspack(cdp, appPath, preferences, console.error, { petAnimations });
+    const rspack = await prepareCodexRspack(cdp, appPath, preferences, console.error, {
+      petAnimations, cacheDirectory: path.join(panelDataDirectory, "codex-adapters"), adapterRevision: sourceHash,
+    });
     if (rspack) {
       if (!rspack.prepared.tabs) reportThreadTabs(`Panel conversation tabs unavailable: ${rspack.errors.tabs}`);
       return { source: rspack.source, threadTabsPrepared: rspack.prepared.tabs,
@@ -2749,7 +2753,7 @@ async function injectTarget(
       console.error(message);
       if (message.startsWith("Panel conversation tabs unavailable:")) cdp.threadTabsError = message.slice(message.indexOf(":") + 1).trim();
     };
-    const adapters = keepAlive ? await prepareNativeAdapters(cdp, appPath, reportThreadTabs) : { source: "", threadTabsPrepared: false };
+    const adapters = keepAlive ? await prepareNativeAdapters(cdp, appPath, reportThreadTabs, sourceHash) : { source: "", threadTabsPrepared: false };
     const quotaSource = adapters.source;
     if (quotaSource) source = `${quotaSource}\n${source}`;
     // 已连接不等于菜单加载成功；失败留给后台巡检重试，只有准备成功才重载应用。
@@ -2760,7 +2764,7 @@ async function injectTarget(
       cdp.threadTabsError = "";
       void cdp.onThreadTabsStatus?.();
       // 手动重试和后台重试都读取当前模块，不能沿用首次失败时的空快照。
-      const refreshed = await prepareNativeAdapters(cdp, appPath, reportThreadTabs);
+      const refreshed = await prepareNativeAdapters(cdp, appPath, reportThreadTabs, sourceHash);
       if (!refreshed.threadTabsPrepared) { cdp.threadTabsPhase = "failed"; return false; }
       const bootstrap = refreshed.source;
       if (!bootstrap) { cdp.threadTabsPhase = "failed"; cdp.threadTabsError = "菜单注入脚本未准备成功"; return false; }

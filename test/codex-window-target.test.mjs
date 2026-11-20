@@ -57,7 +57,7 @@ test("avatar injection handles late windows and reconnects without mounting Pane
   const events = new Map();
   const connections = new Map();
   const inject = vm.runInNewContext(`${source.slice(start, end)}; injectAvatarTargets`, {
-    console: { error() {} },
+    console: { error() {} }, path,
     waitForRendererReady: async () => {},
     readPetAnimations: async () => [{ petId: "fixture" }],
     panelDataDirectory: "/fixture/data",
@@ -117,6 +117,9 @@ test("avatar injection handles late windows and reconnects without mounting Pane
   assert.equal(commands.includes("Runtime.addBinding"), false);
   assert.equal(commands.filter(command => command === "Page.removeScriptToEvaluateOnNewDocument").length, 2);
   assert(preparations.every(([, appPath, preferences, , options]) => appPath === "/fixture/ChatGPT.app" && preferences === undefined && options.petsOnly && options.petAnimations[0].petId === "fixture"));
+  assert(preparations.every(([, , , , options]) => options.cacheDirectory === path.join("/fixture/data", "codex-adapters")));
+  assert.equal(preparations[0][4].adapterRevision, "first");
+  assert.equal(preparations.at(-1)[4].adapterRevision, "updated");
 });
 
 test("imported pet packs and sound preferences update both windows without reloading animations", async t => {
@@ -185,6 +188,7 @@ test("unmounted entries never report successful injection", async () => {
     const cdp = {send:async () => ({}),on(){},close(){closed=true;}};
     const inject = vm.runInNewContext(`${source.slice(start,end)}; injectTarget`, {
       installPanelHostBinding:()=>({install:async()=>{},publishHeartbeat:async()=>{}}),
+      path, panelDataDirectory: "/fixture/data",
       prepareCodexRspack:async()=>null,
       waitForRendererReady:async()=>{},prepareCodexProviderQuotaFix:async()=>"",panelEnvironment:()=>null,
       prepareNativeAdapters:async()=>({source:"",threadTabsPrepared:false}),
@@ -236,7 +240,12 @@ test("quota preparation recovering on a mount retry reloads once before reusing 
   const cdp = { send: async () => ({}), on() {}, close() {} };
   const inject = vm.runInNewContext(`${source.slice(start, end)}; injectTarget`, {
     installPanelHostBinding: () => ({ install: async () => {}, publishHeartbeat: async () => {} }),
-    prepareCodexRspack: async () => null,
+    path, panelDataDirectory: "/fixture/data",
+    prepareCodexRspack: async (_cdp, _appPath, _preferences, _report, options) => {
+      assert.equal(options.cacheDirectory, path.join("/fixture/data", "codex-adapters"));
+      assert.equal(options.adapterRevision, "current");
+      return null;
+    },
     waitForRendererReady: async () => {}, panelEnvironment: () => "fixture",
     prepareCodexProviderQuotaFix: async () => preparations.shift(),
     prepareCodexProviderUltrafast: async () => [],
@@ -267,6 +276,7 @@ test("a connected window retries missing tabs and applies the recovered menu onc
   const { injectAll } = vm.runInNewContext(`${source.slice(start, end)}; ({injectAll})`, {
     Date: { now: () => now }, URL, console: { error() {} },
     installPanelHostBinding: () => ({ install: async () => {}, publishHeartbeat: async () => {} }),
+    path, panelDataDirectory: "/fixture/data",
     prepareCodexRspack: async () => null,
     waitForRendererReady: async () => {}, panelEnvironment: () => "fixture",
     prepareCodexProviderUltrafast: async () => [],

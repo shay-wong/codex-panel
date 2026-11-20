@@ -6,6 +6,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Reuse successful native adaptation plans across restarts; rebuild them when the installed Codex package or Panel adapter changes.
 - Locate native adapters through syntax trees, exports and calls, removing generated-filename, module co-location, declaration-adjacency and field-order assumptions; support Codex 26.1117.31558 quota, speed settings, conversation menus and notification structures.
 - Resume valid partial Codex downloads after network interruptions or timeouts when retrying the same version during the current Panel run.
 - Change the account-quota API send setting only through its switch, including keyboard activation; title, description and row clicks no longer toggle it.
