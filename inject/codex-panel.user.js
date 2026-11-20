@@ -290,6 +290,11 @@
       .codex-panel-phrases-editor { box-sizing: border-box; min-height: 210px; max-height: 40vh; overflow-y: auto; padding: 12px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 10px; line-height: 1.9; }
       .codex-panel-phrases-editor > .ProseMirror { min-height: 184px; outline: none; white-space: pre-wrap; overflow-wrap: anywhere; }
       .codex-panel-phrases-editor p { margin: 0; }
+      .codex-panel-phrases-commands { position: fixed; z-index: 1; width: 320px; max-height: 210px; overflow-y: auto; padding: 5px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 10px; background: var(--color-token-main-surface-primary, Canvas); box-shadow: 0 8px 24px rgb(0 0 0 / .15); }
+      .codex-panel-phrases-commands button { display: block; width: 100%; padding: 7px 9px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; }
+      .codex-panel-phrases-commands button[aria-selected="true"] { background: var(--color-token-main-surface-secondary, light-dark(#f3f3f3, #333)); }
+      .codex-panel-phrases-commands small { display: block; margin-top: 2px; color: var(--color-token-text-secondary, GrayText); font-size: 11px; }
+      .codex-panel-phrases-commands p { margin: 8px; font-size: 12px; color: var(--color-token-text-secondary, GrayText); }
       .codex-panel-phrases-apply { margin-top: 10px; padding: 0; border: 0; background: transparent; color: var(--color-token-text-secondary, GrayText); font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
       .codex-panel-phrases-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
       .codex-panel-phrases-dialog footer button { padding: 7px 14px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 8px; background: transparent; color: inherit; font: inherit; }
@@ -2961,18 +2966,78 @@
     return phrase.replace(/\[(\$[^\]\r\n]+)\]\([^\r\n)]+\)/g, "$1");
   }
 
-  function quickPhraseController(root = quickPhraseComposer()) {
+  function* quickPhraseComposerProps(root = quickPhraseComposer()) {
     const editor = root?.querySelector('[data-codex-composer="true"][contenteditable="true"]');
     // shortcut: uses the native React composer contract; update when Codex changes its editor.
     let owner = editor;
     while (owner && !Object.keys(owner).some(key => key.startsWith("__reactFiber$"))) owner = owner.parentElement;
     const fiberKey = owner && Object.keys(owner).find(key => key.startsWith("__reactFiber$"));
     for (let fiber = owner?.[fiberKey]; fiber; fiber = fiber.return) {
-      const props = fiber.memoizedProps;
+      yield fiber.memoizedProps;
+    }
+  }
+
+  function quickPhraseController(root = quickPhraseComposer()) {
+    const editor = root?.querySelector('[data-codex-composer="true"][contenteditable="true"]');
+    for (const props of quickPhraseComposerProps(root)) {
       const candidate = props?.composerController ?? props?.input?.composerController;
       if (candidate?.view?.dom === editor && typeof candidate.setPromptText === "function") return candidate;
     }
     return null;
+  }
+
+  function requestQuickPhraseSkills(hostId, cwds) {
+    return new Promise((resolve, reject) => {
+      const id = crypto.randomUUID();
+      const finish = (error, result) => {
+        clearTimeout(timer);
+        window.removeEventListener("message", receive, true);
+        if (error) reject(error);
+        else resolve(result);
+      };
+      const receive = event => {
+        const response = event.data;
+        if (response?.type !== "mcp-response" || response.hostId !== hostId || response.message?.id !== id) return;
+        event.stopImmediatePropagation();
+        finish(response.message.error, response.message.result);
+      };
+      const timer = setTimeout(() => finish(new Error("Skill request timed out")), 10000);
+      window.addEventListener("message", receive, true);
+      Promise.resolve().then(() => window.electronBridge.sendMessageFromView({
+        type: "mcp-request", hostId,
+        request: { id, method: "skills/list", params: cwds.length ? { cwds } : {} },
+      })).catch(error => finish(error));
+    });
+  }
+
+  async function quickPhraseSkills() {
+    let client, hostId, cwd;
+    for (const props of quickPhraseComposerProps()) {
+      client ??= [props?.client, props?.queryClient, props?.value]
+        .find(value => typeof value?.getQueryCache === "function");
+      hostId ??= props?.hostId ?? props?.input?.hostId;
+      cwd ??= props?.cwd ?? props?.input?.cwd;
+    }
+    const projectId = quickPhrasesProjectId;
+    const project = projectId && (codexProjectMetadata.get(projectId) ?? (await readCodexProjectMetadata()).get(projectId));
+    const host = hostId ?? project?.hostId ?? "local";
+    const root = cwd || project?.workspacePath;
+    const cwds = root ? [root] : [];
+    const query = client?.getQueryCache().findAll({ queryKey: ["skills", host] }).find(query =>
+      root ? query.queryKey[2]?.some(path => normalizeNativeRootPath(path) === normalizeNativeRootPath(root))
+        : query.queryKey[2]?.length === 0);
+    let result = query?.state.data;
+    if (!result?.data?.some(entry => entry.skills?.length)) {
+      result = query ? await query.fetch() : await requestQuickPhraseSkills(host, cwds);
+    }
+    const skills = new Map();
+    for (const entry of result?.data ?? []) {
+      for (const skill of entry.skills ?? []) {
+        if (!skill.enabled || !skill.name || !skill.path) continue;
+        skills.set(skill.path, skill);
+      }
+    }
+    return Array.from(skills.values()).sort((left, right) => left.name.localeCompare(right.name));
   }
 
   function quickPhrasesDocument(controller, text) {
@@ -3020,7 +3085,7 @@
       const other = dialog.querySelector(".codex-panel-phrases-other");
       other.textContent = hostText("其他仓库…", "Other repositories…");
       other.addEventListener("click", () => void chooseQuickPhrasesRepository());
-      dialog.querySelector(".codex-panel-phrases-hint").textContent = hostText("每行一条，支持文字或粘贴 Skill 引用，也可追加指令。仓库配置覆盖基础配置，未定制时使用基础配置。", "One entry per line. Type text or paste a Skill reference, optionally followed by instructions. Repository entries replace the base list; otherwise the base list applies.");
+      dialog.querySelector(".codex-panel-phrases-hint").textContent = hostText("每行一条，输入 @ 搜索当前会话可用的 Skill 命令，也可粘贴引用或追加指令。仓库配置覆盖基础配置，未定制时使用基础配置。", "One entry per line. Type @ to find Skill commands available in this chat, or paste a reference and add instructions. Repository entries replace the base list; otherwise the base list applies.");
       const tabs = dialog.querySelector('[role="tablist"]');
       tabs.setAttribute("aria-label", hostText("配置范围", "Configure for"));
       dialog.querySelector("#codex-panel-phrases-input-label").textContent = hostText("短语内容", "Phrases");
@@ -3036,6 +3101,7 @@
           button.tabIndex = button === tab ? 0 : -1;
         }
         dialog.querySelector('[role="tabpanel"]').setAttribute("aria-labelledby", tab.id);
+        quickPhrasesEditor.closeCommands();
         quickPhrasesEditor.view.updateState(quickPhrasesEditor.view.state.constructor.create({
           schema: quickPhrasesEditor.view.state.schema,
           doc: quickPhrasesDocument(quickPhrasesEditor.controller, readQuickPhrases(tabs.dataset.projectId).join("\n")),
@@ -3115,6 +3181,7 @@
       });
       dialog.addEventListener("close", () => {
         quickPhrasesRepositoryPicker?.close();
+        quickPhrasesEditor?.commands.remove();
         quickPhrasesEditor?.view.destroy();
         quickPhrasesEditor = null;
       });
@@ -3145,6 +3212,92 @@
     quickPhrasesDialog.querySelector('[role="tabpanel"]').setAttribute("aria-labelledby", tabs.querySelector('[aria-selected="true"]').id);
     quickPhrasesDialog.querySelector(".codex-panel-phrases-reset").hidden = !quickPhrasesProjectId;
     const nativeView = controller.view;
+    const commands = document.createElement("div");
+    commands.id = "codex-panel-phrases-commands";
+    commands.className = "codex-panel-phrases-commands";
+    commands.setAttribute("role", "listbox");
+    commands.setAttribute("aria-label", hostText("当前会话可用命令", "Commands available in this chat"));
+    commands.hidden = true;
+    quickPhrasesDialog.append(commands);
+    let skills = [], matches = [], commandRange, dismissedCommand, commandError;
+    let loadingSkills, commandsLoaded = false, selectedCommand = 0;
+    const closeCommands = () => {
+      commands.hidden = true;
+      view.dom.setAttribute("aria-expanded", "false");
+      view.dom.removeAttribute("aria-activedescendant");
+    };
+    const selectCommand = index => {
+      const skill = matches[index];
+      if (!skill || !commandRange) return;
+      const transaction = view.state.tr.setSelection(view.state.selection.constructor.create(view.state.doc, commandRange.from, commandRange.to));
+      view.dispatch(transaction);
+      const editorController = Object.create(controller);
+      editorController.view = view;
+      editorController.insertSkillMentionAtSelection(skill);
+      closeCommands();
+    };
+    const highlightCommand = () => {
+      for (const [index, option] of Array.from(commands.querySelectorAll('[role="option"]')).entries()) {
+        option.setAttribute("aria-selected", String(index === selectedCommand));
+      }
+      const active = commands.querySelector('[aria-selected="true"]');
+      if (active) {
+        view.dom.setAttribute("aria-activedescendant", active.id);
+        active.scrollIntoView({ block: "nearest" });
+      }
+    };
+    const updateCommands = () => {
+      const { selection } = view.state;
+      const before = selection.$from.parent.textBetween(0, selection.$from.parentOffset, "", "\ufffc");
+      const match = selection.empty && /(?:^|[^\w@$])([@$])([^\s@$]*)$/.exec(before);
+      if (!match || !view.hasFocus() || view.composing) {
+        dismissedCommand = undefined;
+        closeCommands();
+        return;
+      }
+      const from = selection.from - match[1].length - match[2].length;
+      const identity = `${from}:${selection.from}:${match[0]}`;
+      if (identity === dismissedCommand) { closeCommands(); return; }
+      dismissedCommand = undefined;
+      loadingSkills ??= quickPhraseSkills().then(result => { skills = result; }).catch(error => { commandError = error; }).finally(() => {
+        commandsLoaded = true;
+        if (quickPhrasesEditor?.view === view) updateCommands();
+      });
+      if (commandRange?.identity !== identity) selectedCommand = 0;
+      commandRange = { from, to: selection.from, identity };
+      const query = match[2].toLocaleLowerCase();
+      matches = skills.filter(skill => `${skill.name} ${skill.interface?.displayName ?? ""} ${skill.description ?? ""}`.toLocaleLowerCase().includes(query));
+      commands.replaceChildren();
+      for (const [index, skill] of matches.entries()) {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.className = "cursor-interaction";
+        option.id = `codex-panel-phrases-command-${index}`;
+        option.setAttribute("role", "option");
+        option.textContent = `$${skill.name}`;
+        const description = document.createElement("small");
+        description.textContent = skill.interface?.shortDescription || skill.shortDescription || skill.description || "";
+        option.append(description);
+        option.addEventListener("mousedown", event => event.preventDefault());
+        option.addEventListener("click", () => selectCommand(index));
+        commands.append(option);
+      }
+      if (!matches.length) {
+        const status = document.createElement("p");
+        status.setAttribute("role", "status");
+        status.textContent = commandError ? hostText("命令读取失败，请关闭配置后重试。", "Could not load commands. Reopen Configure to retry.")
+          : !commandsLoaded ? hostText("正在读取命令…", "Loading commands…")
+            : hostText("没有匹配的命令", "No matching commands");
+        commands.append(status);
+      }
+      commands.hidden = false;
+      const caret = view.coordsAtPos(selection.from);
+      commands.style.left = `${Math.max(8, Math.min(caret.left, window.innerWidth - 340))}px`;
+      commands.style.top = `${caret.bottom + 4}px`;
+      if (commands.getBoundingClientRect().bottom > window.innerHeight - 8) commands.style.top = `${Math.max(8, caret.top - commands.offsetHeight - 4)}px`;
+      view.dom.setAttribute("aria-expanded", "true");
+      highlightCommand();
+    };
     const view = new nativeView.constructor(quickPhrasesDialog.querySelector("#codex-panel-phrases-input"), {
       state: nativeView.state.constructor.create({
         schema: nativeView.state.schema,
@@ -3156,10 +3309,47 @@
         role: "textbox",
         "aria-labelledby": "codex-panel-phrases-input-label",
         "aria-multiline": "true",
+        "aria-autocomplete": "list",
+        "aria-controls": commands.id,
+        "aria-expanded": "false",
         spellcheck: "false",
       },
+      dispatchTransaction(transaction) {
+        this.updateState(this.state.apply(transaction));
+        updateCommands();
+      },
+      handleDOMEvents: {
+        blur() { closeCommands(); return false; },
+      },
       handleKeyDown(view, event) {
-        if (event.key !== "Enter" || event.isComposing) return false;
+        if (event.isComposing) return false;
+        if (!commands.hidden) {
+          if (event.key === "Escape") {
+            dismissedCommand = commandRange?.identity;
+            closeCommands();
+            return true;
+          }
+          if (matches.length && ["ArrowUp", "ArrowDown"].includes(event.key)) {
+            selectedCommand = (selectedCommand + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length;
+            highlightCommand();
+            return true;
+          }
+          if (matches.length && ["Enter", "Tab"].includes(event.key)) {
+            selectCommand(selectedCommand);
+            return true;
+          }
+        }
+        const { selection } = view.state;
+        if (selection.empty && selection.$from.depth === 1) {
+          const { $from } = selection;
+          const boundary = event.key === "Backspace" && $from.parentOffset === 0 ? $from.before()
+            : event.key === "Delete" && $from.parentOffset === $from.parent.content.size ? $from.after() : 0;
+          if (boundary > 0 && boundary < view.state.doc.content.size) {
+            view.dispatch(view.state.tr.join(boundary).scrollIntoView());
+            return true;
+          }
+        }
+        if (event.key !== "Enter") return false;
         const transaction = view.state.tr.deleteSelection();
         view.dispatch(transaction.split(transaction.selection.from).scrollIntoView());
         return true;
@@ -3172,7 +3362,7 @@
         return true;
       },
     });
-    quickPhrasesEditor = { view, controller };
+    quickPhrasesEditor = { view, controller, commands, closeCommands };
     quickPhrasesDialog.querySelector('[role="alert"]').textContent = "";
     quickPhrasesDialog.showModal();
     tabs.querySelector('[aria-selected="true"]').focus();
