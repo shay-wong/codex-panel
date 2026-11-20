@@ -51,7 +51,7 @@ function scopeFixture() {
   };
 }
 
-function harness(adapt, { settingsReady = false, versionReady = true } = {}) {
+function harness(adapt, { settingsReady = false, versionReady = true, reordered = false } = {}) {
   const scope = scopeFixture(), key = { hostId: 'local', threadId: 'fixture-thread' };
   const coreMessages = [{ id: 'queued-before-reload' }], snapshots = [], subscriptions = [], active = new Set();
   let mainReady = settingsReady;
@@ -83,6 +83,12 @@ function harness(adapt, { settingsReady = false, versionReady = true } = {}) {
     rljs: { kA: { kind: 'derived', read: () => ({ appServerVersion$: version }) } },
   };
   const sources = { MYVk: queueSource, jMec: publicationSource, CfsC: versionSource, other: otherSource };
+  if (reordered) {
+    sources.MYVk = queueSource.replace('function(e,t,n){', 'function(e,t,n){"use strict";').replace('type:"thread",key:t,field:"queuedMessages",listener:n', 'listener:n,field:"queuedMessages",key:t,type:"thread"');
+    sources.jMec = publicationSource.replace('n.d(t,{},{B:c,L:d})', 'n.d(t,{L:()=>d},{B:c})').replace('var r=', 'const decoy="let fake=d; export{wrong}";var r=');
+    sources.CfsC = versionSource.replace('n.d(t,{},{B:s,D:o})', 'n.d(t,{D:()=>o,B:()=>s},{})');
+    sources.unrelatedVersion = 'function(e,t,n){const feature=signal(scope,(id,{get})=>get(get(host,id).appServerVersion$)!==null);n.d(t,{}, {feature})}';
+  }
   const factories = new Map(Object.entries(sources).map(([id, source]) => [id, { id, source, chunkIds: [42] }]));
   const plan = buildRspackPlan({ factories }, adapt ? { queue: rewriteRspackQueue } : {});
   const table = Object.fromEntries(Object.entries(sources).map(([id, source]) => [id, vm.runInNewContext(`(${source})`)]));
@@ -191,4 +197,13 @@ test('a late core version refreshes the queue without republishing ready setting
   assert.equal(adapted.messages()[0], adapted.coreMessages[0]);
   assert.equal(adapted.subscriptions.length, 2);
   assert.deepEqual(adapted.subscriptions.map(entry => entry.disposed), [1, 0]);
+});
+
+test('queue recovery follows reordered properties and getter exports', t => {
+  const adapted = harness(true, { reordered: true });
+  t.after(adapted.stop);
+  assert.equal(adapted.plan.prepared.queue, true);
+  assert.equal(adapted.messages().length, 0);
+  adapted.publish(true);
+  assert.equal(adapted.messages()[0], adapted.coreMessages[0]);
 });

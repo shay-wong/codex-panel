@@ -108,7 +108,7 @@ test('checks the official feed despite a skipped native update and preserves the
   const download = createCodexUpdateDownload({ ...setup.options, getPlanType: async () => 'pro' }, setup.dependencies);
   const cdp = { send: async (_method, params) => {
     assert.ok(!params.expression.includes('checkForUpdateInformation'), 'never ask the updater to filter skipped versions');
-    return { result: { value: params.expression.includes('appBetaPreferencesByAccountId')
+    return { result: { value: params.expression.includes('})("channel",')
       ? { beta: true } : { isUpdateReady: false, lifecycleState: 'idle' } } };
   } };
   assert.equal((await readCodexUpdateStatus(cdp, { download })).checking, true);
@@ -131,7 +131,7 @@ test('checks the official feed despite a skipped native update and preserves the
 test('an invalid official feed reports an error rather than the latest version', { skip: process.platform !== 'darwin' }, async t => {
   const setup = await fixture(t, { feed: '' });
   const download = createCodexUpdateDownload(setup.options, setup.dependencies);
-  const cdp = { send: async (_method, params) => ({ result: { value: params.expression.includes('appBetaPreferencesByAccountId')
+  const cdp = { send: async (_method, params) => ({ result: { value: params.expression.includes('})("channel",')
     ? { beta: false } : { isUpdateReady: false, lifecycleState: 'idle' } } }) };
   await readCodexUpdateStatus(cdp, { download });
   await waitFor(async () => !(await readCodexUpdateStatus(cdp, { download })).checking);
@@ -290,7 +290,7 @@ test('cancels a partial download, cleans it after abort settles, and retries aft
   assert.equal(await partialFile(setup), undefined);
   assert.equal(setup.applied.length, 0);
   const cdp = { send: async (_method, params) => {
-    if (params.expression.includes('appBetaPreferencesByAccountId')) return { result: { value: { beta: false } } };
+    if (params.expression.includes('})("channel",')) return { result: { value: { beta: false } } };
     return { result: { value: { isUpdateReady: false, lifecycleState: 'idle' } } };
   } };
   let checks = 0;

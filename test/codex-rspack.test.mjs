@@ -19,7 +19,7 @@ test('reads current Rspack factories from the installed archive without executin
     'webview/assets/async/456.def.js': 'export const __rspack_esm_id=456;export const __rspack_esm_ids=[456];export const __webpack_modules__={abcd(module){throw Error("must not execute");const marker="model_provider";}};',
     'webview/assets/async/457.notifications.js': 'export const __rspack_esm_ids=[457];export const __webpack_modules__={notifications(){throw Error("must not execute");const marker="notificationThread";}};',
     'webview/assets/async/458.settings.js': 'export const __rspack_esm_ids=[458];export const __webpack_modules__={settings(){throw Error("must not execute");const marker="statsigEvaluations";}};',
-    'webview/assets/async/459.version.js': 'export const __rspack_esm_ids=[459];export const __webpack_modules__={version(){throw Error("must not execute");const marker="appServerVersion$";}};',
+    'webview/relocated/459.version.js': 'throw Error("must not execute chunk top level");export const __webpack_modules__ = {version(){throw Error("must not execute");const marker="appServerVersion$";}};export const __rspack_esm_ids = [459];',
     'webview/assets/async/460.sidebar.js': 'export const __rspack_esm_ids=[460];export const __webpack_modules__={sidebar(){throw Error("must not execute");const row={archiveGroup:null};}};',
   };
   const header = { files: {} }; let offset = 0; const bodies = [];
@@ -42,7 +42,7 @@ test('reads current Rspack factories from the installed archive without executin
   assert.deepEqual(catalog.unreadableChunks, []);
   assert.ok(catalog.factories.has('legacy'));
   assert.match(catalog.factories.get('abcd').source, /^function\(module\)/);
-  assert.equal(rspackSourceContext(catalog.factories).findModule('model_provider').id, 'abcd');
+  assert.equal(rspackSourceContext(catalog.factories).modulesContaining('model_provider')[0].id, 'abcd');
 });
 
 test('patches initial and lazy factories before native require executes them', async () => {
@@ -60,7 +60,6 @@ test('patches initial and lazy factories before native require executes them', a
     globalThis.runtime=runtime;globalThis.load=load;
   `, context);
   assert.equal(vm.runInContext('load("item").value', context), 'adapted');
-  assert.match(context.runtime.findModule('"native"').source, /"native"/);
   vm.runInContext('delete load.m.item;delete cache.item;', context);
   // Only dependency modules requested by a capability are put in the lazy-load map.
   plan.chunks.item = [42];
@@ -80,6 +79,16 @@ test('rewrites the registration table while retaining static and lazy module URL
 test('a renderer load before bootstrap registration keeps the native entry working', () => {
   const source = 'let table={item:()=>"native"};function load(id){return table[id]();}load.m=table,load.C=()=>{};load("item");';
   assert.equal(vm.runInNewContext(rewriteRspackEntry(source, 'app://-/assets/1.abc.js')), 'native');
+});
+
+test('registration discovery follows the table binding across declarations and source decoys', () => {
+  const source = 'const decoy="fake.m=other,";const table={item:()=>"native"};load.C=()=>{};function load(id){return table[id]();}load["m"] = table;load("item");';
+  let wrapped = 0;
+  const value = vm.runInNewContext(rewriteRspackEntry(source, 'app://-/renamed/entry.js'), {
+    __codexPanelRspack__: { wrapFactories(table) { wrapped++; return table; } },
+  });
+  assert.equal(value, 'native');
+  assert.equal(wrapped, 1);
 });
 
 test('replaces only the successful main script response and updates the existing handler', async () => {

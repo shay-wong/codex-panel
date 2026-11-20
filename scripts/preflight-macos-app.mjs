@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyBundledParser } from "./runtime-packages.mjs";
 
 const appPath = process.argv[2] ? path.resolve(process.argv[2]) : null;
 if (!appPath) throw new Error("Usage: preflight-macos-app.mjs <App.app>");
@@ -67,6 +68,7 @@ run(nodePath, [
   "-e",
   "let n=0; const add=(v)=>v+1; for(let i=0;i<5000000;i+=1)n=add(n); if(n!==5000000)process.exit(1)",
 ]);
+verifyBundledParser(nodePath, path.join(appPath, "Contents", "Resources", "app"));
 
 for (const requiredPath of [
   "Contents/Resources/app/scripts/codex-injector.mjs",
@@ -80,4 +82,4 @@ for (const requiredPath of [
   run("/bin/test", ["-f", path.join(appPath, requiredPath)]);
 }
 
-console.log("Verified Codex Panel Tauri app bundle and bundled Node runtime");
+console.log("Verified Codex Panel Tauri app bundle, bundled Node runtime, and Oxc parser");

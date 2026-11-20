@@ -3,31 +3,31 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 import { createRspackThreadTabsRuntime, rewriteRspackThreadTabs } from '../scripts/codex-rspack-tabs.mjs';
+import { rspackSourceContext } from '../scripts/codex-rspack-source.mjs';
 
 const fixtures = {
-  open: 'function(e,t,r){var Tabs=r("controller");let kind="orbit-activity";function open(scope,target,title,{revealAndFocus:focus=true,canInteract=true}={}){activateThreadSummary(target);Tabs.It.openTab(scope,kind)}let registration={open:open};r.d(t,{},{E:open})}',
-  layout: 'function(e,t,n){var State=n("state");function apply(e,t,n){let r=e.get(State.workspaces),o=e.get(State.home),l=null;if("chat"!==t)return false;notify("CodexWorkspaceContentPlacementChanged",{contentSide:n.contentSide});tabType.onEnterFullWidth()}function focus(e,t){"chat"===t?chat(e):tab(e,t.tabId)}n.d(t,{xO:()=>apply,Mn:()=>focus})}',
-  identity: 'function(e,t,n){let label="ThreadScope",clientThreadId=null;function local(id){return "local:"+id}function main(scope,id){return scope.get(atom,local(id))}function getThreadScopeRouteId(route){return route.conversationId}n.d(t,{JJ:()=>main,s8:()=>local})}',
-  scope: 'function(e,t,n){var Location=n("location"),Route=n("route"),Thread=n("thread"),Chat=n("chat");let marker="open-page-on-right";function current(e){let t=e.get(Location.current);if(null==t)return null;let r=(0,Route.parse)({pathname:t.pathname,routeTemplate:t.pathname,search:t.search});if("other"===r.routeKind||"home"===r.routeKind||"new-thread-panel"===r.routeKind)return null;"chatgpt-thread"===r.routeKind&&(r.conversationId=e.get(Chat.id,r.conversationId)??r.conversationId);let s=(0,Thread.scope)(e,e.get(Thread.id,(0,Thread.getThreadScopeRouteId)(r))),v=(0,Route.scope)(s,(0,Route.key)(r));return null==v||v.get(Route.blocked)?null:v}}',
-  focus: 'function(e,t,n){let listeners=new Set;function request(id){clear();let r={composerId:id,expiresTimeoutId:0,focusAnimationFrameId:null}}function current(){let node=selected();return null==node?null:inputs.get(node)?.composerId??null}function changed(){for(let listener of listeners)listener()}let options={isInputActive:request};n.d(t,{},{te:request,Kx:current,cM:function(listener){return listeners.add(listener),()=>{listeners.delete(listener)}}})}',
-  state: 'function(e,t,n){let home=isWorkspaceHome,mode=(0,n.un)(scope,({get:read})=>"full"===read(type)?{mode:"full"}:{contentSide:read(side),mode:"split"});n.d(t,{y_:()=>mode})}',
-  navigation: 'function(e,t,n){let error="AppNavigationSignalBridge is missing";n.d(t,{},{go:function(root,...args){return root.get(bridge).navigateToLocalConversation(...args)},route:function(root,...args){return root.get(bridge).navigate(...args)}})}',
+  open: 'function(e,t,r){var Tabs=r("controller");function open(scope,target,title,{canInteract=true,revealAndFocus:focus=true}={}){activateThreadSummary(target);Tabs.It.openTab(scope,kind)}let kind=register("orbit-activity",component,{open:open});r.d(t,{},{E:open})}',
+  controller: 'function(e,t,n){const It={tabById$:Symbol(),activeTab$:Symbol()};n.d(t,{It:()=>It})}',
+  primary: 'function(e,t,n){function focus(root){root.focus()}n.d(t,{focus:()=>focus})}',
+  otherfocus: 'function(e,t,n){function focus(root,target){target.focus(root)}function layout(root,target,options){target.layout(root,options)}n.d(t,{focus:()=>focus,layout:()=>layout})}',
+  layout: 'function(e,t,n){var State=n("state"),Tabs=n("controller"),Primary=n("primary"),Other=n("otherfocus");function apply(e,t,n){const previous=e.get(State.fullWidth);if(t!=="chat"&&!e.get(Tabs.It.tabById$,t.tabId))return false;let full=n.mode==="full";e.set(State.type,"split");e.set(State.fullWidth,full);t==="chat"?Primary.focus(e):Other.layout(e,t,{contentSide:n.contentSide,mode:"split"});if(!previous&&e.get(State.fullWidth))t?.tabType.onEnterFullWidth?.()}function focus(e,t){"chat"===t?Primary.focus(e):Other.focus(e,t)}n.d(t,{xO:()=>apply,Mn:()=>focus})}',
+  identity: 'function(e,t,n){let label="ThreadScope",atom={},clientThreadId=null;function local(id){return "local:"+id}function main(scope,id){return scope.get(atom,local(id))}function getThreadScopeRouteId(route){switch(route.routeKind){case"local-thread":return local(route.conversationId);default:return route.clientThreadId}}function scope(root,id){return root.thread(id)}n.d(t,{JJ:()=>main,s8:()=>local,scope:()=>scope,id:()=>atom,getThreadScopeRouteId:()=>getThreadScopeRouteId})}',
+  location: 'function(e,t,n){const current={};n.d(t,{current:()=>current})}',
+  chat: 'function(e,t,n){const id={};n.d(t,{id:()=>id})}',
+  route: 'function(e,t,n){let key=route=>route.pathname,route=(0,n.scope)("RouteScope",{parent:ThreadScope,key:key}),blocked=(0,n.value)(route,!1);function parse(input){return input}function scope(root,key){return select(root,route,key)}n.d(t,{parse:()=>parse,scope:()=>scope,key:()=>key,blocked:()=>blocked,descriptor:()=>route})}',
+  scope: 'function(e,t,n){var Location=n("location"),Route=n("route"),Thread=n("identity"),Chat=n("chat");let marker="open-page-on-right";function current(e){let t=e.get(Location.current);if(null==t)return null;let r=(0,Route.parse)({pathname:t.pathname,routeTemplate:t.pathname,search:t.search});if("other"===r.routeKind||"home"===r.routeKind||"new-thread-panel"===r.routeKind)return null;"chatgpt-thread"===r.routeKind&&(r.conversationId=e.get(Chat.id,r.conversationId)??r.conversationId);let s=(0,Thread.scope)(e,e.get(Thread.id,(0,Thread.getThreadScopeRouteId)(r))),v=(0,Route.scope)(s,(0,Route.key)(r));return null==v||v.get(Route.blocked)?null:v}}',
+  focus: 'function(e,t,n){let listeners=new Set,inputs=new Map;function request(id){clear();let r={composerId:id,expiresTimeoutId:0,focusAnimationFrameId:null}}function current(){let node=selected();return null==node?null:inputs.get(node)?.composerId??null}function changed(){for(let listener of listeners)listener()}function register(input,id){inputs.set(input,{composerId:id});changed()}n.d(t,{},{te:request,Kx:current,cM:function(listener){return listeners.add(listener),()=>{listeners.delete(listener)}}})}',
+  state: 'function(e,t,n){let type={},side={},fullWidth={},mode=(0,n.un)(scope,({get:read})=>"full"===read(type)?{mode:"full"}:{contentSide:read(side),mode:"split"});n.d(t,{y_:()=>mode,type:()=>type,side:()=>side,fullWidth:()=>fullWidth})}',
+  navigation: 'function(e,t,n){n.d(t,{},{go:function(root,...args){return root.get(bridge).navigateToLocalConversation(...args)},route:function(root,...args){return root.get(bridge).navigate(...args)}})}',
   react: 'function(e,t,n){t.useSyncExternalStore=React.useSyncExternalStore}',
   menu: 'function(e,t,n){async function menu({scope:root,target:target,actions:actions,surface:surface,paneItems:panes}){let items=[];items.push(...panes??[]);return items}}',
-  sidebar: 'function(e,t,n){var React=n("react");function row(props){let {isActive:active,dataAttributes:attributes}=props,highlighted=void 0!==active&&active,root=props.root,host=provider??summary?.hostId??fallback??null;let result=(0,nav.go)(root,id,host,null==state&&null==access?void 0:{state:state,threadAccess:access});React.startTransition(()=>{});let output={isActive:highlighted,dataAttributes:attributes,primaryAction:null,label:"codex.localTaskRow.archiveTask"};return output}}',
+  sidebar: 'function(e,t,n){var React=n("react"),nav=n("navigation");function row(props){let {conversationId:id="second",isActive:active,dataAttributes:attributes}=props,highlighted=void 0!==active&&active,root=props.root,host=provider??summary?.hostId??fallback??null;let result=(0,nav.go)(root,id,host,null==state&&null==access?void 0:{state:state,threadAccess:access});React.startTransition(()=>{});let output={conversationId:id,hostId:host,isActive:highlighted,dataAttributes:attributes,primaryAction:null,label:"codex.localTaskRow.archiveTask"};return output}}',
   notification: 'function(module,exports,require){const channel="navigate-to-route";module.exports=async function(e){let l=null==e.notificationThread?null:{hostId:e.notificationThread.hostId,threadId:normalize(e.notificationThread.conversationId)};if(review({scope:R,navigate:O,location:P,thread:l,navigationState:e.state}))return;beforeNavigation();let a=e.path,s;O(a,{replace:null==s&&e.replace,state:"/cloud-environments/new"===a?s:e.state})}}',
 };
 
 function context(sources = fixtures) {
   const entries = Array.isArray(sources) ? sources : Object.entries(sources).map(([id, source]) => ({ id, source }));
-  return {
-    findModule(value) {
-      const needles = typeof value === 'string' ? [value] : value;
-      const found = entries.filter(entry => needles.every(needle => entry.source.includes(needle)));
-      return found.length === 1 ? found[0] : null;
-    },
-    moduleSource(id) { return entries.find(entry => entry.id === id)?.source ?? null; },
-  };
+  return rspackSourceContext(new Map(entries.map(entry => [entry.id, entry])));
 }
 
 test('adapts Rspack menu and sidebar factories without named app chunks', () => {
@@ -43,15 +43,15 @@ test('adapts Rspack menu and sidebar factories without named app chunks', () => 
   new vm.Script(`(${menu})`);
   new vm.Script(`(${sidebar})`);
   assert.equal(rewriteRspackThreadTabs('function(e,t,n){return 1}', ctx), null);
-  assert.throws(() => rewriteRspackThreadTabs(fixtures.menu, context({ ...fixtures, layout: 'unsupported' })), /Native thread factory missing/);
+  assert.throws(() => rewriteRspackThreadTabs(fixtures.menu, context({ ...fixtures, layout: 'unsupported' })), /Native conversation layout/);
 });
 
-test('resolves the active route after Codex removes the open-page-on-right helper', () => {
+test('resolves route descriptor keys without a preassembled active-scope helper', () => {
   const ctx = context({ ...fixtures,
     scope: fixtures.scope.replace('let marker="open-page-on-right"', 'let marker="Library chat preview failed to open"')
       .replace('(0,Route.key)(r)', 'Route.descriptor.getKey?.(r)')
       .replace('return null==v||v.get(Route.blocked)?null:v', 'return v'),
-    route: 'function(e,t,n){let route=(0,signals.scope)("RouteScope",{key:key,parent:ThreadScope});let blocked=(0,signals.value)(route,!1);n.d(t,{hf:()=>key,Rj:()=>blocked})}',
+    route: fixtures.route.replace('key:()=>key,blocked:()=>blocked', 'hf:()=>key,Rj:()=>blocked'),
   });
   for (const source of [fixtures.menu, fixtures.sidebar]) {
     const patched = rewriteRspackThreadTabs(source, ctx);
@@ -63,11 +63,21 @@ test('resolves the active route after Codex removes the open-page-on-right helpe
   }
 });
 
-test('resolves the separate native full-width signal used by the unified tab strip', () => {
-  const layout = fixtures.layout.replace('l=null;', 'l=null,full=e.get(State.fullWidth);')
-    .replace('tabType.onEnterFullWidth()', '!full&&e.get(State.fullWidth)&&tab?.tabType.onEnterFullWidth()');
-  const patched = rewriteRspackThreadTabs(fixtures.menu, context({ ...fixtures, layout }));
+test('semantic bindings survive shuffled fields, separated declarations and moved focus exports', () => {
+  const sources = { ...fixtures,
+    menu: fixtures.menu.replace('scope:root,target:target,actions:actions,surface:surface,paneItems:panes', 'paneItems:panes,surface:surface,historyAccess:history,target:target,scope:root,actions:actions'),
+    scope: fixtures.scope.replace('pathname:t.pathname,routeTemplate:t.pathname,search:t.search', 'search:t.search,pathname:t.pathname,routeTemplate:t.pathname')
+      .replace('))),v=(0,Route.scope)', ')));const unrelated=1;let v=(0,Route.scope)'),
+    layout: fixtures.layout.replace('function focus(e,t){"chat"===t?Primary.focus(e):Other.focus(e,t)}', '').replace(',Mn:()=>focus', ''),
+    detachedFocus: 'function(e,t,n){const Other=n("otherfocus"),Primary=n("primary");const focus=(root,view)=>{if(view!=="chat"){Other.focus(root,view)}else{Primary.focus(root)}};n.d(t,{moved:()=>focus})}',
+    focus: fixtures.focus.replace('composerId:id,expiresTimeoutId:0,focusAnimationFrameId:null', 'focusAnimationFrameId:null,composerId:id,extra:true,expiresTimeoutId:0'),
+    state: fixtures.state.replace('contentSide:read(side),mode:"split"', 'mode:"split",contentSide:read(side)'),
+  };
+  const patched = rewriteRspackThreadTabs(sources.menu, context(sources));
+  assert.match(patched, /"focus":\["detachedFocus","moved"\]/);
   assert.match(patched, /"fullWidth":\["state","fullWidth"\]/);
+  assert.match(patched, /await panelThreadTabs\.menu\(root,target,surface\)/);
+  new vm.Script(`(${patched})`);
 });
 
 function harness(t, unified = false) {
@@ -116,7 +126,8 @@ test('a detached archiveGroup sidebar keeps tab focus, row highlight and readine
   const source = fixtures.sidebar
     .replace('let result=', 'const click=()=>{let result=')
     .replace('React.startTransition(()=>{});let output=', 'React.startTransition(()=>{});return result;};let output=')
-    .replace('primaryAction:null,label:"codex.localTaskRow.archiveTask"', 'primaryAction:click,archiveGroup:props.archiveGroup')
+    .replace('};let output=', '};let archive=()=>highlighted,output=')
+    .replace('primaryAction:null,label:"codex.localTaskRow.archiveTask"', 'primaryAction:click,onArchive:archive,archiveGroup:props.archiveGroup')
     .replace('return output}}', 'return output}t.row=row;}');
   const patched = rewriteRspackThreadTabs(source, context());
   assert.ok(patched, 'the sidebar no longer contains the archive action translation key');
@@ -124,12 +135,13 @@ test('a detached archiveGroup sidebar keeps tab focus, row highlight and readine
   const sandbox = vm.createContext({ module, __codexPanelRspackTabsV1__: h.runtime,
     provider: 'local', summary: null, fallback: null, id: 'second', state: null, access: null,
     nav: { go(root, id, host) { navigations.push({ id, host }); return true; } },
-    load: () => ({ useSyncExternalStore: (_subscribe, snapshot) => snapshot(), startTransition: callback => callback() }),
+    load: name => name === 'navigation' ? { go(root, id, host) { navigations.push({ id, host }); return true; } } : { useSyncExternalStore: (_subscribe, snapshot) => snapshot(), startTransition: callback => callback() },
   });
   vm.runInContext(`(${patched})(module,module.exports,load)`, sandbox);
   assert.equal(globalThis.__codexPanelThreadTabsReady__, true, 'the independently loaded sidebar completes the native pair');
-  const row = () => module.exports.row({ root: h.root, isActive: false, archiveGroup: null, dataAttributes: { keep: 'original' } });
+  const row = () => module.exports.row({ root: h.root, conversationId: sandbox.id, isActive: false, archiveGroup: null, dataAttributes: { keep: 'original' } });
   assert.equal(row().isActive, true);
+  assert.equal(row().onArchive(), false, 'archive still observes the native page active state');
   assert.equal(row().dataAttributes.keep, 'original');
   assert.equal(row().dataAttributes['data-app-action-sidebar-thread-active'], 'true');
   h.runtime.focusExisting(h.root, h.target('first'));
@@ -141,6 +153,7 @@ test('a detached archiveGroup sidebar keeps tab focus, row highlight and readine
   assert.equal(h.root.location.pathname, '/local/first');
   assert.equal(navigations.length, 0, 'an open tab is focused instead of navigating to another page');
   assert.equal(row().dataAttributes['data-app-action-sidebar-thread-selected'], 'true');
+  assert.equal(row().onArchive(), false, 'tab focus does not rewrite archive callbacks');
   assert.equal(h.scope('first').tabs.size, 1);
   sandbox.id = 'third';
   row().primaryAction();
@@ -202,14 +215,24 @@ test('restores a child as its own page and clears the original group menu state'
   assert.deepEqual(await h.runtime.menu(h.root, child, 'header'), []);
 });
 
-test('notification clicks focus an existing split conversation and retain native navigation otherwise', async t => {
+for (const [name, notification] of [
+  ['inline options', fixtures.notification],
+  ['nested handler and reordered fields', fixtures.notification
+    .replace(';if(review', ';const handle=()=>{if(review')
+    .replace('scope:R,navigate:O,location:P,thread:l,navigationState:e.state', 'thread:l,navigationState:e.state,navigate:O,scope:R,location:P')
+    .replace('replace:null==s&&e.replace,state:"/cloud-environments/new"===a?s:e.state', 'state:"/cloud-environments/new"===a?s:e.state,replace:null==s&&e.replace')
+    .slice(0, -2) + '};return handle()}}'],
+  ['shared options', fixtures.notification.replace('O(a,{replace:null==s&&e.replace,state:"/cloud-environments/new"===a?s:e.state})',
+    'let options={replace:null==s&&e.replace,state:"/cloud-environments/new"===a?s:e.state};if(e.fromSpace)return O(a,options);O(a,options)')],
+]) {
+test(`notification clicks with ${name} focus an existing split conversation and retain native navigation otherwise`, async t => {
   const h = harness(t), child = h.target('second'), navigations = [];
   await (await h.runtime.menu(h.root, child, 'sidebar')).find(item => item.id === 'panel-thread-split').onSelect();
   h.runtime.focusExisting(h.root, h.target('first'));
   await new Promise(resolve => setImmediate(resolve));
   const module = { exports: {} };
   let effects = 0;
-  const source = rewriteRspackThreadTabs(fixtures.notification, context()) ?? fixtures.notification;
+  const source = rewriteRspackThreadTabs(notification, context()) ?? notification;
   vm.runInNewContext(`(${source})(module,{},()=>{});`, {
     module, R: h.root, P: h.root.location, normalize: value => value, review: () => false,
     beforeNavigation: () => effects++, __codexPanelRspackTabsV1__: h.runtime,
@@ -224,6 +247,10 @@ test('notification clicks focus an existing split conversation and retain native
   assert.equal(h.scope('first').tabs.size, 1);
   assert.equal(navigations.length, 0);
   assert.equal(effects, 1, 'native notification effects still execute');
+
+  await notify('second', { fromSpace: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(navigations.length, 0, 'both native navigation branches focus the existing tab');
 
   h.root.location = { pathname: '/local/third', search: '' };
   await notify('second');
@@ -241,6 +268,7 @@ test('notification clicks focus an existing split conversation and retain native
   assert.equal(navigations.at(-1).path, '/local/first');
   assert.equal(navigations.at(-1).options.replace, true);
 });
+}
 
 test('reports readiness only after both adapted native factories execute', t => {
   const { runtime } = harness(t);

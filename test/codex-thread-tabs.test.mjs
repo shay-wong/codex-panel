@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { test } from "node:test";
+import { sourceAst } from "../scripts/codex-source-ast.mjs";
 import { prepareCodexThreadTabs, rewriteCodexThreadTabs } from "../scripts/codex-thread-tabs.mjs";
 
-const initial = 'import{tabs as wrong}from"./other.js";function open(scope,target,title,options){tabs.openTab(scope,kind,{props:{conversationId:target.threadId}})}var kind;function init(){return(init=once(()=>{kind=register(`orbit-activity`,Component,{open:open})}))()}function layout(scope,tab,options){if(options.mode===`full`&&tab.kind===`chat`)return false;}function initLayout(){return(initLayout=once(()=>{}))()}function focus(scope,view){if(view.kind===`chat`){focusChat(scope);return}focusTab(scope,view.tab.tabId)}var host=atom(Route,({get:read})=>read(context).hostId);function navigateRoute(root,...args){return root.get(bridge).navigate(...args)}var layoutState=atom(Route,({get:read})=>read(mode)===`full`?{mode:`full`}:{contentSide:read(side),mode:`split`});function focusInput(id){clear();let request={composerId:id,expiresTimeoutId:0,focusAnimationFrameId:null};}function subscribeInput(listener){return listeners.add(listener),()=>{listeners.delete(listener)}}function currentInput(){let input=selected();return input==null?null:inputs.get(input)?.composerId??null}function clientId(scope,id){return scope.get(identity,localId(id))}export{localId as n,focusInput as j,currentInput as k,subscribeInput as l,clientId as m,layoutState as i,init as a,open as b,tabs as c,initLayout as d,layout as e,focus as f,host as g,navigateRoute as h};';
+const initial = 'import{tabs as wrong}from"./other.js";let tabs,localId;function open(scope,target,title,options){tabs.openTab(scope,kind,{props:{conversationId:target.threadId}})}var kind;function init(){return(init=once(()=>{kind=register(`orbit-activity`,Component,{open:open})}))()}function layout(scope,tab,options){if(options.mode===`full`&&tab.kind===`chat`)return false;}function initLayout(){return(initLayout=once(()=>{}))()}function focus(scope,view){if(view.kind===`chat`){focusChat(scope);return}focusTab(scope,view.tab.tabId)}var host=atom(Route,({get:read})=>read(context).hostId);function navigateRoute(root,...args){return root.get(bridge).navigate(...args)}var layoutState=atom(Route,({get:read})=>read(mode)===`full`?{mode:`full`}:{contentSide:read(side),mode:`split`});function focusInput(id){clear();let request={composerId:id,expiresTimeoutId:0,focusAnimationFrameId:null};}function subscribeInput(listener){return listeners.add(listener),()=>{listeners.delete(listener)}}function currentInput(){let input=selected();return input==null?null:inputs.get(input)?.composerId??null}function clientId(scope,id){return scope.get(identity,localId(id))}export{localId as n,focusInput as j,currentInput as k,subscribeInput as l,clientId as m,layoutState as i,init as a,open as b,tabs as c,initLayout as d,layout as e,focus as f,host as g,navigateRoute as h};';
 const primary = 'function active(root){let loc=root.get(location);if(loc==null)return null;let route=parse({pathname:loc.pathname,routeTemplate:loc.pathname,search:loc.search});if(route.routeKind===`other`)return null;return root.active;}async function menu({scope:root,target:target,actions:actions,surface:surface,isUnread:unread,paneItems:paneItems}){let items=[];items.push(...paneItems??[]);return items;}function sidebar(root,id,host,state,shared){let {isActive:active}=root;let highlighted=active!==void 0&&active,summary=null,fallbackHost=null,resolvedHost=host??summary?.hostId??fallbackHost??null,attributes={"data-app-action-sidebar-thread-active":String(active===true),"data-app-action-sidebar-thread-selected":String(active===true)};root.routeActive=highlighted;(0,React.startTransition)(()=>{});let result=navigate(root,id,host===`local`?void 0:host,state==null&&!shared?void 0:{state:state,threadAccess:shared?`shared`:void 0});let cache=[],rendered;return cache[0]!==highlighted?(rendered={isActive:highlighted,dataAttributes:attributes},cache[0]=highlighted,cache[1]=rendered):rendered=cache[1],root.renderedActive=rendered.isActive,root.renderedAttributes=rendered.dataAttributes,result;}';
 
 test("large native modules use bounded CDP responses and release their remote object", async () => {
-  const initialUrl = "app://-/assets/app-initial-fixture.js";
-  const primaryUrl = "app://-/assets/app-primary-fixture.js";
+  const initialUrl = "app://-/assets/tabs-core.js";
+  const primaryUrl = "app://-/assets/sidebar-core.js";
   const sources = new Map([[initialUrl, initial + "/*" + "x".repeat(10_300_000) + "*/"],
     [primaryUrl, primary + "/*" + "y".repeat(5_100_000) + "*/"]]);
   for (const failChunk of [false, true]) {
@@ -28,8 +29,8 @@ test("large native modules use bounded CDP responses and release their remote ob
       assert.equal(params.objectId, "modules");
       if (method === "Runtime.releaseObject") { released = true; remote = null; return {}; }
       assert.equal(method, "Runtime.callFunctionOn");
-      if (failChunk && params.arguments.length === 2) return { exceptionDetails: { text: "chunk failed" } };
-      const value = vm.runInNewContext(`(${params.functionDeclaration})`).apply(remote, params.arguments.map(arg => arg.value));
+      if (failChunk && params.arguments?.length === 2) return { exceptionDetails: { text: "chunk failed" } };
+      const value = vm.runInNewContext(`(${params.functionDeclaration})`).apply(remote, (params.arguments ?? []).map(arg => arg.value));
       assert.ok(JSON.stringify(value).length < 1_000_000, "each CDP response must stay bounded");
       return { result: { value } };
     } };
@@ -49,8 +50,8 @@ test("large native modules use bounded CDP responses and release their remote ob
 
 test("prepared modules do not depend on another renderer read", async () => {
   const modules = [
-    { url: "app://-/assets/app-initial-fixture.js", source: initial },
-    { url: "app://-/assets/app-primary-fixture.js", source: primary },
+    { url: "app://-/assets/tabs-core.js", source: initial },
+    { url: "app://-/assets/sidebar-core.js", source: primary },
   ];
   const result = await prepareCodexThreadTabs({ send() { throw Error("renderer read unavailable"); } }, modules, () => {});
   assert.notEqual(result, modules);
@@ -58,22 +59,22 @@ test("prepared modules do not depend on another renderer read", async () => {
 });
 
 test("module discovery survives cleared timing records with preload links or the entry import chain", async () => {
-  const urls = ["app://-/assets/app-initial-fixture.js", "app://-/assets/app-primary-fixture.js"];
+  const urls = ["app://-/assets/tabs-core.js", "app://-/assets/sidebar-core.js"];
   for (const entry of ["preload", "direct", "split"]) {
     const useEntry = entry !== "preload";
     const split = entry === "split";
     let remote;
     const entryUrl = "app://-/assets/index-fixture.js";
-    const mainUrl = "app://-/assets/app-main-fixture.js";
-    const runtimeUrl = "app://-/assets/app-runtime-fixture.js";
+    const mainUrl = "app://-/assets/main-core.js";
+    const runtimeUrl = "app://-/assets/runtime-core.js";
     const initialSource = split ? initial.replace(
       "if(view.kind===`chat`){focusChat(scope);return}focusTab(scope,view.tab.tabId)",
       "view.kind===`chat`?focusChat(scope):focusTab(scope,view.tab.tabId)",
-    ) : 'const lazy=()=>import(`./app-primary-fixture.js`);' + initial;
+    ) : 'const lazy=()=>import(`./sidebar-core.js`);' + initial;
     const sources = new Map([
-      [entryUrl, split ? 'import "./app-main-fixture.js";' : 'import "./app-initial-fixture.js";'],
-      [mainUrl, 'import "./app-initial-fixture.js";import "./app-runtime-fixture.js";'],
-      [runtimeUrl, 'import "./app-primary-fixture.js";'],
+      [entryUrl, split ? 'import "./main-core.js";' : 'import "./tabs-core.js";'],
+      [mainUrl, 'import "./tabs-core.js";import "./runtime-core.js";'],
+      [runtimeUrl, 'import "./sidebar-core.js";'],
       [urls[0], initialSource],
       [urls[1], split ? primary.replace("host===`local`?void 0:host", "host") : primary],
     ]);
@@ -95,7 +96,7 @@ test("module discovery survives cleared timing records with preload links or the
         return { result: { objectId: "modules" } };
       }
       if (method === "Runtime.releaseObject") return {};
-      return { result: { value: vm.runInNewContext(`(${params.functionDeclaration})`).apply(remote, params.arguments.map(arg => arg.value)) } };
+      return { result: { value: vm.runInNewContext(`(${params.functionDeclaration})`).apply(remote, (params.arguments ?? []).map(arg => arg.value)) } };
     } }, [], () => {});
     assert.equal(result.length, 1);
     assert.match(result[0].source, /panel-thread-split/);
@@ -104,10 +105,10 @@ test("module discovery survives cleared timing records with preload links or the
   }
 });
 
-function harness({deferNavigation=false,nativeHostArgument=false}={}) {
-  const source = nativeHostArgument ? primary.replace("let result=navigate(root,id,host===`local`?void 0:host,",
-    "host=host===`local`?void 0:host;let result=navigate(root,id,host,") : primary;
-  const patched = rewriteCodexThreadTabs(source, initial, "app://-/assets/app-initial-fixture.js");
+function harness({deferNavigation=false,nativeHostArgument=false,initialSource=initial,primarySource=primary}={}) {
+  const source = nativeHostArgument ? primarySource.replace("let result=navigate(root,id,host===`local`?void 0:host,",
+    "host=host===`local`?void 0:host;let result=navigate(root,id,host,") : primarySource;
+  const patched = rewriteCodexThreadTabs(source, initialSource, "app://-/assets/tabs-core.js");
   assert.ok(patched);
   assert.match(patched, /c as panelThreadTabs2/);
   let focusedComposer=null;const composerFocuses=[],subscriptions=[];
@@ -310,4 +311,32 @@ test("sidebar moves the input cursor and highlight between both split conversati
   assert.equal(h.panelThreadIsActive(root,main,true,h.currentComposer()),false);
   assert.equal(h.layouts.length,1,"switching input focus preserves the split layout");
   assert.equal(h.navigations.length,0);
+});
+
+
+test("native tabs use bindings across reordered modules and nested sidebar functions", async () => {
+  const reverse=source=>{const ast=sourceAst(source);return ast.root.body.toReversed().map(node=>ast.text(node)).join("\n");};
+  const changedPrimary=primary
+    .replace('{scope:root,target:target,actions:actions,surface:surface,isUnread:unread,paneItems:paneItems}',
+      '{paneItems:paneItems,surface:surface,target:target,scope:root,isUnread:unread,actions:actions}')
+    .replace('root.routeActive=highlighted;', 'root.routeActive=highlighted;function nested(){return "function fake(){isActive:unused}"}')
+    .replace('{isActive:highlighted,dataAttributes:attributes}', '{dataAttributes:attributes,isActive:highlighted}');
+  const h=harness({initialSource:reverse(initial),primarySource:reverse(changedPrimary)});
+  const items=await h.menu({scope:h.root,target:h.target,surface:"sidebar"});
+  await items.find(item=>item.id==="panel-thread-split").onSelect();
+  h.sidebar(h.root,"second","local");await Promise.resolve();
+  assert.equal(h.currentComposer(),"local:second");
+  assert.equal(h.root.active.state.mode,"split");
+  await (await h.menu({scope:h.root,target:h.target,surface:"sidebar"})).find(item=>item.id==="panel-thread-restore").onSelect();
+  assert.equal(h.root.active.value.conversationId,"second");
+});
+
+
+test("lazy layout state resolves its owning initializer regardless of neighboring functions", () => {
+  const state='atom(Route,({get:read})=>read(mode)===`full`?{mode:`full`}:{contentSide:read(side),mode:`split`})';
+  const lazy=initial.replace('var layoutState='+state+';', 'var layoutState;')
+    .replace('function initLayout(){return(initLayout=once(()=>{}))()}', 'function initLayout(){return(initLayout=once(()=>{layoutState='+state+'}))()}function unrelated(){return(unrelated=once(()=>{}))()}');
+  const patched=rewriteCodexThreadTabs(primary,lazy,"app://-/assets/layout-core.js");
+  assert.ok(patched);
+  assert.ok(patched.includes('d as panelThreadTabs3'));
 });

@@ -15,12 +15,14 @@ function harness(service, { discovery = "legacy", delayStartup = false } = {}) {
   const reads = [];
   let listener;
   let published = delayStartup ? undefined : service;
-  const load = () => ({ appServices: published ? { localAutomations: published } : undefined });
-  load.m = {};
+  const load = id => {
+    assert.equal(id, "nativeServices");
+    return { get appServices() { return published ? { localAutomations: published } : undefined; } };
+  };
+  load.m = { unopenedFeature() { throw new Error("An unrelated native factory was executed"); } };
+  load.c = {};
   const installRegistry = () => {
-    load.m.nativeServices = function (module, exports, require) {
-      require.d(exports, { appServices: () => service }, { setAppHost() {}, setAppServices() {} });
-    };
+    load.c.nativeServices = { exports: load("nativeServices") };
   };
   if (!delayStartup) installRegistry();
   const request = vm.runInNewContext(`(() => {
@@ -30,16 +32,20 @@ function harness(service, { discovery = "legacy", delayStartup = false } = {}) {
     return requestCodexAutomationViaCdp;
   })()`, { process: { pid: 1 }, findCodexRspackRequire });
   const mainEntry = "app://-/assets/348410.fixture.js";
+  const legacyModule = "app://-/modules/current-services?v=fixture";
   const page = vm.createContext({
     URL, location: { href: "app://-/index.html" },
     ...(discovery === "rspack" ? { __codexPanelRspack__: {
       require: load,
-      findModule: () => ({ id: "nativeServices" }),
+      nativeServices: { desktopServices: { id: "nativeServices", exportName: "appServices" } },
+      loadModule: async id => load(id),
     } } : {}),
-    performance: { getEntriesByType: () => discovery === "legacy"
-      ? [{ name: "app://-/assets/app-shared-fixture.js" }] : [] },
+    ...(discovery === "cached" ? { __codexPanelUpdateRequire__: load } : {}),
+    performance: { getEntriesByType: () => [{ name: "app://-/classic-script.js" }] },
     document: { querySelectorAll: selector => discovery === "startup"
-      && selector === 'script[type="module"][src]' ? [{ src: mainEntry }] : [] },
+      && selector === 'script[type="module"][src]' ? [{ src: mainEntry }]
+      : discovery === "legacy" && selector.includes("modulepreload")
+        ? [{ href: "https://unrelated.example/ignore.js" }, { href: legacyModule }] : [] },
     fetch: async url => {
       reads.push(url);
       assert.equal(url, mainEntry);
@@ -54,6 +60,7 @@ function harness(service, { discovery = "legacy", delayStartup = false } = {}) {
         }
         return { __webpack_require__: load };
       }
+      assert.equal(url, legacyModule);
       return { renamedExport: service ? { localAutomations: service } : {} };
     },
     window: {
@@ -71,7 +78,8 @@ function harness(service, { discovery = "legacy", delayStartup = false } = {}) {
     async send(method, { expression }) {
       assert.equal(method, "Runtime.evaluate");
       try {
-        const value = await vm.runInContext(expression.replaceAll("import(url)", "importModule(url)"), page);
+        const value = await vm.runInContext(expression.replaceAll("import(url)", "importModule(url)")
+          .replaceAll("import(script.src)", "importModule(script.src)"), page);
         return { result: { value } };
       } catch (error) {
         return { exceptionDetails: { exception: { description: error.message } } };
@@ -81,7 +89,7 @@ function harness(service, { discovery = "legacy", delayStartup = false } = {}) {
   return { fetches, imports, reads, rpc: (method, body) => request(cdp, undefined, method, body) };
 }
 
-for (const discovery of ["legacy", "rspack", "startup"]) test(`legacy automation migration lists and pauses through ${discovery} discovery`, async () => {
+for (const discovery of ["legacy", "rspack", "startup", "cached"]) test(`legacy automation migration lists and pauses through ${discovery} discovery`, async () => {
   const calls = [];
   const service = {
     async list() { calls.push("list"); return { items: [{ id: "fixture-automation", name: "Taskboard 自动认领 · fixture", status: "ACTIVE" }] }; },
@@ -98,9 +106,10 @@ for (const discovery of ["legacy", "rspack", "startup"]) test(`legacy automation
   assert.equal(calls[1].status, "PAUSED");
   assert.equal(result.item.status, "PAUSED");
   assert.equal(fetches.length, 0);
+  assert.ok(imports.every(url => !url.startsWith("https://unrelated.example/")));
   if (discovery === "startup") {
-    assert.deepEqual(reads, ["app://-/assets/348410.fixture.js"]);
-    assert.deepEqual(imports, reads, "the existing entry registry is reused for the subsequent update");
+    assert.deepEqual(reads, [], "loaded entry exports are inspected without source downloads");
+    assert.deepEqual(imports, ["app://-/assets/348410.fixture.js"], "the existing entry registry is reused for the subsequent update");
   }
 });
 

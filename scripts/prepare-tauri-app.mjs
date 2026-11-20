@@ -18,7 +18,7 @@ import {
 } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { discoverRuntimePackages } from "./runtime-packages.mjs";
+import { copyRuntimePackages } from "./runtime-packages.mjs";
 import { ensureCodexDeltaTool } from "./prepare-codex-delta.mjs";
 import { ensureCodexTransport } from "./prepare-codex-transport.mjs";
 
@@ -94,20 +94,6 @@ async function exists(targetPath) {
     return true;
   } catch {
     return false;
-  }
-}
-
-async function copyRuntimePackage(packageName, destinationNodeModules, copiedPackages) {
-  if (copiedPackages.has(packageName)) return;
-  copiedPackages.add(packageName);
-  const packageSegments = packageName.split("/");
-  const sourcePath = path.join(projectRoot, "node_modules", ...packageSegments);
-  const destinationPath = path.join(destinationNodeModules, ...packageSegments);
-  const manifest = JSON.parse(await readFile(path.join(sourcePath, "package.json"), "utf8"));
-  await mkdir(path.dirname(destinationPath), { recursive: true });
-  await cp(sourcePath, destinationPath, { recursive: true });
-  for (const dependency of Object.keys(manifest.dependencies ?? {})) {
-    await copyRuntimePackage(dependency, destinationNodeModules, copiedPackages);
   }
 }
 
@@ -200,6 +186,29 @@ async function verifiedNodeArchive(archiveName, expectedChecksum) {
     throw new Error(`Checksum verification failed for ${archiveName}`);
   }
   return { archiveName, archivePath };
+}
+
+async function prepareRuntimePackage(packageName, expectedVersion) {
+  const lock = JSON.parse(await readFile(path.join(projectRoot, "package-lock.json"), "utf8"));
+  const entry = lock.packages[`node_modules/${packageName}`];
+  if (entry?.version !== expectedVersion || !entry.resolved || !entry.integrity) {
+    throw new Error(`Missing locked runtime dependency '${packageName}@${expectedVersion}'`);
+  }
+  const [algorithm, digest] = entry.integrity.split("-");
+  const cacheDirectory = path.join(runtimeCacheDirectory, "packages");
+  await mkdir(cacheDirectory, { recursive: true });
+  const archivePath = path.join(cacheDirectory, `${packageName.replaceAll("/", "-")}-${expectedVersion}.tgz`);
+  const matchesIntegrity = async () => (
+    await exists(archivePath)
+    && createHash(algorithm).update(await readFile(archivePath)).digest("base64") === digest
+  );
+  if (!(await matchesIntegrity())) await download(entry.resolved, archivePath);
+  if (!(await matchesIntegrity())) throw new Error(`Integrity verification failed for '${packageName}@${expectedVersion}'`);
+  const destination = path.join(extractionDirectory, "packages", packageName.replaceAll("/", "-"));
+  await rm(destination, { recursive: true, force: true });
+  await mkdir(destination, { recursive: true });
+  run(process.platform === "win32" ? "tar" : "/usr/bin/tar", ["-xzf", archivePath, "-C", destination]);
+  return path.join(destination, "package");
 }
 
 async function extractNodeRuntime(architecture) {
@@ -340,6 +349,7 @@ async function copyApplicationResources() {
     "codex-update-transport.mjs",
     "codex-rspack.mjs",
     "codex-rspack-source.mjs",
+    "codex-source-ast.mjs",
     "codex-rspack-quota.mjs",
     "codex-rspack-tabs.mjs",
     "codex-rspack-capabilities.mjs",
@@ -378,16 +388,12 @@ async function copyApplicationResources() {
     path.join(projectRoot, "cli", "panelctl.mjs"),
     path.join(appResources, "cli", "panelctl.mjs"),
   );
-  const destinationNodeModules = path.join(appResources, "node_modules");
-  await mkdir(destinationNodeModules, { recursive: true });
-  const copiedPackages = new Set();
-  const runtimePackages = await discoverRuntimePackages(
-    appResources,
-    projectManifest.dependencies ?? {},
-  );
-  for (const packageName of runtimePackages) {
-    await copyRuntimePackage(packageName, destinationNodeModules, copiedPackages);
-  }
+  await copyRuntimePackages(appResources, {
+    sourceRoot: projectRoot,
+    dependencies: projectManifest.dependencies ?? {},
+    target,
+    resolveMissingPackage: prepareRuntimePackage,
+  });
   await writeFile(
     path.join(resourcesDirectory, "codex-panel-launcher.json"),
     `${JSON.stringify({

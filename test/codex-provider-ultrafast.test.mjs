@@ -16,7 +16,7 @@ function wrapper(e){let l=settings(e),u,d;({serviceTierAccess:d,...u}=l);let p=a
 `;
 const primary = `function menu(e){let{serviceTierSettings:rt,setServiceTier:it}=wrapper(e),at;let{serviceTierAccess:ot}=account(at),s;let Kt=rt.selectedServiceTier,Qt=true&&supported(model,Kt),show=ot!=null&&rt.availableOptions.length>1,command=\`composer.openModelPicker\`;return {show,icon:Qt,access:ot,options:rt.availableOptions,select:it}}`;
 
-function fixture(enabled = true, modelId = "gpt-6-astra") {
+function fixture(enabled = true, modelId = "gpt-6-astra", sources = {initial,primary}) {
   let providerValue = "custom", threadProvider, hostId = "local", tier = null;
   const model = {model: modelId, serviceTiers: [{id: "priority", name: "Fast"}]};
   const access = {fast: true, ultrafast: false};
@@ -39,9 +39,9 @@ function fixture(enabled = true, modelId = "gpt-6-astra") {
     save: async value => {tier = value; saves.push(value); return true;},
   };
   const context = vm.createContext(scope);
-  const patched = rewriteCodexProviderUltrafast(initial, "app://-/assets/app-initial-test.js");
+  const patched = rewriteCodexProviderUltrafast(sources.initial, "app://-/assets/settings-module.js");
   assert.ok(patched);
-  vm.runInContext(patched + rewriteCodexProviderUltrafast(primary, "app://-/assets/app-primary-test.js"), context);
+  vm.runInContext(patched + rewriteCodexProviderUltrafast(sources.primary, "app://-/assets/menu-module.js"), context);
   return { runtime, saves, scope, menu: () => context.menu("thread"), settings: () => context.wrapper("thread"),
     provider: value => {providerValue=value;}, thread: value => {threadProvider=value;}, host: value => {hostId=value;} };
 }
@@ -88,6 +88,9 @@ test("discovers both native modules from an existing import map and rejects unsu
   sources.set("app://-/assets/app-initial-test.js", "unsupported");
   assert.deepEqual(await prepareCodexProviderUltrafast(cdp, () => {}), []);
   assert.equal(rewriteCodexProviderUltrafast(initial+initial, "app://-/assets/app-initial-test.js"), null);
+  sources.clear();
+  sources.set("app://-/assets/single-bundle.js",initial+primary);
+  assert.equal((await prepareCodexProviderUltrafast(cdp, () => {})).length,1,"both speed paths may be bundled in one module");
 });
 
 
@@ -122,4 +125,31 @@ test("fast is available without native permission or a priority catalog entry", 
   assert.equal(f.settings().serviceTierSettings.serviceTierForRequest, "priority");
   f.runtime.setEnabled(false);
   assert.equal(await f.menu().select("priority"), false);
+});
+
+test("speed controls tolerate declaration and property reordering, nested functions and unrelated chunk names", async () => {
+  const hook=initial
+    .replace('let i=r(config,{hostId:t,cwd:n}).data', 'const i=r(config,{cwd:n,hostId:t}).data')
+    .replace('let{serviceTierAccess:D}=account(u),O;', 'let O;const{serviceTierAccess:D}=account(u);')
+    .replace('let tModel;', 'let tModel;function nested(){return "function decoy(){serviceTierForRequest:unused}"}')
+    .replace('return {...u,setServiceTier:p}', 'return {...u,extra:1,setServiceTier:p}');
+  const menu=primary.replace('{serviceTierSettings:rt,setServiceTier:it}', '{setServiceTier:it,serviceTierSettings:rt}');
+  const f=fixture(true,"gpt-6.2-astra",{initial:hook,primary:menu});
+  assert.equal(await f.menu().select("ultrafast"),true);
+  assert.equal(f.settings().serviceTierSettings.serviceTierForRequest,"ultrafast");
+  f.host("remote");
+  assert.equal(await f.menu().select("ultrafast"),false);
+  const combined=rewriteCodexProviderUltrafast(hook+menu,"app://-/assets/combined.js");
+  assert.ok(combined.includes("panelCustomUltrafast")&&combined.includes("panelServiceTierAccess"));
+});
+
+test("model selection before access still receives the enabled native service tiers", async () => {
+  const earlier=initial.replace('let{serviceTierAccess:D}=account(u),O;', 'let earlyModel=findModel(catalog?.models,state.model);let{serviceTierAccess:D}=account(u),O;')
+    .replace('let t=findModel(catalog?.models,state.model),A=', 'let A=')
+    .replace('normalize(t,v,D)', 'normalize(earlyModel,v,D)').replace('selected(t,A)', 'selected(earlyModel,A)').replace('options(t)', 'options(earlyModel)');
+  const f=fixture(true,"gpt-6.2-sol",{initial:earlier,primary});
+  assert.equal(await f.menu().select("ultrafast"),true);
+  assert.equal(f.settings().serviceTierSettings.serviceTierForRequest,"ultrafast");
+  f.runtime.setEnabled(false);
+  assert.equal(await f.menu().select("ultrafast"),false);
 });

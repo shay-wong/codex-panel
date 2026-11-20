@@ -25,6 +25,7 @@ import {
 import { managedInjectorCommandMatches } from "./codex-injector-runtime.mjs";
 import { ensureCodexDeltaTool } from "./prepare-codex-delta.mjs";
 import { ensureCodexTransport } from "./prepare-codex-transport.mjs";
+import { copyRuntimePackages } from "./runtime-packages.mjs";
 import {
   installManagedDirectory,
   installManagedFile,
@@ -73,6 +74,7 @@ const runtimeScriptNames = [
   "codex-update-transport.mjs",
   "codex-rspack.mjs",
   "codex-rspack-source.mjs",
+  "codex-source-ast.mjs",
   "codex-rspack-quota.mjs",
   "codex-rspack-tabs.mjs",
   "codex-rspack-capabilities.mjs",
@@ -200,6 +202,11 @@ async function stageRuntimePayload(sourceRoot, stagedRuntime) {
   for (const filename of runtimeScriptNames) {
     await copyFile(path.join(sourceRoot, "scripts", filename), path.join(scriptsDirectory, filename));
   }
+  const manifest = JSON.parse(await readFile(path.join(sourceRoot, "package.json"), "utf8"));
+  await copyRuntimePackages(stagedRuntime, {
+    sourceRoot,
+    dependencies: manifest.dependencies ?? {},
+  });
   if (process.platform === "darwin") {
     const tool = await ensureCodexDeltaTool({ projectRoot: sourceRoot });
     const toolsDirectory = path.join(stagedRuntime, "tools");

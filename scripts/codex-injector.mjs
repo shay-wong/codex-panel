@@ -1121,43 +1121,38 @@ async function requestCodexAutomationViaCdp(cdp, executionContextId, method, par
         "inbox-items": "readHistory",
       }[${JSON.stringify(method)}];
       let service;
-      const load = await (${findCodexRspackRequire})();
-      if (load) {
-        const markers = ["setAppHost", "setAppServices", "appServices:"];
+      let load = await (${findCodexRspackRequire})();
+      const runtime = globalThis.__codexPanelRspack__;
+      const reference = runtime?.require === load ? runtime.nativeServices?.desktopServices : null;
+      const nativeModule = reference ? await runtime.loadModule(reference.id) : null;
+      const serviceFromExports = exports => [exports?.appServices, exports, ...Object.values(exports ?? {})]
+        .find(value => typeof value?.localAutomations?.[nativeMethod] === "function")?.localAutomations;
+      const readService = () => reference ? nativeModule[reference.exportName]?.localAutomations
+        : Object.values(load?.c ?? {}).map(module => serviceFromExports(module?.exports)).find(Boolean);
+      service = readService();
+      if (!service && !reference) {
+        const urls = new Set([
+          ...Array.from(document.querySelectorAll('script[type="module"][src],link[rel="modulepreload"][href]')).map(node => node.src || node.href),
+        ]);
+        const current = new URL(location.href);
+        for (const url of urls) {
+          const parsed = new URL(url, location.href);
+          if (parsed.protocol !== current.protocol || parsed.host !== current.host) continue;
+          let module;
+          try { module = await import(url); } catch { continue; }
+          load ??= module.__webpack_require__;
+          service = serviceFromExports(module) ?? readService();
+          if (service) break;
+        }
+      }
+      if (!service && load) {
         const deadline = Date.now() + 10_000;
-        let module;
-        // 首次安装 host bridge 时，原生服务可能仍在异步初始化。
+        // 首次安装 host bridge 时，已加载模块的服务导出可能仍在异步初始化。
         for (;;) {
-          if (!module) {
-            const runtime = globalThis.__codexPanelRspack__;
-            if (runtime?.require === load && runtime.findModule) module = runtime.findModule(markers);
-            else {
-              const matches = Object.entries(load.m).filter(([, factory]) =>
-                markers.every(marker => factory.toString().includes(marker)));
-              if (matches.length === 1) module = { id: matches[0][0] };
-            }
-          }
-          service = module && load(module.id).appServices?.localAutomations;
+          service = readService();
           if (service) break;
           if (Date.now() >= deadline) throw Error("Codex 原生自动任务服务尚未就绪");
           await new Promise(resolve => window.setTimeout(resolve, 50));
-        }
-      }
-      const urls = new Set([
-        ...performance.getEntriesByType("resource").map(entry => entry.name),
-        ...Array.from(document.querySelectorAll('script[src],link[rel="modulepreload"][href]')).map(node => node.src || node.href),
-      ]);
-      const current = new URL(location.href);
-      for (const url of urls) {
-        if (service) break;
-        const parsed = new URL(url, location.href);
-        if (parsed.protocol !== current.protocol || parsed.host !== current.host || !/\\/app-shared-[\\w-]+\\.js$/.test(parsed.pathname)) continue;
-        let module;
-        try { module = await import(url); } catch { continue; }
-        const host = Object.values(module).find(value => value && Object.hasOwn(value, "localAutomations"));
-        if (typeof host?.localAutomations?.[nativeMethod] === "function") {
-          service = host.localAutomations;
-          break;
         }
       }
       // 新版已移除自动化 fetch handler；写入失败不得回退重试，避免重复变更。
@@ -2710,9 +2705,9 @@ async function prepareNativeAdapters(cdp, appPath, reportThreadTabs) {
   const ultrafast = await prepareCodexProviderUltrafast(cdp);
   const dot = await prepareCodexDotEntry(cdp, ultrafast);
   const modules = await prepareCodexThreadTabs(cdp, dot.modules, reportThreadTabs);
-  const source = await prepareCodexProviderQuotaFix(cdp, preferences, console.error, modules, dot.prepared, ultrafast.length === 2);
+  const source = await prepareCodexProviderQuotaFix(cdp, preferences, console.error, modules, dot.prepared, ultrafast.length > 0);
   return { source, threadTabsPrepared: modules !== dot.modules && Boolean(source),
-    ultrafastPrepared: ultrafast.length === 2, dotPrepared: dot.prepared };
+    ultrafastPrepared: ultrafast.length > 0, dotPrepared: dot.prepared };
 }
 
 async function injectTarget(
@@ -3003,7 +2998,7 @@ async function currentInjectionSource() {
   const providerUltrafast = await readFile(new URL("./codex-provider-ultrafast.mjs", import.meta.url), "utf8");
   const dotEntry = await readFile(new URL("./codex-dot-entry.mjs", import.meta.url), "utf8");
   const threadTabs = await readFile(new URL("./codex-thread-tabs.mjs", import.meta.url), "utf8");
-  const rspack = await Promise.all(["codex-rspack.mjs", "codex-rspack-source.mjs", "codex-rspack-quota.mjs", "codex-rspack-tabs.mjs", "codex-rspack-capabilities.mjs", "codex-rspack-pets.mjs", "pet-animations.mjs"]
+  const rspack = await Promise.all(["codex-rspack.mjs", "codex-rspack-source.mjs", "codex-source-ast.mjs", "codex-update.mjs", "codex-rspack-quota.mjs", "codex-rspack-tabs.mjs", "codex-rspack-capabilities.mjs", "codex-rspack-pets.mjs", "pet-animations.mjs"]
     .map(file => readFile(new URL(file, import.meta.url), "utf8")));
   const lumi = await Promise.all(["pet.json", "spritesheet.webp", "animation.json", "hover.webp", "dance.m4a"]
     .map(async file => createHash("sha256").update(await readFile(path.join(projectRoot, "inject/pets/lumi", file))).digest("hex")));

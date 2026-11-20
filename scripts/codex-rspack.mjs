@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { sourceAst, propertyName, propertyValue, unwrap, isFunction, returnValue, unique, applyEdits } from './codex-source-ast.mjs';
 import { createCodexProviderQuotaRuntime } from './codex-provider-quota.mjs';
 import { readCodexRspack, rspackSourceContext } from './codex-rspack-source.mjs';
 import { rewriteRspackQuota } from './codex-rspack-quota.mjs';
@@ -7,40 +8,76 @@ import { rewriteRspackDot, rewriteRspackUltrafast, rewriteRspackProjectlessChat 
 import { createRspackThreadTabsRuntime, rewriteRspackThreadTabs } from './codex-rspack-tabs.mjs';
 import { createPetAnimationRuntime, rewriteRspackPets, installPetAudioBinding } from './codex-rspack-pets.mjs';
 import { readBuiltinLumi } from './pet-animations.mjs';
+import { buildCodexUpdateBindings } from './codex-update.mjs';
+import { buildNativeServiceBindings } from './codex-rspack-pets.mjs';
 
 const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltrafast, dot: rewriteRspackDot, tabs: rewriteRspackThreadTabs, queue: rewriteRspackQueue, pets: rewriteRspackPets, projectlessChat: rewriteRspackProjectlessChat };
 const responsePatches = new WeakMap();
 
 export function rewriteRspackQueue(source, context) {
-  if (source.includes('QueuedMessageList:') && source.includes('composer.queuedMessage.interruptedQueue')) {
-    if (source.includes('data-codex-panel-queued-messages')) return null;
-    const items = [...source.matchAll(/\(0,[\w$]+\.jsx\)\([\w$]+\.[\w$]+\.Item,\{initial:!1,/g)];
-    if (items.length !== 1) throw new Error('Native queued-message rail is unsupported');
-    return source.replace(items[0][0], `${items[0][0]}"data-codex-panel-queued-messages":"",`);
+  if (source.includes('data-codex-panel-queued-messages') || source.includes('panelQueueRequire')) return null;
+  if (!source.includes('queuedMessages') && !source.includes('QueuedMessageList')) return null;
+  const ast = context?.ast?.(source) ?? sourceAst(source, { factory: true });
+  const queueList = ast.exports().get('QueuedMessageList');
+  if (queueList) {
+    const component = ast.value(queueList);
+    const items = ast.all(node => node.type === 'CallExpression' && propertyName(unwrap(node.callee)) === 'jsx'
+      && propertyName(unwrap(node.arguments[0])) === 'Item'
+      && propertyValue(node.arguments[1], 'initial'), component);
+    const props = unique(items, 'Native queued-message rail is unsupported').arguments[1];
+    return applyEdits(source, [{ start: props.start + 1, end: props.start + 1, text: '"data-codex-panel-queued-messages":"",' }]);
   }
-  if (!source.includes('field:"queuedMessages"') || !source.includes('messages:void 0') || source.includes('panelQueueRequire')) return null;
-  const id = '[A-Za-z_$][\\w$]*';
-  const require = source.match(new RegExp(`^function\\s*[^\\(]*\\(${id},${id},(${id})\\)`))?.[1];
-  const beforeQueue = source.slice(0, source.indexOf('field:"queuedMessages"'));
-  const subscriptions = [...beforeQueue.matchAll(new RegExp(`\\(0,(${id})\\.(${id})\\)\\(${id},${id},\\(`, 'g'))];
-  const publication = context.findModule(['statsigEvaluations', 'hasEvaluations', 'onMount:']);
-  const signal = publication?.source.match(new RegExp(`let ${id}=${id}\\((${id})\\);if\\(${id}\\?\\.hasEvaluations`))?.[1];
-  const exported = signal && publication.source.slice(publication.source.lastIndexOf('.d('))
-    .match(new RegExp(`(${id}):(?:\\(\\)=>)?${signal.replaceAll('$', '\\$')}(?=[,}])`))?.[1];
-  const version = context.findModule(['appServerVersion$)??null)']);
-  const versionSignal = version?.source.match(new RegExp(`let (${id})=\\(0,${id}\\.${id}\\)\\([^;]*?\\.appServerVersion\\$\\)\\?\\?null\\)`))?.[1];
-  const versionExport = versionSignal && version.source.slice(version.source.lastIndexOf('.d('))
-    .match(new RegExp(`(${id}):(?:\\(\\)=>)?${versionSignal.replaceAll('$', '\\$')}(?=[,}])`))?.[1];
-  if (!require || subscriptions.length !== 1 || !publication || !exported || !versionExport) {
-    throw new Error('Native queued-follow-up subscription is unsupported');
+  const subscriptions = ast.all(node => node.type === 'CallExpression' && propertyName(unwrap(node.callee)) === 'subscribe'
+    && propertyValue(node.arguments[0], 'field')?.value === 'queuedMessages');
+  const candidates = subscriptions.flatMap(rpc => {
+    const callback = ast.enclosing(rpc, isFunction);
+    const subscription = callback && ast.enclosing(callback, node => node.type === 'CallExpression' && node.arguments.includes(callback));
+    const callee = subscription && unwrap(subscription.callee);
+    return subscription && callee.type === 'MemberExpression' && subscription.arguments.length >= 3 ? [{ subscription, callee }] : [];
+  });
+  if (!candidates.length) return null;
+  const { callee, subscription: subscriptionCall } = unique(candidates, 'Native queued-follow-up subscription is ambiguous');
+  const signalCandidates = [];
+  for (const module of context.modulesContaining('statsigEvaluations')) {
+    const dependency = context.moduleAst(module.id);
+    for (const member of dependency.all(node => node.type === 'MemberExpression' && propertyName(node) === 'statsigEvaluations')) {
+      const mount = dependency.enclosing(member, node => node.type === 'Property' && propertyName(node) === 'onMount');
+      const create = mount && dependency.enclosing(mount, node => node.type === 'CallExpression');
+      const declaration = create && dependency.enclosing(create, node => node.type === 'VariableDeclarator');
+      const descriptor = declaration && context.exportOf(dependency, declaration.id);
+      if (descriptor && !signalCandidates.some(value => value.id === descriptor.id && value.exportName === descriptor.exportName)) signalCandidates.push(descriptor);
+    }
   }
-  const subscription = `(0,${subscriptions[0][1]}.${subscriptions[0][2]})`;
-  // Settings and core version can become ready independently after an empty startup snapshot.
-  const reactive = `((...panelQueueArgs)=>panelQueueArgs[0].watch(({get:panelQueueGet})=>{panelQueueGet(panelQueueRequire(${JSON.stringify(publication.id)}).${exported});panelQueueGet(panelQueueRequire(${JSON.stringify(version.id)}).${versionExport},panelQueueArgs[1].hostId);return ${subscription}(...panelQueueArgs)}))`;
-  return source.replace(/^(function\s*[^\(]*\([^)]*\)\{)/, `$1const panelQueueRequire=${require};`)
-    .replace(subscription, reactive);
+  const versionCandidates = [];
+  for (const module of context.modulesContaining('appServerVersion$')) {
+    const dependency = context.moduleAst(module.id);
+    for (const member of dependency.all(node => node.type === 'MemberExpression' && propertyName(node) === 'appServerVersion$')) {
+      const read = dependency.parent(member);
+      if (read?.type !== 'CallExpression' || !read.arguments.includes(member)) continue;
+      const callback = dependency.enclosing(read, isFunction);
+      let result = callback && unwrap(dependency.value(returnValue(callback)));
+      if (result?.type === 'LogicalExpression' && result.operator === '??' && result.right.type === 'Literal' && result.right.value === null) result = unwrap(dependency.value(result.left));
+      if (result !== read) continue;
+      const create = callback && dependency.parent(callback);
+      if (create?.type !== 'CallExpression' || !create.arguments.includes(callback)) continue;
+      const declaration = dependency.enclosing(create, node => node.type === 'VariableDeclarator');
+      const descriptor = declaration && context.exportOf(dependency, declaration.id);
+      if (descriptor) versionCandidates.push(descriptor);
+    }
+  }
+  const publication = unique(signalCandidates, 'Native settings publication is unsupported');
+  const version = unique(versionCandidates, 'Native core version signal is unsupported');
+  const require = ast.factory.params[2];
+  if (require?.type !== 'Identifier') throw new Error('Native queue factory require is unsupported');
+  const subscription = `(${ast.text(subscriptionCall.callee)})`;
+  const load = descriptor => `panelQueueRequire(${JSON.stringify(descriptor.id)})[${JSON.stringify(descriptor.exportName)}]`;
+  const reactive = `((...panelQueueArgs)=>panelQueueArgs[0].watch(({get:panelQueueGet})=>{panelQueueGet(${load(publication)});panelQueueGet(${load(version)},panelQueueArgs[1].hostId);return ${subscription}(...panelQueueArgs)}))`;
+  const firstStatement = ast.factory.body.body.find(node => !node.directive)?.start ?? ast.factory.body.end - 1;
+  return applyEdits(source, [
+    { start: firstStatement, end: firstStatement, text: `const panelQueueRequire=${ast.text(require)};` },
+    { start: callee.start, end: callee.end, text: reactive },
+  ]);
 }
-
 export async function installRspackResponse(cdp, url, source, report = console.error) {
   let patch = responsePatches.get(cdp);
   if (!patch) {
@@ -67,9 +104,10 @@ export async function installRspackResponse(cdp, url, source, report = console.e
 
 export function buildRspackPlan(catalog, adapters = transformers) {
   const selected = new Set();
-  const context = rspackSourceContext(catalog.factories, selected);
+  let context;
   const prepared = {}, errors = {}, patches = {};
   for (const [feature, rewrite] of Object.entries(adapters)) {
+    context = rspackSourceContext(catalog.factories, selected);
     let count = 0;
     for (const module of catalog.factories.values()) {
       for (const variant of module.variants ?? [module]) {
@@ -85,6 +123,7 @@ export function buildRspackPlan(catalog, adapters = transformers) {
     prepared[feature] = count > 0 && !errors[feature];
     if (!count && !errors[feature]) errors[feature] = '未找到兼容的原生模块';
   }
+  context = rspackSourceContext(catalog.factories, selected);
   for (const module of catalog.factories.values()) {
     const variants = [];
     for (const variant of module.variants ?? [module]) {
@@ -102,14 +141,19 @@ export function buildRspackPlan(catalog, adapters = transformers) {
     }
     if (variants.length) patches[module.id] = variants;
   }
+  const nativeUpdate = buildCodexUpdateBindings(catalog.factories);
+  const nativeServices = buildNativeServiceBindings(context);
+  for (const descriptor of Object.values(nativeUpdate)) if (descriptor) selected.add(descriptor.id);
   const chunks = Object.fromEntries([...selected].map(id => [id, catalog.factories.get(id)?.chunkIds ?? []]));
-  return { patches, prepared, errors, chunks };
+  return { patches, prepared, errors, chunks, nativeUpdate, nativeServices };
 }
 
 export function createCodexRspackRuntime(plan) {
   let nativeRequire;
   const runtime = {
     prepared: plan.prepared,
+    nativeUpdate: plan.nativeUpdate,
+    nativeServices: plan.nativeServices,
     get require() { return nativeRequire; },
     wrapFactories(table, require) {
       nativeRequire = require;
@@ -138,12 +182,6 @@ export function createCodexRspackRuntime(plan) {
         return patchedFactory;
       };
       for (const id of Object.keys(table)) table[id] = adapt(id, table[id]);
-      runtime.findModule = needles => {
-        const terms = Array.isArray(needles) ? needles : [needles];
-        const matches = Object.entries(table).filter(([, factory]) => typeof factory === 'function'
-          && terms.every(term => originalSource(factory).includes(term)));
-        return matches.length === 1 ? { id: matches[0][0], source: originalSource(matches[0][1]) } : null;
-      };
       return new Proxy(table, { set(target, id, value) { target[id] = adapt(id, value); return true; } });
     },
     async loadModule(id) {
@@ -160,17 +198,38 @@ export function createCodexRspackRuntime(plan) {
 }
 
 export function rewriteRspackEntry(source, url) {
-  const assignments = [...source.matchAll(/([\w$]+)\.m=([\w$]+),/g)];
-  if (assignments.length !== 1) throw new Error('Codex Rspack 模块注册入口不唯一');
-  const [assignment, require, table] = assignments[0];
-  if (!source.includes(`${table}[`) || !source.includes(`${require}.C=`)) throw new Error('Codex Rspack 模块注册结构不支持');
-  return source.replace(assignment, `${require}.m=${table}=globalThis.__codexPanelRspack__?.wrapFactories(${table},${require})??${table},`)
-    .replace(/\bfrom(["'`])(\.\/?[^"'`\n]+)\1/g, (_, quote, specifier) => `from${JSON.stringify(new URL(specifier, url).href)}`)
-    .replace(/\bimport\((["'`])\.\.\/\1\+([\w$]+)\.u\(([\w$]+)\)\)/g,
-      (_, quote, requireName, chunk) => `import(new URL("../"+${requireName}.u(${chunk}),${JSON.stringify(url)}).href)`)
-    .replaceAll('import.meta.url', JSON.stringify(url));
+  const ast = sourceAst(source);
+  const same = (left, right) => left?.type === 'Identifier' && right?.type === 'Identifier'
+    && ast.binding(left) != null && ast.binding(left) === ast.binding(right);
+  const registrations = ast.all(node => node.type === 'AssignmentExpression' && node.operator === '='
+    && node.left.type === 'MemberExpression' && propertyName(node.left) === 'm' && node.right.type === 'Identifier')
+    .filter(node => {
+      const require = ast.value(node.left.object);
+      return isFunction(require) && ast.all(value => value.type === 'MemberExpression' && value.computed && same(value.object, node.right), require).length > 0;
+    });
+  const registration = unique(registrations, 'Codex Rspack 模块注册入口不唯一');
+  const require = ast.text(registration.left.object), table = ast.text(registration.right);
+  const edits = [{ start: registration.start, end: registration.end,
+    text: `${ast.text(registration.left)}=${table}=globalThis.__codexPanelRspack__?.wrapFactories(${table},${require})??${table}` }];
+  const tableDeclaration = ast.parent(ast.binding(registration.right)?.declaration);
+  if (tableDeclaration?.type === 'VariableDeclaration' && tableDeclaration.kind === 'const') {
+    edits.push({ start: tableDeclaration.start, end: tableDeclaration.start + 'const'.length, text: 'let' });
+  }
+  const relative = node => node?.type === 'Literal' && typeof node.value === 'string' && /^\.\.?\//.test(node.value)
+    || node?.type === 'BinaryExpression' && node.operator === '+' && relative(node.left)
+    || node?.type === 'TemplateLiteral' && /^\.\.?\//.test(node.quasis[0]?.value.cooked ?? '');
+  for (const node of ast.nodes) {
+    if (['ImportDeclaration', 'ExportNamedDeclaration', 'ExportAllDeclaration'].includes(node.type) && relative(node.source)) {
+      edits.push({ start: node.source.start, end: node.source.end, text: JSON.stringify(new URL(node.source.value, url).href) });
+    } else if (node.type === 'ImportExpression' && relative(node.source)) {
+      edits.push({ start: node.source.start, end: node.source.end, text: `new URL(${ast.text(node.source)},${JSON.stringify(url)}).href` });
+    } else if (node.type === 'MemberExpression' && propertyName(node) === 'url' && node.object.type === 'MetaProperty'
+      && node.object.meta.name === 'import' && node.object.property.name === 'meta') {
+      edits.push({ start: node.start, end: node.end, text: JSON.stringify(url) });
+    }
+  }
+  return applyEdits(source, edits);
 }
-
 export async function prepareCodexRspack(cdp, appPath, preferencesFile, report = console.error, { petsOnly = false, petAnimations = [] } = {}) {
   const catalog = await readCodexRspack(appPath);
   if (!catalog) return null;
