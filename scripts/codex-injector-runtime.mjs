@@ -465,6 +465,7 @@ export async function reconcileInjectionRuntime({
   source,
   sourceHash,
   reloadRequired = false,
+  reloadOnSourceChange = true,
   shouldOpen = false,
   removeRegisteredSource,
   registerCurrentSource,
@@ -480,7 +481,7 @@ export async function reconcileInjectionRuntime({
   }
   const scriptIdentifier = await registerCurrentSource(source);
   // Reconnecting a host must preserve the native in-memory route and draft.
-  if (reloadRequired || currentStatus.sourceHash !== sourceHash) {
+  if (reloadRequired || reloadOnSourceChange && currentStatus.sourceHash !== sourceHash) {
     await reloadRenderer();
   }
   await evaluateCurrentSource(source);

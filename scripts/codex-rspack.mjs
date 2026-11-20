@@ -2,21 +2,27 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import vm from 'node:vm';
+import { Worker } from 'node:worker_threads';
 import { sourceAst, propertyName, propertyValue, unwrap, isFunction, returnValue, unique, applyEdits } from './codex-source-ast.mjs';
 import { createCodexProviderQuotaRuntime } from './codex-provider-quota.mjs';
 import { readCodexRspack, readCodexRspackIdentity, rspackSourceContext } from './codex-rspack-source.mjs';
 import { rewriteRspackQuota } from './codex-rspack-quota.mjs';
 import { rewriteRspackDot, rewriteRspackUltrafast, rewriteRspackProjectlessChat } from './codex-rspack-capabilities.mjs';
 import { createRspackThreadTabsRuntime, rewriteRspackThreadTabs } from './codex-rspack-tabs.mjs';
-import { createPetAnimationRuntime, rewriteRspackPets, installPetAudioBinding } from './codex-rspack-pets.mjs';
+import { buildNativeServiceBindings, createPetAnimationRuntime, rewriteRspackPets, installPetAudioBinding } from './codex-rspack-pets.mjs';
 import { readBuiltinLumi } from './pet-animations.mjs';
-import { buildCodexUpdateBindings } from './codex-update.mjs';
-import { buildNativeServiceBindings } from './codex-rspack-pets.mjs';
+import { buildCodexUpdateBindings, findCodexRspackRequire } from './codex-update.mjs';
 
 const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltrafast, dot: rewriteRspackDot, tabs: rewriteRspackThreadTabs, queue: rewriteRspackQueue, pets: rewriteRspackPets, projectlessChat: rewriteRspackProjectlessChat };
 const responsePatches = new WeakMap();
 const preparedPlans = new Map();
 const planCacheFormat = 1;
+const featureTerms = {
+  quota: ['data-codex-composer-root'], ultrafast: ['serviceTierSettings'], dot: ['isCapable'],
+  tabs: ['paneItems', 'dataAttributes', 'navigationState'], queue: ['queuedMessages', 'QueuedMessageList'],
+  pets: ['The original Codex companion.', '/settings/account_user_setting', 'data-codex-pet-state'],
+  projectlessChat: ['canStartProjectlessChat', 'startNewConversation'],
+};
 
 export function rewriteRspackQueue(source, context) {
   if (source.includes('data-codex-panel-queued-messages') || source.includes('panelQueueRequire')) return null;
@@ -106,50 +112,91 @@ export async function installRspackResponse(cdp, url, source, report = console.e
   await cdp.send('Fetch.enable', { patterns: [{ urlPattern: url, resourceType: 'Script', requestStage: 'Response' }] });
 }
 
-export function buildRspackPlan(catalog, adapters = transformers) {
-  const selected = new Set();
-  let context;
-  const prepared = {}, errors = {}, patches = {};
-  for (const [feature, rewrite] of Object.entries(adapters)) {
-    context = rspackSourceContext(catalog.factories, selected);
-    let count = 0;
-    for (const module of catalog.factories.values()) {
-      for (const variant of module.variants ?? [module]) {
-        try {
+export function buildRspackFeaturePlan(catalog, feature, onProgress, rewrite = transformers[feature]) {
+  const selected = new Set(), context = rspackSourceContext(catalog.factories, selected);
+  const patches = {}, errors = {};
+  const total = [...catalog.factories.values()].reduce((count, module) => count + (module.variants?.length ?? 1), 0);
+  let count = 0, completed = 0, moduleId;
+  const terms = rewrite === transformers[feature] ? featureTerms[feature] : null;
+  for (const module of catalog.factories.values()) {
+    for (const variant of module.variants ?? [module]) {
+      moduleId = module.id;
+      onProgress?.({ phase: 'adapt', feature, moduleId, completed, total });
+      try {
+        if (!terms || terms.some(term => variant.contains?.(term) ?? variant.source.includes(term))) {
           const changed = rewrite(variant.source, { ...context, moduleId: module.id });
           if (changed && changed !== variant.source) {
             new vm.Script(`(${changed})`);
+            (patches[module.id] ??= []).push({ before: variant.source, after: changed, features: [feature] });
             count++;
           }
-        } catch (error) { errors[feature] = error.message; }
-      }
+        }
+      } catch (error) { errors[feature] = error.message; }
+      completed++;
     }
-    prepared[feature] = count > 0 && !errors[feature];
-    if (!count && !errors[feature]) errors[feature] = '未找到兼容的原生模块';
   }
-  context = rspackSourceContext(catalog.factories, selected);
-  for (const module of catalog.factories.values()) {
-    const variants = [];
+  onProgress?.({ phase: 'adapt', feature, moduleId, completed, total });
+  const prepared = { [feature]: count > 0 && !errors[feature] };
+  if (!count && !errors[feature]) errors[feature] = '未找到兼容的原生模块';
+  const nativeServices = feature === 'pets' ? buildNativeServiceBindings(context) : {};
+  const chunks = Object.fromEntries([...selected].map(id => [id, catalog.factories.get(id)?.chunkIds ?? []]));
+  return { patches: prepared[feature] ? patches : {}, prepared, errors, chunks, nativeServices, nativeUpdate: {} };
+}
+
+export function buildRspackUpdatePlan(catalog, onProgress) {
+  onProgress?.({ phase: 'adapt', feature: 'nativeUpdate', completed: 0, total: 1 });
+  const nativeUpdate = buildCodexUpdateBindings(catalog.factories);
+  const chunks = Object.fromEntries(Object.values(nativeUpdate).filter(Boolean).map(descriptor => [descriptor.id, catalog.factories.get(descriptor.id)?.chunkIds ?? []]));
+  onProgress?.({ phase: 'adapt', feature: 'nativeUpdate', completed: 1, total: 1 });
+  return { patches: {}, prepared: {}, errors: {}, chunks, nativeServices: {}, nativeUpdate };
+}
+
+export function composeRspackFeaturePlans(catalog, plans, onProgress, adapters = transformers) {
+  const prepared = Object.assign({}, ...plans.map(plan => plan.prepared));
+  const errors = Object.assign({}, ...plans.map(plan => plan.errors));
+  const chunks = Object.assign({}, ...plans.map(plan => plan.chunks));
+  const nativeServices = Object.assign({}, ...plans.map(plan => plan.nativeServices));
+  const nativeUpdate = Object.assign({}, ...plans.map(plan => plan.nativeUpdate));
+  const patches = {}, selected = new Set(), context = rspackSourceContext(catalog.factories, selected);
+  const candidates = [...new Set(plans.flatMap(plan => Object.keys(plan.patches)))];
+  const total = candidates.reduce((count, id) => count + (catalog.factories.get(id).variants?.length ?? 1), 0);
+  let completed = 0, moduleId;
+  for (const id of candidates) {
+    const module = catalog.factories.get(id), variants = [];
     for (const variant of module.variants ?? [module]) {
-      let after = variant.source;
-      const features = [];
-      for (const [feature, rewrite] of Object.entries(adapters)) {
-        if (!prepared[feature]) continue;
-        const changed = rewrite(after, { ...context, moduleId: module.id });
-        if (changed && changed !== after) { after = changed; features.push(feature); }
-      }
-      if (features.length) {
+      moduleId = id;
+      onProgress?.({ phase: 'compose', moduleId, completed, total });
+      const matches = plans.flatMap(plan => plan.patches[id] ?? []).filter(patch => patch.before === variant.source);
+      if (matches.length === 1) variants.push(matches[0]);
+      else if (matches.length > 1) {
+        let after = variant.source;
+        const features = [];
+        for (const [feature, rewrite] of Object.entries(adapters)) {
+          if (!prepared[feature]) continue;
+          const changed = rewrite(after, { ...context, moduleId: id });
+          if (changed && changed !== after) { after = changed; features.push(feature); }
+        }
         new vm.Script(`(${after})`);
         variants.push({ before: variant.source, after, features });
       }
+      completed++;
     }
-    if (variants.length) patches[module.id] = variants;
+    if (variants.length) patches[id] = variants;
   }
-  const nativeUpdate = buildCodexUpdateBindings(catalog.factories);
-  const nativeServices = buildNativeServiceBindings(context);
-  for (const descriptor of Object.values(nativeUpdate)) if (descriptor) selected.add(descriptor.id);
-  const chunks = Object.fromEntries([...selected].map(id => [id, catalog.factories.get(id)?.chunkIds ?? []]));
+  onProgress?.({ phase: 'compose', moduleId, completed, total });
+  for (const id of selected) chunks[id] = catalog.factories.get(id)?.chunkIds ?? [];
   return { patches, prepared, errors, chunks, nativeUpdate, nativeServices };
+}
+
+export function buildRspackPlan(catalog, adapters = transformers, onProgress) {
+  const plans = Object.entries(adapters).map(([feature, rewrite]) => buildRspackFeaturePlan(catalog, feature, onProgress, rewrite));
+  const native = buildRspackUpdatePlan(catalog);
+  if (!('pets' in adapters)) {
+    const selected = new Set();
+    native.nativeServices = buildNativeServiceBindings(rspackSourceContext(catalog.factories, selected));
+    for (const id of selected) native.chunks[id] = catalog.factories.get(id)?.chunkIds ?? [];
+  }
+  return composeRspackFeaturePlans(catalog, [...plans, native], onProgress, adapters);
 }
 
 function reusablePlan(value, features) {
@@ -167,38 +214,121 @@ function reusablePlan(value, features) {
 
 const planDigest = value => createHash('sha256').update(JSON.stringify([value.main, value.plan])).digest('hex');
 
+function runRspackWorker(workerData, { onProgress, unrefWorkers = false } = {}) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./codex-rspack-worker.mjs', import.meta.url), {
+      workerData,
+      execArgv: [],
+    });
+    let received = false, result, failure;
+    worker.on('message', message => {
+      if (message.type === 'progress') onProgress?.(message.progress);
+      else {
+        received = true;
+        if (message.type === 'error') failure = new Error(message.message);
+        else result = message.result;
+      }
+    });
+    worker.on('error', reject);
+    worker.on('exit', code => {
+      if (failure) reject(failure);
+      else if (!received || code !== 0) reject(new Error(`Codex adaptation worker exited before completing (${code})`));
+      else resolve(result);
+    });
+    if (unrefWorkers) worker.unref();
+  });
+}
+
+export async function buildCodexRspackInWorker(appPath, { petsOnly = false, onProgress, onFeaturePrepared, unrefWorkers = false } = {}) {
+  const workerOptions = { onProgress, unrefWorkers };
+  const catalog = await runRspackWorker({ task: 'read', appPath }, workerOptions);
+  if (!catalog) return null;
+  const features = petsOnly ? ['pets'] : Object.keys(transformers);
+  const jobs = ['nativeUpdate', ...features.toSorted((a, b) => Number(b === 'pets') - Number(a === 'pets'))];
+  const plans = new Array(jobs.length);
+  let next = 0;
+  const lane = async () => {
+    while (next < jobs.length) {
+      const index = next++, feature = jobs[index];
+      let plan;
+      try { plan = await runRspackWorker({ task: 'feature', catalog, feature }, workerOptions); }
+      catch (error) {
+        plan = { patches: {}, chunks: {}, nativeUpdate: {}, nativeServices: {},
+          prepared: feature === 'nativeUpdate' ? {} : { [feature]: false }, errors: { [feature]: error.message } };
+      }
+      plans[index] = plan;
+      onFeaturePrepared?.({ feature, plan });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(2, jobs.length) }, lane));
+  const plan = await runRspackWorker({ task: 'compose', catalog, plans }, workerOptions);
+  return { main: catalog.main, plan };
+}
+
 export async function prepareCodexRspackPlan(appPath, {
-  cacheDirectory, adapterRevision, petsOnly = false, report = console.error,
+  cacheDirectory, adapterRevision, petsOnly = false, report = console.error, onProgress, onFeaturePrepared, unrefWorkers = false,
   readCatalog = readCodexRspack, buildPlan = buildRspackPlan,
 } = {}) {
   const adapters = petsOnly ? { pets: rewriteRspackPets } : transformers;
   const features = Object.keys(adapters);
-  const build = async () => {
-    const catalog = await readCatalog(appPath);
-    if (!catalog) return null;
-    return { main: catalog.main, plan: buildPlan(catalog, adapters) };
+  const publishCached = (plan, notify) => {
+    if (!notify) return;
+    for (const feature of ['nativeUpdate', ...Object.keys(plan.prepared)]) {
+      notify({ feature, plan: { ...plan, nativeServices: feature === 'pets' ? plan.nativeServices : {},
+        nativeUpdate: feature === 'nativeUpdate' ? plan.nativeUpdate : {} } });
+    }
   };
-  if (!cacheDirectory || typeof adapterRevision !== 'string' || !adapterRevision) return build();
+  const build = async notify => {
+    if (readCatalog === readCodexRspack && buildPlan === buildRspackPlan) {
+      return buildCodexRspackInWorker(appPath, { petsOnly, onProgress, onFeaturePrepared: notify, unrefWorkers });
+    }
+    onProgress?.({ phase: 'read' });
+    const catalog = await readCatalog(appPath, { onProgress });
+    if (!catalog) return null;
+    const plan = buildPlan(catalog, adapters, onProgress);
+    publishCached(plan, notify);
+    return { main: catalog.main, plan };
+  };
+  if (!cacheDirectory || typeof adapterRevision !== 'string' || !adapterRevision) return build(onFeaturePrepared);
+  onProgress?.({ phase: 'cache' });
   const identity = await readCodexRspackIdentity(appPath);
   if (!identity) return null;
   const key = createHash('sha256').update(JSON.stringify([planCacheFormat, identity.key, adapterRevision, petsOnly ? 'pets' : 'full'])).digest('hex');
   const directory = path.resolve(cacheDirectory);
   const memoryKey = `${directory}:${key}`;
-  if (preparedPlans.has(memoryKey)) return preparedPlans.get(memoryKey);
+  const shared = preparedPlans.get(memoryKey);
+  if (shared) {
+    if (shared.listeners && onFeaturePrepared) {
+      for (const event of shared.events) onFeaturePrepared(event);
+      shared.listeners.push(onFeaturePrepared);
+    } else if (onFeaturePrepared) {
+      const result = await shared.pending;
+      publishCached(result.plan, onFeaturePrepared);
+    }
+    return shared.pending;
+  }
+  const entry = { events: [], listeners: onFeaturePrepared ? [onFeaturePrepared] : [] };
+  const publish = event => {
+    entry.events.push(event);
+    for (const listener of entry.listeners) listener(event);
+  };
+
   const pending = (async () => {
     const file = path.join(directory, `${key}.json`);
     try {
       const cached = JSON.parse(await readFile(file, 'utf8'));
       if (cached.format === planCacheFormat && cached.key === key && reusablePlan(cached, features) && cached.digest === planDigest(cached)) {
+        publishCached(cached.plan, publish);
         return { main: cached.main, plan: cached.plan };
       }
     } catch { /* Missing or damaged static caches are rebuilt from the installed archive. */ }
-    const result = await build();
+    const result = await build(publish);
     if (!reusablePlan(result, features)) return result;
     // An updater may replace the archive while its source is being analyzed.
     if ((await readCodexRspackIdentity(appPath))?.key !== identity.key) return result;
     let temporary;
     try {
+      onProgress?.({ phase: 'write' });
       await mkdir(directory, { recursive: true, mode: 0o700 });
       temporary = `${file}.${randomUUID()}.tmp`;
       await writeFile(temporary, JSON.stringify({ format: planCacheFormat, key, digest: planDigest(result), ...result }), { flag: 'wx', mode: 0o600 });
@@ -207,10 +337,12 @@ export async function prepareCodexRspackPlan(appPath, {
     finally { if (temporary) await rm(temporary, { force: true }).catch(() => {}); }
     return result;
   })();
-  preparedPlans.set(memoryKey, pending);
+  entry.pending = pending;
+  preparedPlans.set(memoryKey, entry);
   try {
     const result = await pending;
     if (!reusablePlan(result, features) || (await readCodexRspackIdentity(appPath))?.key !== identity.key) preparedPlans.delete(memoryKey);
+    else preparedPlans.set(memoryKey, { pending });
     return result;
   } catch (error) {
     preparedPlans.delete(memoryKey);
@@ -225,6 +357,12 @@ export function createCodexRspackRuntime(plan) {
     nativeUpdate: plan.nativeUpdate,
     nativeServices: plan.nativeServices,
     get require() { return nativeRequire; },
+    mergeDescriptors(next, require) {
+      Object.assign(plan.chunks, next.chunks);
+      Object.assign(plan.nativeUpdate, next.nativeUpdate);
+      Object.assign(plan.nativeServices, next.nativeServices);
+      if (require) nativeRequire = require;
+    },
     wrapFactories(table, require) {
       nativeRequire = require;
       const originalSource = factory => {
@@ -267,6 +405,27 @@ export function createCodexRspackRuntime(plan) {
   return runtime;
 }
 
+export async function applyCodexRspackFeature(cdp, plan) {
+  const { nativeUpdate, nativeServices } = plan;
+  if (![...Object.values(nativeUpdate), ...Object.values(nativeServices)].some(Boolean)) return [];
+  const descriptors = { chunks: plan.chunks, nativeUpdate, nativeServices };
+  const result = await cdp.send('Runtime.evaluate', {
+    expression: `(async()=>{
+      const load=await (${findCodexRspackRequire})();
+      if(!load)return [];
+      const descriptors=${JSON.stringify(descriptors)};
+      let runtime=globalThis.__codexPanelRspack__;
+      if(!runtime?.mergeDescriptors){
+        runtime=globalThis.__codexPanelRspack__=(${createCodexRspackRuntime})({patches:{},prepared:{},chunks:{},nativeUpdate:{...runtime?.nativeUpdate},nativeServices:{...runtime?.nativeServices}});
+      }
+      runtime.mergeDescriptors(descriptors,load);
+      return ["nativeUpdate","nativeServices"].filter(key=>Object.values(descriptors[key]??{}).some(Boolean));
+    })()`, awaitPromise: true, returnByValue: true,
+  });
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
+  return result.result?.value ?? [];
+}
+
 export function rewriteRspackEntry(source, url) {
   const ast = sourceAst(source);
   const same = (left, right) => left?.type === 'Identifier' && right?.type === 'Identifier'
@@ -300,10 +459,11 @@ export function rewriteRspackEntry(source, url) {
   }
   return applyEdits(source, edits);
 }
-export async function prepareCodexRspack(cdp, appPath, preferencesFile, report = console.error, { petsOnly = false, petAnimations = [], cacheDirectory, adapterRevision } = {}) {
-  const prepared = await prepareCodexRspackPlan(appPath, { petsOnly, cacheDirectory, adapterRevision, report });
+export async function prepareCodexRspack(cdp, appPath, preferencesFile, report = console.error, { petsOnly = false, petAnimations = [], cacheDirectory, adapterRevision, onProgress, onFeaturePrepared, unrefWorkers = false } = {}) {
+  const prepared = await prepareCodexRspackPlan(appPath, { petsOnly, cacheDirectory, adapterRevision, report, onProgress, onFeaturePrepared, unrefWorkers });
   if (!prepared) return null;
   const { main, plan } = prepared;
+  if (Object.values(plan.prepared).every(Boolean)) onProgress?.({ phase: 'prepared' });
   const result = await cdp.send('Runtime.evaluate', {
     expression: `([...document.querySelectorAll('script[type="module"][src]')].map(script=>script.src))`, returnByValue: true,
   });
@@ -324,7 +484,7 @@ export async function prepareCodexRspack(cdp, appPath, preferencesFile, report =
     return { source: `(() => {
       if(window!==window.top)return;
       ${petSource}
-      if(globalThis.__codexPanelRspack__)return;
+      if(globalThis.__codexPanelRspack__){globalThis.__codexPanelRspack__.mergeDescriptors?.(${JSON.stringify(plan)});return;}
       globalThis.__codexPanelRspack__=(${createCodexRspackRuntime})(${JSON.stringify(plan)});
     })();`, prepared: plan.prepared, errors: plan.errors };
   }
@@ -338,8 +498,8 @@ export async function prepareCodexRspack(cdp, appPath, preferencesFile, report =
     quota.setEnabled(${preferences.customProviderQuotaFix === true});speed.setEnabled(${preferences.customProviderUltrafast === true});dot.setEnabled(${preferences.showCustomProviderDot === true});
     projectless.setEnabled(${preferences.defaultProjectlessChat === true});
     ${petSource}
-    if(globalThis.__codexPanelRspack__)return;
     const plan=${JSON.stringify(plan)};
+    if(globalThis.__codexPanelRspack__){globalThis.__codexPanelRspack__.mergeDescriptors?.(plan);return;}
     globalThis.__codexPanelQuotaBootstrapPrepared__=plan.prepared.quota;
     globalThis.__codexPanelUltrafastBootstrapPrepared__=plan.prepared.ultrafast;
     globalThis.__codexPanelDotBootstrapPrepared__=plan.prepared.dot;

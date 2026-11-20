@@ -2013,6 +2013,22 @@ test("native project reads use Rspack services without legacy asset names", asyn
   assert.equal(await api.waitForNativeProject("/disposable/project", "fixture"), "fixture");
 });
 
+test("native services discovered after connection can be used without reloading Panel", async () => {
+  const start = source.indexOf("  let nativeDesktopServicesPromise;");
+  const end = source.indexOf("  async function requestNativeFetch(", start);
+  const window = {};
+  const readServices = vm.runInNewContext(`${source.slice(start, end)}; nativeDesktopServices`, {
+    window, URL, location: { href: "app://-/index.html" }, document: { querySelectorAll: () => [] },
+  });
+  assert.equal(await readServices(), null);
+  const services = { projectCatalog: { readSelection() {}, readLocalProjects() {}, readRemoteProjects() {} } };
+  window.__codexPanelRspack__ = {
+    nativeServices: { desktopServices: { id: "services", exportName: "app" } },
+    loadModule: async () => ({ app: services }),
+  };
+  assert.equal(await readServices(), services);
+});
+
 test("native project reads use the live catalog when legacy fetch handlers were removed", async () => {
   const projects = { fixture: { rootPaths: ["/disposable/project"] } };
   let selection = { type: "local", projectId: "before" };

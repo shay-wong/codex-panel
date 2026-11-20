@@ -753,7 +753,10 @@
           if (service) return service;
         }
         return null;
-      })().catch(() => null);
+      })().catch(() => null).then(services => {
+        if (!services) nativeDesktopServicesPromise = undefined;
+        return services;
+      });
     }
     return nativeDesktopServicesPromise;
   }

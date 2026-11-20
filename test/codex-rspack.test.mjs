@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
-import { readCodexRspack, rspackSourceContext } from '../scripts/codex-rspack-source.mjs';
+import { readCodexRspack, rspackSourceContext, shareRspackCatalog, sharedRspackCatalog } from '../scripts/codex-rspack-source.mjs';
 import { buildRspackPlan, createCodexRspackRuntime, installRspackResponse, rewriteRspackEntry } from '../scripts/codex-rspack.mjs';
 
 test('reads current Rspack factories from the installed archive without executing them', async t => {
@@ -17,6 +17,7 @@ test('reads current Rspack factories from the installed archive without executin
     'webview/assets/123.abc.js': 'const load=()=>{};export{load as __webpack_require__};',
     'webview/assets/async/789.old.js': 'export const __rspack_esm_ids=[789];export const __webpack_modules__={legacy(){throw Error("must not execute");const marker="serviceTierForRequest";}};',
     'webview/assets/async/456.def.js': 'export const __rspack_esm_id=456;export const __rspack_esm_ids=[456];export const __webpack_modules__={abcd(module){throw Error("must not execute");const marker="model_provider";}};',
+    'webview/short.js': 'export const __rspack_esm_ids=[12];export const __webpack_modules__={abcd(module){throw Error("must not execute");const marker="model_provider";}};',
     'webview/assets/async/457.notifications.js': 'export const __rspack_esm_ids=[457];export const __webpack_modules__={notifications(){throw Error("must not execute");const marker="notificationThread";}};',
     'webview/assets/async/458.settings.js': 'export const __rspack_esm_ids=[458];export const __webpack_modules__={settings(){throw Error("must not execute");const marker="statsigEvaluations";}};',
     'webview/relocated/459.version.js': 'throw Error("must not execute chunk top level");export const __webpack_modules__ = {version(){throw Error("must not execute");const marker="appServerVersion$";}};export const __rspack_esm_ids = [459];',
@@ -35,6 +36,9 @@ test('reads current Rspack factories from the installed archive without executin
   const catalog = await readCodexRspack(path.join(root, 'Test.app'));
   assert.equal(catalog.main.urlPath, '/assets/123.abc.js');
   assert.equal(catalog.factories.size, 6);
+  const shared = sharedRspackCatalog(shareRspackCatalog(catalog));
+  assert.deepEqual(shared.factories.get('abcd').chunkIds, [12], 'a shared catalog keeps the smallest chunk for identical factories');
+  assert.equal(shared.factories.get('abcd').source, catalog.factories.get('abcd').source);
   assert.ok(catalog.factories.has('notifications'));
   assert.ok(catalog.factories.has('settings'));
   assert.ok(catalog.factories.has('version'));

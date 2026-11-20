@@ -13,8 +13,8 @@ export function normalizeRspackFactory(source) {
 export function rspackSourceContext(factories, selected = new Set()) {
   const ids = new WeakMap();
   const asts = new Map();
-  const sourceIds = new Map();
-  for (const module of factories.values()) {
+  const sourceIds = factories.sourceIds ?? new Map();
+  if (!factories.sourceIds) for (const module of factories.values()) {
     for (const variant of module.variants ?? [module]) sourceIds.set(variant.source, module.id);
   }
   const imported = (ast, expression) => {
@@ -42,7 +42,7 @@ export function rspackSourceContext(factories, selected = new Set()) {
       return source == null ? null : this.ast(source);
     },
     modulesContaining(term) {
-      return [...factories.values()].filter(module => module.source.includes(term));
+      return [...factories.values()].filter(module => module.contains?.(term) ?? module.source.includes(term));
     },
     modulesExporting(name) {
       return [...factories.values()].filter(module => module.exportNames ? module.exportNames.includes(name) : module.source.includes(name))
@@ -96,12 +96,58 @@ export async function readCodexRspackIdentity(appPath) {
   return { archive, key, size: details.size };
 }
 
-export async function readCodexRspack(appPath) {
+export function shareRspackCatalog(catalog) {
+  let length = 0;
+  const modules = [...catalog.factories.values()].map(module => {
+    const variants = (module.variants ?? [module]).map(variant => {
+      const size = Buffer.byteLength(variant.source);
+      const value = { offset: length, length: size };
+      length += size;
+      return value;
+    });
+    return { id: module.id, chunkIds: module.chunkIds, exportNames: module.exportNames,
+      sourceIndex: (module.variants ?? [module]).findIndex(variant => variant.source === module.source), variants };
+  });
+  const sources = new SharedArrayBuffer(length), bytes = Buffer.from(sources);
+  for (const [index, module] of [...catalog.factories.values()].entries()) {
+    for (const [variantIndex, variant] of (module.variants ?? [module]).entries()) {
+      bytes.write(variant.source, modules[index].variants[variantIndex].offset, 'utf8');
+    }
+  }
+  return { main: catalog.main, modules, sources };
+}
+
+export function sharedRspackCatalog(shared) {
+  const bytes = Buffer.from(shared.sources), factories = new Map(), sourceIds = new Map();
+  for (const module of shared.modules) {
+    const variants = module.variants.map(variant => {
+      const view = bytes.subarray(variant.offset, variant.offset + variant.length);
+      let source;
+      return {
+        ...variant,
+        get source() {
+          if (source === undefined) { source = view.toString('utf8'); sourceIds.set(source, module.id); }
+          return source;
+        },
+        contains(term) { return view.includes(term); },
+      };
+    });
+    const preferred = variants[module.sourceIndex];
+    factories.set(module.id, {
+      id: module.id, exportNames: module.exportNames, variants, chunkIds: module.chunkIds,
+      get source() { return preferred.source; }, contains: preferred.contains,
+    });
+  }
+  factories.sourceIds = sourceIds;
+  return { main: shared.main, factories };
+}
+
+export async function readCodexRspack(appPath, { onProgress, cache = true } = {}) {
   const identity = await readCodexRspackIdentity(appPath);
   if (!identity) return null;
   const { archive, key } = identity;
   const details = identity;
-  if (catalogs.has(key)) return catalogs.get(key);
+  if (cache && catalogs.has(key)) return catalogs.get(key);
   const file = await open(archive, 'r');
   try {
     const read = async (offset, length) => {
@@ -140,11 +186,12 @@ export async function readCodexRspack(appPath) {
       const ast = sourceAst(source, { cache: false });
       if (ast.exports().has('__webpack_require__')) main = { urlPath, source };
     }
-    if (!main) { catalogs.set(key, null); return null; }
+    if (!main) { if (cache) catalogs.set(key, null); return null; }
     const factories = new Map();
     const unreadableChunks = [];
-    for (const name of entries.keys()) {
-      if (!name.startsWith('webview/') || !name.endsWith('.js')) continue;
+    const assets = [...entries.keys()].filter(name => name.startsWith('webview/') && name.endsWith('.js'));
+    for (const [completed, name] of assets.entries()) {
+      onProgress?.({ phase: 'read', completed, total: assets.length, asset: name });
       const source = await sourceFor(name);
       if (!source.includes('__webpack_modules__')) continue;
       let modules, chunkIds;
@@ -191,9 +238,9 @@ export async function readCodexRspack(appPath) {
         }
       }
     }
+    onProgress?.({ phase: 'read', completed: assets.length, total: assets.length, asset: assets.at(-1) });
     const result = { main, factories, unreadableChunks };
-    catalogs.clear();
-    catalogs.set(key, result);
+    if (cache) { catalogs.clear(); catalogs.set(key, result); }
     return result;
   } finally { await file.close(); }
 }

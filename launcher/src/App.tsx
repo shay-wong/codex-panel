@@ -13,6 +13,9 @@ export type LauncherSnapshot = {
   embeddedVisible: boolean;
   threadTabsPhase: string;
   threadTabsMessage: string;
+  nativeAdaptersPhase: string;
+  nativeAdaptersMessage: string;
+  nativeAdaptersFeatures: { feature: string; phase: string; message: string }[];
   openRequestPending: boolean;
   updateMessage: string;
   updateNotes: string | null;
@@ -46,6 +49,7 @@ const titles: Record<string, string> = { running: "Panel 已就绪", waiting: "�
 const initialSnapshot: LauncherSnapshot = {
   phase: "starting", version: "—", message: "正在读取服务状态…", childPid: null,
   embeddedVisible: false, threadTabsPhase: "waiting", threadTabsMessage: "", openRequestPending: false, updateMessage: "尚未检查更新。", updateNotes: null,
+  nativeAdaptersPhase: "waiting", nativeAdaptersMessage: "", nativeAdaptersFeatures: [],
   updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false, appPath: null,
 };
 
@@ -306,6 +310,9 @@ export function App() {
   }
 
   const threadTabsLabels: Record<string, string> = { waiting: "等待连接", loading: "加载中", prepared: "已准备，等待页面加载", ready: "已加载", failed: "加载失败" };
+  const nativeAdaptersLabels: Record<string, string> = { idle: "未开始", waiting: "等待连接", reading: "读取中", adapting: "适配中", prepared: "等待应用", applying: "应用中", ready: "已就绪", partial: "部分可用", failed: "适配失败" };
+  const adapterFeatureLabels: Record<string, string> = { quota: "API 发送限制", ultrafast: "Ultrafast", dot: "Dot 入口", tabs: "会话菜单", queue: "排队消息", pets: "宠物", projectlessChat: "无项目聊天", nativeUpdate: "Codex 更新", nativeServices: "原生服务" };
+  const adapterFeaturePhases: Record<string, string> = { loading: "适配中", prepared: "已准备", ready: "已启用", failed: "失败" };
 
   const componentStates = [
     { id: "panel", label: "Panel 服务", text: snapshot.phase === "error" ? "启动异常" : hasProcess ? `运行中 · PID ${snapshot.childPid}` : "未启动", tone: snapshot.phase === "error" ? "error" : hasProcess ? "running" : "stopped" },
@@ -382,11 +389,21 @@ export function App() {
             <section className="overview-section" aria-labelledby="extensionStatusTitle">
               <Heading as="h3" size="2" id="extensionStatusTitle" mb="3">功能与维护</Heading>
               <div className="maintenance-card-grid">
+                <div className="maintenance-card" id="nativeAdaptersComponent">
+                  <div className="status-row-copy" aria-live="polite">
+                    <Flex align="center" gap="2"><Text size="2" weight="medium">Codex 适配</Text><Badge id="nativeAdaptersPhase" size="1" color={snapshot.nativeAdaptersPhase === "failed" ? "red" : snapshot.nativeAdaptersPhase === "partial" ? "amber" : snapshot.nativeAdaptersPhase === "ready" ? "green" : "gray"}>{nativeAdaptersLabels[snapshot.nativeAdaptersPhase] || "等待连接"}</Badge></Flex>
+                    <Text as="p" id="nativeAdaptersMessage" size="1" color="gray" mt="1">{snapshot.nativeAdaptersMessage || "连接 Codex 后准备原生功能"}</Text>
+                    <Flex direction="column" gap="2" mt="3" role="list" aria-label="功能适配进度">{snapshot.nativeAdaptersFeatures?.map(feature => <Box key={feature.feature} role="listitem">
+                      <Flex align="center" gap="2"><Text size="1" weight="medium">{adapterFeatureLabels[feature.feature] || feature.feature}</Text><Badge size="1" color={feature.phase === "failed" ? "red" : feature.phase === "ready" ? "green" : "gray"}>{adapterFeaturePhases[feature.phase] || feature.phase}</Badge></Flex>
+                      {feature.message && <Text as="p" size="1" color="gray" mt="1">{feature.message}</Text>}
+                    </Box>)}</Flex>
+                  </div>
+                </div>
                 <div className="maintenance-card" id="threadTabsComponent">
                   <div className="status-row-copy" aria-live="polite">
                     <Flex align="center" gap="2"><Text size="2" weight="medium">会话菜单</Text><Badge size="1" color={snapshot.threadTabsPhase === "failed" ? "red" : snapshot.threadTabsPhase === "ready" ? "green" : "gray"}>{threadTabsLabels[snapshot.threadTabsPhase] || "等待连接"}</Badge></Flex>
                     <Text as="p" size="1" color="gray" mt="1">新标签页与并排会话</Text>
-                    {snapshot.threadTabsMessage && <details className="menu-diagnostics"><summary>加载详情</summary><Text as="p" size="1" color="gray" mt="2">{snapshot.threadTabsMessage}</Text></details>}
+                    {snapshot.threadTabsMessage && <Text as="p" size="1" color="gray" mt="2">{snapshot.threadTabsMessage}</Text>}
                     {snapshot.threadTabsPhase !== "ready" && <Text as="p" size="1" color="gray" mt="1">加载成功时可能刷新一次 Codex 界面。</Text>}
                   </div>
                   {snapshot.threadTabsPhase !== "ready" && <Flex className="card-actions">{cardAction("retryThreadTabs", "retry_thread_tabs", "重试加载", <span className="action-icon" aria-hidden="true">↻</span>, !ready || snapshot.threadTabsPhase === "loading")}</Flex>}
