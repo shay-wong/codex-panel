@@ -130,21 +130,21 @@ test('available update downloads in the background without opening native confir
   const cdp = idleCdp();
   let state = null;
   let starts = 0;
-  const getPlanType = async () => 'plus';
+  const checkedOffer = { status: 'available', availableVersion: '26.new', availableBuildVersion: '42', installedVersion: '26.old', appcastXml: '<rss/>' };
   const download = {
-    ...updateChecker(async () => ({ status: 'available', availableVersion: '26.new', availableBuildVersion: '42', installedVersion: '26.old' })),
+    ...updateChecker(async () => checkedOffer),
     status: () => state,
     start(result) {
       starts++;
       assert.equal(result.availableVersion, '26.new');
       assert.equal(result.availableBuildVersion, '42');
-      assert.equal(result.getPlanType, getPlanType);
+      assert.equal(result, checkedOffer);
       state = { ready: false, available: true, downloading: true, message: '正在下载更新 · 0%', checking: false };
     },
   };
   await readCodexUpdateStatus(cdp, { download });
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal((await downloadCodexUpdate(cdp, download, { getPlanType })).downloading, true);
+  assert.equal((await downloadCodexUpdate(cdp, download)).downloading, true);
   assert.equal((await downloadCodexUpdate(cdp, download)).downloading, true);
   assert.equal(starts, 1);
   state = { ...state, message: '正在下载更新 · 42%' };

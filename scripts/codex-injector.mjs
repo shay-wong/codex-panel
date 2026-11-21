@@ -3707,12 +3707,7 @@ async function main() {
             if (process.platform !== "darwin" || options.cdpPipe) throw new Error("目前需要 macOS TCP 连接模式");
             const connection = [...injectedTargets.values()].find(cdp => !cdp.closed);
             if (!connection) throw new Error("请先通过 Panel 连接 Codex");
-            const update = await downloadCodexUpdate(connection, codexUpdateDownload, {
-              getPlanType: async () => {
-                const result = await requestCodexAppServerViaCdp(connection, "local", "account/read", { refreshToken: false });
-                return result?.account?.planType ?? "unknown";
-              },
-            });
+            const update = await downloadCodexUpdate(connection, codexUpdateDownload);
             return { ready: true, codexUpdateReady: update.ready, codexUpdateAvailable: update.available, codexUpdateDownloading: update.downloading, codexUpdatePhase: update.phase ?? "", codexUpdateMessage: update.message, codexUpdateChecking: update.checking };
           },
           ...Object.fromEntries(["pause", "resume", "cancel"].map(action => [`${action}-codex-update`, async () => {

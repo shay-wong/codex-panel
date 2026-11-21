@@ -497,6 +497,10 @@ Local Codex composers show output throughput and cache hit rate through the exis
 
 ## Codex updates through Panel
 
+Downloads use the official feed snapshot from the matching check rather than requesting another rollout offer. If downloading fails, the card offers **Check for updates**; a successful recheck replaces the snapshot and restores the download action.
+
+下载沿用本次检查的官方清单快照，避免重新生成更新标识后灰度分流到另一版本。下载失败时卡片提供“检查更新”，重新检查成功后替换快照并恢复下载入口。
+
 Network failures during checks and downloads show a short retry message instead of the complete macOS error and request URL. Full diagnostics remain available through **运行日志** (Runtime log); errors about package compatibility or signature validation retain their specific reason.
 
 检查和下载发生网络错误时，只显示简短的重试提示，不再展开完整 macOS 错误和请求 URL。详细诊断保留在“运行日志”中；安装包兼容性和验签错误仍显示具体原因。

@@ -6,6 +6,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Keep the checked Codex release feed for its download, avoiding mismatched rollout targets; show Check for updates after a download failure.
 - Assign increasing local package build numbers, show them in About and startup logs, and include them in macOS bundle metadata. `codex:install` prints its build number before preparing resources and streams build output.
 - Connect Panel before preparing native adapters, show ongoing module progress in a compact notice at the top of the launcher, run independent adapters concurrently, and apply interface patches with one final reload. The notice disappears when adaptation ends.
 - Make all Launcher settings toggle only through the switch itself or keyboard activation, including pet sounds.
