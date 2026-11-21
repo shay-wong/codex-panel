@@ -12,7 +12,7 @@ This file records user-visible changes introduced by the fork.
 - Assign increasing local package build numbers, show them in About and startup logs, and include them in macOS bundle metadata. `codex:install` prints its build number before preparing resources and streams build output.
 - Connect Panel before preparing native adapters, group ongoing adaptation text and its progress bar on the right of the launcher’s main status panel while preserving the independent connection status on the left, run independent adapters concurrently, and apply interface patches with one final reload. Only the adaptation details and progress bar disappear when adaptation ends.
 - Make all Launcher settings toggle only through the switch itself or keyboard activation, including pet sounds.
-- Reuse successful native adaptation plans across restarts; rebuild them when the installed Codex package or Panel adapter changes.
+- Cache native adaptation features independently across restarts; UI changes reuse them, adapter changes rebuild only affected features, and failures retry without rebuilding successful peers.
 - Locate native adapters through syntax trees, exports and calls, removing generated-filename, module co-location, declaration-adjacency and field-order assumptions; support Codex 26.1117.31558 quota, speed settings, conversation menus and notification structures.
 - Resume valid partial Codex downloads after network interruptions or timeouts when retrying the same version during the current Panel run.
 - Offer Skill command suggestions for `@`/`$` in quick-phrase configuration and allow continuous deletion across lines.

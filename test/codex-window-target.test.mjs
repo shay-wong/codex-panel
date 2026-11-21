@@ -118,8 +118,7 @@ test("avatar injection handles late windows and reconnects without mounting Pane
   assert.equal(commands.filter(command => command === "Page.removeScriptToEvaluateOnNewDocument").length, 2);
   assert(preparations.every(([, appPath, preferences, , options]) => appPath === "/fixture/ChatGPT.app" && preferences === undefined && options.petsOnly && options.petAnimations[0].petId === "fixture"));
   assert(preparations.every(([, , , , options]) => options.cacheDirectory === path.join("/fixture/data", "codex-adapters")));
-  assert.equal(preparations[0][4].adapterRevision, "first");
-  assert.equal(preparations.at(-1)[4].adapterRevision, "updated");
+  assert(preparations.every(([, , , , options]) => !Object.hasOwn(options, "adapterRevision")), "runtime updates leave adaptation identity to its planners");
 });
 
 test("stopping during avatar preparation closes its pending connection and cannot retain it later", async () => {
@@ -283,7 +282,7 @@ async function adapterHarness(prepare, initial = {}) {
       result.preparations++;
       assert.equal(appPath, "/fixture/ChatGPT.app");
       assert.equal(options.cacheDirectory, path.join("/fixture/data", "codex-adapters"));
-      assert.equal(options.adapterRevision, "current");
+      assert.equal(Object.hasOwn(options, "adapterRevision"), false, "Panel runtime code does not determine adaptation identity");
       return prepare(options, result.preparations);
     },
     applyCodexRspackFeature: async (_cdp, plan) => { live.push(plan); return Object.keys(plan.nativeServices ?? {}).length ? ["nativeServices"] : []; },
@@ -360,7 +359,8 @@ test("Panel connects before adaptation, publishes feature progress, and applies 
   assert.equal(progress.progress, 20, 'the worker aggregate takes priority over one module’s progress');
   assert.equal(progress.features.length, 2, "parallel modules retain their separate progress");
   assert.match(progress.features[0].message, /2\/10.*provider/);
-  options.onFeaturePrepared({ feature: "pets", plan: { prepared: { pets: true }, errors: {}, nativeServices: { desktopServices: { id: "services", exportName: "app" } } } });
+  options.onFeaturePrepared({ feature: "nativeServices", plan: { prepared: {}, errors: {}, nativeServices: { desktopServices: { id: "services", exportName: "app" } } } });
+  assert(harness.statuses.at(-1).features.some(feature => feature.feature === "nativeServices" && feature.phase === "prepared"));
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(harness.live.length, 1, "services become available before the entire plan finishes");

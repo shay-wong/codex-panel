@@ -532,9 +532,9 @@ test("injection code identity survives host address and capability rotation", as
     : String(filename).endsWith('inject.js') ? '// injection' : '// quota';
   const updatedPet = await vm.runInContext('currentInjectionSource()', context);
   assert.notEqual(updatedPet.sourceHash, first.sourceHash, 'changing packaged pet assets is a code update');
-  context.readFile = async () => '// upgraded code';
+  context.readFile = async (filename) => String(filename).endsWith('inject.js') ? '// upgraded injection UI' : '// quota';
   const upgraded = await vm.runInContext('currentInjectionSource()', context);
-  assert.notEqual(upgraded.sourceHash, first.sourceHash);
+  assert.notEqual(upgraded.sourceHash, first.sourceHash, 'changing the injection UI still refreshes the runtime');
 });
 
 
