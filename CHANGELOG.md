@@ -15,7 +15,7 @@ This file records user-visible changes introduced by the fork.
 - Cache native adaptation features independently across restarts; UI changes reuse them, adapter changes rebuild only affected features, and failures retry without rebuilding successful peers.
 - Locate native adapters through syntax trees, exports and calls, removing generated-filename, module co-location, declaration-adjacency and field-order assumptions; support Codex 26.1117.31558 quota, speed settings, conversation menus and notification structures.
 - Resume valid partial Codex downloads after network interruptions or timeouts when retrying the same version during the current Panel run.
-- Offer Skill command suggestions for `@`/`$` in quick-phrase configuration and allow continuous deletion across lines.
+- Filter quick-phrase Skill suggestions as you type `@`/`$`, rank matching names first, and allow continuous deletion across lines. Keep native Skill labels and icons consistent between the card and editor, including after saving and reopening.
 - Keep multiple repository quick-phrase configuration tabs open, focus an existing tab when selected again, and scroll the tab row horizontally.
 
 - Configure a shared base quick-phrase list or a complete override per repository, restore base phrases, edit Skill links with native labels and icons, switch between base and current-repository underline tabs, edit other repositories without leaving the current chat, and explicitly select one or more phrases or all phrases before applying them to existing custom lists without duplicating identical entries.

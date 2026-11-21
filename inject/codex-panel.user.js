@@ -115,6 +115,8 @@
   let quickPhrasesDialog = null;
   let quickPhrasesRepositoryPicker = null;
   let quickPhrasesEditor = null;
+  let disposeQuickPhraseLabels = null;
+  let quickPhraseLabelsController = null;
   let quickPhraseSending = false;
   let quickPhrasesSyncFrame = 0;
   let quickPhrasesProjectId = "";
@@ -276,8 +278,8 @@
       .codex-panel-phrases-list { display: grid; gap: 7px; }
       .codex-panel-phrase { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 0; border-radius: 9px; background: var(--color-token-bg-secondary, light-dark(#f8f8f8, #292929)); color: inherit; font: inherit; text-align: left; }
       .codex-panel-phrase:hover, .codex-panel-phrases-config:hover { background: var(--color-token-bg-tertiary, light-dark(#eee, #353535)); }
-      .codex-panel-phrase span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-      .codex-panel-phrase svg { width: 14px; height: 14px; flex: none; color: var(--color-token-text-secondary, GrayText); }
+      .codex-panel-phrase > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+      .codex-panel-phrase > svg { width: 14px; height: 14px; flex: none; color: var(--color-token-text-secondary, GrayText); }
       .codex-panel-phrase:disabled { opacity: .5; }
       .codex-panel-phrases-status { min-height: 18px; margin: 10px 0 0; color: var(--color-token-text-secondary, GrayText); font-size: 12px; overflow-wrap: anywhere; }
       #${QUICK_PHRASES_ID} .codex-panel-phrases-status { min-height: 0; overflow: hidden; }
@@ -2999,7 +3001,11 @@
   }
 
   function quickPhraseLabel(phrase) {
-    return phrase.replace(/\[(\$[^\]\r\n]+)\]\([^\r\n)]+\)/g, "$1");
+    return phrase.replace(/\[(\$[^\]\r\n]+)\]\([^\r\n)]+\)/g, (_, label) => {
+      const query = label.indexOf("?");
+      const appearance = new URLSearchParams(query < 0 ? "" : label.slice(query + 1));
+      return appearance.get("label") || (appearance.has("label") || appearance.has("icon") ? label.slice(0, query) : label);
+    });
   }
 
   function* quickPhraseComposerProps(root = quickPhraseComposer()) {
@@ -3076,11 +3082,38 @@
     return Array.from(skills.values()).sort((left, right) => left.name.localeCompare(right.name));
   }
 
+  function quickPhraseCommandRank(skill, query) {
+    const name = skill.name.toLocaleLowerCase();
+    const tail = name.split(":").at(-1);
+    const display = (skill.interface?.displayName ?? "").toLocaleLowerCase();
+    if (!query || name === query || tail === query) return 0;
+    if (display === query) return 1;
+    if ([name, tail, display].some(value => value.startsWith(query))) return 2;
+    if ([name, display].some(value => value.includes(query))) return 3;
+    return `${skill.interface?.shortDescription ?? ""} ${skill.shortDescription ?? ""} ${skill.description ?? ""}`
+      .toLocaleLowerCase().includes(query) ? 4 : -1;
+  }
+
   function quickPhrasesDocument(controller, text) {
     // Each saved line is one entry, regardless of the conversation's Markdown mode.
     const parser = Object.create(controller);
     parser.plainTextMode = true;
     return parser.parsePromptText(text);
+  }
+
+  function quickPhrasesText(controller, state) {
+    const transaction = state.tr;
+    state.doc.descendants((node, position) => {
+      if (node.type.name !== "skillMention") return;
+      const name = `$${node.attrs.name}`;
+      const saved = node.attrs.promptLinkLabel || name;
+      const appearance = new URLSearchParams(saved.startsWith(`${name}?`) ? saved.slice(name.length + 1) : "");
+      if (!appearance.has("label") && node.attrs.displayName) appearance.set("label", node.attrs.displayName);
+      if (!appearance.has("icon") && node.attrs.skillIcon) appearance.set("icon", node.attrs.skillIcon);
+      // Native plain serialization otherwise drops the inserted mention's display name and icon.
+      if (appearance.size) transaction.setNodeAttribute(position, "promptLinkLabel", `${name}?${appearance}`);
+    });
+    return controller.getPersistedText(transaction.doc, { format: "plain" });
   }
 
   function renderQuickPhrases() {
@@ -3099,6 +3132,15 @@
     }
     const actionLabel = action === "fill" ? hostText("填入：", "Fill: ")
       : action === "steer" ? hostText("引导：", "Steer: ") : hostText("排队：", "Queue: ");
+    disposeQuickPhraseLabels?.();
+    const controller = quickPhraseController();
+    quickPhraseLabelsController = controller;
+    const registry = controller?.inlineMentionIconRegistry;
+    const mentions = [];
+    disposeQuickPhraseLabels = () => {
+      for (const mention of mentions) mention.destroy();
+      registry?.publish();
+    };
     list.replaceChildren();
     for (const phrase of phrases) {
       const button = document.createElement("button");
@@ -3106,14 +3148,24 @@
       button.className = "codex-panel-phrase cursor-interaction";
       button.disabled = quickPhraseSending;
       button.setAttribute("aria-label", actionLabel + quickPhraseLabel(phrase));
-      button.title = phrase;
+      button.title = quickPhraseLabel(phrase);
       const label = document.createElement("span");
-      label.textContent = quickPhraseLabel(phrase);
+      if (controller?.parsePromptText && registry?.createView) {
+        quickPhrasesDocument(controller, phrase).firstChild.forEach(node => {
+          if (node.isText) label.append(document.createTextNode(node.text));
+          else {
+            const mention = registry.createView(document, node.type.spec.toDOM(node));
+            mentions.push(mention);
+            label.append(mention.dom);
+          }
+        });
+      } else label.textContent = quickPhraseLabel(phrase);
       button.append(label);
       button.insertAdjacentHTML("beforeend", '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg>');
       button.addEventListener("click", () => void sendQuickPhrase(phrase));
       list.append(button);
     }
+    registry?.publish();
     if (!phrases.length) list.textContent = hostText("还没有短语，点击配置添加", "No phrases yet. Add them in Configure.");
   }
 
@@ -3189,7 +3241,7 @@
       dialog.querySelector("form").addEventListener("submit", event => {
         event.preventDefault();
         try {
-          const phrases = quickPhrasesEditor.controller.getPersistedText(quickPhrasesEditor.view.state.doc, { format: "plain" })
+          const phrases = quickPhrasesText(quickPhrasesEditor.controller, quickPhrasesEditor.view.state)
             .split(/\r?\n/).map(line => line.trim()).filter(Boolean);
           window.localStorage.setItem(quickPhrasesStorageKey(tabs.dataset.projectId), phrases.join("\n"));
           renderQuickPhrases();
@@ -3287,7 +3339,10 @@
       if (commandRange?.identity !== identity) selectedCommand = 0;
       commandRange = { from, to: selection.from, identity };
       const query = match[2].toLocaleLowerCase();
-      matches = skills.filter(skill => `${skill.name} ${skill.interface?.displayName ?? ""} ${skill.description ?? ""}`.toLocaleLowerCase().includes(query));
+      matches = skills.map(skill => ({ skill, rank: quickPhraseCommandRank(skill, query) }))
+        .filter(({ rank }) => rank >= 0)
+        .sort((left, right) => left.rank - right.rank || left.skill.name.localeCompare(right.skill.name))
+        .map(({ skill }) => skill);
       commands.replaceChildren();
       for (const [index, skill] of matches.entries()) {
         const option = document.createElement("button");
@@ -3341,6 +3396,10 @@
       },
       handleDOMEvents: {
         blur() { closeCommands(); return false; },
+        compositionend() {
+          window.requestAnimationFrame(() => { if (quickPhrasesEditor?.view === view) updateCommands(); });
+          return false;
+        },
       },
       handleKeyDown(view, event) {
         if (event.isComposing) return false;
@@ -3391,7 +3450,7 @@
 
   function chooseQuickPhrasesToApply() {
     const { view, controller } = quickPhrasesEditor;
-    const phrases = [...new Set(controller.getPersistedText(view.state.doc, { format: "plain" })
+    const phrases = [...new Set(quickPhrasesText(controller, view.state)
       .split(/\r?\n/).map(line => line.trim()).filter(Boolean))];
     const status = quickPhrasesDialog.querySelector('[role="alert"]');
     status.textContent = "";
@@ -3678,7 +3737,7 @@
       });
       quickPhrasesPanel.querySelector(".codex-panel-phrases-hint").replaceWith(createQuickPhraseActionControl(quickPhrasesPanel.querySelector('[role="status"]')));
       renderQuickPhrases();
-    }
+    } else if (quickPhraseController() !== quickPhraseLabelsController) renderQuickPhrases();
     void syncQuickPhrasesProject();
     // Share the summary animation when available; keep independent placement otherwise.
     if (container) {
@@ -4258,6 +4317,9 @@
   function destroy() {
     if (destroyed) return;
     destroyed = true;
+    disposeQuickPhraseLabels?.();
+    disposeQuickPhraseLabels = null;
+    quickPhraseLabelsController = null;
     quickPhrasesEditor?.view.destroy();
     quickPhrasesEditor = null;
     for (const { line } of usageLines.values()) line.remove();
