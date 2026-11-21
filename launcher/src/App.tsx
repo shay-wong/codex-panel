@@ -310,9 +310,10 @@ export function App() {
   }
 
   const threadTabsLabels: Record<string, string> = { waiting: "等待连接", loading: "加载中", prepared: "已准备，等待页面加载", ready: "已加载", failed: "加载失败" };
-  const nativeAdaptersLabels: Record<string, string> = { idle: "未开始", waiting: "等待连接", reading: "读取中", adapting: "适配中", prepared: "等待应用", applying: "应用中", ready: "已就绪", partial: "部分可用", failed: "适配失败" };
+  const nativeAdaptersInProgress = ["reading", "adapting", "prepared", "applying"].includes(snapshot.nativeAdaptersPhase);
   const adapterFeatureLabels: Record<string, string> = { quota: "API 发送限制", ultrafast: "Ultrafast", dot: "Dot 入口", tabs: "会话菜单", queue: "排队消息", pets: "宠物", projectlessChat: "无项目聊天", nativeUpdate: "Codex 更新", nativeServices: "原生服务" };
-  const adapterFeaturePhases: Record<string, string> = { loading: "适配中", prepared: "已准备", ready: "已启用", failed: "失败" };
+  const activeAdapterModules = snapshot.nativeAdaptersFeatures?.filter(feature => feature.phase === "loading")
+    .map(feature => `${adapterFeatureLabels[feature.feature] || feature.feature} · ${feature.message}`).join("；");
 
   const componentStates = [
     { id: "panel", label: "Panel 服务", text: snapshot.phase === "error" ? "启动异常" : hasProcess ? `运行中 · PID ${snapshot.childPid}` : "未启动", tone: snapshot.phase === "error" ? "error" : hasProcess ? "running" : "stopped" },
@@ -342,6 +343,10 @@ export function App() {
           {iconAction("browserPanel", "open_browser_panel", "在浏览器中打开", <LinearIcon name="openExternal" />, !hasProcess)}
         </Flex>
       </header>}
+      {!workflowUrl && nativeAdaptersInProgress && <Box id="nativeAdaptersComponent" mb="4" role="status" aria-live="polite">
+        <Text as="p" id="nativeAdaptersMessage" size="1" color="gray">Codex 适配中 · {snapshot.nativeAdaptersMessage}</Text>
+        {activeAdapterModules && <Text as="p" size="1" color="gray" mt="1">{activeAdapterModules}</Text>}
+      </Box>}
       {error && !usageSettingsOpen && <Callout.Root id="errorNotice" color="red" size="1" role="alert" mb="4">
         <Callout.Icon><LinearIcon name="alert" /></Callout.Icon>
         <Callout.Text id="errorText" className="launcher-error">{error}</Callout.Text>
@@ -389,16 +394,6 @@ export function App() {
             <section className="overview-section" aria-labelledby="extensionStatusTitle">
               <Heading as="h3" size="2" id="extensionStatusTitle" mb="3">功能与维护</Heading>
               <div className="maintenance-card-grid">
-                <div className="maintenance-card" id="nativeAdaptersComponent">
-                  <div className="status-row-copy" aria-live="polite">
-                    <Flex align="center" gap="2"><Text size="2" weight="medium">Codex 适配</Text><Badge id="nativeAdaptersPhase" size="1" color={snapshot.nativeAdaptersPhase === "failed" ? "red" : snapshot.nativeAdaptersPhase === "partial" ? "amber" : snapshot.nativeAdaptersPhase === "ready" ? "green" : "gray"}>{nativeAdaptersLabels[snapshot.nativeAdaptersPhase] || "等待连接"}</Badge></Flex>
-                    <Text as="p" id="nativeAdaptersMessage" size="1" color="gray" mt="1">{snapshot.nativeAdaptersMessage || "连接 Codex 后准备原生功能"}</Text>
-                    <Flex direction="column" gap="2" mt="3" role="list" aria-label="功能适配进度">{snapshot.nativeAdaptersFeatures?.map(feature => <Box key={feature.feature} role="listitem">
-                      <Flex align="center" gap="2"><Text size="1" weight="medium">{adapterFeatureLabels[feature.feature] || feature.feature}</Text><Badge size="1" color={feature.phase === "failed" ? "red" : feature.phase === "ready" ? "green" : "gray"}>{adapterFeaturePhases[feature.phase] || feature.phase}</Badge></Flex>
-                      {feature.message && <Text as="p" size="1" color="gray" mt="1">{feature.message}</Text>}
-                    </Box>)}</Flex>
-                  </div>
-                </div>
                 <div className="maintenance-card" id="threadTabsComponent">
                   <div className="status-row-copy" aria-live="polite">
                     <Flex align="center" gap="2"><Text size="2" weight="medium">会话菜单</Text><Badge size="1" color={snapshot.threadTabsPhase === "failed" ? "red" : snapshot.threadTabsPhase === "ready" ? "green" : "gray"}>{threadTabsLabels[snapshot.threadTabsPhase] || "等待连接"}</Badge></Flex>

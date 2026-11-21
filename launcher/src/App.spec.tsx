@@ -542,7 +542,7 @@ it("opens pets from its own navigation page and refreshes the real selection whe
   await screen.findByRole("button", { name: "取消使用" });
 });
 
-it("shows parallel adapter module progress while Codex remains connected", async () => {
+it("shows only ongoing adapter progress at the top while Codex remains connected", async () => {
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const snapshot: LauncherSnapshot = {
@@ -562,28 +562,31 @@ it("shows parallel adapter module progress while Codex remains connected", async
   });
   render(<Theme><App /></Theme>);
   await act(async () => {});
-  const card = document.getElementById("nativeAdaptersComponent")!;
-  expect(within(card).getByText("正在读取 Codex 原生模块")).toBeTruthy();
+  const progress = document.getElementById("nativeAdaptersComponent")!;
+  expect(progress.textContent).toContain("正在读取 Codex 原生模块");
+  expect(progress.compareDocumentPosition(document.querySelector(".status-panel")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(progress.closest(".maintenance-card")).toBeNull();
   await act(async () => { statusListener({ payload: { ...snapshot,
     nativeAdaptersPhase: "adapting", nativeAdaptersMessage: "正在并行适配 2 项功能",
     nativeAdaptersFeatures: [
       { feature: "quota", phase: "loading", message: "模块 42 · 2/10" },
       { feature: "tabs", phase: "loading", message: "模块 75 · 3/10" },
+      { feature: "pets", phase: "ready", message: "已启用" },
     ],
   } }); });
   expect(document.getElementById("statusText")?.textContent).toBe("运行正常");
   expect(document.getElementById("codexStatus")?.textContent).toBe("连接已就绪");
   expect(document.getElementById("embeddedStatus")?.textContent).toBe("已在 Codex 中打开");
-  expect(within(card).getByText("正在并行适配 2 项功能")).toBeTruthy();
-  expect(within(card).getByText("模块 42 · 2/10")).toBeTruthy();
-  expect(within(card).getByText("模块 75 · 3/10")).toBeTruthy();
-  expect(within(card).getAllByRole("listitem")).toHaveLength(2);
-  expect(card.querySelector("details")).toBeNull();
+  expect(progress.textContent).toContain("正在并行适配 2 项功能");
+  expect(progress.textContent).toContain("模块 42 · 2/10");
+  expect(progress.textContent).toContain("模块 75 · 3/10");
+  expect(progress.textContent).not.toContain("已启用");
   expect(document.getElementById("threadTabsComponent")?.querySelector("details")).toBeNull();
-  await act(async () => { statusListener({ payload: { ...snapshot,
-    nativeAdaptersPhase: "ready", nativeAdaptersMessage: "Codex 适配已就绪",
-    nativeAdaptersFeatures: [{ feature: "quota", phase: "ready", message: "已启用" }],
-  } }); });
-  expect(document.getElementById("nativeAdaptersPhase")?.textContent).toBe("已就绪");
-  expect(within(card).getByText("Codex 适配已就绪")).toBeTruthy();
+  for (const phase of ["ready", "partial", "failed", "waiting"]) {
+    await act(async () => { statusListener({ payload: { ...snapshot,
+      nativeAdaptersPhase: phase, nativeAdaptersMessage: "Codex 适配已结束",
+      nativeAdaptersFeatures: [{ feature: "quota", phase: "ready", message: "已启用" }],
+    } }); });
+    expect(document.getElementById("nativeAdaptersComponent")).toBeNull();
+  }
 });
