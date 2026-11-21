@@ -57,7 +57,7 @@ export async function selectCodexUpdateVersion(file, architecture, systemVersion
     const target = targetVersion(version, build);
     if (!latest || BigInt(target.availableBuildVersion) > BigInt(latest.availableBuildVersion)) latest = target;
   }
-  return latest;
+  return latest && { ...latest, appcastXml: xml };
 }
 
 // Download only the official delta from the installed build to the checked appcast offer.
@@ -171,18 +171,10 @@ export function createCodexUpdateDownload({ appPath, dataDirectory, getPlanType 
         await mkdir(root, { recursive: true, mode: 0o700 });
         session.temporary = path.join(root, `.download-${randomUUID()}`);
         await mkdir(session.temporary, { mode: 0o700 });
-        const planType = await offer.getPlanType?.() ?? offer.planType ?? 'unknown';
-        running();
-        const systemVersion = (await command('/usr/bin/sw_vers', ['-productVersion'], { timeout: 15_000 })).stdout.trim();
+        // The official rollout can select another feed on a second appcast request.
         const appcast = path.join(session.temporary, 'appcast.xml');
-        for (const beta of typeof offer.beta === 'boolean' ? [offer.beta] : [false, true]) {
-          await downloadFile({ url: appcastUrl(session.installed, architecture, systemVersion, beta, planType), destination: appcast, expectedLength: null,
-            signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) });
-          const xml = await readFile(appcast, { encoding: 'utf8', signal });
-          if (xml.includes('<!DOCTYPE') || xml.includes('<!ENTITY')) throw new Error('Codex 更新清单包含不允许的 XML 声明');
-          session.archive = await selectArchive(appcast, session.target, architecture, session.installed.CFBundleVersion, command);
-          if (session.archive) break;
-        }
+        await writeFile(appcast, offer.appcastXml, { mode: 0o600, signal });
+        session.archive = await selectArchive(appcast, session.target, architecture, session.installed.CFBundleVersion, command);
         if (!session.archive) throw new Error('官方更新清单中未找到已检查到的版本，请重新检查更新');
         await assertDeltaBase({ appPath, deltaFromSparkleExecutableSize: session.archive.deltaFromSparkleExecutableSize,
           deltaFromSparkleLocales: session.archive.deltaFromSparkleLocales, signal }, { run: command });
@@ -259,7 +251,7 @@ export function createCodexUpdateDownload({ appPath, dataDirectory, getPlanType 
         const target = await selectCodexUpdateVersion(file, architecture, systemVersion, command);
         return { installedVersion: installed.CFBundleShortVersionString,
           ...(target && BigInt(target.availableBuildVersion) > BigInt(installed.CFBundleVersion)
-            ? { status: 'available', ...target, beta, planType }
+            ? { status: 'available', ...target }
             : { status: 'up_to_date' }) };
       } finally { await rm(temporary, { recursive: true, force: true }); }
     },

@@ -14,7 +14,7 @@ Codex 新会话页和已有会话右侧均以原生浮窗卡片独立显示**快
 
 任务支持在明确授权后由新会话接手：`panelctl conversation bind ISSUE_ID --replace-thread-id OLD_ID` 替换刚读取的旧绑定，旧会话保留在活动记录中，Spec、状态、分支和工作树不变。详见[会话工作流](docs/fork-capabilities.md#configurable-ai-workflows)。
 
-macOS 上，Codex 更新卡片直接查询官方清单，不受原生更新弹窗及“跳过这个版本”影响，手动检查会重新查询。卡片常驻：发现新版时提供“下载更新”，点击通过 macOS 系统网络直接下载匹配当前版本的官方增量包，不再弹下载确认框；支持暂停、继续和取消；网络中断或超时后，在同一次 Panel 运行中重试相同版本会接着已有进度下载，关闭 Panel 后不保留续传状态。验证及合成新版后切换为安装按钮；在 **运行概览 → 功能与维护 → 安装 Codex 更新并重启** 中完成更新。确认安装后，Panel 正常退出 Codex，替换已验证的新版应用后再启动连接，省去手动二次重启；忙碌或检查超时后可手动重试。详见[通过 Panel 完成 Codex 更新](docs/fork-capabilities.md#codex-updates-through-panel)。
+macOS 上，Codex 更新卡片直接查询官方清单，不受原生更新弹窗及“跳过这个版本”影响，手动检查会重新查询。下载复用本次检查的清单，避免灰度分流后目标版本消失；下载失败后显示“检查更新”，重新检查成功后再提供下载。卡片常驻：发现新版时提供“下载更新”，点击通过 macOS 系统网络直接下载匹配当前版本的官方增量包，不再弹下载确认框；支持暂停、继续和取消；网络中断或超时后，在同一次 Panel 运行中重试相同版本会接着已有进度下载，关闭 Panel 后不保留续传状态。验证及合成新版后切换为安装按钮；在 **运行概览 → 功能与维护 → 安装 Codex 更新并重启** 中完成更新。确认安装后，Panel 正常退出 Codex，替换已验证的新版应用后再启动连接，省去手动二次重启；忙碌或检查超时后可手动重试。详见[通过 Panel 完成 Codex 更新](docs/fork-capabilities.md#codex-updates-through-panel)。
 
 macOS 可在 **运行概览 → 功能与维护 → Codex 更新 → 禁止 Codex 自动更新** 关闭 Codex 内置更新器，下次通过 Panel 启动 Codex 后生效。默认关闭此选项，Panel 手动更新入口仍可使用。当前 Codex 已下载的更新仍可能在本次退出时安装。详见[更新控制](docs/fork-capabilities.md#codex-updates-through-panel)。
 
@@ -184,7 +184,7 @@ npm ci
 npm run codex:install
 ```
 
-每次本地打包自动递增构建号，在“关于”页可看到 `版本 0.5.17-fork · Build N`，macOS 包同时写入 `CFBundleVersion`。同仓库的 worktree 共用计数，打包失败可能占用一个号码。详见[本地构建号](docs/fork-capabilities.md#local-build-numbers)。
+每次本地打包自动递增构建号，`codex:install` 在准备资源前就打印 `Codex Panel local Build N`，并实时显示构建输出；在“关于”页可看到 `版本 0.5.17-fork · Build N`，macOS 包同时写入 `CFBundleVersion`。同仓库的 worktree 共用计数，打包失败可能占用一个号码。详见[本地构建号](docs/fork-capabilities.md#local-build-numbers)。
 
 集成命令会构建独立 runtime 并复制到 `~/Library/Application Support/Codex Panel/runtime`，把 `manage-panel` 和 `handoff-panel` 复制到标准用户 Skill 目录 `~/.agents/skills`，把 `panelctl` 安装到 `~/.local/bin`，然后生成 macOS 启动器；启动器还会在自己的 App bundle 中保存一份受签名保护的 runtime 副本。安装结果都是带所有权标记的真实副本，不是指回 Git 仓库的符号链接。单独运行 `npm ci` 只安装项目依赖，不会写入这些用户级集成。安装完成后启动一个新的 Codex 任务即可使用 `$manage-panel` 和 `$handoff-panel`。
 

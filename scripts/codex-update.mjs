@@ -267,12 +267,12 @@ export async function readCodexUpdateState(cdp) {
 
 const updateChecks = new WeakMap();
 
-export async function downloadCodexUpdate(cdp, download, { getPlanType } = {}) {
+export async function downloadCodexUpdate(cdp, download) {
   const current = download.status();
   if (current?.ready || current?.downloading) return current;
   const result = updateChecks.get(cdp)?.result;
   if (result?.status !== "available") return readCodexUpdateStatus(cdp, { force: true, download });
-  download.start({ ...result, getPlanType });
+  download.start(result);
   return download.status();
 }
 

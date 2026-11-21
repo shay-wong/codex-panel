@@ -145,6 +145,17 @@ it("keeps launcher feedback, live status and global preferences working through 
   await click(button("downloadCodexUpdate"));
   await advance(300);
   expect(invoke).toHaveBeenCalledWith("download_codex_update");
+  const checksBeforeFailure = invoke.mock.calls.filter(([command]) => command === "check_codex_updates").length;
+  await publish({ codexUpdatePhase: "failed", codexUpdateAvailable: true, codexUpdateDownloading: false,
+    codexUpdateMessage: "Codex 更新下载失败：官方更新清单中未找到已检查到的版本，请重新检查更新" });
+  expect(document.getElementById("downloadCodexUpdate")).toBeNull();
+  expect(button("checkCodexUpdates").getAttribute("aria-label")).toBe("检查更新");
+  expect(button("checkCodexUpdates").disabled).toBe(false);
+  await click(button("checkCodexUpdates"));
+  await advance(300);
+  expect(invoke.mock.calls.filter(([command]) => command === "check_codex_updates")).toHaveLength(checksBeforeFailure + 1);
+  await publish({ codexUpdatePhase: "", codexUpdateAvailable: true, codexUpdateMessage: "发现新版本 26.new" });
+  expect(button("downloadCodexUpdate")).toBeTruthy();
   await publish({ codexUpdateDownloading: true, codexUpdateMessage: "正在下载更新 · 42%" });
   expect(button("downloadCodexUpdate").disabled).toBe(true);
   expect(document.getElementById("installCodexUpdate")).toBeNull();

@@ -40,6 +40,8 @@ test('selects the exact target delta from the installed build without falling ba
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+const checkedOffer = { ...target, appcastXml: appcast };
+
 async function fixture(t, { badSignature = false, downloadError, downloadArchive, feed = '<rss><channel/></rss>' } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'panel-direct-update-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -75,7 +77,7 @@ async function fixture(t, { badSignature = false, downloadError, downloadArchive
     requests.push(new URL(url));
     if (new URL(url).pathname.endsWith('/appcast')) {
       assert.equal(expectedLength, null);
-      await writeFile(destination, feed, { signal });
+      await writeFile(destination, typeof feed === 'function' ? feed({ signature, length: archive.length }) : feed, { signal });
       return;
     }
     assert.equal(expectedLength, archive.length);
@@ -129,6 +131,30 @@ test('checks the official feed despite a skipped native update and preserves the
   assert.deepEqual(await readdir(path.join(setup.options.dataDirectory, 'codex-update')), []);
 });
 
+test('rechecks after a missing delta and downloads from that checked rollout without requesting another feed', { skip: process.platform !== 'darwin' }, async t => {
+  let checks = 0;
+  const setup = await fixture(t, { feed: ({ signature, length }) => {
+    checks++;
+    if (checks === 1) return appcast;
+    if (checks > 2) return '<rss><channel/></rss>';
+    return appcast.replace('</item>', `<sparkle:deltas><enclosure sparkle:deltaFrom="24141" url="https://persistent.oaistatic.com/checked.delta" length="${length}" sparkle:edSignature="${signature}"/></sparkle:deltas></item>`);
+  } });
+  const download = createCodexUpdateDownload(setup.options, { ...setup.dependencies, selectArchive: selectCodexUpdateArchive });
+  const cdp = { send: async (_method, params) => ({ result: { value: params.expression.includes('})("channel",')
+    ? { beta: false } : { isUpdateReady: false, lifecycleState: 'idle' } } }) };
+  for (const force of [false, true]) {
+    assert.equal((await readCodexUpdateStatus(cdp, { force, download })).checking, true);
+    await waitFor(async () => (await readCodexUpdateStatus(cdp, { download })).available);
+    await downloadCodexUpdate(cdp, download);
+    await download.wait();
+    if (!force) assert.match(download.status().message, /未提供.*增量包/);
+  }
+  assert.equal(checks, 2, 'only the two explicit checks request the rollout feed');
+  assert.equal(setup.requests.at(-1).pathname, '/checked.delta');
+  assert.equal(download.status().ready, true);
+  assert.equal(setup.applied.length, 1);
+});
+
 test('an invalid official feed reports an error rather than the latest version', { skip: process.platform !== 'darwin' }, async t => {
   const setup = await fixture(t, { feed: '' });
   const download = createCodexUpdateDownload(setup.options, setup.dependencies);
@@ -148,19 +174,15 @@ test('downloads in the background, verifies signature, stages, restores, and dro
   assert.equal(download.status(), null);
   await download.restore();
   assert.equal(setup.commands.length, 0, 'no stage must not read the installed App');
-  let resolvePlan;
-  download.start({ ...target, getPlanType: () => new Promise(resolve => { resolvePlan = resolve; }) });
+  download.start(checkedOffer);
   assert.equal(download.status().downloading, true);
-  while (!resolvePlan) await new Promise(resolve => setImmediate(resolve));
-  resolvePlan('pro');
   await download.wait();
   assert.equal(download.status().ready, true);
   const staged = path.join(setup.options.dataDirectory, 'codex-update/staged');
   assert.deepEqual(JSON.parse(await readFile(path.join(staged, 'metadata.json'), 'utf8')), {
     version: 1, ...target, installedVersion: '26.1027.61615', installedBuildVersion: '24141', architecture: 'arm64',
   });
-  assert.equal(setup.requests[0].searchParams.get('plan_type'), 'pro');
-  assert.equal(setup.requests[0].searchParams.get('beta'), 'false');
+  assert.deepEqual(setup.requests.map(url => url.pathname), ['/codex-app-prod/fixture.delta']);
   assert.ok(setup.commands.some(([command, args]) => command.endsWith('/codesign') && args.includes('--deep')));
   assert.ok(setup.commands.some(([command, args]) => command.endsWith('/codesign') && path.basename(args.at(-1)) === 'codex'));
   await assert.rejects(readFile(path.join(staged, 'update.delta')), { code: 'ENOENT' });
@@ -177,7 +199,7 @@ test('downloads in the background, verifies signature, stages, restores, and dro
 test('rejects invalid archive signatures before extraction and allows retry', async t => {
   const setup = await fixture(t, { badSignature: true });
   const download = createCodexUpdateDownload(setup.options, setup.dependencies);
-  download.start({ ...target, planType: 'pro' });
+  download.start(checkedOffer);
   await download.wait();
   assert.equal(download.status().ready, false);
   assert.equal(download.status().available, true);
@@ -187,7 +209,7 @@ test('rejects invalid archive signatures before extraction and allows retry', as
   assert.equal(await partialFile(setup), undefined);
   download.clearFailure();
   assert.equal(download.status(), null);
-  download.start({ ...target, planType: 'pro' });
+  download.start(checkedOffer);
   assert.equal(download.status().downloading, true);
   await download.wait();
 });
@@ -195,10 +217,10 @@ test('rejects invalid archive signatures before extraction and allows retry', as
 test('reports native transport failure without applying an update', async t => {
   const setup = await fixture(t, { downloadError: 'Codex 更新地址不是官方 HTTPS 地址' });
   const download = createCodexUpdateDownload(setup.options, setup.dependencies);
-  download.start({ ...target, planType: 'pro' });
+  download.start(checkedOffer);
   await download.wait();
   assert.match(download.status().message, /不是官方 HTTPS 地址/);
-  assert.equal(setup.requests.length, 2);
+  assert.equal(setup.requests.length, 1);
   assert.equal(setup.applied.length, 0);
 });
 
@@ -240,17 +262,17 @@ for (const failure of ['network', 'timeout']) {
       options.onProgress?.(archive.length);
     } });
     const download = createCodexUpdateDownload(setup.options, setup.dependencies);
-    download.start({ ...target, planType: 'pro' });
+    download.start(checkedOffer);
     await download.wait();
     assert.equal(download.status().phase, 'failed');
     const file = await partialFile(setup);
     assert.ok(file, 'failed transfer must retain its partial file for retry');
     assert.equal((await stat(file)).size, 9);
-    download.start({ ...target, planType: 'pro' });
+    download.start({ ...checkedOffer, appcastXml: appcast.replace('<channel>', '<channel><title>Updated feed</title>') });
     await download.wait();
     assert.equal(download.status().phase, 'ready');
     assert.deepEqual(offsets, [0, 9]);
-    assert.equal(setup.requests.filter(url => url.pathname.endsWith('/appcast')).length, 1);
+    assert.equal(setup.requests.filter(url => url.pathname.endsWith('/appcast')).length, 0);
     assert.equal(setup.applied.length, 1);
   });
 }
@@ -261,7 +283,7 @@ test('cancels a failed download and discards the retained partial file', async t
     throw Object.assign(new Error('Network interrupted'), { retryable: true });
   } });
   const download = createCodexUpdateDownload(setup.options, setup.dependencies);
-  download.start({ ...target, planType: 'pro' });
+  download.start(checkedOffer);
   await download.wait();
   assert.ok(await partialFile(setup));
   assert.equal(download.cancel().phase, 'cancelled');
@@ -280,18 +302,18 @@ test('discards failed partial bytes when downloading a different target version'
     await writeFile(options.destination, archive, { signal: options.signal });
   } });
   const download = createCodexUpdateDownload(setup.options, setup.dependencies);
-  download.start(target);
+  download.start(checkedOffer);
   await download.wait();
   const previousFile = await partialFile(setup);
   assert.ok(previousFile);
   const next = { availableVersion: '26.1029.61004', availableBuildVersion: '24615' };
   setup.offeredTarget(next);
-  download.start(next);
+  download.start({ ...next, appcastXml: appcast });
   await download.wait();
   assert.equal(download.status().phase, 'ready');
   assert.deepEqual(offsets, [0, 0]);
   await assert.rejects(stat(previousFile), { code: 'ENOENT' });
-  assert.equal(setup.requests.filter(url => url.pathname.endsWith('/appcast')).length, 2);
+  assert.equal(setup.requests.filter(url => url.pathname.endsWith('/appcast')).length, 0);
 });
 
 for (const nativeResumeMode of ['append', 'overwrite']) {
@@ -307,7 +329,7 @@ for (const nativeResumeMode of ['append', 'overwrite']) {
       options.onProgress?.(archive.length);
     } });
     const download = createCodexUpdateDownload(setup.options, setup.dependencies);
-    download.start({ ...target, planType: 'pro' });
+    download.start(checkedOffer);
     await waitFor(async () => {
       const file = await partialFile(setup);
       return file && await stat(file).then(info => info.size === 9).catch(() => false);
@@ -329,7 +351,7 @@ test('propagates native resume validation failure without applying corrupt bytes
     throw new Error('Codex 更新续传范围与已下载文件不一致');
   } });
   const download = createCodexUpdateDownload(setup.options, setup.dependencies);
-  download.start({ ...target, planType: 'pro' });
+  download.start(checkedOffer);
   await waitFor(async () => {
     const file = await partialFile(setup);
     return file && await stat(file).then(info => info.size === 9).catch(() => false);
@@ -351,7 +373,7 @@ test('cancels a partial download, cleans it after abort settles, and retries aft
     options.onProgress?.(archive.length);
   } });
   const download = createCodexUpdateDownload(setup.options, setup.dependencies);
-  download.start({ ...target, planType: 'pro' });
+  download.start(checkedOffer);
   await waitFor(async () => {
     const file = await partialFile(setup);
     return file && await stat(file).then(info => info.size === 9).catch(() => false);
@@ -367,7 +389,7 @@ test('cancels a partial download, cleans it after abort settles, and retries aft
     return { result: { value: { isUpdateReady: false, lifecycleState: 'idle' } } };
   } };
   let checks = 0;
-  download.check = async () => { checks++; return { status: 'available', ...target }; };
+  download.check = async () => { checks++; return { status: 'available', ...checkedOffer }; };
   assert.equal((await downloadCodexUpdate(cdp, download)).checking, true);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal((await readCodexUpdateStatus(cdp, { download })).available, true);
@@ -387,7 +409,7 @@ test('cancels delta application without publishing a ready update', async t => {
     applicationStarted();
   });
   const download = createCodexUpdateDownload(setup.options, setup.dependencies);
-  download.start({ ...target, planType: 'pro' });
+  download.start(checkedOffer);
   await started;
   assert.equal(download.status().phase, 'verifying');
   assert.equal(download.pause().phase, 'verifying');
