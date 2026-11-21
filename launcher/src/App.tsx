@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import ReactMarkdown from "react-markdown";
-import { AlertDialog, Badge, Box, Button, Callout, Dialog, Flex, Heading, IconButton, Select, Separator, Switch, Tabs, Text, TextField, Tooltip } from "@radix-ui/themes";
+import { AlertDialog, Badge, Box, Button, Callout, Dialog, Flex, Heading, IconButton, Progress, Select, Separator, Switch, Tabs, Text, TextField, Tooltip } from "@radix-ui/themes";
 import { LinearIcon } from "../../web/src/components/LinearIcon";
 import { ModelContextSettings } from "./ModelContextSettings";
 import { PetAnimationSettings } from "./PetAnimationSettings";
@@ -16,6 +16,7 @@ export type LauncherSnapshot = {
   threadTabsMessage: string;
   nativeAdaptersPhase: string;
   nativeAdaptersMessage: string;
+  nativeAdaptersProgress?: number | null;
   nativeAdaptersFeatures: { feature: string; phase: string; message: string }[];
   openRequestPending: boolean;
   updateMessage: string;
@@ -311,7 +312,8 @@ export function App() {
   }
 
   const threadTabsLabels: Record<string, string> = { waiting: "等待连接", loading: "加载中", prepared: "已准备，等待页面加载", ready: "已加载", failed: "加载失败" };
-  const nativeAdaptersInProgress = ["reading", "adapting", "prepared", "applying"].includes(snapshot.nativeAdaptersPhase);
+  const nativeAdaptersInProgress = !["error", "restart_required", "stopped"].includes(snapshot.phase)
+    && ["reading", "adapting", "prepared", "applying"].includes(snapshot.nativeAdaptersPhase);
   const adapterFeatureLabels: Record<string, string> = { quota: "API 发送限制", ultrafast: "Ultrafast", dot: "Dot 入口", tabs: "会话菜单", queue: "排队消息", pets: "宠物", projectlessChat: "无项目聊天", nativeUpdate: "Codex 更新", nativeServices: "原生服务" };
   const activeAdapterModules = snapshot.nativeAdaptersFeatures?.filter(feature => feature.phase === "loading")
     .map(feature => `${adapterFeatureLabels[feature.feature] || feature.feature} · ${feature.message}`).join("；");
@@ -344,10 +346,6 @@ export function App() {
           {iconAction("browserPanel", "open_browser_panel", "在浏览器中打开", <LinearIcon name="openExternal" />, !hasProcess)}
         </Flex>
       </header>}
-      {!workflowUrl && nativeAdaptersInProgress && <Box id="nativeAdaptersComponent" mb="4" role="status" aria-live="polite">
-        <Text as="p" id="nativeAdaptersMessage" size="1" color="gray">Codex 适配中 · {snapshot.nativeAdaptersMessage}</Text>
-        {activeAdapterModules && <Text as="p" size="1" color="gray" mt="1">{activeAdapterModules}</Text>}
-      </Box>}
       {error && !usageSettingsOpen && <Callout.Root id="errorNotice" color="red" size="1" role="alert" mb="4">
         <Callout.Icon><LinearIcon name="alert" /></Callout.Icon>
         <Callout.Text id="errorText" className="launcher-error">{error}</Callout.Text>
@@ -365,14 +363,24 @@ export function App() {
       </Callout.Root>}
           <Tabs.Content value="overview" id="overviewView">
             <section className="status-panel">
-              <Flex align="center" gap="3">
-                <div className={`status-symbol ${snapshot.phase}`}><LinearIcon name={snapshot.phase === "error" ? "alert" : ready ? "check" : "terminal"} /></div>
-                <Box>
-                  <Badge id="status" variant="soft" color={snapshot.phase === "error" ? "red" : "gray"} size="1" mb="2"><span id="statusText">{labels[snapshot.phase] || "启动中"}</span></Badge>
-                  <Heading id="overviewTitle" as="h3" size="4">{titles[snapshot.phase] || "正在建立连接"}</Heading>
-                </Box>
-              </Flex>
+              <Flex align="center" justify="between" gap="4">
+                <Box className="status-panel-summary">
+                  <Flex align="center" gap="3">
+                    <div className={`status-symbol ${snapshot.phase}`}><LinearIcon name={snapshot.phase === "error" ? "alert" : ready ? "check" : "terminal"} /></div>
+                    <Box>
+                      <Badge id="status" variant="soft" color={snapshot.phase === "error" ? "red" : "gray"} size="1" mb="2"><span id="statusText">{labels[snapshot.phase] || "启动中"}</span></Badge>
+                      <Heading id="overviewTitle" as="h3" size="4">{titles[snapshot.phase] || "正在建立连接"}</Heading>
+                    </Box>
+                  </Flex>
                   <Text as="p" id="message" size="2" color="gray" mt="2" aria-live="polite">{snapshot.message}</Text>
+                </Box>
+                {nativeAdaptersInProgress && <Box id="nativeAdaptersComponent" className="native-adapters-progress" role="status" aria-live="polite">
+                  <Text as="p" size="1" color="gray" mb="2">{snapshot.nativeAdaptersProgress == null ? "适配中" : `适配中 · 阶段进度 ${Math.round(snapshot.nativeAdaptersProgress)}%`}</Text>
+                  <Progress value={snapshot.nativeAdaptersProgress ?? null} size="2" aria-label="Codex 当前阶段适配进度" />
+                  <Text as="p" id="nativeAdaptersMessage" size="1" color="gray" mt="2">{snapshot.nativeAdaptersMessage}</Text>
+                  {activeAdapterModules && <Text as="p" size="1" color="gray" mt="1">{activeAdapterModules}</Text>}
+                </Box>}
+              </Flex>
             </section>
             <section className="overview-section" aria-labelledby="connectionStatusTitle">
               <Heading as="h3" size="2" id="connectionStatusTitle" mb="3">服务与连接</Heading>

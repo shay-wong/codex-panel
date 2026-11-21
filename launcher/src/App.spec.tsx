@@ -556,7 +556,7 @@ it("opens pets from its own navigation page and refreshes the real selection whe
   await screen.findByRole("button", { name: "取消使用" });
 });
 
-it("shows only ongoing adapter progress at the top while Codex remains connected", async () => {
+it("shows adapter progress inside the status panel alongside the independent connection status", async () => {
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const snapshot: LauncherSnapshot = {
@@ -578,10 +578,17 @@ it("shows only ongoing adapter progress at the top while Codex remains connected
   await act(async () => {});
   const progress = document.getElementById("nativeAdaptersComponent")!;
   expect(progress.textContent).toContain("正在读取 Codex 原生模块");
-  expect(progress.compareDocumentPosition(document.querySelector(".status-panel")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(progress.closest(".maintenance-card")).toBeNull();
+  expect(progress.closest(".status-panel")).toBe(document.querySelector(".status-panel"));
+  expect(document.getElementById("overviewTitle")?.textContent).toBe("Panel 已就绪");
+  expect(document.getElementById("message")?.textContent).toBe(snapshot.message);
+  expect(document.querySelector(".status-symbol")?.classList.contains("running")).toBe(true);
+  expect(within(progress).getByRole("progressbar")).toBe(screen.getByRole("progressbar"));
+  expect(document.getElementById("nativeAdaptersMessage")?.parentElement).toBe(progress);
+  expect(document.getElementById("message")?.closest("#nativeAdaptersComponent")).toBeNull();
+  expect(screen.getByRole("progressbar").hasAttribute("aria-valuenow")).toBe(false);
   await act(async () => { statusListener({ payload: { ...snapshot,
     nativeAdaptersPhase: "adapting", nativeAdaptersMessage: "正在并行适配 2 项功能",
+    nativeAdaptersProgress: 42,
     nativeAdaptersFeatures: [
       { feature: "quota", phase: "loading", message: "模块 42 · 2/10" },
       { feature: "tabs", phase: "loading", message: "模块 75 · 3/10" },
@@ -589,12 +596,16 @@ it("shows only ongoing adapter progress at the top while Codex remains connected
     ],
   } }); });
   expect(document.getElementById("statusText")?.textContent).toBe("运行正常");
+  expect(document.getElementById("overviewTitle")?.textContent).toBe("Panel 已就绪");
+  expect(document.getElementById("message")?.textContent).toBe(snapshot.message);
   expect(document.getElementById("codexStatus")?.textContent).toBe("连接已就绪");
   expect(document.getElementById("embeddedStatus")?.textContent).toBe("已在 Codex 中打开");
   expect(progress.textContent).toContain("正在并行适配 2 项功能");
   expect(progress.textContent).toContain("模块 42 · 2/10");
   expect(progress.textContent).toContain("模块 75 · 3/10");
   expect(progress.textContent).not.toContain("已启用");
+  expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("42");
+  expect(within(progress).getByText("适配中 · 阶段进度 42%")).toBeTruthy();
   expect(document.getElementById("threadTabsComponent")?.querySelector("details")).toBeNull();
   for (const phase of ["ready", "partial", "failed", "waiting"]) {
     await act(async () => { statusListener({ payload: { ...snapshot,
@@ -602,5 +613,14 @@ it("shows only ongoing adapter progress at the top while Codex remains connected
       nativeAdaptersFeatures: [{ feature: "quota", phase: "ready", message: "已启用" }],
     } }); });
     expect(document.getElementById("nativeAdaptersComponent")).toBeNull();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(document.getElementById("overviewTitle")?.textContent).toBe("Panel 已就绪");
+    expect(document.getElementById("message")?.textContent).toBe(snapshot.message);
   }
+  await act(async () => { statusListener({ payload: { ...snapshot,
+    phase: "error", message: "连接失败", nativeAdaptersPhase: "adapting",
+  } }); });
+  expect(document.getElementById("nativeAdaptersComponent")).toBeNull();
+  expect(document.getElementById("statusText")?.textContent).toBe("运行异常");
+  expect(document.getElementById("message")?.textContent).toBe("连接失败");
 });
