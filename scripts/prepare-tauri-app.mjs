@@ -345,6 +345,7 @@ async function copyApplicationResources() {
     "codex-update-delta.mjs",
     "codex-update-transport.mjs",
     "codex-rspack.mjs",
+    "codex-rspack-revisions.mjs",
     "codex-rspack-source.mjs",
     "codex-rspack-worker.mjs",
     "codex-source-ast.mjs",

@@ -1,5 +1,5 @@
 import { parentPort, workerData } from 'node:worker_threads';
-import { buildRspackFeaturePlan, buildRspackUpdatePlan, composeRspackFeaturePlans } from './codex-rspack.mjs';
+import { buildRspackFeaturePlan, buildRspackUpdatePlan, buildRspackServicePlan, composeRspackFeaturePlans } from './codex-rspack.mjs';
 import { readCodexRspack, shareRspackCatalog, sharedRspackCatalog } from './codex-rspack-source.mjs';
 
 let lastPhase, lastTime = 0;
@@ -24,6 +24,7 @@ try {
     result = workerData.task === 'compose'
       ? composeRspackFeaturePlans(catalog, workerData.plans, onProgress)
       : workerData.feature === 'nativeUpdate' ? buildRspackUpdatePlan(catalog, onProgress)
+        : workerData.feature === 'nativeServices' ? buildRspackServicePlan(catalog, onProgress)
         : buildRspackFeaturePlan(catalog, workerData.feature, onProgress);
   }
   parentPort.postMessage({ type: 'result', result });

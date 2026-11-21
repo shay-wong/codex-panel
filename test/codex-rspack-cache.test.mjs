@@ -14,6 +14,8 @@ const loaderUrl = new URL('../scripts/codex-rspack.mjs', import.meta.url).href;
 const native = 'function(module){module.exports="native";}';
 const entry = 'const table={};function load(id){return table[id];}load.m=table;export{load as __webpack_require__};';
 const allFeatures = ['quota', 'ultrafast', 'dot', 'tabs', 'queue', 'pets', 'projectlessChat'];
+const allJobs = ['nativeUpdate', 'nativeServices', ...allFeatures];
+const revisions = { catalog: 'catalog-one', compose: 'compose-one', features: Object.fromEntries(allJobs.map(feature => [feature, 'one'])) };
 
 async function writeArchive(appPath, revision = 'one', factoryCount = 1, factorySource = native) {
   const resources = path.join(appPath, 'Contents/Resources');
@@ -44,7 +46,19 @@ async function fixture(t) {
   const cacheDirectory = path.join(root, 'data/codex-adapters');
   await mkdir(path.join(root, 'workspace'), { recursive: true });
   await writeArchive(appPath);
-  return { root, appPath, cacheDirectory, adapterRevision: 'adapter-one' };
+  return { root, appPath, cacheDirectory, revisions };
+}
+
+async function planFiles(directory) {
+  return (await readdir(directory)).filter(name => name.endsWith('.json'));
+}
+
+function successfulFeature(feature) {
+  const plan = successfulPlan(allFeatures.includes(feature) ? [feature] : []);
+  if (allFeatures.includes(feature)) plan.patches = { [feature]: [{ before: native, after: native.replace('"native"', '"adapted"'), features: [feature] }] };
+  if (feature === 'nativeUpdate') { plan.patches = {}; plan.nativeUpdate = { subscription: { id: 'item', name: 'update' } }; }
+  if (feature === 'nativeServices') { plan.patches = {}; plan.nativeServices = { desktopServices: { id: 'item', exportName: 'services' } }; }
+  return plan;
 }
 
 function successfulPlan(features) {
@@ -55,27 +69,37 @@ function successfulPlan(features) {
   };
 }
 
+function fixtureCompose(_catalog, plans) {
+  return { patches: Object.assign({}, ...plans.map(plan => plan.patches)), prepared: Object.assign({}, ...plans.map(plan => plan.prepared)),
+    errors: Object.assign({}, ...plans.map(plan => plan.errors)), chunks: Object.assign({}, ...plans.map(plan => plan.chunks)),
+    nativeUpdate: Object.assign({}, ...plans.map(plan => plan.nativeUpdate)), nativeServices: Object.assign({}, ...plans.map(plan => plan.nativeServices)) };
+}
+
 function spies() {
-  const calls = { read: 0, build: 0 };
+  const calls = { read: 0, build: 0, features: [] };
   return {
     calls,
+    report() {},
+    composePlan: fixtureCompose,
     readCatalog: async app => { calls.read++; return readCodexRspack(app); },
-    buildPlan: (catalog, adapters) => {
-      calls.build++;
+    buildFeaturePlan: (catalog, feature) => {
+      calls.build++; calls.features.push(feature);
       assert.equal(catalog.factories.get('item').source, native);
-      return successfulPlan(Object.keys(adapters));
+      return successfulFeature(feature);
     },
   };
 }
 
 async function childCache(f, { expectedHit = true, petsOnly = false } = {}) {
   const source = `import {prepareCodexRspackPlan} from ${JSON.stringify(loaderUrl)};
+    import {readCodexRspack} from ${JSON.stringify(new URL('../scripts/codex-rspack-source.mjs', import.meta.url).href)};
+    const composePlan=${fixtureCompose};
     let read=0,build=0; const ready=[];
     const result=await prepareCodexRspackPlan(${JSON.stringify(f.appPath)},{
-      cacheDirectory:${JSON.stringify(f.cacheDirectory)},adapterRevision:${JSON.stringify(f.adapterRevision)},petsOnly:${petsOnly},
+      cacheDirectory:${JSON.stringify(f.cacheDirectory)},revisions:${JSON.stringify(f.revisions)},petsOnly:${petsOnly},report(){},composePlan,
       onFeaturePrepared:({feature})=>ready.push(feature),
-      readCatalog:async()=>{read++;${expectedHit ? 'throw Error("catalog must not be read on a disk cache hit")' : `return {main:${JSON.stringify({ urlPath: '/assets/main.js', source: entry })}}`}},
-      buildPlan:()=>{build++;${expectedHit ? 'throw Error("plan must not be built on a disk cache hit")' : `return ${JSON.stringify(successfulPlan(petsOnly ? ['pets'] : allFeatures))}`}}
+      readCatalog:async(app)=>{read++;${expectedHit ? 'throw Error("catalog must not be read on a disk cache hit")' : 'return readCodexRspack(app)'}},
+      buildFeaturePlan:()=>{build++;throw Error("cached feature plans must be reused")}
     });console.log(JSON.stringify({read,build,ready,features:Object.keys(result.plan.prepared),main:result.main.urlPath}));`;
   const result = await run(process.execPath, ['--input-type=module', '-e', source], { cwd: path.join(f.root, 'workspace') });
   return JSON.parse(result.stdout);
@@ -90,15 +114,16 @@ test('same artifact shares one build across concurrent calls, later calls, and a
   });
   const [first, concurrent] = await Promise.all([prepare(0), prepare(1)]);
   const next = await prepare(2);
-  const ready = ['nativeUpdate', ...allFeatures];
-  assert.deepEqual(notifications, [ready, ready, ready]);
+  const ready = allJobs;
+  assert.deepEqual(notifications.map(items => items.toSorted()), [ready, ready, ready].map(items => items.toSorted()));
   assert.equal(first, concurrent);
   assert.equal(first, next);
-  assert.deepEqual(spy.calls, { read: 1, build: 1 });
-  const files = await readdir(f.cacheDirectory);
+  assert.equal(spy.calls.read, 1);
+  assert.equal(spy.calls.build, allJobs.length);
+  const files = await planFiles(f.cacheDirectory);
   assert.equal(files.length, 1);
   assert.ok(files[0].endsWith('.json'));
-  assert.deepEqual(await childCache(f), { read: 0, build: 0, ready, features: allFeatures, main: '/assets/main.js' });
+  assert.deepEqual(await childCache(f), { read: 0, build: 0, ready, features: allFeatures.toSorted((a, b) => Number(b === 'pets') - Number(a === 'pets')), main: '/assets/main.js' });
 });
 
 test('startup reports a pending analysis immediately and reports cached preparation without analyzing again', async t => {
@@ -125,7 +150,8 @@ test('startup reports a pending analysis immediately and reports cached preparat
   } };
   await prepareCodexRspack(cdp, f.appPath, null, () => {}, { ...f, onProgress: message => messages.push(message) });
   assert.deepEqual(messages.map(progress => progress.phase), ['cache', 'prepared']);
-  assert.deepEqual(spy.calls, { read: 1, build: 1 });
+  assert.equal(spy.calls.read, 1);
+  assert.equal(spy.calls.build, allJobs.length);
 });
 
 test('native features analyze concurrently in two workers and publish results before final composition', async t => {
@@ -142,15 +168,15 @@ test('native features analyze concurrently in two workers and publish results be
       active.add(item.feature);
       maximumActive = Math.max(maximumActive, active.size);
     }
-    if (item.phase === 'compose') assert.equal(completed.length, allFeatures.length + 1);
+    if (item.phase === 'compose') assert.equal(completed.length, allFeatures.length + 2);
   }, onFeaturePrepared: ({ feature }) => { completed.push(feature); active.delete(feature); } });
   clearInterval(timer);
   assert.ok(heartbeats > 0, 'main-loop heartbeats continue during native module analysis');
   assert.ok(progress.some(item => item.phase === 'read' && item.asset === 'webview/chunks/relocated.js'));
   const features = [...new Set(progress.filter(item => item.phase === 'adapt').map(item => item.feature))];
-  assert.deepEqual(features.toSorted(), ['nativeUpdate', ...allFeatures].toSorted());
+  assert.deepEqual(features.toSorted(), allJobs.toSorted());
   assert.equal(maximumActive, 2, 'independent feature analysis overlaps with at most two workers');
-  const ratios = new Map(['nativeUpdate', ...allFeatures].map(feature => [feature, 0]));
+  const ratios = new Map(allJobs.map(feature => [feature, 0]));
   let lastPercent = 0;
   for (const item of progress.filter(item => item.phase === 'adapt')) {
     ratios.set(item.feature, item.total > 0 ? item.completed / item.total : 1);
@@ -160,7 +186,7 @@ test('native features analyze concurrently in two workers and publish results be
     lastPercent = item.percent;
   }
   assert.equal(lastPercent, 100);
-  assert.deepEqual(completed.toSorted(), ['nativeUpdate', ...allFeatures].toSorted());
+  assert.deepEqual(completed.toSorted(), allJobs.toSorted());
   assert.ok(progress.some(item => item.phase === 'adapt' && item.moduleId === 'item-0' && item.completed === 0));
   assert.ok(progress.some(item => item.phase === 'compose' && item.completed === 0 && item.total === 0));
   assert.deepEqual(result.plan.prepared, Object.fromEntries(allFeatures.map(feature => [feature, false])));
@@ -171,8 +197,8 @@ test('one ambiguous native descriptor still lets the other features finish', asy
   const service = 'function(module,exports,load){let current;function publish(value){current=value}load.d(exports,{setAppServices:()=>publish,appServices:()=>current});}';
   await writeArchive(f.appPath, 'ambiguous-service', 2, service);
   const { plan } = await buildCodexRspackInWorker(f.appPath, { onFeaturePrepared: ({feature}) => ready.push(feature) });
-  assert.match(plan.errors.pets, /ambiguous/);
-  assert.deepEqual(ready.toSorted(), ['nativeUpdate', ...allFeatures].toSorted());
+  assert.match(plan.errors.nativeServices, /ambiguous/);
+  assert.deepEqual(ready.toSorted(), allJobs.toSorted());
 });
 
 test('publishing native descriptors reuses loaded exports and leaves UI factories alone until reload', async () => {
@@ -210,46 +236,55 @@ test('publishing native descriptors reuses loaded exports and leaves UI factorie
   assert.deepEqual(chunks, [19]);
 });
 
-test('archive identity and adapter revision each invalidate the static cache', async t => {
+test('archive changes invalidate all modules while one adapter revision rebuilds only its own module', async t => {
   const f = await fixture(t), spy = spies();
   await prepareCodexRspackPlan(f.appPath, { ...f, ...spy });
   await writeArchive(f.appPath, 'two-with-new-bytes');
   await prepareCodexRspackPlan(f.appPath, { ...f, ...spy });
-  const updated = { ...f, adapterRevision: 'adapter-two' };
+  const updated = { ...f, revisions: { ...revisions, features: { ...revisions.features, dot: 'two' } } };
+  spy.calls.features.length = 0;
   await prepareCodexRspackPlan(f.appPath, { ...updated, ...spy });
-  assert.deepEqual(spy.calls, { read: 3, build: 3 });
-  assert.equal((await readdir(f.cacheDirectory)).length, 3);
+  assert.equal(spy.calls.read, 3);
+  assert.equal(spy.calls.build, allJobs.length * 2 + 1);
+  assert.deepEqual(spy.calls.features, ['dot']);
+  assert.equal((await planFiles(f.cacheDirectory)).length, 3);
   assert.equal((await childCache(updated)).build, 0);
 });
 
 test('damaged disk cache rebuilds atomically and is reusable by the next process', async t => {
   const f = await fixture(t), spy = spies();
   await prepareCodexRspackPlan(f.appPath, { ...f, ...spy });
-  const [file] = await readdir(f.cacheDirectory);
+  const [file] = await planFiles(f.cacheDirectory);
   await writeFile(path.join(f.cacheDirectory, file), '{invalid');
-  assert.equal((await childCache(f, { expectedHit: false })).build, 1);
+  assert.equal((await childCache(f, { expectedHit: false })).build, 0);
   assert.equal((await childCache(f)).read, 0);
   const valid = await readFile(path.join(f.cacheDirectory, file), 'utf8');
   await writeFile(path.join(f.cacheDirectory, file), valid.replace('adapted', 'damaged'));
-  assert.equal((await childCache(f, { expectedHit: false })).build, 1, 'valid JSON with corrupted patch bytes must rebuild');
+  assert.equal((await childCache(f, { expectedHit: false })).build, 0, 'damaged composition reuses successful module plans');
   assert.equal((await childCache(f)).build, 0);
-  assert.deepEqual(await readdir(f.cacheDirectory), [file]);
-  assert.equal(JSON.parse(await readFile(path.join(f.cacheDirectory, file), 'utf8')).format, 1);
+  assert.deepEqual(await planFiles(f.cacheDirectory), [file]);
+  assert.equal(JSON.parse(await readFile(path.join(f.cacheDirectory, file), 'utf8')).format, 2);
 });
 
-test('full and pets-only caches stay separate and failed plans are retried', async t => {
+test('full and pets-only share successful module plans and retry only failed modules', async t => {
   const f = await fixture(t), spy = spies();
   await prepareCodexRspackPlan(f.appPath, { ...f, ...spy });
   const pets = await prepareCodexRspackPlan(f.appPath, { ...f, ...spy, petsOnly: true });
   assert.deepEqual(Object.keys(pets.plan.prepared), ['pets']);
-  assert.equal(spy.calls.build, 2);
+  assert.equal(spy.calls.build, allJobs.length);
   assert.deepEqual((await childCache(f, { petsOnly: true })).features, ['pets']);
-  const broken = { ...f, adapterRevision: 'broken-adapter' };
-  const failed = () => ({ ...successfulPlan(allFeatures), prepared: { quota: false }, errors: { quota: 'not prepared' } });
+  const broken = { ...f, revisions: { ...revisions, features: { ...revisions.features, quota: 'broken' } } };
   let failures = 0;
-  for (let i = 0; i < 2; i++) await prepareCodexRspackPlan(f.appPath, { ...broken, readCatalog: spy.readCatalog, buildPlan: () => { failures++; return failed(); } });
+  spy.calls.features.length = 0;
+  const failed = (catalog, feature) => {
+    if (feature !== 'quota') return spy.buildFeaturePlan(catalog, feature);
+    failures++;
+    return { ...successfulFeature(feature), prepared: { quota: false }, errors: { quota: 'not prepared' } };
+  };
+  for (let i = 0; i < 2; i++) await prepareCodexRspackPlan(f.appPath, { ...broken, ...spy, buildFeaturePlan: failed });
   assert.equal(failures, 2);
-  assert.equal((await readdir(f.cacheDirectory)).length, 2);
+  assert.deepEqual(spy.calls.features, []);
+  assert.equal((await planFiles(f.cacheDirectory)).length, 2);
 });
 
 test('a disk hit still reads current preferences and uses each renderer URL', async t => {
@@ -269,8 +304,9 @@ test('a disk hit still reads current preferences and uses each renderer URL', as
   assert.ok(first.source.includes('quota.setEnabled(false)'));
   assert.ok(second.source.includes('quota.setEnabled(true)'));
   assert.deepEqual(calls.filter(call => call.method === 'Fetch.enable').map(call => call.params.patterns[0].urlPattern), ['app://first/assets/main.js', 'app://second/assets/main.js']);
-  assert.deepEqual(spy.calls, { read: 1, build: 1 });
-  const [file] = await readdir(f.cacheDirectory);
+  assert.equal(spy.calls.read, 1);
+  assert.equal(spy.calls.build, allJobs.length);
+  const [file] = await planFiles(f.cacheDirectory);
   const persisted = await readFile(path.join(f.cacheDirectory, file), 'utf8');
   assert.equal(persisted.includes('customProviderQuotaFix'), false);
   assert.equal(persisted.includes('app://first'), false);

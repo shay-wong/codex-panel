@@ -2594,7 +2594,7 @@ async function injectAvatarTarget(runtime, target, sourceHash, appPath, keepAliv
     await waitForRendererReady(cdp, 15_000);
     const petAnimations = await readPetAnimations(panelDataDirectory);
     const adapters = await prepareCodexRspack(cdp, appPath, panelEnvironment("PREFERENCES_FILE"), console.error, {
-      petsOnly: true, petAnimations, cacheDirectory: path.join(panelDataDirectory, "codex-adapters"), adapterRevision: sourceHash, unrefWorkers: keepAlive,
+      petsOnly: true, petAnimations, cacheDirectory: path.join(panelDataDirectory, "codex-adapters"), unrefWorkers: keepAlive,
     });
     if (!adapters?.prepared.pets) throw new Error("Pet animation module is unavailable");
     const currentStatus = await readAvatarInjectionStatus(cdp);
@@ -2699,14 +2699,14 @@ async function syncPetAnimations(dataDirectory, connections) {
   }
 }
 
-async function prepareNativeAdapters(cdp, appPath, reportThreadTabs, sourceHash, onProgress, onFeaturePrepared) {
+async function prepareNativeAdapters(cdp, appPath, reportThreadTabs, onProgress, onFeaturePrepared) {
   const preferences = panelEnvironment("PREFERENCES_FILE");
   try {
     let petAnimations = [];
     try { petAnimations = await readPetAnimations(panelDataDirectory); }
     catch (error) { console.error(`Pet animation configuration is unavailable: ${error.message}`); }
     const rspack = await prepareCodexRspack(cdp, appPath, preferences, console.error, {
-      petAnimations, cacheDirectory: path.join(panelDataDirectory, "codex-adapters"), adapterRevision: sourceHash, onProgress, onFeaturePrepared, unrefWorkers: true,
+      petAnimations, cacheDirectory: path.join(panelDataDirectory, "codex-adapters"), onProgress, onFeaturePrepared, unrefWorkers: true,
     });
     if (rspack) {
       if (!rspack.prepared.tabs) reportThreadTabs(`Panel conversation tabs unavailable: ${rspack.errors.tabs}`);
@@ -2803,10 +2803,11 @@ async function injectTarget(
       void cdp.onThreadTabsStatus?.();
       const liveApplications = [];
       cdp.nativeAdaptersTask = (async () => {
-        const adapters = await prepareNativeAdapters(cdp, appPath, reportThreadTabs, sourceHash, reportProgress, result => {
+        const adapters = await prepareNativeAdapters(cdp, appPath, reportThreadTabs, reportProgress, result => {
           if (cdp.closed) return;
           const feature = result.feature;
-          const prepared = feature === "nativeUpdate" ? Object.values(result.plan.nativeUpdate ?? {}).some(Boolean) : result.plan.prepared[feature] === true;
+          const prepared = feature === "nativeUpdate" || feature === "nativeServices"
+            ? Object.values(result.plan[feature] ?? {}).some(Boolean) : result.plan.prepared[feature] === true;
           features.set(feature, { feature, phase: prepared ? "prepared" : "failed", message: prepared ? "已适配，等待统一应用" : result.plan.errors[feature] || "未找到兼容的原生模块" });
           const application = applyCodexRspackFeature(cdp, result.plan).then(applied => {
             if (!applied?.length || cdp.closed) return;
