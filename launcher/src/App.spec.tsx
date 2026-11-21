@@ -55,7 +55,7 @@ it("keeps launcher feedback, live status and global preferences working through 
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const current: LauncherState = {
     snapshot: {
-      phase: "waiting", message: "Panel 服务已启动，正在等待 Codex 连接。", version: "0.1.0",
+      phase: "waiting", message: "Panel 服务已启动，正在等待 Codex 连接。", version: "0.1.0", buildNumber: "42",
       childPid: 123, openRequestPending: false, embeddedVisible: false,
       threadTabsPhase: "waiting", threadTabsMessage: "",
       nativeAdaptersPhase: "waiting", nativeAdaptersMessage: "", nativeAdaptersFeatures: [],
@@ -191,6 +191,9 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(document.querySelector(".sidebar-footer")).toBeNull();
   expect(button("checkCodexUpdates")).toBeTruthy();
   fireEvent.mouseDown(screen.getByRole("tab", { name: /关于/ }), { button: 0, ctrlKey: false });
+  expect(document.getElementById("version")?.textContent).toBe("版本 0.1.0 · Build 42");
+  await publish({ buildNumber: null });
+  expect(document.getElementById("version")?.textContent).toBe("版本 0.1.0");
   expect(within(document.getElementById("aboutView")!).getByRole("button", { name: "检查更新" })).toBeTruthy();
   expect(screen.queryByRole("region", { name: "版本说明" })).toBeNull();
   await publish({ updateAvailable: true, updateNotes: "## 更新内容\n\n- 恢复 **GPT-6.2** 的 UF 选择。\n- 保留原生安装流程。" });

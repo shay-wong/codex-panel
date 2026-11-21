@@ -8,6 +8,7 @@ import { PetAnimationSettings } from "./PetAnimationSettings";
 export type LauncherSnapshot = {
   phase: string;
   version: string;
+  buildNumber?: string | null;
   message: string;
   childPid: number | null;
   embeddedVisible: boolean;
@@ -530,7 +531,7 @@ export function App() {
           <Tabs.Content value="about" id="aboutView">
             <Flex align="center" gap="4" mb="5">
               <picture aria-hidden="true"><source srcSet="icon-dark.png" media="(prefers-color-scheme: dark)" /><img width="52" height="52" src="icon-light.png" alt="" /></picture>
-              <Box><Heading as="h3" size="5">Codex Panel</Heading><Text as="p" id="version" size="2" color="gray" mt="2">版本 {snapshot.version}</Text></Box>
+              <Box><Heading as="h3" size="5">Codex Panel</Heading><Text as="p" id="version" size="2" color="gray" mt="2">版本 {snapshot.version}{snapshot.buildNumber && ` · Build ${snapshot.buildNumber}`}</Text></Box>
             </Flex>
             <Text as="p" size="2" color="gray">在 Codex 中管理任务与工作流。</Text>
             <Separator size="4" my="5" />

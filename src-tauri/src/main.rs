@@ -120,6 +120,8 @@ fn set_application_icon(theme: Theme) -> Result<(), String> {
     Ok(())
 }
 
+const LOCAL_BUILD_NUMBER: Option<&str> = option_env!("CODEX_PANEL_BUILD_NUMBER");
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LauncherSnapshot {
@@ -138,6 +140,7 @@ struct LauncherSnapshot {
     codex_update_checking: bool,
     update_url: Option<String>,
     version: String,
+    build_number: Option<&'static str>,
     app_path: Option<String>,
     child_pid: Option<u32>,
     open_signal_pid: Option<u32>,
@@ -550,6 +553,7 @@ impl LauncherState {
                 codex_update_checking: false,
                 update_url: None,
                 version,
+                build_number: LOCAL_BUILD_NUMBER,
                 app_path: None,
                 child_pid: None,
                 open_signal_pid: None,
@@ -3977,7 +3981,8 @@ fn main() {
                 window.set_size(tauri::LogicalSize::new(size.width, size.height))?;
             }
 
-            menu_diagnostics::log(&state.log_path, &format!("startup version={version} os={} arch={}", std::env::consts::OS, std::env::consts::ARCH));
+            let build = LOCAL_BUILD_NUMBER.map(|number| format!(" build={number}")).unwrap_or_default();
+            menu_diagnostics::log(&state.log_path, &format!("startup version={version}{build} os={} arch={}", std::env::consts::OS, std::env::consts::ARCH));
             #[cfg(target_os = "macos")]
             menu_diagnostics::install(&state.log_path);
 
@@ -4571,6 +4576,7 @@ mod tests {
             codex_update_checking: false,
             update_url: None,
             version: "0.1.0".into(),
+            build_number: None,
             app_path: None,
             child_pid: Some(42),
             open_signal_pid: None,
@@ -4678,6 +4684,7 @@ mod tests {
             codex_update_checking: false,
             update_url: None,
             version: "0.1.0".into(),
+            build_number: None,
             app_path: None,
             child_pid: Some(42),
             open_signal_pid: Some(42),

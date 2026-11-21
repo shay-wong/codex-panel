@@ -17,3 +17,4 @@ src-tauri/target/
 /*-proof.png
 /workflow-telemetry.json
 .playwright-mcp
+/.codex-panel-build.sqlite*

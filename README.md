@@ -183,6 +183,8 @@ npm ci
 npm run codex:install
 ```
 
+Each local package build receives an increasing build number. Open **About** to see `版本 0.5.17-fork · Build N`; macOS also records it as `CFBundleVersion`. Builds from worktrees of the same repository share the counter. A failed packaging attempt can consume a number. See [local build numbers](docs/fork-capabilities.md#local-build-numbers).
+
 The integration command builds and copies a standalone runtime to `~/Library/Application Support/Codex Panel/runtime`, copies `manage-panel` and `handoff-panel` into the standard user Skill directory at `~/.agents/skills`, installs `panelctl` in `~/.local/bin`, and generates the macOS launcher. The launcher receives its own signed copy of that runtime inside the app bundle. The installed files are real managed copies, not symbolic links back to the Git repository. Plain `npm ci` only installs project dependencies and does not write these user-level integrations. Start a new Codex task after installation to use `$manage-panel` and `$handoff-panel`.
 
 On the first install, if the fixed data directory does not exist, the installer snapshots the existing repository `.data/panel.sqlite` and copies its attachments and local configuration without deleting the source. It also removes old repository-managed `~/.codex/skills` and Node-bin links. Re-running the command atomically refreshes only files carrying the Codex Panel ownership marker; user-managed files and directories are never overwritten. Moving or deleting the repository does not break the already installed runtime. Run the command again after pulling code updates or replacing Node.js to install a new version.

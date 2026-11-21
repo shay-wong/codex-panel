@@ -6,6 +6,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Assign increasing local package build numbers, show them in About and startup logs, and include them in macOS bundle metadata.
 - Connect Panel before preparing native adapters, show ongoing module progress in a compact notice at the top of the launcher, run independent adapters concurrently, and apply interface patches with one final reload. The notice disappears when adaptation ends.
 - Make all Launcher settings toggle only through the switch itself or keyboard activation, including pet sounds.
 - Reuse successful native adaptation plans across restarts; rebuild them when the installed Codex package or Panel adapter changes.
