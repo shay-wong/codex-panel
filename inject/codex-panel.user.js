@@ -15,6 +15,7 @@
   const STYLE_ID = "codex-panel-inject-style";
   const QUICK_PHRASES_ID = "codex-panel-quick-phrases";
   const QUICK_PHRASES_KEY = "codex-panel.quick-phrases.v1";
+  const QUICK_PHRASES_ACTION_KEY = "codex-panel.quick-phrases.action.v1";
   const OWNED_ATTRIBUTE = "data-codex-panel-owned";
   const HIDDEN_ATTRIBUTE = "data-codex-panel-native-hidden";
   const USAGE_BANNER_HIDDEN_ATTRIBUTE = "data-codex-panel-usage-banner-hidden";
@@ -266,6 +267,12 @@
       .codex-panel-phrases-heading svg { width: 16px; height: 16px; flex: none; }
       .codex-panel-phrases-config { margin-left: auto; padding: 4px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--color-token-text-secondary, GrayText); font: inherit; font-size: 12px; }
       .codex-panel-phrases-hint { margin: 4px 0 12px; color: var(--color-token-text-secondary, GrayText); font-size: 12px; }
+      .codex-panel-phrases-action { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; margin: 12px 0; color: var(--color-token-text-secondary, GrayText); font-size: 12px; }
+      .codex-panel-phrases-action-description { grid-column: 1 / -1; margin: 0; line-height: 1.6; }
+      .codex-panel-phrases-action-switch { display: grid; place-items: center; flex: none; width: 40px; height: 40px; padding: 10px; border: 0; border-radius: 8px; background: transparent; color: inherit; }
+      .codex-panel-phrases-action-switch:hover { background: var(--color-token-bg-tertiary, light-dark(#eee, #353535)); }
+      .codex-panel-phrases-action-switch:focus-visible { outline: 2px solid var(--color-token-border, Highlight); outline-offset: 2px; }
+      .codex-panel-phrases-action-switch svg { width: 16px; height: 16px; }
       .codex-panel-phrases-list { display: grid; gap: 7px; }
       .codex-panel-phrase { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 0; border-radius: 9px; background: var(--color-token-bg-secondary, light-dark(#f8f8f8, #292929)); color: inherit; font: inherit; text-align: left; }
       .codex-panel-phrase:hover, .codex-panel-phrases-config:hover { background: var(--color-token-bg-tertiary, light-dark(#eee, #353535)); }
@@ -2956,6 +2963,31 @@
     )).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   }
 
+  function quickPhraseAction() {
+    return window.localStorage.getItem(QUICK_PHRASES_ACTION_KEY) || "queue";
+  }
+
+  function createQuickPhraseActionControl(status) {
+    const row = document.createElement("div");
+    row.className = "codex-panel-phrases-action";
+    row.innerHTML = '<span class="codex-panel-phrases-action-mode" aria-live="polite"></span><button type="button" class="codex-panel-phrases-action-switch cursor-interaction"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h18m-4-4 4 4-4 4M21 17H3m4-4-4 4 4 4"/></svg></button><p class="codex-panel-phrases-action-description"></p>';
+    const button = row.querySelector("button");
+    button.setAttribute("aria-label", hostText("切换快捷短语模式", "Switch quick phrase mode"));
+    button.title = hostText("切换模式", "Switch mode");
+    button.addEventListener("click", () => {
+      try {
+        const actions = ["queue", "steer", "fill"];
+        const next = actions[(actions.indexOf(quickPhraseAction()) + 1) % actions.length];
+        window.localStorage.setItem(QUICK_PHRASES_ACTION_KEY, next);
+        renderQuickPhrases();
+        setQuickPhraseStatus(status, "");
+      } catch {
+        setQuickPhraseStatus(status, hostText("无法保存点击动作，请重试。", "Could not save the click action. Please try again."));
+      }
+    });
+    return row;
+  }
+
   function quickPhraseComposer() {
     const threadId = threadIdFromLocation();
     return Array.from(document.querySelectorAll('[data-codex-composer-root][data-composer-placement="home"], [data-codex-composer-root][data-composer-placement="thread"]'))
@@ -3055,13 +3087,25 @@
     if (!quickPhrasesPanel) return;
     const list = quickPhrasesPanel.querySelector(".codex-panel-phrases-list");
     const phrases = readQuickPhrases();
+    const action = quickPhraseAction();
+    for (const root of [quickPhrasesPanel, quickPhrasesDialog]) {
+      const mode = root?.querySelector(".codex-panel-phrases-action-mode");
+      if (mode) mode.textContent = action === "fill" ? hostText("填入输入框", "Fill composer")
+        : action === "steer" ? hostText("直接引导", "Steer now") : hostText("加入队列", "Add to queue");
+      const description = root?.querySelector(".codex-panel-phrases-action-description");
+      if (description) description.textContent = action === "fill" ? hostText("只填入输入框，不自动发送。", "Fill the composer without sending.")
+        : action === "steer" ? hostText("执行中立即补充指令，引导当前任务；空闲时直接发送。", "Guide the current task immediately, or send normally when idle.")
+          : hostText("执行中加入队列，等当前任务结束后发送；空闲时直接发送。", "Wait for the current task to finish, or send immediately when idle.");
+    }
+    const actionLabel = action === "fill" ? hostText("填入：", "Fill: ")
+      : action === "steer" ? hostText("引导：", "Steer: ") : hostText("排队：", "Queue: ");
     list.replaceChildren();
     for (const phrase of phrases) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "codex-panel-phrase cursor-interaction";
       button.disabled = quickPhraseSending;
-      button.setAttribute("aria-label", hostText("发送：", "Send: ") + quickPhraseLabel(phrase));
+      button.setAttribute("aria-label", actionLabel + quickPhraseLabel(phrase));
       button.title = phrase;
       const label = document.createElement("span");
       label.textContent = quickPhraseLabel(phrase);
@@ -3086,6 +3130,7 @@
       dialog.setAttribute("aria-labelledby", "codex-panel-phrases-title");
       dialog.innerHTML = `<form><header><h2 id="codex-panel-phrases-title"></h2><button type="button" class="codex-panel-phrases-other cursor-interaction"></button></header><div role="tablist" class="codex-panel-phrases-tabs"></div><p class="codex-panel-phrases-hint"></p><label id="codex-panel-phrases-input-label"></label><div id="codex-panel-phrases-input" class="codex-panel-phrases-editor" role="tabpanel"></div><button type="button" class="codex-panel-phrases-apply cursor-interaction"></button><p role="alert" class="codex-panel-phrases-status"></p><footer><button type="button" class="codex-panel-phrases-reset cursor-interaction"></button><button type="button" class="codex-panel-phrases-cancel cursor-interaction"></button><button type="submit" class="cursor-interaction"></button></footer></form>`;
       dialog.querySelector("h2").textContent = hostText("配置快捷短语", "Configure quick phrases");
+      dialog.querySelector("header").after(createQuickPhraseActionControl(dialog.querySelector('[role="alert"]')));
       const other = dialog.querySelector(".codex-panel-phrases-other");
       other.textContent = hostText("其他仓库…", "Other repositories…");
       other.addEventListener("click", () => void chooseQuickPhrasesRepository());
@@ -3163,6 +3208,7 @@
       document.body.append(dialog);
       quickPhrasesDialog = dialog;
     }
+    renderQuickPhrases();
     const tabs = quickPhrasesDialog.querySelector('[role="tablist"]');
     tabs.replaceChildren();
     tabs.dataset.projectId = quickPhrasesProjectId;
@@ -3575,6 +3621,7 @@
     try {
       const root = quickPhraseComposer();
       const controller = quickPhraseController(root);
+      const action = quickPhraseAction();
       if (!controller) throw new Error(hostText("当前会话输入框尚未就绪", "The current composer is not ready"));
       if (controller.getText().trim() || root.querySelector('[data-composer-attachment-pill]')) {
         throw new Error(hostText("输入框已有草稿或附件，请先发送或清空", "Send or clear the existing draft or attachments first"));
@@ -3583,12 +3630,14 @@
       renderQuickPhrases();
       setQuickPhraseStatus(status, "");
       controller.setPromptText(phrase);
+      controller.view.focus();
+      if (action === "fill") return;
       await new Promise(resolve => window.requestAnimationFrame(resolve));
       if (quickPhraseComposer() !== root) throw new Error(hostText("会话已切换，短语保留在原输入框中", "The conversation changed. The phrase remains in the original composer."));
-      const send = Array.from(root.querySelectorAll('button[aria-label]'))
-        .find(button => SEND_LABELS.includes(normalizedLabel(button.getAttribute("aria-label"))) && !button.disabled);
-      if (!send) throw new Error(hostText("当前无法发送，短语已填入输入框", "Sending is unavailable. The phrase is in the composer."));
-      send.click();
+      const editorProps = Array.from(quickPhraseComposerProps(root))
+        .find(props => props?.composerController === controller && typeof props.submitReady === "boolean");
+      if (editorProps?.submitReady === false) throw new Error(hostText("当前暂时无法提交，短语已填入输入框", "Submission is unavailable. The phrase is in the composer."));
+      dispatchHostMessage({ type: "run-command", id: action === "steer" ? "composer.steer" : "composer.queue" });
     } catch (error) {
       setQuickPhraseStatus(status, error.message);
     } finally {
@@ -3627,7 +3676,7 @@
         event.preventDefault();
         configureQuickPhrases();
       });
-      quickPhrasesPanel.querySelector(".codex-panel-phrases-hint").textContent = hostText("点击短语，直接发送", "Click a phrase to send it");
+      quickPhrasesPanel.querySelector(".codex-panel-phrases-hint").replaceWith(createQuickPhraseActionControl(quickPhrasesPanel.querySelector('[role="status"]')));
       renderQuickPhrases();
     }
     void syncQuickPhrasesProject();

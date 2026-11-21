@@ -151,6 +151,7 @@ struct LauncherSnapshot {
     native_adapters_phase: String,
     native_adapters_message: String,
     native_adapters_features: Vec<NativeAdapterFeatureStatus>,
+    native_adapters_progress: Option<f64>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -204,6 +205,8 @@ enum LauncherEvent {
         phase: String,
         message: String,
         features: Vec<NativeAdapterFeatureStatus>,
+        #[serde(default)]
+        progress: Option<f64>,
     },
     ManagedStatus {
         #[serde(rename = "panelManagedStatus")]
@@ -564,6 +567,7 @@ impl LauncherState {
                 native_adapters_phase: "waiting".into(),
                 native_adapters_message: String::new(),
                 native_adapters_features: Vec::new(),
+                native_adapters_progress: None,
             }),
             status_menu: Mutex::new(None),
             service_control_menu: Mutex::new(None),
@@ -1805,6 +1809,7 @@ fn reset_native_adapters_status(snapshot: &mut LauncherSnapshot) {
     snapshot.native_adapters_phase = "waiting".into();
     snapshot.native_adapters_message.clear();
     snapshot.native_adapters_features.clear();
+    snapshot.native_adapters_progress = None;
 }
 
 fn apply_native_adapters_status(
@@ -1812,10 +1817,12 @@ fn apply_native_adapters_status(
     phase: String,
     message: String,
     features: Vec<NativeAdapterFeatureStatus>,
+    progress: Option<f64>,
 ) {
     snapshot.native_adapters_phase = phase;
     snapshot.native_adapters_message = message;
     snapshot.native_adapters_features = features;
+    snapshot.native_adapters_progress = progress;
 }
 
 fn apply_renderer_status(snapshot: &mut LauncherSnapshot, pid: u32, status: RendererStatus) {
@@ -2307,8 +2314,8 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                         snapshot.thread_tabs_phase = phase;
                         snapshot.thread_tabs_message = message;
                     }
-                    LauncherEvent::NativeAdaptersStatus { phase, message, features } => {
-                        apply_native_adapters_status(snapshot, phase, message, features);
+                    LauncherEvent::NativeAdaptersStatus { phase, message, features, progress } => {
+                        apply_native_adapters_status(snapshot, phase, message, features, progress);
                     }
                     LauncherEvent::ManagedStatus { status } => {
                         #[cfg(target_os = "windows")]
@@ -4587,6 +4594,7 @@ mod tests {
             native_adapters_phase: "waiting".into(),
             native_adapters_message: String::new(),
             native_adapters_features: Vec::new(),
+            native_adapters_progress: None,
         };
         apply_renderer_status(
             &mut snapshot,
@@ -4609,18 +4617,19 @@ mod tests {
         assert!(!snapshot.embedded_visible);
         let connection_message = snapshot.message.clone();
         let progress = serde_json::from_str::<super::LauncherEvent>(
-            r#"{"launcherEvent":"nativeAdaptersStatus","phase":"adapting","message":"正在适配 Codex 模块 42 · 2/10","features":[{"feature":"quota","phase":"loading","message":"模块 42 · 2/10"},{"feature":"tabs","phase":"loading","message":"模块 75 · 3/10"}]}"#,
+            r#"{"launcherEvent":"nativeAdaptersStatus","phase":"adapting","message":"正在适配 Codex 模块 42 · 2/10","features":[{"feature":"quota","phase":"loading","message":"模块 42 · 2/10"},{"feature":"tabs","phase":"loading","message":"模块 75 · 3/10"}],"progress":12.5}"#,
         ).unwrap();
-        let super::LauncherEvent::NativeAdaptersStatus { phase, message, features } = progress else {
+        let super::LauncherEvent::NativeAdaptersStatus { phase, message, features, progress } = progress else {
             panic!("expected native adapter progress");
         };
-        super::apply_native_adapters_status(&mut snapshot, phase, message, features);
+        super::apply_native_adapters_status(&mut snapshot, phase, message, features, progress);
         assert_eq!(snapshot.phase, "running");
         assert_eq!(snapshot.message, connection_message);
         assert_eq!(snapshot.open_signal_pid, Some(42));
         assert_eq!(snapshot.native_adapters_phase, "adapting");
         assert!(snapshot.native_adapters_message.contains("模块 42"));
         assert_eq!(snapshot.native_adapters_features.len(), 2);
+        assert_eq!(snapshot.native_adapters_progress, Some(12.5));
         assert!(snapshot.native_adapters_features.iter().all(|feature| feature.phase == "loading"));
         snapshot.native_adapters_phase = "applying".into();
         let applying = serde_json::from_str::<RendererStatus>(
@@ -4637,6 +4646,7 @@ mod tests {
         assert!(snapshot.open_request_pending);
         assert_eq!(snapshot.native_adapters_phase, "waiting");
         assert!(snapshot.native_adapters_features.is_empty());
+        assert_eq!(snapshot.native_adapters_progress, None);
 
         // 更新后的普通进程需要用户确认；后续轮询不能把提示冲掉。
         super::apply_codex_restart_required(&mut snapshot);
@@ -4695,6 +4705,7 @@ mod tests {
             native_adapters_phase: "waiting".into(),
             native_adapters_message: String::new(),
             native_adapters_features: Vec::new(),
+            native_adapters_progress: None,
         };
 
         apply_waiting_for_codex(&mut snapshot);

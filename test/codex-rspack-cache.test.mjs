@@ -150,6 +150,16 @@ test('native features analyze concurrently in two workers and publish results be
   const features = [...new Set(progress.filter(item => item.phase === 'adapt').map(item => item.feature))];
   assert.deepEqual(features.toSorted(), ['nativeUpdate', ...allFeatures].toSorted());
   assert.equal(maximumActive, 2, 'independent feature analysis overlaps with at most two workers');
+  const ratios = new Map(['nativeUpdate', ...allFeatures].map(feature => [feature, 0]));
+  let lastPercent = 0;
+  for (const item of progress.filter(item => item.phase === 'adapt')) {
+    ratios.set(item.feature, item.total > 0 ? item.completed / item.total : 1);
+    const percent = [...ratios.values()].reduce((sum, ratio) => sum + ratio, 0) / ratios.size * 100;
+    assert.equal(item.percent, percent, 'parallel progress includes completed, active and queued features');
+    assert.ok(item.percent >= lastPercent, 'another worker starting does not reset the progress bar');
+    lastPercent = item.percent;
+  }
+  assert.equal(lastPercent, 100);
   assert.deepEqual(completed.toSorted(), ['nativeUpdate', ...allFeatures].toSorted());
   assert.ok(progress.some(item => item.phase === 'adapt' && item.moduleId === 'item-0' && item.completed === 0));
   assert.ok(progress.some(item => item.phase === 'compose' && item.completed === 0 && item.total === 0));

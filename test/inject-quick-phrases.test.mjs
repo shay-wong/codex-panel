@@ -30,10 +30,18 @@ test(`quick phrases stay available and send from ${placement} without a project 
     const send = window.document.querySelector('button[aria-label="发送"]');
     const submitted = [];
     editor.parentElement.__reactFiber$fixture = { memoizedProps: { composerController: {
-      view: { dom: editor },
+      view: { dom: editor, focus: () => editor.focus() },
       getText: () => editor.textContent,
       setPromptText: text => { editor.textContent = text; send.disabled = !text; },
     } }, return: null };
+    let receiveCommand;
+    window.addEventListener("message", event => {
+      if (event.data?.type !== "run-command") return;
+      assert.equal(window.document.activeElement, editor, "native commands target the focused composer");
+      assert.ok(["composer.queue", "composer.steer"].includes(event.data.id));
+      send.click();
+      receiveCommand?.(event.data.id);
+    });
     send.addEventListener("click", () => { submitted.push(editor.textContent); editor.textContent = ""; send.disabled = true; });
     window.__CODEX_PANEL_SOURCE_HASH__ = "independent-quick-phrases-test";
     window.eval(source);
@@ -60,10 +68,31 @@ test(`quick phrases stay available and send from ${placement} without a project 
     assert.ok(Number.parseFloat(panel.style.left) >= 0);
     assert.ok(Number.parseFloat(panel.style.left) + Number.parseFloat(panel.style.width) <= window.innerWidth);
 
+    const command = new Promise(resolve => { receiveCommand = resolve; });
     panel.querySelector(".codex-panel-phrase").click();
     flushFrames();
-    await Promise.resolve();
+    assert.equal(await command, "composer.queue");
     assert.deepEqual(submitted, ["继续"]);
+
+    send.setAttribute("aria-label", "排队");
+    const action = panel.querySelector(".codex-panel-phrases-action-switch");
+    action.click();
+    assert.equal(panel.querySelector(".codex-panel-phrases-action-mode").textContent, "直接引导");
+    const steer = new Promise(resolve => { receiveCommand = resolve; });
+    panel.querySelector(".codex-panel-phrase").click();
+    flushFrames();
+    assert.equal(await steer, "composer.steer", "running turns use native steer without looking for a Send button");
+    assert.deepEqual(submitted, ["继续", "继续"]);
+
+    action.click();
+    assert.equal(panel.querySelector(".codex-panel-phrases-action-mode").textContent, "填入输入框");
+    panel.querySelector(".codex-panel-phrase").click();
+    assert.equal(editor.textContent, "继续");
+    assert.equal(window.document.activeElement, editor);
+    assert.deepEqual(submitted, ["继续", "继续"], "fill mode must keep the draft without submitting");
+    assert.equal(window.localStorage.getItem("codex-panel.quick-phrases.action.v1"), "fill");
+    action.click();
+    assert.equal(panel.querySelector(".codex-panel-phrases-action-mode").textContent, "加入队列");
 
     const sidebar = window.document.createElement("aside");
     sidebar.setAttribute("data-app-shell-focus-area", "right-panel");

@@ -245,18 +245,25 @@ export async function buildCodexRspackInWorker(appPath, { petsOnly = false, onPr
   if (!catalog) return null;
   const features = petsOnly ? ['pets'] : Object.keys(transformers);
   const jobs = ['nativeUpdate', ...features.toSorted((a, b) => Number(b === 'pets') - Number(a === 'pets'))];
+  const progressByFeature = new Map(jobs.map(feature => [feature, 0]));
+  const reportFeatureProgress = progress => {
+    if (progress.total > 0) progressByFeature.set(progress.feature, progress.completed / progress.total);
+    onProgress?.({ ...progress, percent: [...progressByFeature.values()].reduce((sum, value) => sum + value, 0) / jobs.length * 100 });
+  };
   const plans = new Array(jobs.length);
   let next = 0;
   const lane = async () => {
     while (next < jobs.length) {
       const index = next++, feature = jobs[index];
       let plan;
-      try { plan = await runRspackWorker({ task: 'feature', catalog, feature }, workerOptions); }
+      try { plan = await runRspackWorker({ task: 'feature', catalog, feature }, { ...workerOptions, onProgress: reportFeatureProgress }); }
       catch (error) {
         plan = { patches: {}, chunks: {}, nativeUpdate: {}, nativeServices: {},
           prepared: feature === 'nativeUpdate' ? {} : { [feature]: false }, errors: { [feature]: error.message } };
       }
       plans[index] = plan;
+      progressByFeature.set(feature, 1);
+      reportFeatureProgress({ phase: 'adapt', feature });
       onFeaturePrepared?.({ feature, plan });
     }
   };

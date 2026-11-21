@@ -2769,8 +2769,10 @@ async function injectTarget(
     cdp.threadTabsError = "";
     const featureLabels = { quota: "账号额度限制", ultrafast: "Ultrafast", dot: "Dot 入口", tabs: "会话菜单", queue: "排队消息", pets: "宠物动画", projectlessChat: "无项目聊天", nativeUpdate: "Codex 更新", nativeServices: "原生服务" };
     const features = new Map();
-    const publishAdapters = (phase, message) => {
-      cdp.nativeAdaptersStatus = { phase, message, features: [...features.values()] };
+    let adapterProgress = null;
+    const publishAdapters = (phase, message, progress = phase === "adapting" ? adapterProgress : null) => {
+      adapterProgress = progress;
+      cdp.nativeAdaptersStatus = { phase, message, features: [...features.values()], progress };
       cdp.onNativeAdaptersStatus?.();
     };
     const reportProgress = progress => {
@@ -2789,7 +2791,8 @@ async function injectTarget(
         write: "正在保存此版本的适配缓存…",
         prepared: "适配已准备，正在应用…",
       };
-      publishAdapters(progress.phase === "read" || progress.phase === "cache" ? "reading" : "adapting", messages[progress.phase] ?? "正在适配原生模块…");
+      const percent = progress.percent ?? (progress.total > 0 ? progress.completed / progress.total * 100 : null);
+      publishAdapters(progress.phase === "read" || progress.phase === "cache" ? "reading" : "adapting", messages[progress.phase] ?? "正在适配原生模块…", percent);
     };
     const retryThreadTabs = keepAlive ? () => {
       if (cdp.nativeAdaptersTask) return cdp.nativeAdaptersTask;
