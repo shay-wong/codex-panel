@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Change quick-phrase mode from the card or Configure dialog with an explanation of each mode: fill the composer, join the queue, or steer a running task; queue and steer send normally when idle.
+
 - Keep the checked Codex release feed for its download, avoiding mismatched rollout targets; show Check for updates after a download failure.
 - Assign increasing local package build numbers, show them in About and startup logs, and include them in macOS bundle metadata. `codex:install` prints its build number before preparing resources and streams build output.
 - Connect Panel before preparing native adapters, group ongoing adaptation text and its progress bar on the right of the launcher’s main status panel while preserving the independent connection status on the left, run independent adapters concurrently, and apply interface patches with one final reload. Only the adaptation details and progress bar disappear when adaptation ends.
