@@ -382,10 +382,9 @@ function hostTarget() {
 async function buildTauriApp() {
   const target = hostTarget();
   const npmPath = path.join(path.dirname(process.execPath), "npm");
-  const tauriPath = path.join(projectRoot, "node_modules", ".bin", "tauri");
   run(npmPath, ["run", "app:prepare", "--", "--target", target], { cwd: projectRoot });
-  run(tauriPath, [
-    "build",
+  run(process.execPath, [
+    path.join(projectRoot, "scripts", "run-tauri.mjs"), "build",
     "--target", target,
     "--bundles", "app",
     "--no-sign",
