@@ -183,7 +183,7 @@ npm ci
 npm run codex:install
 ```
 
-Each local package build receives an increasing build number. Open **About** to see `版本 0.5.17-fork · Build N`; macOS also records it as `CFBundleVersion`. Builds from worktrees of the same repository share the counter. A failed packaging attempt can consume a number. See [local build numbers](docs/fork-capabilities.md#local-build-numbers).
+Each local package build receives an increasing build number. `codex:install` prints `Codex Panel local Build N` before preparing resources and shows build output as it runs. Open **About** to see `版本 0.5.17-fork · Build N`; macOS also records it as `CFBundleVersion`. Builds from worktrees of the same repository share the counter. A failed packaging attempt can consume a number. See [local build numbers](docs/fork-capabilities.md#local-build-numbers).
 
 The integration command builds and copies a standalone runtime to `~/Library/Application Support/Codex Panel/runtime`, copies `manage-panel` and `handoff-panel` into the standard user Skill directory at `~/.agents/skills`, installs `panelctl` in `~/.local/bin`, and generates the macOS launcher. The launcher receives its own signed copy of that runtime inside the app bundle. The installed files are real managed copies, not symbolic links back to the Git repository. Plain `npm ci` only installs project dependencies and does not write these user-level integrations. Start a new Codex task after installation to use `$manage-panel` and `$handoff-panel`.
 

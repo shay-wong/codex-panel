@@ -2,9 +2,9 @@
 
 ## Local build numbers
 
-Local `app:build*` commands, `npm run tauri -- build` and the build performed by `codex:install` assign one increasing build number when Tauri packaging starts. About shows the product version followed by `Build N`, and startup logs include the same number. macOS stores it as `CFBundleVersion`. The counter is local to the Git common directory, shared across its worktrees; source archives keep an ignored counter file at their root. It does not change the product version or update comparison. A failed attempt can consume a number. Preparing assets, running development mode or starting the App does not increment it. GitHub Actions release builds retain their release version without a local build number.
+Local `app:build*` commands and `npm run tauri -- build` assign one increasing build number when Tauri packaging starts. `codex:install` reserves and prints its build number before preparing resources, then reuses that number for Tauri and streams preparation and compilation output. About shows the product version followed by `Build N`, and startup logs include the same number. macOS stores it as `CFBundleVersion`. The counter is local to the Git common directory, shared across its worktrees; source archives keep an ignored counter file at their root. It does not change the product version or update comparison. A failed attempt can consume a number. Preparing assets on their own, running development mode or starting the App does not increment it. GitHub Actions release builds retain their release version without a local build number.
 
-本地 `app:build*`、`npm run tauri -- build` 以及 `codex:install` 内部构建在进入 Tauri 打包时递增一次；“关于”显示版本及 `Build N`，启动日志带相同号码，macOS 写入 `CFBundleVersion`。计数保存在 Git 公共目录并由同仓库的 worktree 共用；源码压缩包在根目录使用已忽略的计数文件。产品版本和更新比较保持原逻辑；失败可能占用号码。准备资源、开发模式和启动 App 不递增，GitHub Actions 发布继续使用正式版本且不带本地号。
+本地 `app:build*` 和 `npm run tauri -- build` 在进入 Tauri 打包时递增一次；`codex:install` 在准备资源前就预留并打印构建号，后续 Tauri 沿用同号，资源准备与编译输出实时显示；“关于”显示版本及 `Build N`，启动日志带相同号码，macOS 写入 `CFBundleVersion`。计数保存在 Git 公共目录并由同仓库的 worktree 共用；源码压缩包在根目录使用已忽略的计数文件。产品版本和更新比较保持原逻辑；失败可能占用号码。单独准备资源、开发模式和启动 App 不递增，GitHub Actions 发布继续使用正式版本且不带本地号。
 
 ## New chats outside projects
 

@@ -184,7 +184,7 @@ npm ci
 npm run codex:install
 ```
 
-每次本地打包自动递增构建号，在“关于”页可看到 `版本 0.5.17-fork · Build N`，macOS 包同时写入 `CFBundleVersion`。同仓库的 worktree 共用计数，打包失败可能占用一个号码。详见[本地构建号](docs/fork-capabilities.md#local-build-numbers)。
+每次本地打包自动递增构建号，`codex:install` 在准备资源前就打印 `Codex Panel local Build N`，并实时显示构建输出；在“关于”页可看到 `版本 0.5.17-fork · Build N`，macOS 包同时写入 `CFBundleVersion`。同仓库的 worktree 共用计数，打包失败可能占用一个号码。详见[本地构建号](docs/fork-capabilities.md#local-build-numbers)。
 
 集成命令会构建独立 runtime 并复制到 `~/Library/Application Support/Codex Panel/runtime`，把 `manage-panel` 和 `handoff-panel` 复制到标准用户 Skill 目录 `~/.agents/skills`，把 `panelctl` 安装到 `~/.local/bin`，然后生成 macOS 启动器；启动器还会在自己的 App bundle 中保存一份受签名保护的 runtime 副本。安装结果都是带所有权标记的真实副本，不是指回 Git 仓库的符号链接。单独运行 `npm ci` 只安装项目依赖，不会写入这些用户级集成。安装完成后启动一个新的 Codex 任务即可使用 `$manage-panel` 和 `$handoff-panel`。
 

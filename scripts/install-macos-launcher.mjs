@@ -25,6 +25,7 @@ import {
 import { managedInjectorCommandMatches } from "./codex-injector-runtime.mjs";
 import { ensureCodexDeltaTool } from "./prepare-codex-delta.mjs";
 import { ensureCodexTransport } from "./prepare-codex-transport.mjs";
+import { createLocalBuildEnvironment, runTauri } from "./run-tauri.mjs";
 import { copyRuntimePackages } from "./runtime-packages.mjs";
 import {
   installManagedDirectory,
@@ -87,9 +88,9 @@ const runtimeScriptNames = [
   "panel-supervisor.mjs",
 ];
 
-function run(command, args, { allowFailure = false, cwd } = {}) {
+function run(command, args, { allowFailure = false, cwd, stdio, env } = {}) {
   const result = spawnSync(command, args, {
-    cwd,
+    cwd, stdio, env,
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
   });
@@ -379,17 +380,19 @@ function hostTarget() {
   throw new Error(`Unsupported macOS architecture: ${process.arch}`);
 }
 
-async function buildTauriApp() {
+export async function buildTauriApp() {
   const target = hostTarget();
   const npmPath = path.join(path.dirname(process.execPath), "npm");
-  run(npmPath, ["run", "app:prepare", "--", "--target", target], { cwd: projectRoot });
-  run(process.execPath, [
-    path.join(projectRoot, "scripts", "run-tauri.mjs"), "build",
+  const env = await createLocalBuildEnvironment(true, projectRoot);
+  run(npmPath, ["run", "app:prepare", "--", "--target", target], { cwd: projectRoot, env, stdio: "inherit" });
+  const status = runTauri([
+    "build",
     "--target", target,
     "--bundles", "app",
     "--no-sign",
     "--config", JSON.stringify({ bundle: { createUpdaterArtifacts: false } }),
-  ], { cwd: projectRoot });
+  ], env, projectRoot);
+  if (status !== 0) throw new Error(`Tauri build failed with exit status ${status}`);
   const appPath = path.join(
     projectRoot,
     "src-tauri",
