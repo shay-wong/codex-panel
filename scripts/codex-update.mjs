@@ -267,10 +267,22 @@ export async function readCodexUpdateState(cdp) {
 
 const updateChecks = new WeakMap();
 
-export async function downloadCodexUpdate(cdp, download) {
+export async function downloadCodexUpdate(cdp, download, targetBuild) {
   const current = download.status();
-  if (current?.ready || current?.downloading) return current;
+  if (current?.ready || current?.downloading || current?.phase === "paused") return current;
   const result = updateChecks.get(cdp)?.result;
+  if (result?.versions || targetBuild != null) {
+    const selected = targetBuild == null
+      ? result.versions.find(version => version.verified) ?? result.versions[0]
+      : result?.versions?.find(version => version.build === targetBuild);
+    if (!selected) throw new Error("当前更新清单没有所选版本，请重新检查更新");
+    const native = await readCodexUpdateState(cdp);
+    if (native.ready || native.downloading) throw new Error("Codex 自带更新正在下载或等待安装，请先处理自带更新");
+    if (updateChecks.get(cdp)?.result !== result) throw new Error("更新清单已变化，请重新选择版本");
+    // 选中的构建号只在本次官方清单中解析，下载时继续使用同一份清单。
+    download.start({ availableVersion: selected.version, availableBuildVersion: selected.build, appcastXml: result.appcastXml });
+    return download.status();
+  }
   if (result?.status !== "available") return readCodexUpdateStatus(cdp, { force: true, download });
   download.start(result);
   return download.status();
@@ -279,7 +291,7 @@ export async function downloadCodexUpdate(cdp, download) {
 export async function readCodexUpdateStatus(cdp, { force = false, download } = {}) {
   if (force) download?.clearFailure();
   const direct = download?.status();
-  if (direct) return direct;
+  if (direct && direct.phase !== "cancelled") return direct;
   const state = await readCodexUpdateState(cdp).catch(() => ({ ready: false, downloading: false, progress: null }));
   let check = updateChecks.get(cdp);
   if (check && !check.result && Date.now() - check.startedAt >= 35_000) {
@@ -302,9 +314,14 @@ export async function readCodexUpdateStatus(cdp, { force = false, download } = {
   else if (result.status === "busy") message = `Codex 更新器正忙，请稍后重试${version}`;
   else if (result.status === "timeout") message = "检查更新超时，请重试";
   else if (result.status === "up_to_date") message = `当前已是最新版${version}`;
-  else if (result.status === "available") message = result.availableVersion ? `发现新版本 ${result.availableVersion}${version}` : `发现新版本，尚未下载完成${version}`;
+  else if (result.status === "no_delta") message = `有新版本，官方未提供适用于当前构建的增量包${version}`;
+  else if (result.status === "available") message = result.versions
+    ? `${direct?.phase === "cancelled" ? "已取消下载 · " : ""}当前版本 ${result.installedVersion}`
+    : result.availableVersion ? `发现新版本 ${result.availableVersion}${version}` : `发现新版本，尚未下载完成${version}`;
   else if (result.status === "restart_required") message = `更新需要重启后生效${version}`;
   else message = `暂时无法检查更新${result.error ? `：${result.error}` : version}`;
   return { ready: state.ready, available: result?.status === "available", downloading: state.downloading,
-    message, checking: !result && !state.ready && !state.downloading };
+    ...(direct?.phase === "cancelled" ? { phase: direct.phase } : {}),
+    message, checking: !result && !state.ready && !state.downloading,
+    ...(!state.ready && !state.downloading && result?.versions ? { versions: result.versions } : {}) };
 }

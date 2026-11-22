@@ -305,10 +305,16 @@ impl UpdateDialog {
 }
 
 impl UpdateDialog {
-    pub(super) fn confirm_codex_update(app: &AppHandle) -> bool {
+    pub(super) fn confirm_codex_update(app: &AppHandle, target_version: Option<&str>) -> bool {
+        let update = match target_version {
+            Some(version) => format!("版本 {version}"),
+            None => "已下载的更新".into(),
+        };
+        let message = format!(
+            "Codex 将退出并安装{update}，正在运行的任务会中断。安装完成后由 Panel 启动并连接。"
+        );
         let Some(dialog) = Self::prompt_message(app, "安装 Codex 更新并重启",
-            "Codex 将退出安装已下载的更新，正在运行的任务会中断。安装完成后由 Panel 启动并连接。".into(),
-            "安装并重启", None) else { return false; };
+            message, "安装并重启", None) else { return false; };
         dialog.close();
         true
     }

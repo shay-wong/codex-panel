@@ -145,6 +145,18 @@ it("keeps launcher feedback, live status and global preferences working through 
   await click(button("downloadCodexUpdate"));
   await advance(300);
   expect(invoke).toHaveBeenCalledWith("download_codex_update");
+  await publish({ codexUpdateVersions: [
+    { version: "26.1117.41037", build: "29803", verified: false },
+    { version: "26.1117.31558", build: "29513", verified: true },
+    { version: "26.1111.71704", build: "29030", verified: false },
+  ] });
+  const versionPicker = screen.getByRole("combobox", { name: "目标版本" });
+  expect(versionPicker.textContent).toContain("26.1117.31558 · Build 29513 · 已验证源码适配");
+  fireEvent.keyDown(versionPicker, { key: "Enter" });
+  fireEvent.click(screen.getByRole("option", { name: "26.1111.71704 · Build 29030" }));
+  await click(button("downloadCodexUpdate"));
+  await advance(300);
+  expect(invoke).toHaveBeenCalledWith("download_codex_update", { targetBuild: "29030" });
   const checksBeforeFailure = invoke.mock.calls.filter(([command]) => command === "check_codex_updates").length;
   await publish({ codexUpdatePhase: "failed", codexUpdateAvailable: true, codexUpdateDownloading: false,
     codexUpdateMessage: "Codex 更新下载失败：官方更新清单中未找到已检查到的版本，请重新检查更新" });

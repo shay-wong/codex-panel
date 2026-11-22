@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Choose a Codex upgrade target on macOS. Panel prefers versions with verified source adapters when the official feed offers a matching delta.
+
 - Change quick-phrase mode from the card or Configure dialog with an explanation of each mode: fill the composer, join the queue, or steer a running task; queue and steer send normally when idle.
 
 - Keep the checked Codex release feed for its download, avoiding mismatched rollout targets; show Check for updates after a download failure.

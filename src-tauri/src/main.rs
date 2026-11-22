@@ -138,6 +138,7 @@ struct LauncherSnapshot {
     codex_update_phase: String,
     codex_update_message: String,
     codex_update_checking: bool,
+    codex_update_versions: Vec<CodexUpdateVersion>,
     update_url: Option<String>,
     version: String,
     build_number: Option<&'static str>,
@@ -161,6 +162,13 @@ struct NativeAdapterFeatureStatus {
     message: String,
 }
 
+#[derive(Clone, Deserialize, PartialEq, Serialize)]
+struct CodexUpdateVersion {
+    version: String,
+    build: String,
+    verified: bool,
+}
+
 #[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RendererStatus {
@@ -173,6 +181,8 @@ struct RendererStatus {
     #[serde(default)]
     codex_update_native_downloading: bool,
     #[serde(default)]
+    codex_update_staged_build: Option<String>,
+    #[serde(default)]
     codex_update_ready: bool,
     #[serde(default)]
     codex_update_available: bool,
@@ -184,6 +194,8 @@ struct RendererStatus {
     codex_update_message: String,
     #[serde(default)]
     codex_update_checking: bool,
+    #[serde(default)]
+    codex_update_versions: Vec<CodexUpdateVersion>,
 }
 
 #[derive(Deserialize)]
@@ -554,6 +566,7 @@ impl LauncherState {
                 codex_update_downloading: false, codex_update_phase: String::new(),
                 codex_update_message: String::new(),
                 codex_update_checking: false,
+                codex_update_versions: Vec::new(),
                 update_url: None,
                 version,
                 build_number: LOCAL_BUILD_NUMBER,
@@ -1774,7 +1787,7 @@ fn signal_pending_panel_open(app: &AppHandle, state: &Arc<LauncherState>) -> Res
         return Ok(());
     }
     drop(snapshot);
-    let result = send_injector_control_request(state, "open");
+    let result = send_injector_control_request(state, "open", None);
     let mut snapshot = state.snapshot.lock().unwrap();
     if let Ok(status) = &result {
         snapshot.open_request_pending = false;
@@ -1837,6 +1850,7 @@ fn apply_renderer_status(snapshot: &mut LauncherSnapshot, pid: u32, status: Rend
     snapshot.codex_update_phase = if status.ready { status.codex_update_phase } else { String::new() };
     snapshot.codex_update_message = status.codex_update_message;
     snapshot.codex_update_checking = status.ready && status.codex_update_checking;
+    snapshot.codex_update_versions = if status.ready { status.codex_update_versions } else { Vec::new() };
     if status.ready {
         snapshot.phase = "running".into();
         snapshot.message = "Codex 连接和 Panel 注入已就绪。".into();
@@ -1862,7 +1876,8 @@ fn apply_waiting_for_codex(snapshot: &mut LauncherSnapshot) {
     snapshot.codex_update_ready = false;
     snapshot.codex_update_available = false;
     snapshot.codex_update_downloading = false;
-                snapshot.codex_update_phase.clear();
+    snapshot.codex_update_phase.clear();
+    snapshot.codex_update_versions.clear();
     snapshot.thread_tabs_phase = "waiting".into();
     snapshot.thread_tabs_message.clear();
     reset_native_adapters_status(snapshot);
@@ -1876,7 +1891,8 @@ fn apply_codex_restart_required(snapshot: &mut LauncherSnapshot) {
     snapshot.codex_update_ready = false;
     snapshot.codex_update_available = false;
     snapshot.codex_update_downloading = false;
-                snapshot.codex_update_phase.clear();
+    snapshot.codex_update_phase.clear();
+    snapshot.codex_update_versions.clear();
     snapshot.thread_tabs_phase = "waiting".into();
     snapshot.thread_tabs_message.clear();
     reset_native_adapters_status(snapshot);
@@ -1929,6 +1945,7 @@ fn monitor_renderer_readiness(
                     || snapshot.codex_update_phase != status.codex_update_phase
                     || snapshot.codex_update_message != status.codex_update_message
                     || snapshot.codex_update_checking != status.codex_update_checking
+                    || snapshot.codex_update_versions != status.codex_update_versions
             } else {
                 snapshot.phase == "running"
                     || snapshot.open_signal_pid == Some(pid)
@@ -1968,6 +1985,7 @@ fn monitor_renderer_readiness(
 fn send_injector_control_request(
     state: &LauncherState,
     action: &str,
+    target_build: Option<&str>,
 ) -> Result<RendererStatus, String> {
     let runtime_path = state.data_directory.join("launcher-runtime.json");
     let descriptor: RuntimeDescriptor =
@@ -2005,11 +2023,14 @@ fn send_injector_control_request(
     stream
         .set_write_timeout(Some(Duration::from_secs(3)))
         .map_err(|error| error.to_string())?;
-    let mut request = serde_json::to_vec(&serde_json::json!({
+    let mut request = serde_json::json!({
         "action": action,
         "startupToken": startup_token,
-    }))
-    .map_err(|error| error.to_string())?;
+    });
+    if let Some(build) = target_build {
+        request["targetBuild"] = serde_json::Value::String(build.to_string());
+    }
+    let mut request = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
     request.push(b'\n');
     stream
         .write_all(&request)
@@ -2031,6 +2052,16 @@ fn send_injector_control_request(
             applying_native_adapters: result.and_then(|value| value.get("applyingNativeAdapters")).and_then(serde_json::Value::as_bool).unwrap_or(false),
             codex_update_native_ready: result.and_then(|value| value.get("codexUpdateNativeReady")).and_then(serde_json::Value::as_bool).unwrap_or(false),
             codex_update_native_downloading: result.and_then(|value| value.get("codexUpdateNativeDownloading")).and_then(serde_json::Value::as_bool).unwrap_or(false),
+            codex_update_staged_build: result
+                .and_then(|value| value.get("codexUpdateStagedBuild"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            codex_update_versions: result
+                .and_then(|value| value.get("codexUpdateVersions"))
+                .map(|value| serde_json::from_value(value.clone()))
+                .transpose()
+                .map_err(|error| error.to_string())?
+                .unwrap_or_default(),
             codex_update_checking: result.and_then(|value| value.get("codexUpdateChecking")).and_then(serde_json::Value::as_bool).unwrap_or(false),
             codex_update_message: result.and_then(|value| value.get("codexUpdateMessage")).and_then(serde_json::Value::as_str).unwrap_or_default().to_string(),
             codex_update_available: result.and_then(|value| value.get("codexUpdateAvailable")).and_then(serde_json::Value::as_bool).unwrap_or(false),
@@ -2058,7 +2089,7 @@ fn send_injector_control_request(
 
 #[cfg(target_os = "macos")]
 fn query_renderer_status(state: &LauncherState) -> RendererStatus {
-    send_injector_control_request(state, "status").unwrap_or_default()
+    send_injector_control_request(state, "status", None).unwrap_or_default()
 }
 
 #[cfg(target_os = "windows")]
@@ -2252,7 +2283,8 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
         snapshot.codex_update_ready = false;
         snapshot.codex_update_available = false;
         snapshot.codex_update_downloading = false;
-                snapshot.codex_update_phase.clear();
+        snapshot.codex_update_phase.clear();
+        snapshot.codex_update_versions.clear();
         snapshot.thread_tabs_phase = "waiting".into();
         snapshot.thread_tabs_message.clear();
         reset_native_adapters_status(snapshot);
@@ -2334,12 +2366,14 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                                 page_visible: snapshot.embedded_visible,
                                 codex_update_native_ready: false,
                                 codex_update_native_downloading: false,
+                                codex_update_staged_build: None,
                                 codex_update_ready: snapshot.codex_update_ready,
                                 codex_update_available: snapshot.codex_update_available,
                                 codex_update_downloading: snapshot.codex_update_downloading,
                                 codex_update_phase: snapshot.codex_update_phase.clone(),
                                 codex_update_message: snapshot.codex_update_message.clone(),
                                 codex_update_checking: snapshot.codex_update_checking,
+                                codex_update_versions: snapshot.codex_update_versions.clone(),
                             },
                         );
                     }
@@ -2443,7 +2477,8 @@ fn start_launcher_locked(
         snapshot.codex_update_ready = false;
         snapshot.codex_update_available = false;
         snapshot.codex_update_downloading = false;
-                snapshot.codex_update_phase.clear();
+        snapshot.codex_update_phase.clear();
+        snapshot.codex_update_versions.clear();
         snapshot.thread_tabs_phase = "waiting".into();
         snapshot.thread_tabs_message.clear();
         reset_native_adapters_status(snapshot);
@@ -2652,6 +2687,7 @@ fn start_launcher_locked(
                 snapshot.codex_update_available = false;
                 snapshot.codex_update_downloading = false;
                 snapshot.codex_update_phase.clear();
+                snapshot.codex_update_versions.clear();
                 snapshot.thread_tabs_phase = "waiting".into();
                 snapshot.thread_tabs_message.clear();
                 reset_native_adapters_status(snapshot);
@@ -2727,6 +2763,24 @@ fn start_launcher(
 #[derive(Clone, Copy, PartialEq)]
 enum RestartTarget { Service, Codex, CodexUpdate }
 
+#[cfg(target_os = "macos")]
+fn check_codex_install_source(status: &RendererStatus, staged_build: Option<&str>) -> Result<(), String> {
+    // Sparkle 可能在退出时安装不同版本，已有指定版本时需要先保留当前会话。
+    if staged_build.is_some() && (status.codex_update_native_ready || status.codex_update_native_downloading) {
+        return Err("Codex 官方更新与选定版本冲突，尚未退出 Codex。请在 Codex 中处理官方更新后重新检查。".into());
+    }
+    if !status.ready
+        || staged_build != status.codex_update_staged_build.as_deref()
+        || (staged_build.is_none() && !status.codex_update_native_ready)
+    {
+        return Err("Codex 更新状态已变化，请重新检查后再试，尚未退出 Codex".into());
+    }
+    if status.codex_update_native_downloading {
+        return Err("Codex 正在下载更新，请下载完成后重试，尚未退出 Codex".into());
+    }
+    Ok(())
+}
+
 fn restart_launcher(
     app: &AppHandle,
     state: &Arc<LauncherState>,
@@ -2748,14 +2802,22 @@ fn restart_launcher(
         let codex_app = find_codex_app(&home_directory).ok_or_else(missing_codex_app_message)?;
         verify_codex_app(&codex_app)?;
         #[cfg(target_os = "macos")]
-        let mut update_info = if target == RestartTarget::CodexUpdate {
-            let status = send_injector_control_request(state, "codex-update-status")?;
+        let update_info = if target == RestartTarget::CodexUpdate {
+            let status = send_injector_control_request(state, "codex-update-status", None)?;
             if !status.ready {
                 return Err("Codex 尚无已下载完成的更新".into());
             }
-            // Sparkle may install its own download on quit; never race it with the staged copy.
-            let staged = if status.codex_update_native_ready { None } else {
-                codex_update::prepare_staged_installation(&state.data_directory, &codex_app, verify_codex_app)?
+            let staged_build = status.codex_update_staged_build.as_deref();
+            check_codex_install_source(&status, staged_build)?;
+            let staged = if let Some(build) = staged_build {
+                let update = codex_update::prepare_staged_installation(
+                    &state.data_directory, &codex_app, verify_codex_app,
+                )?
+                .filter(|update| update.build() == build)
+                .ok_or("选定的 Codex 更新已变化，请重新检查后再试")?;
+                Some(update)
+            } else {
+                None
             };
             Some((fs::read(codex_app.join("Contents/Info.plist")).map_err(|error| error.to_string())?, staged))
         } else { None };
@@ -2769,7 +2831,11 @@ fn restart_launcher(
                 return Err("Codex 已退出，请重新连接后检查更新状态".into());
             }
             let confirmed = if target == RestartTarget::CodexUpdate {
-                UpdateDialog::confirm_codex_update(app)
+                #[cfg(target_os = "macos")]
+                let version = update_info.as_ref().and_then(|(_, staged)| staged.as_ref()).map(|update| update.version());
+                #[cfg(not(target_os = "macos"))]
+                let version = None;
+                UpdateDialog::confirm_codex_update(app, version)
             } else { pid.is_none() || UpdateDialog::confirm_codex_restart(app) };
             if !confirmed {
                 return Ok(state.snapshot.lock().unwrap().clone());
@@ -2782,17 +2848,10 @@ fn restart_launcher(
             None
         };
         #[cfg(target_os = "macos")]
-        if let Some((_, staged)) = update_info.as_mut() {
-            // The confirmation may stay open while Sparkle finishes its own download.
-            let status = send_injector_control_request(state, "codex-update-status")?;
-            if !status.ready {
-                return Err("Codex 更新状态已变化，请重新检查后再试，尚未退出 Codex".into());
-            }
-            if status.codex_update_native_ready {
-                *staged = None;
-            } else if status.codex_update_native_downloading {
-                return Err("Codex 正在下载更新，请下载完成后重试，尚未退出 Codex".into());
-            }
+        if let Some((_, staged)) = &update_info {
+            // 用户确认期间 Sparkle 可能完成自己的下载，退出前再次核对安装来源。
+            let status = send_injector_control_request(state, "codex-update-status", None)?;
+            check_codex_install_source(&status, staged.as_ref().map(|update| update.build()))?;
         }
         let restart_reminder = if target != RestartTarget::Service {
             let _guard = state.restart_reminder_guard.lock().unwrap();
@@ -3002,7 +3061,7 @@ async fn retry_thread_tabs(
     let state = Arc::clone(state.inner());
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
-        send_injector_control_request(&state, "retry-thread-tabs")?;
+        send_injector_control_request(&state, "retry-thread-tabs", None)?;
         #[cfg(target_os = "windows")]
         write_windows_control(&state, "retry-thread-tabs")?;
         current_ui_state(&app, &state)
@@ -3034,7 +3093,7 @@ async fn check_codex_updates(
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(target_os = "macos")]
         {
-            let status = send_injector_control_request(&state, "check-codex-updates")?;
+            let status = send_injector_control_request(&state, "check-codex-updates", None)?;
             update_snapshot(&app, &state, |snapshot| {
                 snapshot.codex_update_ready = status.codex_update_ready;
                 snapshot.codex_update_available = status.codex_update_available;
@@ -3042,6 +3101,7 @@ async fn check_codex_updates(
                 snapshot.codex_update_phase = status.codex_update_phase;
                 snapshot.codex_update_message = status.codex_update_message;
                 snapshot.codex_update_checking = status.codex_update_checking;
+                snapshot.codex_update_versions = status.codex_update_versions;
             });
             current_ui_state(&app, &state)
         }
@@ -3054,12 +3114,13 @@ async fn check_codex_updates(
 async fn download_codex_update(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
+    target_build: Option<String>,
 ) -> Result<LauncherUiState, String> {
     let state = Arc::clone(state.inner());
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(target_os = "macos")]
         {
-            let status = send_injector_control_request(&state, "download-codex-update")?;
+            let status = send_injector_control_request(&state, "download-codex-update", target_build.as_deref())?;
             update_snapshot(&app, &state, |snapshot| {
                 snapshot.codex_update_ready = status.codex_update_ready;
                 snapshot.codex_update_available = status.codex_update_available;
@@ -3067,11 +3128,12 @@ async fn download_codex_update(
                 snapshot.codex_update_phase = status.codex_update_phase;
                 snapshot.codex_update_message = status.codex_update_message;
                 snapshot.codex_update_checking = status.codex_update_checking;
+                snapshot.codex_update_versions = status.codex_update_versions;
             });
             current_ui_state(&app, &state)
         }
         #[cfg(not(target_os = "macos"))]
-        { let _ = (app, state); Err("目前仅支持 macOS Codex 更新下载".into()) }
+        { let _ = (app, state, target_build); Err("目前仅支持 macOS Codex 更新下载".into()) }
     }).await.map_err(|error| error.to_string())?
 }
 
@@ -3091,7 +3153,7 @@ async fn control_codex_update_download(
                 "cancel" => "cancel-codex-update",
                 _ => return Err("无效的 Codex 下载操作".into()),
             };
-            let status = send_injector_control_request(&state, command)?;
+            let status = send_injector_control_request(&state, command, None)?;
             update_snapshot(&app, &state, |snapshot| {
                 snapshot.codex_update_ready = status.codex_update_ready;
                 snapshot.codex_update_available = status.codex_update_available;
@@ -3099,6 +3161,7 @@ async fn control_codex_update_download(
                 snapshot.codex_update_phase = status.codex_update_phase;
                 snapshot.codex_update_message = status.codex_update_message;
                 snapshot.codex_update_checking = status.codex_update_checking;
+                snapshot.codex_update_versions = status.codex_update_versions;
             });
             current_ui_state(&app, &state)
         }
@@ -4581,6 +4644,7 @@ mod tests {
             codex_update_downloading: false, codex_update_phase: String::new(),
             codex_update_message: String::new(),
             codex_update_checking: false,
+            codex_update_versions: Vec::new(),
             update_url: None,
             version: "0.1.0".into(),
             build_number: None,
@@ -4599,19 +4663,14 @@ mod tests {
         apply_renderer_status(
             &mut snapshot,
             42,
-            RendererStatus {
-                ready: true,
-                applying_native_adapters: false,
-                page_visible: false,
-                codex_update_native_ready: false,
-                codex_update_native_downloading: false,
-                codex_update_ready: false,
-                codex_update_available: false,
-                codex_update_downloading: false, codex_update_phase: String::new(),
-                codex_update_message: String::new(),
-                codex_update_checking: false,
-            },
+            serde_json::from_str(
+                r#"{"ready":true,"pageVisible":false,"codexUpdateVersions":[{"version":"26.1117.31558","build":"29513","verified":true}]}"#,
+            )
+            .unwrap(),
         );
+        let versions = serde_json::to_value(&snapshot).unwrap()["codexUpdateVersions"].clone();
+        assert_eq!(versions[0]["build"], "29513");
+        assert_eq!(versions[0]["verified"], true);
         assert_eq!(snapshot.phase, "running");
         assert_eq!(snapshot.open_signal_pid, Some(42));
         assert!(!snapshot.embedded_visible);
@@ -4640,7 +4699,9 @@ mod tests {
         assert_eq!(snapshot.open_signal_pid, Some(42));
         assert_eq!(snapshot.native_adapters_phase, "applying");
         assert_eq!(snapshot.native_adapters_features.len(), 2);
+        assert_eq!(snapshot.codex_update_versions.len(), 1);
         apply_renderer_status(&mut snapshot, 42, RendererStatus::default());
+        assert!(snapshot.codex_update_versions.is_empty());
         assert_eq!(snapshot.phase, "waiting");
         assert_eq!(snapshot.open_signal_pid, None);
         assert!(snapshot.open_request_pending);
@@ -4667,11 +4728,13 @@ mod tests {
                 page_visible: true,
                 codex_update_native_ready: false,
                 codex_update_native_downloading: false,
+                codex_update_staged_build: None,
                 codex_update_ready: false,
                 codex_update_available: false,
                 codex_update_downloading: false, codex_update_phase: String::new(),
                 codex_update_message: String::new(),
                 codex_update_checking: false,
+                codex_update_versions: Vec::new(),
             },
         );
         assert_eq!(snapshot.phase, "running");
@@ -4692,6 +4755,7 @@ mod tests {
             codex_update_downloading: false, codex_update_phase: String::new(),
             codex_update_message: String::new(),
             codex_update_checking: false,
+            codex_update_versions: Vec::new(),
             update_url: None,
             version: "0.1.0".into(),
             build_number: None,

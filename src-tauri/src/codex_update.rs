@@ -28,6 +28,16 @@ pub(super) struct StagedUpdate {
     expected_version: BundleVersion,
 }
 
+impl StagedUpdate {
+    pub(super) fn version(&self) -> &str {
+        &self.expected_version.version
+    }
+
+    pub(super) fn build(&self) -> &str {
+        &self.expected_version.build
+    }
+}
+
 impl Drop for StagedUpdate {
     fn drop(&mut self) {
         // A failed rollback leaves the previous App here for recovery.
@@ -194,39 +204,40 @@ pub(super) fn install_staged_update(
     app: &Path,
     verify: impl Fn(&Path) -> Result<(), String>,
 ) -> Result<(), String> {
-    // Sparkle may have completed the update while Codex was exiting.
-    if build_number(&bundle_version(app)?.build)? >= build_number(&update.expected_version.build)? {
+    let installed = bundle_version(app)?;
+    if installed == update.expected_version {
+        // Sparkle 可能在 Codex 退出时完成安装，只接受与用户选择完全一致的版本。
         verify(app)?;
-        let _ = fs::remove_dir_all(
-            update
-                .source
-                .parent()
-                .ok_or("无法定位 Codex 更新暂存目录")?,
-        );
-        return Ok(());
+    } else {
+        if build_number(&installed.build)? >= build_number(&update.expected_version.build)? {
+            return Err(format!(
+                "Codex 已安装 {}（{}），与选定的 {}（{}）不一致",
+                installed.version, installed.build, update.expected_version.version, update.expected_version.build
+            ));
+        }
+        verify_staged_app(&update.source, &update.expected_version, &verify)?;
+        replace_verified_app(
+            app,
+            &update.work_directory,
+            |incoming| {
+                let output = Command::new("/usr/bin/ditto")
+                    .arg("--noqtn")
+                    .arg(&update.source)
+                    .arg(incoming)
+                    .output()
+                    .map_err(|error| error.to_string())?;
+                if !output.status.success() {
+                    return Err(format!(
+                        "复制 Codex 更新失败：{}",
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ));
+                }
+                Ok(())
+            },
+            |candidate| verify_staged_app(candidate, &update.expected_version, &verify),
+        )?;
     }
-    verify_staged_app(&update.source, &update.expected_version, &verify)?;
-    replace_verified_app(
-        app,
-        &update.work_directory,
-        |incoming| {
-            let output = Command::new("/usr/bin/ditto")
-                .arg("--noqtn")
-                .arg(&update.source)
-                .arg(incoming)
-                .output()
-                .map_err(|error| error.to_string())?;
-            if !output.status.success() {
-                return Err(format!(
-                    "复制 Codex 更新失败：{}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ));
-            }
-            Ok(())
-        },
-        |candidate| verify_staged_app(candidate, &update.expected_version, &verify),
-    )?;
-    // Remove only this exact download after the verified installation succeeds.
+    // 保留安装失败的下载，只有验证通过后才删除暂存包。
     let _ = fs::remove_dir_all(
         update
             .source
@@ -309,12 +320,12 @@ mod tests {
     }
 
     #[test]
-    fn native_installation_completed_on_quit_keeps_the_newer_app() {
-        for installed_build in [2, 3] {
+    fn native_installation_completed_on_quit_requires_exact_target() {
+        for (installed_version, installed_build) in [("26.1.1", 2), ("26.1.1", 3), ("26.1.2", 2)] {
             let (root, app, work) = fixture();
             fs::create_dir(app.join("Contents")).unwrap();
             fs::write(app.join("Contents/Info.plist"), format!(
-                "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>CFBundleShortVersionString</key><string>26.1.1</string><key>CFBundleVersion</key><string>{installed_build}</string></dict></plist>"
+                "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>CFBundleShortVersionString</key><string>{installed_version}</string><key>CFBundleVersion</key><string>{installed_build}</string></dict></plist>"
             )).unwrap();
             let staged = root.join("staged");
             fs::create_dir(&staged).unwrap();
@@ -326,18 +337,19 @@ mod tests {
                     build: "2".into(),
                 },
             };
-            install_staged_update(&update, &app, |candidate| {
+            let result = install_staged_update(&update, &app, |candidate| {
                 assert_eq!(candidate, app);
                 assert!(staged.exists());
                 Ok(())
-            })
-            .unwrap();
+            });
+            let matched = installed_version == "26.1.1" && installed_build == 2;
+            assert_eq!(result.is_ok(), matched);
             assert_eq!(
                 bundle_version(&app).unwrap().build,
                 installed_build.to_string()
             );
             assert_eq!(fs::read_to_string(app.join("version")).unwrap(), "old");
-            assert!(!staged.exists());
+            assert_eq!(staged.exists(), !matched);
             drop(update);
             fs::remove_dir_all(root).unwrap();
         }

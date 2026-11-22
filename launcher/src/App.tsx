@@ -29,6 +29,7 @@ export type LauncherSnapshot = {
   codexUpdatePhase: string;
   codexUpdateMessage: string;
   codexUpdateChecking: boolean;
+  codexUpdateVersions?: { version: string; build: string; verified: boolean }[];
   appPath: string | null;
 };
 export type LauncherPreferences = { defaultProjectlessChat: boolean; sharedSessionBackend: boolean; autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean; petSounds: boolean };
@@ -69,6 +70,7 @@ export function App() {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [error, setError] = useState("");
   const [busyAction, setBusyAction] = useState("");
+  const [selectedCodexBuild, setSelectedCodexBuild] = useState("");
   const [feedback, setFeedback] = useState<Record<string, "success" | "failed">>({});
   const [savingPreference, setSavingPreference] = useState(false);
   const [sharedCliCopied, setSharedCliCopied] = useState(false);
@@ -99,6 +101,14 @@ export function App() {
   }, [preferences?.usageAnimationMinSpeed, preferences?.usageAnimationMaxSpeed, preferences?.usageAnimationMode]);
   const hasProcess = snapshot.childPid !== null && snapshot.childPid !== undefined;
   const ready = snapshot.phase === "running";
+  const codexUpdateVersions = snapshot.codexUpdateVersions ?? [];
+  // 优先选有源码适配记录的版本，同时允许手动选择其他可下载构建。
+  const targetCodexBuild = codexUpdateVersions.find(({ build }) => build === selectedCodexBuild)?.build
+    ?? codexUpdateVersions.find(({ verified }) => verified)?.build ?? codexUpdateVersions[0]?.build;
+  const codexDownloadInProgress = ["preparing", "downloading", "paused", "verifying"].includes(snapshot.codexUpdatePhase);
+  const canChooseCodexBuild = ready && snapshot.codexUpdateAvailable && !snapshot.codexUpdateReady
+    && !snapshot.codexUpdateChecking && !snapshot.codexUpdateDownloading
+    && !codexDownloadInProgress && snapshot.codexUpdatePhase !== "failed" && targetCodexBuild;
   const needsRestart = snapshot.phase === "restart_required";
   const needsStart = snapshot.phase === "stopped" || snapshot.phase === "error";
   const opening = !needsStart && snapshot.openRequestPending && ready;
@@ -414,14 +424,28 @@ export function App() {
                 </div>
                 {snapshot.appPath?.endsWith(".app") && <div className="maintenance-card codex-update-card" id="codexUpdateComponent">
                   <Flex align="center" justify="between" gap="4">
-                    <div className="status-row-copy"><Text size="2" weight="medium">Codex 更新</Text><Text as="p" size="1" color="gray" mt="1">{!ready ? "连接 Codex 后读取更新状态" : snapshot.codexUpdateMessage || "正在读取更新状态…"}</Text></div>
+                    <div className="status-row-copy">
+                      <Text size="2" weight="medium">Codex 更新</Text>
+                      <Text as="p" size="1" color="gray" mt="1">{!ready ? "连接 Codex 后读取更新状态" : snapshot.codexUpdateMessage || "正在读取更新状态…"}</Text>
+                      {canChooseCodexBuild && <Flex align="center" wrap="wrap" gap="2" mt="2">
+                        <Text as="label" htmlFor="codexUpdateVersion" size="1" color="gray">目标版本</Text>
+                        <Select.Root value={targetCodexBuild} onValueChange={setSelectedCodexBuild} disabled={busy} size="2">
+                          <Select.Trigger id="codexUpdateVersion" />
+                          <Select.Content position="popper">
+                            {codexUpdateVersions.map(({ version, build, verified }) => <Select.Item key={build} value={build}>
+                              {version} · Build {build}{verified ? " · 已验证源码适配" : ""}
+                            </Select.Item>)}
+                          </Select.Content>
+                        </Select.Root>
+                      </Flex>}
+                    </div>
                     <Flex className="card-actions" gap="2">
-                      {ready && ["preparing", "downloading", "paused", "verifying"].includes(snapshot.codexUpdatePhase) ? <>
+                      {ready && codexDownloadInProgress ? <>
                         {snapshot.codexUpdatePhase === "downloading" && <Tooltip content="暂停下载"><IconButton id="pauseCodexUpdate" aria-label="暂停下载" size="2" variant="soft" {...actionProps("control_codex_update_download", false, { action: "pause" })}><LinearIcon name="pause" /></IconButton></Tooltip>}
                         {snapshot.codexUpdatePhase === "paused" && <Tooltip content="继续下载"><IconButton id="resumeCodexUpdate" aria-label="继续下载" size="2" variant="soft" {...actionProps("control_codex_update_download", false, { action: "resume" })}><LinearIcon name="play" /></IconButton></Tooltip>}
                         <Tooltip content="取消下载"><IconButton id="cancelCodexUpdate" aria-label="取消下载" size="2" variant="soft" {...actionProps("control_codex_update_download", false, { action: "cancel" })}><LinearIcon name="close" /></IconButton></Tooltip>
                       </> : ready && snapshot.codexUpdateReady ? cardAction("installCodexUpdate", "install_codex_update", "安装 Codex 更新并重启", <LinearIcon name="package" />)
-                        : ready && snapshot.codexUpdatePhase !== "failed" && (snapshot.codexUpdateAvailable || snapshot.codexUpdateDownloading) ? <Tooltip content={snapshot.codexUpdateDownloading ? "正在下载并验证官方更新包" : "直接下载更新，完成后可安装并重启"}><IconButton id="downloadCodexUpdate" aria-label={snapshot.codexUpdateDownloading ? "正在下载更新…" : "下载更新"} size="2" variant="soft" {...actionProps("download_codex_update", snapshot.codexUpdateDownloading)} loading={busyAction === "download_codex_update" || snapshot.codexUpdateDownloading}><LinearIcon name="download" /></IconButton></Tooltip>
+                        : ready && snapshot.codexUpdatePhase !== "failed" && (snapshot.codexUpdateAvailable || snapshot.codexUpdateDownloading) ? <Tooltip content={snapshot.codexUpdateDownloading ? "正在下载并验证官方更新包" : "直接下载更新，完成后可安装并重启"}><IconButton id="downloadCodexUpdate" aria-label={snapshot.codexUpdateDownloading ? "正在下载更新…" : "下载更新"} size="2" variant="soft" {...actionProps("download_codex_update", snapshot.codexUpdateDownloading || snapshot.codexUpdateChecking, targetCodexBuild ? { targetBuild: targetCodexBuild } : undefined)} loading={busyAction === "download_codex_update" || snapshot.codexUpdateDownloading}><LinearIcon name="download" /></IconButton></Tooltip>
                         : <Tooltip content={snapshot.codexUpdateChecking ? "正在检查更新…" : "检查更新"}><IconButton id="checkCodexUpdates" aria-label={snapshot.codexUpdateChecking ? "正在检查更新…" : "检查更新"} size="2" variant="soft" {...actionProps("check_codex_updates", !ready || snapshot.codexUpdateChecking)} loading={busyAction === "check_codex_updates" || snapshot.codexUpdateChecking}><span className="action-icon" aria-hidden="true">↻</span></IconButton></Tooltip>}
                     </Flex>
                   </Flex>

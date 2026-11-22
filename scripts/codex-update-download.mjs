@@ -11,6 +11,8 @@ const verifySignature = promisify(verify);
 const officialHosts = new Set(['updates.oaistatic.com', 'persistent.oaistatic.com']);
 const versionPattern = /^\d+(?:\.\d+){1,4}$/;
 const buildPattern = /^\d+$/;
+// 仅标记随当前 Panel 代码验证过源码适配的确切版本和架构。
+const sourceVerified = new Set(['arm64:26.1117.31558:29513']);
 
 function officialUrl(value) {
   const url = new URL(value);
@@ -34,18 +36,21 @@ function appcastUrl(installed, architecture, systemVersion, beta, planType) {
   return url.href;
 }
 
-export async function selectCodexUpdateVersion(file, architecture, systemVersion, run = execute) {
+async function readCodexUpdateVersions(file, architecture, systemVersion, installedBuild, run) {
   const xml = await readFile(file, 'utf8');
   if (xml.includes('<!DOCTYPE') || xml.includes('<!ENTITY')) throw new Error('Codex 更新清单包含不允许的 XML 声明');
+  if (!buildPattern.test(installedBuild)) throw new Error('当前 Codex 构建号无效');
   const xpath = async expression => (await run('/usr/bin/xmllint', ['--nonet', '--xpath', expression, file], { timeout: 15_000, maxBuffer: 2 * 1024 * 1024 })).stdout.trim();
   if (await xpath('count(/rss/channel)') !== '1') throw new Error('Codex 官方更新清单格式无效');
   const count = Number(await xpath('count(/rss/channel/item)'));
-  let latest = null;
+  const versions = [];
+  let hasNewerBuild = false;
   for (let index = 1; index <= count; index++) {
     const item = `/rss/channel/item[${index}]`;
     const fields = ['version', 'shortVersionString', 'hardwareRequirements', 'minimumSystemVersion'];
     const values = fields.map(field => `string((${item}/*[local-name()='${field}'] | ${item}/enclosure/@*[local-name()='${field}'])[1])`);
-    const [build, version, hardware, minimumSystemVersion] = (await xpath(`concat(${values.join(", '|', ")})`)).split('|');
+    const delta = `${item}/*[local-name()='deltas']/enclosure[@*[local-name()='deltaFrom']='${installedBuild}']`;
+    const [build, version, hardware, minimumSystemVersion, deltaCount] = (await xpath(`concat(${values.join(", '|', ")}, '|', count(${delta}))`)).split('|');
     if (hardware && hardware !== architecture) continue;
     if (minimumSystemVersion) {
       if (!versionPattern.test(minimumSystemVersion) || !versionPattern.test(systemVersion)) throw new Error('Codex 更新系统版本要求无效');
@@ -54,10 +59,16 @@ export async function selectCodexUpdateVersion(file, architecture, systemVersion
       const difference = Array.from({ length: Math.max(required.length, current.length) }, (_, i) => (current[i] ?? 0) - (required[i] ?? 0)).find(value => value !== 0) ?? 0;
       if (difference < 0) continue;
     }
-    const target = targetVersion(version, build);
-    if (!latest || BigInt(target.availableBuildVersion) > BigInt(latest.availableBuildVersion)) latest = target;
+    targetVersion(version, build);
+    if (BigInt(build) <= BigInt(installedBuild)) continue;
+    hasNewerBuild = true;
+    if (deltaCount === '1') versions.push({ version, build, verified: sourceVerified.has(`${architecture}:${version}:${build}`) });
   }
-  return latest && { ...latest, appcastXml: xml };
+  versions.sort((left, right) => {
+    const a = BigInt(left.build), b = BigInt(right.build);
+    return a === b ? 0 : a > b ? -1 : 1;
+  });
+  return { versions, hasNewerBuild, appcastXml: xml };
 }
 
 // Download only the official delta from the installed build to the checked appcast offer.
@@ -135,7 +146,10 @@ export function createCodexUpdateDownload({ appPath, dataDirectory, getPlanType 
   const status = (phase, message) => ({ phase, ready: phase === 'ready', available: true,
     downloading: ['preparing', 'downloading', 'verifying'].includes(phase), checking: false, message });
   const failed = error => { state = status('failed', `Codex 更新下载失败：${error.message ?? error}`); };
-  const ready = target => { state = status('ready', `更新 ${target.availableVersion} 已下载，可安装并重新连接`); };
+  const ready = target => {
+    state = { ...status('ready', `更新 ${target.availableVersion} 已下载，可安装并重新连接`),
+      stagedBuild: target.availableBuildVersion };
+  };
 
   async function restore() {
     let metadata;
@@ -248,11 +262,11 @@ export function createCodexUpdateDownload({ appPath, dataDirectory, getPlanType 
         const file = path.join(temporary, 'appcast.xml');
         await downloadFile({ url: appcastUrl(installed, architecture, systemVersion, beta, planType),
           destination: file, expectedLength: null, signal });
-        const target = await selectCodexUpdateVersion(file, architecture, systemVersion, command);
+        const { versions, hasNewerBuild, appcastXml } = await readCodexUpdateVersions(
+          file, architecture, systemVersion, String(installed.CFBundleVersion), command);
         return { installedVersion: installed.CFBundleShortVersionString,
-          ...(target && BigInt(target.availableBuildVersion) > BigInt(installed.CFBundleVersion)
-            ? { status: 'available', ...target }
-            : { status: 'up_to_date' }) };
+          ...(versions.length ? { status: 'available', versions, appcastXml }
+            : { status: hasNewerBuild ? 'no_delta' : 'up_to_date' }) };
       } finally { await rm(temporary, { recursive: true, force: true }); }
     },
     start(offer) {

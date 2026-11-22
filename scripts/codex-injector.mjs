@@ -3697,30 +3697,36 @@ async function main() {
             const connection = [...injectedTargets.values()].find(cdp => !cdp.closed);
             if (!connection) throw new Error("请先通过 Panel 连接 Codex");
             const native = await readCodexUpdateState(connection);
-            return { ready: native.ready || codexUpdateDownload.status()?.ready === true,
-              codexUpdateNativeReady: native.ready, codexUpdateNativeDownloading: native.downloading };
+            const direct = codexUpdateDownload.status();
+            return { ready: native.ready || direct?.ready === true,
+              codexUpdateNativeReady: native.ready, codexUpdateNativeDownloading: native.downloading,
+              codexUpdateStagedBuild: direct?.stagedBuild };
           },
           "check-codex-updates": async () => {
             if (process.platform !== "darwin" || options.cdpPipe) throw new Error("目前需要 macOS TCP 连接模式");
             const connection = [...injectedTargets.values()].find(cdp => !cdp.closed);
             if (!connection) throw new Error("请先通过 Panel 连接 Codex");
             const update = await readCodexUpdateStatus(connection, { force: true, download: codexUpdateDownload });
-            return { ready: true, codexUpdateReady: update.ready, codexUpdateAvailable: update.available, codexUpdateDownloading: update.downloading, codexUpdatePhase: update.phase ?? "", codexUpdateMessage: update.message, codexUpdateChecking: update.checking };
+            return { ready: true, codexUpdateReady: update.ready, codexUpdateAvailable: update.available, codexUpdateDownloading: update.downloading, codexUpdatePhase: update.phase ?? "", codexUpdateMessage: update.message, codexUpdateChecking: update.checking, codexUpdateVersions: update.versions };
           },
-          "download-codex-update": async () => {
+          "download-codex-update": async ({ targetBuild }) => {
             if (process.platform !== "darwin" || options.cdpPipe) throw new Error("目前需要 macOS TCP 连接模式");
             const connection = [...injectedTargets.values()].find(cdp => !cdp.closed);
             if (!connection) throw new Error("请先通过 Panel 连接 Codex");
-            const update = await downloadCodexUpdate(connection, codexUpdateDownload);
-            return { ready: true, codexUpdateReady: update.ready, codexUpdateAvailable: update.available, codexUpdateDownloading: update.downloading, codexUpdatePhase: update.phase ?? "", codexUpdateMessage: update.message, codexUpdateChecking: update.checking };
+            const update = await downloadCodexUpdate(connection, codexUpdateDownload, targetBuild);
+            return { ready: true, codexUpdateReady: update.ready, codexUpdateAvailable: update.available, codexUpdateDownloading: update.downloading, codexUpdatePhase: update.phase ?? "", codexUpdateMessage: update.message, codexUpdateChecking: update.checking, codexUpdateVersions: update.versions };
           },
           ...Object.fromEntries(["pause", "resume", "cancel"].map(action => [`${action}-codex-update`, async () => {
             if (process.platform !== "darwin" || options.cdpPipe) throw new Error("目前需要 macOS TCP 连接模式");
-            const update = codexUpdateDownload[action]();
+            let update = codexUpdateDownload[action]();
             if (!update) throw new Error("当前没有可操作的 Codex 下载");
+            if (update.phase === "cancelled") {
+              const connection = [...injectedTargets.values()].find(cdp => !cdp.closed);
+              if (connection) update = await readCodexUpdateStatus(connection, { download: codexUpdateDownload });
+            }
             return { ready: true, codexUpdateReady: update.ready, codexUpdateAvailable: update.available,
               codexUpdateDownloading: update.downloading, codexUpdatePhase: update.phase ?? "",
-              codexUpdateMessage: update.message, codexUpdateChecking: update.checking };
+              codexUpdateMessage: update.message, codexUpdateChecking: update.checking, codexUpdateVersions: update.versions };
           }])),
           "retry-thread-tabs": async () => requestThreadTabsRetry(),
           status: async () => {
@@ -3740,6 +3746,7 @@ async function main() {
             let codexUpdateDownloading = false;
             let codexUpdatePhase = "";
             let codexUpdateChecking = false;
+            let codexUpdateVersions = [];
             let codexUpdateMessage = "暂时无法读取更新状态";
             if (process.platform === "darwin" && !options.cdpPipe) {
               const connection = [...injectedTargets.values()].find(cdp => !cdp.closed);
@@ -3752,11 +3759,12 @@ async function main() {
                   codexUpdatePhase = update.phase ?? "";
                   codexUpdateMessage = update.message;
                   codexUpdateChecking = update.checking;
+                  codexUpdateVersions = update.versions ?? [];
                 }
                 catch { /* Unknown update state must not offer installation. */ }
               }
             }
-            return { ...readiness, applyingNativeAdapters: applyingNativeAdapters(), codexUpdateReady, codexUpdateAvailable, codexUpdateDownloading, codexUpdatePhase, codexUpdateMessage, codexUpdateChecking };
+            return { ...readiness, applyingNativeAdapters: applyingNativeAdapters(), codexUpdateReady, codexUpdateAvailable, codexUpdateDownloading, codexUpdatePhase, codexUpdateMessage, codexUpdateChecking, codexUpdateVersions };
           },
           open: async () => {
             if (!cdpRuntime) throw new Error("Panel renderer injection is waiting for Codex");

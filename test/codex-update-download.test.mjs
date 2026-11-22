@@ -17,6 +17,10 @@ const appcast = `<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces
   <item><sparkle:version>99998</sparkle:version><sparkle:shortVersionString>26.1105.10000</sparkle:shortVersionString><sparkle:minimumSystemVersion>99.0</sparkle:minimumSystemVersion></item>
 </channel></rss>`;
 
+function addDelta(feed, { signature, length }, name = 'checked', build = '24141') {
+  return feed.replace('</item>', `<sparkle:deltas><enclosure sparkle:deltaFrom="${build}" url="https://persistent.oaistatic.com/${name}.delta" length="${length}" sparkle:edSignature="${signature}"/></sparkle:deltas></item>`);
+}
+
 test('selects the exact target delta from the installed build without falling back to a complete ZIP', { skip: process.platform !== 'darwin' }, async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'panel-appcast-'));
   try {
@@ -107,7 +111,7 @@ async function fixture(t, { badSignature = false, downloadError, downloadArchive
 }
 
 test('checks the official feed despite a skipped native update and preserves the selected channel', { skip: process.platform !== 'darwin' }, async t => {
-  const setup = await fixture(t, { feed: appcast });
+  const setup = await fixture(t, { feed: (archive) => addDelta(appcast, archive) });
   const download = createCodexUpdateDownload({ ...setup.options, getPlanType: async () => 'pro' }, setup.dependencies);
   const cdp = { send: async (_method, params) => {
     assert.ok(!params.expression.includes('checkForUpdateInformation'), 'never ask the updater to filter skipped versions');
@@ -118,7 +122,8 @@ test('checks the official feed despite a skipped native update and preserves the
   await waitFor(async () => !(await readCodexUpdateStatus(cdp, { download })).checking);
   const result = await readCodexUpdateStatus(cdp, { download });
   assert.equal(result.available, true);
-  assert.match(result.message, /26.1029.61003/);
+  assert.match(result.message, /当前版本 26.1027.61615/);
+  assert.deepEqual(result.versions, [{ version: '26.1029.61003', build: '24614', verified: false }]);
   assert.equal(setup.requests[0].searchParams.get('beta'), 'true');
   assert.equal(setup.requests[0].searchParams.get('plan_type'), 'pro');
   assert.equal(setup.requests.length, 1);
@@ -131,27 +136,38 @@ test('checks the official feed despite a skipped native update and preserves the
   assert.deepEqual(await readdir(path.join(setup.options.dataDirectory, 'codex-update')), []);
 });
 
-test('rechecks after a missing delta and downloads from that checked rollout without requesting another feed', { skip: process.platform !== 'darwin' }, async t => {
+test('selects the verified older target from the checked rollout and omits builds without a matching delta', { skip: process.platform !== 'darwin' }, async t => {
   let checks = 0;
-  const setup = await fixture(t, { feed: ({ signature, length }) => {
+  const setup = await fixture(t, { feed: archive => {
     checks++;
     if (checks === 1) return appcast;
     if (checks > 2) return '<rss><channel/></rss>';
-    return appcast.replace('</item>', `<sparkle:deltas><enclosure sparkle:deltaFrom="24141" url="https://persistent.oaistatic.com/checked.delta" length="${length}" sparkle:edSignature="${signature}"/></sparkle:deltas></item>`);
+    const newer = '<item><sparkle:version>29803</sparkle:version><sparkle:shortVersionString>26.1117.41037</sparkle:shortVersionString></item>';
+    const verified = '<item><sparkle:version>29513</sparkle:version><sparkle:shortVersionString>26.1117.31558</sparkle:shortVersionString></item>';
+    return appcast.replace('</channel>', `${addDelta(verified, archive)}${addDelta(newer, archive, 'latest')}</channel>`);
   } });
   const download = createCodexUpdateDownload(setup.options, { ...setup.dependencies, selectArchive: selectCodexUpdateArchive });
   const cdp = { send: async (_method, params) => ({ result: { value: params.expression.includes('})("channel",')
     ? { beta: false } : { isUpdateReady: false, lifecycleState: 'idle' } } }) };
-  for (const force of [false, true]) {
-    assert.equal((await readCodexUpdateStatus(cdp, { force, download })).checking, true);
-    await waitFor(async () => (await readCodexUpdateStatus(cdp, { download })).available);
-    await downloadCodexUpdate(cdp, download);
-    await download.wait();
-    if (!force) assert.match(download.status().message, /未提供.*增量包/);
-  }
+  assert.equal((await readCodexUpdateStatus(cdp, { download })).checking, true);
+  await waitFor(async () => !(await readCodexUpdateStatus(cdp, { download })).checking);
+  const noDelta = await readCodexUpdateStatus(cdp, { download });
+  assert.equal(noDelta.available, false);
+  assert.match(noDelta.message, /未提供.*增量包/);
+  assert.equal((await readCodexUpdateStatus(cdp, { force: true, download })).checking, true);
+  await waitFor(async () => (await readCodexUpdateStatus(cdp, { download })).available);
+  assert.deepEqual((await readCodexUpdateStatus(cdp, { download })).versions, [
+    { version: '26.1117.41037', build: '29803', verified: false },
+    { version: '26.1117.31558', build: '29513', verified: true },
+  ]);
+  await assert.rejects(downloadCodexUpdate(cdp, download, '24614'), /没有所选版本/);
+  setup.offeredTarget({ availableVersion: '26.1117.31558', availableBuildVersion: '29513' });
+  await downloadCodexUpdate(cdp, download, '29513');
+  await download.wait();
   assert.equal(checks, 2, 'only the two explicit checks request the rollout feed');
   assert.equal(setup.requests.at(-1).pathname, '/checked.delta');
   assert.equal(download.status().ready, true);
+  assert.equal(download.status().stagedBuild, '29513');
   assert.equal(setup.applied.length, 1);
 });
 
