@@ -4,7 +4,7 @@ import { test } from "node:test";
 import vm from "node:vm";
 import { JSDOM } from "jsdom";
 import { DOMSerializer, Schema } from "prosemirror-model";
-import { EditorState } from "prosemirror-state";
+import { AllSelection, EditorState, TextSelection } from "prosemirror-state";
 
 const source = await readFile(new URL("../inject/codex-panel.user.js", import.meta.url), "utf8");
 const threadId = "11111111-1111-4111-8111-111111111111";
@@ -132,6 +132,34 @@ test("command search ranks names before descriptions and filters each new query"
   assert.deepEqual(matches("review-g"), ["shay-skills:review-game"]);
   assert.deepEqual(matches("提交"), ["shay-skills:commit"]);
   assert.deepEqual(matches("missing-command"), []);
+});
+
+test("quick phrase Backspace and Delete remove multiline and whole-document selections", () => {
+  const start = source.indexOf("      handleKeyDown(view, event) {", source.indexOf("  function configureQuickPhrases("));
+  const end = source.indexOf("      handlePaste(", start);
+  const { handleKeyDown } = vm.runInNewContext(`({${source.slice(start, end)}})`, { commands: { hidden: true } });
+  const schema = new Schema({ nodes: {
+    doc: { content: "paragraph+" }, paragraph: { content: "inline*" }, text: { group: "inline" },
+    skillMention: { inline: true, group: "inline", atom: true },
+  } });
+  const doc = schema.node("doc", null, [
+    schema.node("paragraph", null, [schema.text("Alpha")]),
+    schema.node("paragraph", null, [schema.nodes.skillMention.create()]),
+    schema.node("paragraph", null, [schema.text("Gamma")]),
+  ]);
+  for (const key of ["Backspace", "Delete"]) {
+    for (const selection of [TextSelection.create(doc, 3, doc.content.size - 3), new AllSelection(doc)]) {
+      const view = {
+        state: EditorState.create({ schema, doc, selection }),
+        dispatch(transaction) { this.state = this.state.apply(transaction); },
+      };
+      assert.equal(handleKeyDown(view, { key }), true, `${key} must handle the selected range`);
+      assert.equal(view.state.doc.childCount, 1);
+      assert.equal(view.state.doc.textContent, selection instanceof AllSelection ? "" : "Alma");
+      assert.equal(view.state.doc.firstChild.childCount, selection instanceof AllSelection ? 0 : 1);
+      assert.equal(view.state.selection.empty, true);
+    }
+  }
 });
 
 test("quick phrase cards use native mention views without changing the composer or retaining old icons", () => {

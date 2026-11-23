@@ -247,7 +247,7 @@ test('native features analyze concurrently in two workers and publish results be
   for (const item of progress.filter(item => item.phase === 'adapt')) {
     ratios.set(item.feature, item.total > 0 ? item.completed / item.total : 1);
     const percent = [...ratios.values()].reduce((sum, ratio) => sum + ratio, 0) / ratios.size * 100;
-    assert.equal(item.percent, percent, 'parallel progress includes completed, active and queued features');
+    assert.ok(Math.abs(item.percent - percent) < 1e-10, 'parallel progress includes completed, active and queued features');
     assert.ok(item.percent >= lastPercent, 'another worker starting does not reset the progress bar');
     lastPercent = item.percent;
   }

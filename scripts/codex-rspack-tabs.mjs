@@ -293,7 +293,10 @@ export function rewriteRspackThreadTabs(source, context) {
       const single = first.arguments.length === 1 ? first : second.arguments.length === 1 ? second : null;
       const pair = first.arguments.length === 2 ? first : second.arguments.length === 2 ? second : null;
       if (!single || !pair || !same(tree, single.arguments[0], tree, fn.params[0])
-        || !same(tree, pair.arguments[0], tree, fn.params[0]) || !same(tree, pair.arguments[1], tree, fn.params[1])) continue;
+        || !same(tree, pair.arguments[0], tree, fn.params[0])) continue;
+      const tab = unwrap(pair.arguments[1]);
+      if (!same(tree, tab, tree, fn.params[1])
+        && !(member(tab, 'tabId') && same(tree, tab.object, tree, fn.params[1]))) continue;
       if (primaryCalls.some(candidate => same(tree, single.callee, candidate.ast, candidate.node))) focusCandidates.push({ ast: tree, node: fn });
     }
   }
@@ -492,8 +495,9 @@ export function rewriteRspackThreadTabs(source, context) {
   }
 
   const sidebar = unique(sidebarPatterns, 'Native sidebar component is ambiguous'), owner = fnOf(ast, sidebar);
-  const presentation = unique(ast.all(node => objectWith(node, ['isActive', 'dataAttributes', 'conversationId', 'hostId']), owner.body), 'Native sidebar presentation changed');
-  const active = propertyValue(presentation, 'isActive'), conversation = propertyValue(presentation, 'conversationId');
+  const presentation = unique(ast.all(node => objectWith(node, ['isActive', 'dataAttributes', 'hostId']), owner.body), 'Native sidebar presentation changed');
+  const active = propertyValue(presentation, 'isActive'), conversationInput = propertyValue(sidebar, 'conversationId');
+  const conversation = conversationInput.type === 'AssignmentPattern' ? conversationInput.left : conversationInput;
   let host = propertyValue(presentation, 'hostId');
   for (;;) {
     const next = unwrap(ast.value(host));
