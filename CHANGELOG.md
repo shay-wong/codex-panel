@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Restore conversation-tab adaptation on Codex 26.1111.21308: recognize native focus functions that take a tab ID and sidebar rows whose presentation does not forward the conversation ID.
+
 ## 0.6.1-fork
 
 - Choose a Codex upgrade target on macOS. Panel prefers versions with verified source adapters when the official feed offers a matching delta.
