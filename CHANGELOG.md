@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.6.1-fork
+
 - Choose a Codex upgrade target on macOS. Panel prefers versions with verified source adapters when the official feed offers a matching delta.
 
 ## 0.6.0-fork
