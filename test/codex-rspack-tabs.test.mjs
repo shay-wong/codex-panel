@@ -46,6 +46,21 @@ test('adapts Rspack menu and sidebar factories without named app chunks', () => 
   assert.throws(() => rewriteRspackThreadTabs(fixtures.menu, context({ ...fixtures, layout: 'unsupported' })), /Native conversation layout/);
 });
 
+test('legacy conversation focus forwards the tab id instead of the entire view', () => {
+  const sources = { ...fixtures, layout: fixtures.layout.replace('Other.focus(e,t)', 'Other.focus(e,t.tabId)') };
+  const patched = rewriteRspackThreadTabs(sources.menu, context(sources));
+  assert.match(patched, /"focus":\["layout","Mn"\]/);
+  new vm.Script(`(${patched})`);
+});
+
+test('legacy sidebar presentation keeps conversation identity in the row input', () => {
+  const source = fixtures.sidebar.replace('let output={conversationId:id,', 'let output={');
+  const patched = rewriteRspackThreadTabs(source, context());
+  assert.match(patched, /panelThreadTabs\.isActive\(root,\{conversationId:id,hostId:host\?\?"local"\}/);
+  assert.match(patched, /panelThreadTabs\.focusExisting\(root,\{conversationId:id,hostId:host\?\?"local"\}/);
+  new vm.Script(`(${patched})`);
+});
+
 test('resolves route descriptor keys without a preassembled active-scope helper', () => {
   const ctx = context({ ...fixtures,
     scope: fixtures.scope.replace('let marker="open-page-on-right"', 'let marker="Library chat preview failed to open"')

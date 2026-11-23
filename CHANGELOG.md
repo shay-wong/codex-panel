@@ -15,6 +15,7 @@ This file records user-visible changes introduced by the fork.
 - Cache native adaptation features independently across restarts using package contents; copying the same package or changing file attributes keeps the cache, UI changes reuse it, and only changed or failed features rebuild.
 - Locate native adapters through syntax trees, exports and calls, removing generated-filename, module co-location, declaration-adjacency and field-order assumptions; support Codex 26.1117.31558 quota, speed settings, conversation menus and notification structures.
 - Resume valid partial Codex downloads after network interruptions or timeouts when retrying the same version during the current Panel run.
+- Restore conversation-tab adaptation on Codex 26.1111.21308: recognize native focus functions that take a tab ID and sidebar rows whose presentation does not forward the conversation ID.
 - Filter quick-phrase Skill suggestions as you type `@`/`$`, rank matching names first, and allow continuous deletion across lines. Keep native Skill labels and icons consistent between the card and editor, including after saving and reopening.
 - Keep multiple repository quick-phrase configuration tabs open, focus an existing tab when selected again, and scroll the tab row horizontally.
 
