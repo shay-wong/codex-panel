@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { chmod, cp, mkdtemp, mkdir, readFile, readdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import vm from 'node:vm';
 import { applyCodexRspackFeature, buildCodexRspackInWorker, prepareCodexRspack, prepareCodexRspackPlan } from '../scripts/codex-rspack.mjs';
-import { readCodexRspack } from '../scripts/codex-rspack-source.mjs';
+import { readCodexRspack, readCodexRspackIdentity } from '../scripts/codex-rspack-source.mjs';
 
 const run = promisify(execFile);
 const loaderUrl = new URL('../scripts/codex-rspack.mjs', import.meta.url).href;
@@ -124,6 +125,71 @@ test('same artifact shares one build across concurrent calls, later calls, and a
   assert.equal(files.length, 1);
   assert.ok(files[0].endsWith('.json'));
   assert.deepEqual(await childCache(f), { read: 0, build: 0, ready, features: allFeatures.toSorted((a, b) => Number(b === 'pets') - Number(a === 'pets')), main: '/assets/main.js' });
+});
+
+test('unchanged archive contents reuse adaptation after metadata changes, copies, and moves', async t => {
+  const f = await fixture(t), spy = spies();
+  const archive = path.join(f.appPath, 'Contents/Resources/app.asar');
+  const original = await readCodexRspackIdentity(f.appPath);
+  await prepareCodexRspackPlan(f.appPath, { ...f, ...spy });
+  await chmod(archive, 0o640);
+  await utimes(archive, new Date('2020-01-01'), new Date('2020-01-01'));
+  assert.deepEqual(await readCodexRspackIdentity(f.appPath), original);
+  await prepareCodexRspackPlan(f.appPath, { ...f, ...spy });
+  const copy = path.join(f.root, 'fixtures/Copy.app'), moved = path.join(f.root, 'fixtures/Moved.app');
+  await cp(f.appPath, copy, { recursive: true });
+  assert.equal((await readCodexRspackIdentity(copy)).key, original.key);
+  await prepareCodexRspackPlan(copy, { ...f, ...spy });
+  await rename(copy, moved);
+  assert.equal((await readCodexRspackIdentity(moved)).key, original.key);
+  await prepareCodexRspackPlan(moved, { ...f, ...spy });
+  assert.equal(spy.calls.read, 1);
+  assert.equal(spy.calls.build, allJobs.length);
+  assert.equal((await childCache({ ...f, appPath: moved })).read, 0);
+});
+
+test('same-size archive content changes invalidate adaptation even with the original modification time', async t => {
+  const f = await fixture(t), spy = spies();
+  const archive = path.join(f.appPath, 'Contents/Resources/app.asar');
+  const time = new Date('2020-01-01');
+  await utimes(archive, time, time);
+  const original = await readCodexRspackIdentity(f.appPath);
+  await prepareCodexRspackPlan(f.appPath, { ...f, ...spy });
+  await writeArchive(f.appPath, 'two');
+  await utimes(archive, time, time);
+  const changed = await readCodexRspackIdentity(f.appPath);
+  assert.equal(changed.size, original.size);
+  assert.equal((await stat(archive)).mtimeMs, time.getTime());
+  assert.notEqual(changed.key, original.key);
+  await prepareCodexRspackPlan(f.appPath, { ...f, ...spy });
+  assert.equal(spy.calls.read, 2);
+  assert.equal(spy.calls.build, allJobs.length * 2);
+  assert.equal((await childCache(f)).build, 0);
+});
+
+test('failed or interrupted archive reads never retain a reusable digest', async () => {
+  const source = await readFile(new URL('../scripts/codex-rspack-source.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('export async function readCodexRspackIdentity(');
+  const end = source.indexOf('\nexport function shareRspackCatalog(', start);
+  let failure = 'stream', version = 0n, reads = 0;
+  const readIdentity = vm.runInNewContext(`const archiveDigests = new Map(); ${source.slice(start, end).replace('export ', '')}; readCodexRspackIdentity`, {
+    path, createHash, realpath: async value => value,
+    stat: async () => ({ size: 7n, mtimeNs: 1n, ctimeNs: version, dev: 1n, ino: 1n }),
+    createReadStream: async function* () {
+      reads++;
+      if (failure === 'stream') throw new Error('read failed');
+      yield Buffer.from('archive');
+      if (failure === 'change') version++;
+    },
+  });
+  await assert.rejects(readIdentity('/isolated/Codex.app'), /read failed/);
+  failure = 'change';
+  await assert.rejects(readIdentity('/isolated/Codex.app'), /读取期间发生变化/);
+  failure = '';
+  const result = await readIdentity('/isolated/Codex.app');
+  assert.equal(result.key, createHash('sha256').update('archive').digest('hex'));
+  assert.equal((await readIdentity('/isolated/Codex.app')).key, result.key);
+  assert.equal(reads, 3, 'retry failed reads and reuse the stable successful digest');
 });
 
 test('startup reports a pending analysis immediately and reports cached preparation without analyzing again', async t => {

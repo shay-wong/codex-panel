@@ -1,9 +1,12 @@
 import { open, realpath, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { parseSync, visitorKeys } from 'oxc-parser';
 import { sourceAst, unwrap, propertyName } from './codex-source-ast.mjs';
 
 const catalogs = new Map();
+const archiveDigests = new Map();
 
 export function normalizeRspackFactory(source) {
   if (/^(?:async\s+)?function\b/.test(source)) return source;
@@ -90,10 +93,24 @@ export async function readCodexRspackIdentity(appPath) {
       : path.join(path.dirname(appPath), 'resources');
   let archive = path.join(resources, 'app.asar');
   let details;
-  try { archive = await realpath(archive); details = await stat(archive); }
+  try { archive = await realpath(archive); details = await stat(archive, { bigint: true }); }
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-  const key = JSON.stringify([archive, details.size, details.mtimeMs, details.ctimeMs, details.dev, details.ino]);
-  return { archive, key, size: details.size };
+  const fileStamp = value => [value.size, value.mtimeNs, value.ctimeNs, value.dev, value.ino].join(':');
+  const stamp = fileStamp(details);
+  let cached = archiveDigests.get(archive);
+  if (cached?.stamp !== stamp) {
+    const pending = (async () => {
+      const hash = createHash('sha256');
+      for await (const bytes of createReadStream(archive)) hash.update(bytes);
+      if (fileStamp(await stat(archive, { bigint: true })) !== stamp) throw new Error('Codex app.asar 在读取期间发生变化');
+      return hash.digest('hex');
+    })();
+    cached = { stamp, pending };
+    archiveDigests.set(archive, cached);
+    const entry = cached;
+    pending.catch(() => { if (archiveDigests.get(archive) === entry) archiveDigests.delete(archive); });
+  }
+  return { archive, key: await cached.pending, size: Number(details.size) };
 }
 
 export function shareRspackCatalog(catalog) {

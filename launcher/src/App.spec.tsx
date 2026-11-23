@@ -574,7 +574,7 @@ it("shows adapter progress inside the status panel alongside the independent con
   const snapshot: LauncherSnapshot = {
     phase: "running", version: "test", message: "Codex 连接和 Panel 注入已就绪。", childPid: 1,
     embeddedVisible: true, threadTabsPhase: "loading", threadTabsMessage: "正在准备会话菜单",
-    nativeAdaptersPhase: "reading", nativeAdaptersMessage: "正在读取 Codex 原生模块", nativeAdaptersFeatures: [],
+    nativeAdaptersPhase: "reading", nativeAdaptersMessage: "正在读取 Codex 资源（7369/9599） · webview/assets/async/79584.107a3o8b22.js", nativeAdaptersFeatures: [],
     openRequestPending: false, updateMessage: "", updateNotes: null, updateAvailable: false, updateReady: false,
     codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false, appPath: null,
   };
@@ -589,7 +589,9 @@ it("shows adapter progress inside the status panel alongside the independent con
   render(<Theme><App /></Theme>);
   await act(async () => {});
   const progress = document.getElementById("nativeAdaptersComponent")!;
-  expect(progress.textContent).toContain("正在读取 Codex 原生模块");
+  expect(progress.textContent).toContain("读取资源");
+  expect(document.getElementById("nativeAdaptersMessage")?.textContent).toBe("正在读取 Codex 资源（7369/9599）\nwebview/assets/async/79584.107a3o8b22.js");
+  expect(document.getElementById("nativeAdaptersMessage")?.title).toBe(snapshot.nativeAdaptersMessage);
   expect(progress.closest(".status-panel")).toBe(document.querySelector(".status-panel"));
   expect(document.getElementById("overviewTitle")?.textContent).toBe("Panel 已就绪");
   expect(document.getElementById("message")?.textContent).toBe(snapshot.message);

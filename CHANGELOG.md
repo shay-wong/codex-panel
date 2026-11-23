@@ -8,16 +8,26 @@ This file records user-visible changes introduced by the fork.
 
 - Choose a Codex upgrade target on macOS. Panel prefers versions with verified source adapters when the official feed offers a matching delta.
 
+## 0.6.0-fork
+
 - Change quick-phrase mode from the card or Configure dialog with an explanation of each mode: fill the composer, join the queue, or steer a running task; queue and steer send normally when idle.
 
 - Keep the checked Codex release feed for its download, avoiding mismatched rollout targets; show Check for updates after a download failure.
+
 - Assign increasing local package build numbers, show them in About and startup logs, and include them in macOS bundle metadata. `codex:install` prints its build number before preparing resources and streams build output.
-- Connect Panel before preparing native adapters, group ongoing adaptation text and its progress bar on the right of the launcher’s main status panel while preserving the independent connection status on the left, run independent adapters concurrently, and apply interface patches with one final reload. Only the adaptation details and progress bar disappear when adaptation ends.
+
+- Connect Panel before preparing native adapters, group ongoing adaptation text and its progress bar on the right of the launcher’s main status panel while preserving the independent connection status on the left, run independent adapters concurrently, and apply interface patches with one final reload. Only the adaptation details and progress bar disappear when adaptation ends. Expand the progress area into the remaining width, label resource reading separately, and truncate long paths with their full text on hover.
+
 - Make all Launcher settings toggle only through the switch itself or keyboard activation, including pet sounds.
-- Cache native adaptation features independently across restarts; UI changes reuse them, adapter changes rebuild only affected features, and failures retry without rebuilding successful peers.
+
+- Cache native adaptation features independently across restarts using package contents; copying the same package or changing file attributes keeps the cache, UI changes reuse it, and only changed or failed features rebuild. The first connection after upgrading rebuilds the cache once; later starts reuse it.
+
 - Locate native adapters through syntax trees, exports and calls, removing generated-filename, module co-location, declaration-adjacency and field-order assumptions; support Codex 26.1117.31558 quota, speed settings, conversation menus and notification structures.
+
 - Resume valid partial Codex downloads after network interruptions or timeouts when retrying the same version during the current Panel run.
+
 - Filter quick-phrase Skill suggestions as you type `@`/`$`, rank matching names first, and allow continuous deletion across lines. Keep native Skill labels and icons consistent between the card and editor, including after saving and reopening.
+
 - Keep multiple repository quick-phrase configuration tabs open, focus an existing tab when selected again, and scroll the tab row horizontally.
 
 - Configure a shared base quick-phrase list or a complete override per repository, restore base phrases, edit Skill links with native labels and icons, switch between base and current-repository underline tabs, edit other repositories without leaving the current chat, and explicitly select one or more phrases or all phrases before applying them to existing custom lists without duplicating identical entries.
