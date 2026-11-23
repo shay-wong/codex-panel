@@ -3420,6 +3420,10 @@
           }
         }
         const { selection } = view.state;
+        if (!selection.empty && ["Backspace", "Delete"].includes(event.key)) {
+          view.dispatch(view.state.tr.deleteSelection().scrollIntoView());
+          return true;
+        }
         if (selection.empty && selection.$from.depth === 1) {
           const { $from } = selection;
           const boundary = event.key === "Backspace" && $from.parentOffset === 0 ? $from.before()

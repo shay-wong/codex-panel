@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fix Backspace and Delete in the quick-phrase editor for multiline selections, including Skill mentions and selecting all.
+
 - Restore conversation-tab adaptation on Codex 26.1111.21308: recognize native focus functions that take a tab ID and sidebar rows whose presentation does not forward the conversation ID.
 
 ## 0.6.1-fork
