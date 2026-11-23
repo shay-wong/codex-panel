@@ -126,7 +126,7 @@ test("composer status follows its own thread and removes values on Home", async 
       ${block}\nwindow.pollUsage = () => { usagePolledAt = 0; return pollThreadUsage(); }; window.renderUsage = renderUsageLine; window.usageNotification = onUsageNotification; window.usageStates = usageLines; window.tickUsage = () => usageLines.forEach(state => renderUsageState(state));`);
     await dom.window.pollUsage();
     const line = dom.window.document.querySelector(".codex-panel-usage-line");
-    assert.match(line.textContent, /20.0\s*tok\/s.*缓存命中\s*81.0%/);
+    assert.match(line.textContent, /--\s*tok\/s.*缓存命中\s*81.0%/);
     assert.equal(line.querySelectorAll('svg[aria-hidden="true"][stroke="currentColor"]').length, 2);
     assert.equal(line.parentElement.closest("[data-composer-trailing-controls]") != null, true);
     assert.equal(line.nextElementSibling.textContent, "模型");
@@ -152,44 +152,49 @@ test("composer status follows its own thread and removes values on Home", async 
     notify("turn/started", { turn: { id: "live", startedAt: epoch / 1000 } });
     now += 10_000;
     notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
-    assert.match(line.textContent, /10.0\s*tok\/s/);
+    assert.match(line.querySelector('[data-usage-speed]').getAttribute('aria-label'), /统计中/);
+    now += 1_000;
+    notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
+    assert.match(line.textContent, /100.0\s*tok\/s/);
     assert.doesNotMatch(line.textContent, /≈/);
     assert.match(line.title, /估算/);
-    now += 10_000;
+    now += 3_000;
     dom.window.tickUsage();
-    assert.match(line.textContent, /5.0\s*tok\/s/);
+    assert.match(line.textContent, /0.0\s*tok\/s/);
     dom.window.usageFailure = true;
     await dom.window.pollUsage();
-    assert.match(line.textContent, /5.0\s*tok\/s/);
+    assert.match(line.textContent, /0.0\s*tok\/s/);
     assert.equal([...dom.window.usageStates.values()][0].usage.turnId, "live");
     dom.window.usageFailure = false;
     dom.window.usageResult = { usage: null };
     await dom.window.pollUsage();
-    assert.match(line.textContent, /5.0\s*tok\/s/);
+    assert.match(line.textContent, /0.0\s*tok\/s/);
     notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
-    assert.match(line.textContent, /10.0\s*tok\/s/);
+    assert.match(line.querySelector('[data-usage-speed]').getAttribute('aria-label'), /统计中/);
+    now += 1_000;
+    notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
+    assert.match(line.textContent, /100.0\s*tok\/s/);
     delete dom.window.usageResult;
     const actual = { turnId: "live", tokenUsage: { last: { outputTokens: 4090, inputTokens: 100, cachedInputTokens: 80 }, total: { totalTokens: 4490 } } };
-    now = epoch + 100_000;
     notify("thread/tokenUsage/updated", actual);
-    assert.match(line.textContent, /40.9\s*tok\/s.*缓存命中\s*80.0%/);
-    assert.doesNotMatch(line.title, /估算/);
+    assert.match(line.textContent, /100.0\s*tok\/s.*缓存命中\s*80.0%/);
+    assert.match(line.title, /估算/);
     notify("thread/tokenUsage/updated", actual);
-    assert.match(line.textContent, /40.9\s*tok\/s/);
-    notify("turn/completed", { turn: { id: "live", durationMs: 100_000 } });
+    assert.match(line.textContent, /100.0\s*tok\/s/);
+    notify("turn/completed", { turn: { id: "live", durationMs: 15_000 } });
     now += 100_000;
     dom.window.tickUsage();
-    assert.match(line.textContent, /40.9\s*tok\/s/);
+    assert.match(line.textContent, /100.0\s*tok\/s/);
     notify("item/agentMessage/delta", { turnId: "live", delta: "ignored" });
-    assert.doesNotMatch(line.title, /估算/);
+    assert.match(line.title, /估算/);
     notify("turn/started", { turn: { id: "remote" } }, "remote");
-    assert.match(line.textContent, /40.9\s*tok\/s/);
+    assert.match(line.textContent, /100.0\s*tok\/s/);
     const live = [...dom.window.usageStates.values()][0];
     live.pendingTokens = 900;
     dom.window.usageResult = { usage: { ...live.usage } };
     await dom.window.pollUsage();
     assert.equal(live.pendingTokens, 0);
-    assert.match(line.textContent, /40.9\s*tok\/s/);
+    assert.match(line.textContent, /100.0\s*tok\/s/);
     notify("turn/started", { turn: { id: "next" } });
     assert.equal(line.querySelectorAll('.codex-panel-usage-dots i').length, 6);
     dom.window.document.querySelector("[data-codex-composer-root]").setAttribute("data-composer-placement", "home");
@@ -245,7 +250,7 @@ test("usage retargeting changes velocity gradually while keeping the current val
   } finally { dom.window.close(); }
 });
 
-test("active TPS reaches the latest sample before decaying and stops after completion", async () => {
+test("live TPS follows its rolling window immediately and freezes the last output rate on completion", async () => {
   const source = await readFile(new URL("../inject/codex-panel.user.js", import.meta.url), "utf8");
   const block = source.slice(source.indexOf("  const usageLines = new Map();"), source.indexOf("  function mount() {"));
   const dom = new JSDOM('<div id="line"><svg><path data-usage-needle></path></svg><span data-usage-speed></span><span data-usage-cache></span></div>', { runScripts: "outside-only", pretendToBeVisual: true });
@@ -259,7 +264,8 @@ test("active TPS reaches the latest sample before decaying and stops after compl
     dom.window.requestAnimationFrame = callback => { frames.set(++sequence, callback); return sequence; };
     dom.window.cancelAnimationFrame = frame => frames.delete(frame);
     dom.window.eval(`let usageDotMatrix = true; let usageAnimationMode = "smooth"; let usageAnimationMinSpeed = 0.5; let usageAnimationMaxSpeed = 50;
-      ${block}\nwindow.liveUsage = { line: document.getElementById("line"), pendingTokens: 0,
+      ${block}\nwindow.liveUsage = { line: document.getElementById("line"), pendingTokens: 0, lastSpeed: 40,
+        speedSamples: [{ at: 8000, tokens: 0 }, { at: 9000, tokens: 40 }, { at: 10000, tokens: 80 }],
         usage: { startedAt: 0, inProgress: true, outputTokens: 400, cache: 80 } };
       window.drawLiveUsage = () => renderUsageState(window.liveUsage);
       window.animation = () => usageValueAnimations.get(document.querySelector('[data-usage-speed]'));
@@ -272,46 +278,28 @@ test("active TPS reaches the latest sample before decaying and stops after compl
       callbacks.forEach(callback => callback(time));
     };
     assert.equal(value(), 40);
-    dom.window.liveUsage.usage.outputTokens = 800;
+    dom.window.liveUsage.speedSamples.at(-1).tokens = 160;
     dom.window.drawLiveUsage();
-    let reached = false;
-    for (let frame = 0; frame < 400; frame++) {
-      const before = value();
-      if (frame % 50 === 0) dom.window.drawLiveUsage();
-      assert.equal(dom.window.animation().target, 80, "duplicate samples must not lower a pending target");
-      step();
-      assert.ok(value() >= before, "TPS must not fall before reaching the sample target");
-      if (value() === 80) { reached = true; break; }
-    }
-    assert.ok(reached, "TPS must reach 80 before decaying");
-    for (let frame = 0; frame < 50; frame++) step();
-    assert.ok(value() < 80, "TPS can decay after reaching the target without new data");
-    assert.ok(frames.size > 0);
+    assert.equal(dom.window.animation().target, 80);
+    step();
+    assert.ok(dom.window.animation().target < 80, "elapsed time must immediately update an unreached target");
+    for (let frame = 0; frame < 20; frame++) step();
     const shown = (Number(dom.window.document.querySelector("[data-usage-needle]").getAttribute("transform").match(/rotate\(([^ ]+)/)[1]) + 90) / 1.8;
     const fraction = dom.window.document.querySelector(".codex-panel-usage-odometer").lastElementChild.querySelector(".codex-panel-usage-track");
     assert.ok(Math.abs(Number(fraction.style.getPropertyValue("--usage-offset")) - (1 + (shown * 10 % 10 + 10) % 10)) < 1e-8,
       "live targets must retain the fractional wheel position between displayed decimal values");
-    const beforeRisingTarget = value();
-    assert.ok(dom.window.animation().velocity < 0);
-    dom.window.liveUsage.pendingTokens = (beforeRisingTarget + 0.08) * (time / 1000) - 800;
+    for (let frame = 0; frame < 200; frame++) step();
+    assert.equal(dom.window.animation().target, 0, "a tool wait must empty the three-second window");
+    dom.window.liveUsage.speedSamples = [{ at: time - 1000, tokens: 0 }, { at: time, tokens: 100 }];
+    dom.window.liveUsage.lastSpeed = 100;
     dom.window.drawLiveUsage();
-    step();
-    assert.ok(value() >= beforeRisingTarget, "a new higher TPS target must not inherit the previous downward motion");
-    dom.window.liveUsage.usage.outputTokens = 1200;
-    dom.window.liveUsage.pendingTokens = 0;
-    dom.window.drawLiveUsage();
-    const replacedTarget = dom.window.animation().target;
-    for (let frame = 0; frame < 5; frame++) step();
-    assert.ok(value() < replacedTarget);
-    dom.window.liveUsage.usage.outputTokens = 600;
-    dom.window.drawLiveUsage();
-    assert.ok(dom.window.animation().target < replacedTarget, "new data must replace an unreached target");
+    assert.equal(dom.window.animation().target, 100);
     dom.window.liveUsage.usage.inProgress = false;
     dom.window.liveUsage.usage.endedAt = time;
     dom.window.drawLiveUsage();
     for (let frame = 0; frame < 600 && frames.size; frame++) step();
     assert.equal(frames.size, 0);
-    assert.ok(Math.abs(value() - 600 / (dom.window.liveUsage.usage.endedAt / 1000)) < 1e-8);
+    assert.equal(value(), 100);
   } finally { dom.window.close(); }
 });
 

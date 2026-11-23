@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Show live output speed from a three-second streaming window instead of the whole-turn average; tool waits no longer dilute the rate, delayed usage reports do not cause spikes, and completion retains the last measured speed.
+
 ## 0.6.1-fork
 
 - Choose a Codex upgrade target on macOS. Panel prefers versions with verified source adapters when the official feed offers a matching delta.

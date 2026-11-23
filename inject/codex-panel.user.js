@@ -3817,19 +3817,42 @@
     for (const state of usageLines.values()) renderUsageState(state);
   }
 
-  function currentUsageSpeed(state) {
-    const usage = state.usage;
-    if (!usage) return null;
-    const tokens = (usage.outputTokens ?? 0) + state.pendingTokens;
-    const elapsed = usage.startedAt == null ? 0
-      : ((usage.inProgress ? Date.now() : usage.endedAt) - usage.startedAt) / 1000;
-    return tokens > 0 && elapsed > 0 ? tokens / elapsed : null;
+  function currentUsageSpeed(state, now = Date.now()) {
+    if (!state.usage) return null;
+    if (!state.usage.inProgress) return state.lastSpeed ?? null;
+    const samples = state.speedSamples ?? [];
+    const last = samples.at(-1);
+    if (!last) return null;
+    if (now - last.at >= 3_000) return 0;
+    const cutoff = now - 3_000;
+    while (samples.length > 2 && samples[1].at <= cutoff) samples.shift();
+    if (samples.length < 2) return null;
+    const [first, second] = samples;
+    const start = Math.max(first.at, cutoff);
+    const elapsed = now - start;
+    // 首段没有可测的到达间隔；积累至少 250ms，避免同一批事件形成虚高峰值。
+    if (elapsed < 250) return null;
+    const baseline = first.tokens + (second.tokens - first.tokens) * (start - first.at) / (second.at - first.at);
+    return Math.max(0, (last.tokens - baseline) / (elapsed / 1000));
+  }
+
+  function recordUsageDelta(state, tokens) {
+    const now = Date.now();
+    const samples = state.speedSamples ??= [];
+    const previous = samples.at(-1);
+    // 工具等待后的新一段单独采样；用量补报不进入窗口，避免把整次调用算成瞬时输出。
+    if (previous && now - previous.at >= 3_000) samples.length = 0;
+    const last = samples.at(-1);
+    if (last?.at === now) last.tokens += tokens;
+    else samples.push({ at: now, tokens: (last?.tokens ?? 0) + tokens });
+    const speed = currentUsageSpeed(state, now);
+    if (speed != null) state.lastSpeed = speed;
   }
 
   function renderUsageState(state) {
     if (!state.usage) return;
     const usage = { ...state.usage, speed: currentUsageSpeed(state) };
-    usage.estimated = state.pendingTokens > 0;
+    usage.estimated = usage.speed != null;
     usage.outputTokens += state.pendingTokens;
     renderUsageLine(state.line, usage, false, state);
   }
@@ -3863,13 +3886,18 @@
           totalTokens: state.usage?.totalTokens ?? null, cache: null,
         };
         state.pendingTokens = 0;
+        state.speedSamples = [];
+        state.lastSpeed = null;
       } else {
         if (state.usage?.turnId !== turnId) continue;
         const usage = state.usage;
         if (delta) {
           if (!usage.inProgress || typeof params.delta !== "string" || !params.delta) continue;
           // shortcut: ASCII 约 4 字符/token，其他字符约 1；若原生提供逐 token 用量则替换估算。
-          for (const character of params.delta) state.pendingTokens += character.codePointAt(0) < 128 ? 0.25 : 1;
+          let tokens = 0;
+          for (const character of params.delta) tokens += character.codePointAt(0) < 128 ? 0.25 : 1;
+          state.pendingTokens += tokens;
+          recordUsageDelta(state, tokens);
           state.revision++;
           renderUsageState(state);
           continue;
@@ -4099,27 +4127,20 @@
       const accessible = document.createElement("span");
       accessible.className = "codex-panel-usage-number-text";
       state = { mode: "smooth", value: state?.value ?? target, velocity: state?.velocity ?? 0, target: state?.target ?? target,
-        sample: state?.sample, chasing: state?.chasing, dotMatrix: usageDotMatrix, prefix, suffix, odometer, accessible,
+        dotMatrix: usageDotMatrix, prefix, suffix, odometer, accessible,
         needle: label.previousElementSibling?.querySelector("[data-usage-needle]"), columns: [], frame: 0 };
       replaceUsageLabel(label, [odometer, accessible], prefix, suffix);
       usageValueAnimations.set(label, state);
     }
     state.liveState = liveState;
-    const live = liveState?.usage?.inProgress === true;
-    const sample = live ? `${liveState.usage.turnId}:${liveState.usage.outputTokens}:${liveState.pendingTokens}` : null;
-    // 无新数据时先到达本次目标，再允许耗时增长拉低 TPS。
-    if (!live || state.sample !== sample) {
-      state.target = target;
-      state.sample = sample;
-      state.chasing = live;
-    }
+    // 实时窗口随输出暂停而下降，不能先追到已过时的高值再回落。
+    state.target = target;
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     if (reducedMotion) {
       window.cancelAnimationFrame(state.frame);
       state.frame = 0;
       state.value = state.target = target;
       state.velocity = 0;
-      state.chasing = false;
     }
     drawUsageNumber(state);
     if (reducedMotion || state.frame || (state.value === state.target && !liveState?.usage?.inProgress)) return;
@@ -4129,7 +4150,7 @@
       const dt = (now - state.updatedAt) / 1000;
       state.updatedAt = now;
       const live = state.liveState?.usage?.inProgress === true;
-      if (live && !state.chasing) {
+      if (live) {
         const latest = currentUsageSpeed(state.liveState);
         if (latest != null) state.target = latest;
       }
@@ -4143,8 +4164,7 @@
       const next = state.value + state.velocity * dt;
       if (difference === 0 || (difference > 0 && next >= state.target) || (difference < 0 && next <= state.target)) {
         state.value = state.target;
-        if (!live || state.chasing) state.velocity = 0;
-        state.chasing = false;
+        state.velocity = 0;
       } else {
         state.value = Math.max(0, next);
         if (next < 0) state.velocity = 0;
@@ -4191,9 +4211,9 @@
     renderUsageValue(cacheLabel, usage?.cache ?? null, `${zh ? "缓存命中" : "Cache hit"} `, usage?.cache == null ? "" : "%", loading);
     if (usage?.speed == null) line.querySelector("[data-usage-needle]")?.setAttribute("transform", "rotate(-90 12 15)");
     line.title = unavailable ? (zh ? "暂时无法读取本机会话用量" : "Local usage is unavailable")
-      : zh ? "输出 TPS：本轮输出 Token ÷ 本轮总耗时，含等待、思考与工具执行，保留一位小数。缓存命中：同轮缓存输入 ÷ 输入 Token。数据不足时显示 --。"
-        : "Output TPS: turn output tokens / total turn seconds, including waiting, reasoning and tools; one decimal place. Cache hit is cached/input tokens within the turn. Missing data is shown as --.";
-    if (usage?.estimated) line.title += zh ? " 输出中按文本估算 Token，真实用量到达后校准。" : "Streaming tokens are estimated from text and corrected when actual usage arrives.";
+      : zh ? "实时 TPS：最近 3 秒流式输出的 Token ÷ 采样秒数；停止输出后回落至 0，结束后保留最后有效速度。缓存命中：同轮缓存输入 ÷ 输入 Token。缺少流式样本时显示 --。"
+        : "Live TPS: streamed tokens over the last 3 seconds / sampled seconds; falls to zero without output, and keeps the last measured rate after completion. Cache hit is cached/input tokens within the turn. Missing stream samples show --.";
+    if (usage?.estimated) line.title += zh ? " 速度按流式文本估算，不包含未公开的思考 Token；原生用量补报仅用于本轮统计。" : "Speed is estimated from streamed text and excludes hidden reasoning tokens; reported usage only updates turn totals.";
     if (usage?.partial) line.title += zh ? " 日志尾部缺少轮边界，仅显示最近一次调用。" : " Turn boundary unavailable; latest call only.";
     const end = usage?.inProgress ? Date.now() : usage?.endedAt;
     if (Number.isFinite(usage?.outputTokens) && Number.isFinite(usage?.startedAt) && Number.isFinite(end) && end >= usage.startedAt) {
@@ -4269,6 +4289,10 @@
             }
             if (!usage || !usage.inProgress || usage.turnId !== state.usage?.turnId
               || usage.outputTokens > (state.usage?.outputTokens ?? 0)) state.pendingTokens = 0;
+            if (usage?.turnId !== state.usage?.turnId) {
+              state.speedSamples = [];
+              state.lastSpeed = null;
+            }
             state.usage = usage ?? null;
             if (usage) renderUsageState(state);
             else renderUsageLine(state.line, null, unavailable);
