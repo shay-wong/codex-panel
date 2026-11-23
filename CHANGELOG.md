@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.6.2-fork
+
 - Show live output speed from a three-second streaming window instead of the whole-turn average; tool waits no longer dilute the rate, delayed usage reports do not cause spikes, and completion retains the last measured speed.
 
 - Fix Backspace and Delete in the quick-phrase editor for multiline selections, including Skill mentions and selecting all.
