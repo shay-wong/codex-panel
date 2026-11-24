@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Measure live speed from response text only, excluding reasoning summaries, plans and tool content. Update on new text, show “Waiting for output” during pauses, and retain the same measured rate after completion without a final spike.
+
 ## 0.6.4-fork
 
 - Keep release notes on the version-update page and remove their duplicate display from the installation confirmation, leaving the target version and confirmation buttons.

@@ -131,13 +131,13 @@ test("composer status follows its own thread and removes values on Home", async 
     assert.equal(line.parentElement.closest("[data-composer-trailing-controls]") != null, true);
     assert.equal(line.nextElementSibling.textContent, "模型");
     dom.window.renderUsage(line, { speed: null, cache: null, inProgress: true });
-    assert.equal(line.querySelectorAll('.codex-panel-usage-dots i').length, 6);
-    assert.match(line.querySelector('[data-usage-speed]').getAttribute('aria-label'), /统计中/);
+    assert.equal(line.querySelectorAll('.codex-panel-usage-dots i').length, 3);
+    assert.equal(line.querySelector('[data-usage-speed]').textContent, '等待输出');
     const dots = line.querySelector('.codex-panel-usage-dots');
     dom.window.renderUsage(line, { speed: null, cache: null, inProgress: true });
     assert.equal(line.querySelector('.codex-panel-usage-dots'), dots);
     dom.window.renderUsage(line, { speed: null, cache: 81, inProgress: true });
-    assert.equal(line.querySelectorAll('.codex-panel-usage-dots').length, 1);
+    assert.equal(line.querySelectorAll('.codex-panel-usage-dots').length, 0);
     assert.match(line.textContent, /缓存命中\s*81.0%/);
     dom.window.renderUsage(line, { speed: null, cache: 81, inProgress: false });
     assert.equal(line.querySelector('.codex-panel-usage-dots'), null);
@@ -151,26 +151,34 @@ test("composer status follows its own thread and removes values on Home", async 
     });
     notify("turn/started", { turn: { id: "live", startedAt: epoch / 1000 } });
     now += 10_000;
+    for (const method of ["item/reasoning/textDelta", "item/reasoning/summaryTextDelta", "item/plan/delta"]) {
+      notify(method, { turnId: "live", delta: "a".repeat(400) });
+    }
+    assert.equal([...dom.window.usageStates.values()][0].pendingTokens, 0);
+    assert.equal(line.querySelector('[data-usage-speed]').textContent, '等待输出');
     notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
-    assert.match(line.querySelector('[data-usage-speed]').getAttribute('aria-label'), /统计中/);
+    assert.equal(line.querySelector('[data-usage-speed]').textContent, '等待输出');
     now += 1_000;
     notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
     assert.match(line.textContent, /100.0\s*tok\/s/);
     assert.doesNotMatch(line.textContent, /≈/);
     assert.match(line.title, /估算/);
-    now += 3_000;
+    now += 500;
     dom.window.tickUsage();
-    assert.match(line.textContent, /0.0\s*tok\/s/);
+    assert.match(line.textContent, /100.0\s*tok\/s/, "the last body sample must not decay between arrivals");
+    now += 2_500;
+    dom.window.tickUsage();
+    assert.equal(line.querySelector('[data-usage-speed]').textContent, '等待输出');
     dom.window.usageFailure = true;
     await dom.window.pollUsage();
-    assert.match(line.textContent, /0.0\s*tok\/s/);
+    assert.equal(line.querySelector('[data-usage-speed]').textContent, '等待输出');
     assert.equal([...dom.window.usageStates.values()][0].usage.turnId, "live");
     dom.window.usageFailure = false;
     dom.window.usageResult = { usage: null };
     await dom.window.pollUsage();
-    assert.match(line.textContent, /0.0\s*tok\/s/);
+    assert.equal(line.querySelector('[data-usage-speed]').textContent, '等待输出');
     notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
-    assert.match(line.querySelector('[data-usage-speed]').getAttribute('aria-label'), /统计中/);
+    assert.equal(line.querySelector('[data-usage-speed]').textContent, '等待输出');
     now += 1_000;
     notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
     assert.match(line.textContent, /100.0\s*tok\/s/);
@@ -196,14 +204,14 @@ test("composer status follows its own thread and removes values on Home", async 
     assert.equal(live.pendingTokens, 0);
     assert.match(line.textContent, /100.0\s*tok\/s/);
     notify("turn/started", { turn: { id: "next" } });
-    assert.equal(line.querySelectorAll('.codex-panel-usage-dots i').length, 6);
+    assert.equal(line.querySelectorAll('.codex-panel-usage-dots i').length, 3);
     dom.window.document.querySelector("[data-codex-composer-root]").setAttribute("data-composer-placement", "home");
     await dom.window.pollUsage();
     assert.equal(dom.window.document.querySelector(".codex-panel-usage-line"), null);
   } finally { dom.window.close(); }
 });
 
-test("batch output stays unknown and short streams retain their measured speed after completion", async () => {
+test("batch and short body streams stay unknown instead of inventing a final speed", async () => {
   const source = await readFile(new URL("../inject/codex-panel.user.js", import.meta.url), "utf8");
   const block = source.slice(source.indexOf("  const usageLines = new Map();"), source.indexOf("  function mount() {"));
   const dom = new JSDOM('<div id="line"><svg><path data-usage-needle></path></svg><span data-usage-speed></span><span data-usage-cache></span></div>', { runScripts: "outside-only", pretendToBeVisual: true });
@@ -224,7 +232,7 @@ test("batch output stays unknown and short streams retain their measured speed a
     for (let count = 0; count < 100; count++) dom.window.addTokens(1);
     now += 4_000;
     dom.window.drawUsage();
-    assert.match(text(), /--\s*tok\/s/, "one arrival timestamp cannot establish a speed");
+    assert.equal(text(), "等待输出", "one arrival timestamp cannot establish a speed");
     dom.window.finishUsage();
     assert.match(text(), /--\s*tok\/s/);
 
@@ -233,12 +241,10 @@ test("batch output stays unknown and short streams retain their measured speed a
     now += 100;
     dom.window.addTokens(50);
     dom.window.finishUsage();
-    assert.match(text(), /500.0\s*tok\/s/, "a completed short stream uses its actual arrival interval");
-    assert.match(dom.window.document.querySelector('#line').title, /仅指针/);
-    assert.equal(dom.window.document.querySelector('[data-usage-needle]').getAttribute('transform'), 'rotate(90 12 15)');
+    assert.match(text(), /--\s*tok\/s/, "completion must not bypass the 250ms sampling interval");
     now += 5_000;
     dom.window.drawUsage();
-    assert.match(text(), /500.0\s*tok\/s/);
+    assert.match(text(), /--\s*tok\/s/);
 
     dom.window.resetUsage();
     dom.window.addTokens(20);
@@ -246,7 +252,7 @@ test("batch output stays unknown and short streams retain their measured speed a
     dom.window.addTokens(100);
     now += 4_000;
     dom.window.drawUsage();
-    assert.match(text(), /0.0\s*tok\/s/);
+    assert.equal(text(), "等待输出");
     dom.window.finishUsage();
     assert.match(text(), /100.0\s*tok\/s/, "completion preserves output speed instead of idle zero");
   } finally { dom.window.close(); }
@@ -299,7 +305,7 @@ test("usage retargeting changes velocity gradually while keeping the current val
   } finally { dom.window.close(); }
 });
 
-test("live TPS follows its rolling window immediately and freezes the last output rate on completion", async () => {
+test("body TPS holds its sample between arrivals and does not recalculate at completion", async () => {
   const source = await readFile(new URL("../inject/codex-panel.user.js", import.meta.url), "utf8");
   const block = source.slice(source.indexOf("  const usageLines = new Map();"), source.indexOf("  function mount() {"));
   const dom = new JSDOM('<div id="line"><svg><path data-usage-needle></path></svg><span data-usage-speed></span><span data-usage-cache></span></div>', { runScripts: "outside-only", pretendToBeVisual: true });
@@ -327,18 +333,21 @@ test("live TPS follows its rolling window immediately and freezes the last outpu
       callbacks.forEach(callback => callback(time));
     };
     assert.equal(value(), 40);
-    dom.window.liveUsage.speedSamples.at(-1).tokens = 160;
+    dom.window.liveUsage.lastSpeed = 80;
     dom.window.drawLiveUsage();
     assert.equal(dom.window.animation().target, 80);
     step();
-    assert.ok(dom.window.animation().target < 80, "elapsed time must immediately update an unreached target");
+    assert.equal(dom.window.animation().target, 80, "elapsed time must not change the sampled rate");
     for (let frame = 0; frame < 20; frame++) step();
     const shown = (Number(dom.window.document.querySelector("[data-usage-needle]").getAttribute("transform").match(/rotate\(([^ ]+)/)[1]) + 90) / 1.8;
     const fraction = dom.window.document.querySelector(".codex-panel-usage-odometer").lastElementChild.querySelector(".codex-panel-usage-track");
     assert.ok(Math.abs(Number(fraction.style.getPropertyValue("--usage-offset")) - (1 + (shown * 10 % 10 + 10) % 10)) < 1e-8,
       "live targets must retain the fractional wheel position between displayed decimal values");
     for (let frame = 0; frame < 200; frame++) step();
-    assert.equal(dom.window.animation().target, 0, "a tool wait must empty the three-second window");
+    assert.equal(value(), 80);
+    assert.equal(frames.size, 0, "a settled rate needs no animation frames while waiting for new samples");
+    dom.window.drawLiveUsage();
+    assert.equal(dom.window.document.querySelector('[data-usage-speed]').textContent, '等待输出');
     dom.window.liveUsage.speedSamples = [{ at: time - 1000, tokens: 0 }, { at: time, tokens: 100 }];
     dom.window.liveUsage.lastSpeed = 100;
     dom.window.drawLiveUsage();
@@ -382,5 +391,9 @@ test("dot animation offers morphing while plain numbers always fade", async () =
     assert.ok(dom.window.document.querySelector("[data-usage-speed] svg circle"));
     assert.equal(dom.window.document.querySelector(".codex-panel-usage-plain-number"), null);
     assert.equal(dom.window.document.querySelector("[data-usage-needle]").getAttribute("transform"), "rotate(-18 12 15)");
+    dom.window.showUsage(500);
+    assert.match(dom.window.document.querySelector('[data-usage-speed]').textContent, /500.0/);
+    assert.match(dom.window.document.querySelector('#line').title, /仅指针/);
+    assert.equal(dom.window.document.querySelector('[data-usage-needle]').getAttribute('transform'), 'rotate(90 12 15)');
   } finally { dom.window.close(); }
 });
