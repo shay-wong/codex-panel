@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+## 0.6.3-fork
+
 - Fix false zero speed for batched streaming output and lost readings after short replies; show `--` without a measurable interval, preserve the last output rate on completion, and clarify that the 0–100 range only limits the gauge needle.
 
 ## 0.6.2-fork
