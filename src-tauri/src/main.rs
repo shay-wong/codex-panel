@@ -241,6 +241,15 @@ enum UsageAnimationMode {
     Morph,
 }
 
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum NativeSettingsMode {
+    #[default]
+    System,
+    Dialog,
+    Page,
+}
+
 #[derive(Clone, Copy, Deserialize, Serialize)]
 struct LauncherWindowSize {
     width: f64,
@@ -287,6 +296,8 @@ struct LauncherPreferences {
     #[serde(default)]
     default_projectless_chat: bool,
     #[serde(default)]
+    native_settings_mode: NativeSettingsMode,
+    #[serde(default)]
     window_size: Option<LauncherWindowSize>,
 }
 
@@ -319,6 +330,7 @@ impl Default for LauncherPreferences {
             disable_codex_auto_update: false,
             shared_session_backend: false,
             default_projectless_chat: false,
+            native_settings_mode: NativeSettingsMode::System,
             pet_sounds: true,
             window_size: None,
         }
@@ -3519,6 +3531,14 @@ fn set_usage_animation_mode(
 }
 
 #[tauri::command]
+fn set_native_settings_mode(
+    state: State<'_, Arc<LauncherState>>,
+    mode: NativeSettingsMode,
+) -> Result<LauncherPreferences, String> {
+    update_preferences(&state, |preferences| preferences.native_settings_mode = mode)
+}
+
+#[tauri::command]
 async fn read_model_context_settings(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
@@ -3950,6 +3970,7 @@ fn main() {
             copy_shared_cli_command,
             set_usage_animation_speeds,
             set_usage_animation_mode,
+            set_native_settings_mode,
             set_autostart,
             check_for_updates,
             open_available_release,
@@ -4524,6 +4545,7 @@ mod tests {
         assert!(!preferences.disable_codex_auto_update);
         assert!(!preferences.shared_session_backend);
         assert!(!preferences.default_projectless_chat);
+        assert!(matches!(preferences.native_settings_mode, super::NativeSettingsMode::System));
         assert!(preferences.pet_sounds);
         let logical = tauri::PhysicalSize::new(1920, 1440).to_logical::<f64>(2.0);
         preferences.window_size = Some(super::LauncherWindowSize { width: logical.width, height: logical.height });
@@ -4531,6 +4553,7 @@ mod tests {
         preferences.disable_codex_auto_update = true;
         preferences.shared_session_backend = true;
         preferences.default_projectless_chat = true;
+        preferences.native_settings_mode = super::NativeSettingsMode::Dialog;
         preferences.pet_sounds = false;
         super::write_preferences(&path, preferences).unwrap();
         let restored = super::read_preferences(&path).unwrap();
@@ -4541,6 +4564,7 @@ mod tests {
         assert!(restored.disable_codex_auto_update);
         assert!(restored.shared_session_backend);
         assert!(restored.default_projectless_chat);
+        assert!(matches!(restored.native_settings_mode, super::NativeSettingsMode::Dialog));
         assert!(!restored.pet_sounds);
         assert!(!super::LauncherWindowSize { width: 0.0, height: 0.0 }.valid());
         assert!(!super::LauncherWindowSize { width: f64::NAN, height: 720.0 }.valid());

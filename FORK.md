@@ -650,6 +650,14 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 - 仅 `task_started` / `turn_started` 确认轮起点；`turn_context` 可重复，缺真实起点继续扩读至现有 8 MiB 上限，仍缺时不显示 TPS。完成日志清除残留估算，tooltip 分子包含当前估算。真实日志修复前 9009/443.519=20.3，修复后与完整读取一致为 14087/627.837=22.4 tok/s。
 - 验证：`test/codex-thread-usage.test.mjs` 覆盖截断上下文、完成校准与模式/样式切换；隔离实际 Launcher 页面与模拟宿主验证保存、重读及动画。未安装、未核实用户现场视觉效果。来源：`git log -S'usageAnimationMode' -- inject/codex-panel.user.js`。与既有会话用量能力共同维护。
 
+## 原生设置展示（2026-11-24，长期保留）
+
+- 目的与入口：在「偏好设置 → 常用 → Codex 设置界面」选择跟随 Codex、弹窗或整页。默认 `system` 保持原生决定，`dialog` / `page` 显式选择展示方式；重新打开设置后生效，无需重启。
+- 路径与不变量：`launcher/src/App.tsx` → Rust `set_native_settings_mode` → Panel 偏好 `nativeSettingsMode` → injector 心跳 → renderer runtime。只在原生设置 gate `3561799561` 的调用位置通过 `useSyncExternalStore` 读取偏好，原生 hook 始终执行；不改 Statsig 服务端状态或其他 gate。原生菜单与 Electron 导航桥共用 modal provider；直接 `/settings/*` 路由和带 `account_id` 的专用链接仍走原生整页。新适配作为独立 `settingsPresentation` 模块缓存，首次仅生成该模块，已有成功模块继续复用，图谱显示「设置界面」节点。
+- 代码：`scripts/codex-settings-presentation.mjs`、`scripts/codex-rspack.mjs`、`scripts/codex-rspack-revisions.mjs`、`scripts/codex-injector.mjs`、`inject/codex-panel.user.js`、`launcher/src/App.tsx`、`launcher/src/NativeAdapterGraph.tsx`、`src-tauri/src/main.rs` 及运行时打包清单。展示覆盖保留语义绑定，不依赖压缩变量、模块位置或生成文件名。
+- 验证：`test/codex-settings-presentation.test.mjs`、`launcher/src/App.spec.tsx` 及 Rust 设置命令直接路径；真实 Codex 26.1117.41037 / build 29803 的静态匹配和原生 provider/menu 隔离验证已通过，安装后的实际 App 行为另行验收。
+- 用户说明：中英文 README、`docs/fork-capabilities.md#native-settings-presentation`；发布记录：中英文未发布日志。来源：本次变更，提交后用 `git log -S'createSettingsPresentationRuntime' -- scripts/codex-settings-presentation.mjs` 定位。合并时保留默认原生决定、只覆盖设置展示、直接路由边界及独立缓存；上游提供等价本地展示选项后评估移除。
+
 ## 按仓库分支前缀（2026-11-24，长期保留）
 
 - 目的与入口：原生「设置 → Git → 分支前缀」旁提供「按仓库配置…」，默认显示已配置仓库列表，每项显示实际名称、前缀输入框、路径及删除操作。行内直接编辑，失焦或按 Enter 保存，留空保存显式空前缀。「添加」仅列出尚未配置的仓库，添加后回到列表；删除配置恢复全局，未配置时沿用全局。

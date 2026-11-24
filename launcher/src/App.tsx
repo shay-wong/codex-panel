@@ -33,7 +33,8 @@ export type LauncherSnapshot = {
   codexUpdateVersions?: { version: string; build: string; verified: boolean }[];
   appPath: string | null;
 };
-export type LauncherPreferences = { defaultProjectlessChat: boolean; sharedSessionBackend: boolean; autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean; petSounds: boolean };
+export type NativeSettingsMode = "system" | "dialog" | "page";
+export type LauncherPreferences = { defaultProjectlessChat: boolean; sharedSessionBackend: boolean; autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean; petSounds: boolean; nativeSettingsMode: NativeSettingsMode };
 export type LauncherState = {
   snapshot: LauncherSnapshot;
   preferences: LauncherPreferences;
@@ -263,6 +264,16 @@ export function App() {
     } catch (cause) { setError(String(cause)); }
   }
 
+  async function saveNativeSettingsMode(mode: NativeSettingsMode) {
+    setError("");
+    setSavingPreference(true);
+    try {
+      const next = await window.__TAURI__.core.invoke<LauncherPreferences>("set_native_settings_mode", { mode });
+      setState(current => current && ({ ...current, preferences: next }));
+    } catch (cause) { setError(String(cause)); }
+    finally { setSavingPreference(false); }
+  }
+
   async function saveUsageAnimationSpeeds() {
     const minimum = Number(usageMinimum);
     const maximum = Number(usageMaximum);
@@ -488,6 +499,14 @@ export function App() {
                     <Setting id="autoOpenPanel" title="连接后打开任务面板" detail={preferences?.autoConnectCodex ? "连接就绪后自动显示 Panel" : "需先开启“启动时连接 Codex”"} checked={preferences?.autoOpenPanel ?? false} disabled={!preferences?.autoConnectCodex || savingPreference} onChange={enabled => void savePreference("autoOpenPanel", enabled)} />
                     <Separator size="4" />
                     <Setting id="followSystemAppearance" title="跟随系统外观" detail="随系统在浅色与深色之间切换" checked={followSystemAppearance} onChange={enabled => { setFollowSystemAppearance(enabled); window.localStorage.setItem("codex-panel.follow-system-appearance", String(enabled)); window.dispatchEvent(new CustomEvent("codex-panel-appearance-preference", { detail: enabled })); }} />
+                    <Separator size="4" />
+                    <Flex className="preference-row" align="center" justify="between" gap="4">
+                      <Box><Text as="div" size="2" weight="medium">Codex 设置界面</Text><Text as="p" size="1" color="gray" mt="1" id="nativeSettingsModeDetail">选择 Codex 设置的打开方式；重新打开设置后生效。</Text></Box>
+                      <Select.Root value={preferences?.nativeSettingsMode ?? "system"} disabled={!state || savingPreference} onValueChange={value => void saveNativeSettingsMode(value as NativeSettingsMode)}>
+                        <Select.Trigger id="nativeSettingsMode" aria-label="Codex 设置界面" aria-describedby="nativeSettingsModeDetail" />
+                        <Select.Content><Select.Item value="system">跟随 Codex</Select.Item><Select.Item value="dialog">弹窗</Select.Item><Select.Item value="page">整页</Select.Item></Select.Content>
+                      </Select.Root>
+                    </Flex>
                     <Separator size="4" />
                   </div>
                 </Tabs.Content>

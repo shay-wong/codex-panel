@@ -2665,6 +2665,7 @@
       window.__codexPanelProviderUltrafastV1__?.setEnabled(message.customProviderUltrafast === true);
       window.__codexPanelDotEntryV1__?.setEnabled(message.showCustomProviderDot === true);
       window.__codexPanelProjectlessChatV1__?.setEnabled(message.defaultProjectlessChat === true);
+      window.__codexPanelSettingsPresentationV1__?.setMode(message.nativeSettingsMode);
       syncUsageBannerVisibility();
       window[HOST_STARTUP_TOKEN_NAME] = message.startupToken ?? null;
       return;

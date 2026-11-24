@@ -10,6 +10,14 @@ Local `app:build*` commands and `npm run tauri -- build` assign one increasing b
 
 **Preferences → Chat → 新聊天默认不带项目** is off by default. When enabled, ordinary new-chat actions and creation from **Recent** start without a project. Creating a chat inside a specific project still keeps that project. It does not change existing chats or explicit project choices. The adapter uses the existing one-time renderer reload on installation; later switch changes affect the next new chat immediately. See [configuration and verification](codex-compatibility.md#new-chats-outside-projects).
 
+## Native settings presentation
+
+While Panel is connected to Codex, open **Preferences → General → Codex 设置界面** and choose **跟随 Codex** (Follow Codex), **弹窗** (Dialog), or **整页** (Full page). Follow Codex is the default and preserves Codex's current choice. Panel saves the preference locally; reopen native settings to apply a changed choice without restarting Codex.
+
+The native settings menu and Electron navigation entry use the same presentation choice. Direct `/settings/*` routes and dedicated links containing `account_id` keep their native full-page routing. This option changes settings presentation only; it does not change other Codex features.
+
+The feature has its own adaptation cache. Its first preparation reuses other successfully cached modules, and the adaptation graph includes a **设置界面** (Settings presentation) node. Source matching and the native provider/menu path were checked in isolation against **Codex 26.1117.41037 / build 29803**; installed-App behavior remains a separate verification step.
+
 ## App and CLI shared sessions
 
 The macOS and Windows launcher offers **Preferences → Models & advanced → App 与 CLI 共享会话**, off by default. Enable it with Panel connected to Codex, then run the command from **复制共享 CLI 命令** in your terminal. Panel forwards the terminal's requests and notifications through the App's existing local authenticated connection, and uses the native `retainActiveConversation` lease while a CLI view is attached. It does not remove Codex's writer lock or start another backend for that chat. The App keeps its existing transport and does not need to restart. Approvals and questions are handled in the App. Exiting with /quit or disabling sharing releases its view without canceling the App's task. Create or fork chats in the App before selecting them in the shared CLI.
