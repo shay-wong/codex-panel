@@ -317,6 +317,14 @@
       .codex-panel-repository-prefix select, .codex-panel-repository-prefix input { box-sizing: border-box; width: 100%; padding: 9px 11px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 8px; background: var(--color-token-main-surface-primary, Canvas); color: inherit; font: inherit; }
       .codex-panel-repository-prefix [hidden], .codex-panel-repository-prefix .codex-panel-phrases-status:empty { display: none; }
       .codex-panel-repository-prefix .codex-panel-repository-prefix-path { margin: 8px 0 0; color: var(--color-token-text-secondary, GrayText); font-size: 12px; overflow-wrap: anywhere; }
+      .codex-panel-prefix-list { display: grid; gap: 8px; max-height: 45vh; margin-top: 18px; overflow-y: auto; }
+      .codex-panel-prefix-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 10px; }
+      .codex-panel-prefix-copy { display: grid; flex: 1; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+      .codex-panel-prefix-copy strong { font-size: 13px; font-weight: 500; }
+      .codex-panel-prefix-copy small { font-size: 11px; color: var(--color-token-text-secondary, GrayText); }
+      .codex-panel-repository-prefix .codex-panel-prefix-value { padding: 7px 9px; font-size: 12px; }
+      .codex-panel-prefix-actions { display: flex; gap: 4px; flex-shrink: 0; }
+      .codex-panel-prefix-add, .codex-panel-prefix-actions button { padding: 6px 9px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 7px; background: transparent; color: inherit; font: inherit; font-size: 12px; }
       .codex-panel-usage-number-text { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
       .codex-panel-usage-line { display: flex; align-items: center; justify-content: center; flex: none; }
       /* Keep present queues open when the native exit style remains applied. */
@@ -2978,78 +2986,170 @@
     dialog.className = "codex-panel-phrases-dialog codex-panel-repository-prefix";
     dialog.setAttribute(OWNED_ATTRIBUTE, "true");
     dialog.setAttribute("aria-labelledby", "codex-panel-repository-prefix-title");
-    dialog.innerHTML = '<form><h2 id="codex-panel-repository-prefix-title"></h2><p class="codex-panel-phrases-hint"></p><label for="codex-panel-prefix-repository"></label><select id="codex-panel-prefix-repository"></select><p class="codex-panel-repository-prefix-path"></p><label for="codex-panel-prefix-mode"></label><select id="codex-panel-prefix-mode"></select><label for="codex-panel-prefix-value"></label><input id="codex-panel-prefix-value" type="text" maxlength="200" autocomplete="off" spellcheck="false"><p class="codex-panel-phrases-status" role="alert"></p><footer><button type="button"></button><button type="submit"></button></footer></form>';
-    dialog.querySelector("h2").textContent = hostText("仓库分支前缀", "Repository branch prefixes");
-    dialog.querySelector(".codex-panel-phrases-hint").textContent = hostText("按仓库设置分支前缀；未定制时使用全局设置。应用到新建会话和分支名称建议，已有会话可能保留原指令，请新建会话以确保生效。", "Set a branch prefix per repository; otherwise use the global setting. Applies to new chats and suggested branch names. Existing chats may retain their instructions; start a new chat to ensure it applies.");
+    dialog.innerHTML = '<header><h2 id="codex-panel-repository-prefix-title"></h2><button type="button" class="codex-panel-prefix-add cursor-interaction"></button></header><p class="codex-panel-phrases-hint"></p><p class="codex-panel-phrases-status" role="alert"></p><section class="codex-panel-prefix-list-view"><div class="codex-panel-prefix-list" role="list"></div><footer><button type="button"></button></footer></section><form hidden><label for="codex-panel-prefix-repository"></label><select id="codex-panel-prefix-repository"></select><p class="codex-panel-repository-prefix-path"></p><label for="codex-panel-prefix-mode"></label><select id="codex-panel-prefix-mode"></select><label for="codex-panel-prefix-value"></label><input id="codex-panel-prefix-value" type="text" maxlength="200" autocomplete="off" spellcheck="false"><footer><button type="button"></button><button type="submit"></button></footer></form>';
+    const title = dialog.querySelector("h2");
+    title.textContent = hostText("仓库分支前缀", "Repository branch prefixes");
+    dialog.querySelector(".codex-panel-phrases-hint").textContent = hostText("直接修改前缀，移开焦点或按 Enter 保存；留空则不添加前缀。删除配置后恢复全局设置。应用到新建会话和分支名称建议，已有会话可能保留原指令。", "Edit a prefix directly, then leave the field or press Enter to save. Leave it empty for no prefix; delete the configuration to use the global setting. Applies to new chats and suggested branch names; existing chats may retain their instructions.");
+    const listView = dialog.querySelector(".codex-panel-prefix-list-view");
+    const list = dialog.querySelector('[role="list"]');
+    list.setAttribute("aria-label", hostText("已配置的仓库", "Configured repositories"));
+    const form = dialog.querySelector("form");
+    const add = dialog.querySelector(".codex-panel-prefix-add");
+    add.textContent = hostText("添加", "Add");
     const repository = dialog.querySelector("#codex-panel-prefix-repository");
     const mode = dialog.querySelector("#codex-panel-prefix-mode");
     const value = dialog.querySelector("#codex-panel-prefix-value");
+    const status = dialog.querySelector('[role="alert"]');
+    const submit = form.querySelector('button[type="submit"]');
+    const cancel = form.querySelector('button[type="button"]');
     dialog.querySelector('label[for="codex-panel-prefix-repository"]').textContent = hostText("仓库", "Repository");
     dialog.querySelector('label[for="codex-panel-prefix-mode"]').textContent = hostText("前缀模式", "Prefix mode");
     dialog.querySelector('label[for="codex-panel-prefix-value"]').textContent = hostText("自定义前缀", "Custom prefix");
     value.placeholder = "feature/";
-    for (const [id, label] of [["global", hostText("使用全局设置", "Use global setting")], ["custom", hostText("自定义前缀", "Custom prefix")], ["none", hostText("不添加前缀", "No prefix")]]) {
+    for (const [id, label] of [["custom", hostText("自定义前缀", "Custom prefix")], ["none", hostText("不添加前缀", "No prefix")]]) {
       const option = document.createElement("option");
       option.value = id;
       option.textContent = label;
       mode.append(option);
     }
-    const status = dialog.querySelector('[role="alert"]');
-    const submit = dialog.querySelector('button[type="submit"]');
-    const cancel = dialog.querySelector('button[type="button"]');
     submit.textContent = hostText("保存", "Save");
-    submit.disabled = true;
     cancel.textContent = hostText("取消", "Cancel");
-    cancel.addEventListener("click", () => dialog.close());
+    const close = listView.querySelector("button");
+    close.textContent = hostText("完成", "Done");
+    close.addEventListener("click", () => dialog.close());
     const updateMode = () => {
       value.hidden = mode.value !== "custom";
       value.required = mode.value === "custom";
       dialog.querySelector('label[for="codex-panel-prefix-value"]').hidden = value.hidden;
     };
     mode.addEventListener("change", updateMode);
-    let projects = [];
-    const load = () => {
-      const saved = window.__codexPanelRepositoryBranchPrefixV1__?.get(repository.value);
-      mode.value = !saved ? "global" : saved.prefix === "" ? "none" : "custom";
-      value.value = saved?.prefix ?? "";
-      dialog.querySelector(".codex-panel-repository-prefix-path").textContent = projects.find(project => project.id === repository.value)?.workspacePath ?? "";
-      status.textContent = "";
-      updateMode();
+    let projects = [], loading = true;
+    const runtime = () => window.__codexPanelRepositoryBranchPrefixV1__;
+    const projectFor = id => {
+      const saved = runtime()?.get(id);
+      return projects.find(project => project.id === id) ?? {
+        id,
+        name: saved?.rootPaths[0]?.split(/[\\/]/).filter(Boolean).at(-1) || id,
+        hostId: saved?.hostId,
+        rootPaths: saved?.rootPaths,
+        workspacePath: saved?.rootPaths[0],
+      };
     };
-    repository.addEventListener("change", load);
-    dialog.querySelector("form").addEventListener("submit", event => {
-      event.preventDefault();
-      try {
-        const runtime = window.__codexPanelRepositoryBranchPrefixV1__;
-        if (!runtime) throw new Error(hostText("仓库分支前缀适配尚未就绪", "Repository branch prefixes are not ready"));
-        const project = projects.find(project => project.id === repository.value);
-        if (mode.value === "custom" && !value.value.trim()) throw new Error(hostText("请输入自定义前缀，或选择“不添加前缀”。", "Enter a custom prefix, or choose No prefix."));
-        if (mode.value === "global") runtime.remove(project.id);
-        else runtime.set(project.id, { prefix: mode.value === "none" ? "" : value.value.trim(), hostId: project.hostId ?? "local", rootPaths: project.rootPaths ?? (project.workspacePath ? [project.workspacePath] : []) });
-        dialog.close();
-      } catch (error) { status.textContent = error.message; }
-    });
-    dialog.addEventListener("close", () => { dialog.remove(); repositoryBranchPrefixDialog = null; });
-    document.body.append(dialog);
-    repositoryBranchPrefixDialog = dialog;
-    status.textContent = hostText("正在读取仓库…", "Loading repositories…");
-    updateMode();
-    dialog.showModal();
-    try {
-      projects = await quickPhraseRepositories();
-      if (!dialog.open) return;
-      const currentId = quickPhrasesProjectId || await selectedNativeProjectId();
-      for (const project of projects) {
+    const updatePath = () => {
+      dialog.querySelector(".codex-panel-repository-prefix-path").textContent = projectFor(repository.value).workspacePath ?? "";
+    };
+    repository.addEventListener("change", updatePath);
+    const renderList = () => {
+      form.hidden = true;
+      listView.hidden = false;
+      add.hidden = false;
+      title.textContent = hostText("仓库分支前缀", "Repository branch prefixes");
+      list.replaceChildren();
+      const configured = Object.keys(runtime()?.list() ?? {}).filter(id => runtime().get(id))
+        .map(id => projectFor(id)).sort((left, right) => left.name.localeCompare(right.name));
+      for (const project of configured) {
+        const saved = runtime().get(project.id);
+        const row = document.createElement("div");
+        row.className = "codex-panel-prefix-row";
+        row.setAttribute("role", "listitem");
+        const copy = document.createElement("div");
+        copy.className = "codex-panel-prefix-copy";
+        const name = document.createElement("strong");
+        name.textContent = project.name;
+        const prefix = document.createElement("input");
+        prefix.type = "text";
+        prefix.className = "codex-panel-prefix-value";
+        prefix.value = saved.prefix;
+        prefix.placeholder = hostText("不添加前缀", "No prefix");
+        prefix.maxLength = 200;
+        prefix.disabled = loading;
+        prefix.autocomplete = "off";
+        prefix.spellcheck = false;
+        prefix.setAttribute("aria-label", hostText(`${project.name} 的分支前缀`, `Branch prefix for ${project.name}`));
+        prefix.addEventListener("blur", () => {
+          try {
+            const next = prefix.value.trim();
+            if (runtime().get(project.id)?.prefix !== next) runtime().set(project.id, { ...saved, prefix: next });
+            prefix.value = next;
+            prefix.removeAttribute("aria-invalid");
+            status.textContent = "";
+          } catch (error) { prefix.setAttribute("aria-invalid", "true"); status.textContent = error.message; }
+        });
+        prefix.addEventListener("keydown", event => {
+          if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); prefix.blur(); }
+        });
+        copy.append(name, prefix);
+        if (project.workspacePath) {
+          const path = document.createElement("small");
+          path.textContent = project.workspacePath;
+          copy.append(path);
+        }
+        const actions = document.createElement("div");
+        actions.className = "codex-panel-prefix-actions";
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = hostText("删除", "Delete");
+        remove.title = hostText("删除配置，恢复全局设置", "Delete configuration and use the global setting");
+        remove.setAttribute("aria-label", hostText(`删除 ${project.name} 的配置，恢复全局设置`, `Delete configuration for ${project.name} and use the global setting`));
+        remove.addEventListener("click", () => {
+          try { runtime().remove(project.id); status.textContent = ""; renderList(); }
+          catch (error) { status.textContent = error.message; }
+        });
+        actions.append(remove);
+        row.append(copy, actions);
+        list.append(row);
+      }
+      if (!configured.length) list.textContent = hostText("还没有单独配置的仓库，点击“添加”设置。", "No repository configurations yet. Choose Add to create one.");
+      add.disabled = loading || !projects.some(project => !runtime()?.get(project.id));
+    };
+    const openAddForm = () => {
+      const choices = projects.filter(project => !runtime()?.get(project.id));
+      if (!choices.length) return;
+      repository.replaceChildren();
+      for (const project of choices) {
         const option = document.createElement("option");
         option.value = project.id;
         option.textContent = project.name;
         repository.append(option);
       }
-      if (projects.some(project => project.id === currentId)) repository.value = currentId;
-      submit.disabled = projects.length === 0;
-      load();
-      if (!projects.length) status.textContent = hostText("暂无可配置的仓库", "No repositories available");
+      if (choices.some(project => project.id === quickPhrasesProjectId)) repository.value = quickPhrasesProjectId;
+      mode.value = "custom";
+      value.value = "";
+      status.textContent = "";
+      title.textContent = hostText("添加仓库前缀", "Add repository prefix");
+      add.hidden = true;
+      listView.hidden = true;
+      form.hidden = false;
+      updatePath();
+      updateMode();
+      repository.focus();
+    };
+    add.addEventListener("click", openAddForm);
+    cancel.addEventListener("click", () => { status.textContent = ""; renderList(); (add.disabled ? close : add).focus(); });
+    form.addEventListener("submit", event => {
+      event.preventDefault();
+      try {
+        if (!runtime()) throw new Error(hostText("仓库分支前缀适配尚未就绪", "Repository branch prefixes are not ready"));
+        const project = projectFor(repository.value);
+        if (mode.value === "custom" && !value.value.trim()) throw new Error(hostText("请输入自定义前缀，或选择“不添加前缀”。", "Enter a custom prefix, or choose No prefix."));
+        runtime().set(project.id, { prefix: mode.value === "none" ? "" : value.value.trim(), hostId: project.hostId ?? "local", rootPaths: project.rootPaths ?? (project.workspacePath ? [project.workspacePath] : []) });
+        status.textContent = "";
+        renderList();
+        (add.disabled ? close : add).focus();
+      } catch (error) { status.textContent = error.message; }
+    });
+    dialog.addEventListener("close", () => { dialog.remove(); repositoryBranchPrefixDialog = null; });
+    document.body.append(dialog);
+    repositoryBranchPrefixDialog = dialog;
+    renderList();
+    status.textContent = hostText("正在读取仓库…", "Loading repositories…");
+    dialog.showModal();
+    try {
+      projects = await quickPhraseRepositories();
+      if (!dialog.open) return;
+      status.textContent = "";
     } catch { status.textContent = hostText("无法读取仓库，请稍后重试。", "Could not load repositories. Please try again."); }
+    finally { loading = false; if (dialog.open && form.hidden) renderList(); }
   }
 
   function quickPhrasesStorageKey(projectId) {

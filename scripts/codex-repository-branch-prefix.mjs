@@ -47,7 +47,7 @@ export function createRepositoryBranchPrefixRuntime({ storage = globalThis.local
   };
   const appendInstructions = (instructions, entry) => {
     const instruction = entry.prefix === ''
-      ? 'Create branches without any prefix; do not prepend the global default or a code/codex prefix.'
+      ? 'Create branches without any prefix; do not prepend the global default or codex/.'
       : `For this repository, use the branch prefix ${JSON.stringify(entry.prefix)} instead of the global branch-prefix default.`;
     const block = `<repository-branch-prefix>\n${instruction}\nFollow the user's explicit request if they ask for a different branch name or prefix.\n</repository-branch-prefix>`;
     const original = (instructions ?? '').replace(/(?:\n\n)?<repository-branch-prefix>\n[\s\S]*?\n<\/repository-branch-prefix>/g, '');

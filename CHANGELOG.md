@@ -6,7 +6,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
-- Configure a branch prefix per repository in native Git settings: inherit the global value, use a custom prefix, or explicitly omit prefixes including the native `code/` default for new chats and suggested branch names.
+- Manage repository branch prefixes from a list in native Git settings: add an unconfigured repository, edit its prefix directly and save on blur or Enter, leave it empty for no prefix, or delete its configuration to restore the global value. Custom and no-prefix choices apply to new chats and suggested branch names, including overriding the native `codex/` default.
 
 - Show the actual repository name in the quick-phrase editor's current-repository tab instead of an internal project ID.
 
