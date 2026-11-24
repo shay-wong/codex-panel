@@ -233,7 +233,9 @@ Panel 会在运行概览的会话菜单卡片中显示加载状态，失败时�
 
 Fork 从 `0.0.1-fork`（标签 `v0.0.1-fork`）开始独立版本，不再随上游版本变化。已有本地 `0.1.0` 开发版需手动安装一次以切换到新版本线。
 
-Panel 每次启动时检查 Fork 的 GitHub Releases；有效的成功结果缓存 24 小时，临时失败缓存 5 分钟，匿名 API 限流缓存到 GitHub 返回的重置时间，缓存会在下次启动时再次判断。手动检查始终绕过缓存。检查会优先使用本机已登录的 `gh` CLI，无法使用时才回退到匿名 GitHub API，并分别提示额度耗尽、网络失败、暂无 Release、已是最新版本或发现新版本。只有规范化的 `vX.Y.Z-fork` 标签会成为更新候选，发现新版本后会在应用内下载并验证签名，只有用户确认后才安装并重启 Panel。macOS 使用原生前台确认弹窗，其他平台继续使用 Tauri 对话框。官方 Fork 构建内置更新公钥，自定义构建可用 `CODEX_PANEL_UPDATER_PUBLIC_KEY` 覆盖。详见[更新包配置](docs/fork-capabilities.md#signed-in-app-updates)。
+Panel 每次启动时检查 Fork 的 GitHub Releases；有效的成功结果缓存 24 小时，临时失败缓存 5 分钟，API 限流缓存到 GitHub 返回的重置时间，缓存会在下次启动时再次判断。手动检查可绕过成功缓存，所有更新入口仍遵守有效限流缓存。检查优先使用 Panel 登录的 GitHub 账号，未登录时沿用本机已认证的 `gh` CLI，否则使用匿名 GitHub API；Panel 令牌失效时明确要求重新登录，不静默回退匿名，并分别提示额度耗尽、网络失败、暂无 Release、已是最新版本或发现新版本。只有规范化的 `vX.Y.Z-fork` 标签会成为更新候选，发现新版本后会在应用内下载并验证签名，只有用户确认后才安装并重启 Panel。macOS 使用原生前台确认弹窗，其他平台继续使用 Tauri 对话框。官方 Fork 构建内置更新公钥，自定义构建可用 `CODEX_PANEL_UPDATER_PUBLIC_KEY` 覆盖。详见[更新包配置](docs/fork-capabilities.md#signed-in-app-updates)。
+
+在 **关于 → 版本更新 → GitHub 账号** 中点击 **登录 GitHub**，复制显示的授权码，在 GitHub 官方授权页确认；成功后显示 `@账号`，可点击 **退出登录**。登录可选，仅用于认证读取公开发布信息，令牌保存在系统凭据库；Linux 需要已安装 `secret-tool` 且 Secret Service 已解锁。登录或退出会清除旧检查缓存，不会自动检查或下载更新。详见[GitHub 更新登录](docs/fork-capabilities.md#github-login-for-update-checks)。
 
 发现新版本后，**关于 → 版本更新** 会显示该版本的说明，支持 Markdown 标题、列表、行内格式和长内容滚动。没有说明时显示“该版本暂无版本说明。”；“查看发布说明”仍可打开 GitHub 发行版。下载并通过签名验证后，安装确认框只显示目标版本、确认提示和“稍后 / 安装并重启”按钮，不再重复展示版本日志。
 

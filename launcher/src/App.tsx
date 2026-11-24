@@ -5,6 +5,7 @@ import { LinearIcon } from "../../web/src/components/LinearIcon";
 import { ModelContextSettings } from "./ModelContextSettings";
 import { PetAnimationSettings } from "./PetAnimationSettings";
 import { NativeAdapterGraph } from "./NativeAdapterGraph";
+import { GitHubLogin } from "./GitHubLogin";
 
 export type LauncherSnapshot = {
   phase: string;
@@ -599,6 +600,7 @@ export function App() {
               {snapshot.updateReady && <Button id="installUpdate" highContrast {...actionProps("install_available_update")}>安装并重启</Button>}
               {snapshot.updateAvailable && <Button id="openRelease" variant="soft" {...actionProps("open_available_release")}>查看发布说明</Button>}
             </Flex>
+            <GitHubLogin />
           </Tabs.Content>
     </main>
     </Tabs.Root>
