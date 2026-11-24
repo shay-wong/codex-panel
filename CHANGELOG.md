@@ -6,6 +6,8 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
+- Fix missing speed readings while newer Codex clients are already displaying response text by subscribing to their native text notifications, while preserving older clients without double counting. Keep the last valid output speed visible during pauses instead of showing “Waiting for output”; preserve sparse samples within one message, start a fresh sample window for the next, and show `--` only before a valid speed is available.
+
 ## 0.6.5-fork
 
 - Measure live speed from response text only, excluding reasoning summaries, plans and tool content. Update on new text, show “Waiting for output” during pauses, and retain the same measured rate after completion without a final spike.

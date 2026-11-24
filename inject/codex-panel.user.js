@@ -3790,6 +3790,70 @@
   };
   let usagePollInFlight = false;
   let usagePolledAt = 0;
+  let nativeUsageSubscription = null;
+
+  function disconnectNativeUsage() {
+    nativeUsageSubscription?.stop();
+  }
+
+  async function connectNativeUsage() {
+    if (nativeUsageSubscription || destroyed || !showThreadUsage || !usageLines.size) return;
+    const connection = { direct: false, stop: () => {} };
+    nativeUsageSubscription = connection;
+    const dispose = value => value?.[Symbol.dispose]?.();
+    const current = () => nativeUsageSubscription === connection && !destroyed && showThreadUsage;
+    let managers, managerPending, managerLease, client, pending, lease;
+    const stopClient = () => {
+      connection.direct = false;
+      const previous = [pending, lease, client];
+      pending = lease = client = null;
+      previous.forEach(dispose);
+    };
+    connection.stop = () => {
+      if (nativeUsageSubscription === connection) nativeUsageSubscription = null;
+      stopClient();
+      const previous = [managerPending, managerLease, managers];
+      managerPending = managerLease = managers = null;
+      previous.forEach(dispose);
+    };
+    try {
+      const services = await nativeDesktopServices();
+      if (!current()) return;
+      managers = services?.appServerManagers?.dup();
+      if (!managers) { connection.stop(); return; }
+      // 新版正文只走原生 Manager RPC；沿用原生订阅及租约释放，不重播或修改会话。
+      managerPending = managers.subscribe("local", snapshot => {
+        stopClient();
+        if (!current() || snapshot.status !== "ready") return;
+        const subscribedClient = client = snapshot.manager.dup();
+        const active = () => current() && client === subscribedClient;
+        const broken = () => { if (active()) connection.stop(); };
+        pending = client.subscribe({
+          type: "notification", key: { hostId: "local" }, methods: "item/agentMessage/delta",
+          listener: notification => {
+            if (active()) onUsageNotification({ source: null, origin: "", data: {
+              type: "mcp-notification", hostId: "local", method: notification.method, params: notification.params,
+            } }, true);
+          },
+        });
+        connection.direct = true;
+        pending.onRpcBroken(broken);
+        pending.then(value => {
+          if (!active()) { dispose(value); return; }
+          lease = value;
+          lease.onRpcBroken(broken);
+        }, broken);
+      });
+      managerPending.onRpcBroken(connection.stop);
+      managerPending.then(value => {
+        if (!current()) { dispose(value); return; }
+        managerLease = value;
+        managerLease.onRpcBroken(connection.stop);
+      }, connection.stop);
+    } catch {
+      connection.stop();
+    }
+  }
 
   function setThreadUsageVisible(enabled) {
     if (showThreadUsage === enabled) return;
@@ -3798,6 +3862,7 @@
       usagePolledAt = 0;
       void pollThreadUsage();
     } else {
+      disconnectNativeUsage();
       for (const { line } of usageLines.values()) line.remove();
       usageLines.clear();
     }
@@ -3822,22 +3887,19 @@
     for (const state of usageLines.values()) renderUsageState(state);
   }
 
-  function currentUsageSpeed(state, now = Date.now()) {
-    if (!state.usage) return null;
-    if (!state.usage.inProgress) return state.lastSpeed ?? null;
-    const samples = state.speedSamples ?? [];
-    const last = samples.at(-1);
-    // 新一段正文须重新取得有效间隔；静默表示等待，不能解释为模型生成速度为零。
-    if (samples.length < 2 || last.at - samples[0].at < 250 || now - last.at >= usageSpeedWindowMs) return null;
-    return state.lastSpeed ?? null;
+  function currentUsageSpeed(state) {
+    // 分批传输和工具间歇不会使已测读数失效；仅新采样更新它，新轮次清空它。
+    return state.usage ? state.lastSpeed ?? null : null;
   }
 
-  function recordUsageDelta(state, tokens) {
+  function recordUsageDelta(state, tokens, itemId) {
     const now = Date.now();
     const samples = state.speedSamples ??= [];
-    const previous = samples.at(-1);
-    // 工具等待后的新一段单独采样；用量补报不进入窗口，避免把整次调用算成瞬时输出。
-    if (previous && now - previous.at >= usageSpeedWindowMs) samples.length = 0;
+    // 同一正文可以隔几秒到一批；只在切换消息时重采样，排除消息之间的工具等待。
+    if (typeof itemId === "string" && itemId !== state.speedItemId) {
+      samples.length = 0;
+      state.speedItemId = itemId;
+    }
     const last = samples.at(-1);
     if (last?.at === now) last.tokens += tokens;
     else samples.push({ at: now, tokens: (last?.tokens ?? 0) + tokens });
@@ -3867,7 +3929,7 @@
     for (const state of usageLines.values()) renderUsageState(state);
   }
 
-  function onUsageNotification(event) {
+  function onUsageNotification(event, fromNative = false) {
     if (!showThreadUsage) return;
     // 原生 preload 通过无 source/origin 的 MessageEvent 广播；排除嵌入页面消息。
     if (event.source !== null && (event.source !== window || event.origin !== window.location.origin)) return;
@@ -3878,6 +3940,8 @@
     if (!params || typeof params.threadId !== "string") return;
     // 思考摘要按批次到达，不能代表模型的连续输出；仅正文参与实时速度采样。
     const delta = method === "item/agentMessage/delta";
+    // 两条通道可能并存；直连正文订阅生效后忽略旧广播，避免同一片段重复计数。
+    if (delta && nativeUsageSubscription?.direct && !fromNative) return;
     if (!delta && !["turn/started", "turn/completed", "thread/tokenUsage/updated"].includes(method)) return;
     const turnId = params.turn?.id ?? params.turnId;
     if (typeof turnId !== "string") return;
@@ -3892,6 +3956,7 @@
         };
         state.pendingTokens = 0;
         state.speedSamples = [];
+        state.speedItemId = null;
         state.lastSpeed = null;
       } else {
         if (state.usage?.turnId !== turnId) continue;
@@ -3902,7 +3967,7 @@
           let tokens = 0;
           for (const character of params.delta) tokens += character.codePointAt(0) < 128 ? 0.25 : 1;
           state.pendingTokens += tokens;
-          recordUsageDelta(state, tokens);
+          recordUsageDelta(state, tokens, params.itemId);
           state.revision++;
           renderUsageState(state);
           continue;
@@ -4205,13 +4270,12 @@
     const speedLabel = line.querySelector("[data-usage-speed]");
     const cacheLabel = line.querySelector("[data-usage-cache]");
     const loading = !unavailable && usage?.inProgress ? (zh ? "统计中" : "Calculating") : "";
-    const waitingForOutput = !unavailable && usage?.inProgress && usage.speed == null;
-    renderUsageValue(speedLabel, usage?.speed ?? null, "", waitingForOutput ? "" : " tok/s", "", waitingForOutput ? (zh ? "等待输出" : "Waiting for output") : "--");
+    renderUsageValue(speedLabel, usage?.speed ?? null, "", " tok/s", "");
     renderUsageValue(cacheLabel, usage?.cache ?? null, `${zh ? "缓存命中" : "Cache hit"} `, usage?.cache == null ? "" : "%", loading);
     if (usage?.speed == null) line.querySelector("[data-usage-needle]")?.setAttribute("transform", "rotate(-90 12 15)");
     line.title = unavailable ? (zh ? "暂时无法读取本机会话用量" : "Local usage is unavailable")
-      : zh ? "正文实时 TPS：按最近 3 秒正文采样，在新正文到达时更新；思考或暂停输出时显示等待输出，结束后保留最后有效速度。缓存命中：同轮缓存输入 ÷ 输入 Token。没有有效采样的已结束回复显示 --。"
-        : "Live response TPS: measured over the last 3 seconds and updated when response text arrives; waiting or reasoning shows Waiting for output, and completion keeps the last measured rate. Cache hit is cached/input tokens within the turn. Completed replies without valid samples show --.";
+      : zh ? "正文实时 TPS：按最近 3 秒正文采样，在新正文到达时更新；两次采样之间及结束后保留最后有效速度，首次采样不足显示 --。缓存命中：同轮缓存输入 ÷ 输入 Token。"
+        : "Live response TPS: measured over the last 3 seconds and updated when response text arrives; keep the last measured rate between samples and after completion. Insufficient initial samples show --. Cache hit is cached/input tokens within the turn.";
     if (usage?.estimated) line.title += zh ? " 速度按正文文本估算，不计入思考摘要、计划或工具内容；原生用量补报仅用于本轮统计。" : "Speed is estimated from response text, excluding reasoning summaries, plans and tool content; reported usage only updates turn totals.";
     if (usage?.partial) line.title += zh ? " 日志尾部缺少轮边界，仅显示最近一次调用。" : " Turn boundary unavailable; latest call only.";
     const end = usage?.inProgress ? Date.now() : usage?.endedAt;
@@ -4262,6 +4326,8 @@
         usageLines.delete(card);
       }
     }
+    if (usageLines.size) void connectNativeUsage();
+    else disconnectNativeUsage();
     if (usagePollInFlight || !usageLines.size || Date.now() - usagePolledAt < 1_000 || !hasLiveHostBinding()) return;
     usagePollInFlight = true;
     usagePolledAt = Date.now();
@@ -4290,6 +4356,7 @@
               || usage.outputTokens > (state.usage?.outputTokens ?? 0)) state.pendingTokens = 0;
             if (usage?.turnId !== state.usage?.turnId) {
               state.speedSamples = [];
+              state.speedItemId = null;
               state.lastSpeed = null;
             }
             state.usage = usage ?? null;
@@ -4372,6 +4439,7 @@
     window.removeEventListener("message", onFrameMessage);
     window.removeEventListener("message", onHostBridgeMessage);
     window.removeEventListener("message", onUsageNotification);
+    disconnectNativeUsage();
     window.removeEventListener("resize", scheduleRefresh);
     closePanel(false);
     document.querySelectorAll(`[${OWNED_ATTRIBUTE}="true"]`).forEach((node) => node.remove());

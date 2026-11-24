@@ -119,6 +119,7 @@ test("composer status follows its own thread and removes values on Home", async 
     dom.window.eval(`let destroyed = false; let showThreadUsage = true; let threadUsageAboveComposer = false; let usageDotMatrix = true; let usageAnimationMode = "smooth"; let usageAnimationMinSpeed = 5; let usageAnimationMaxSpeed = 40; const OWNED_ATTRIBUTE = "data-codex-panel-owned";
       const normalizeThreadId = value => value.replace(/^local:/, "");
       const threadIdFromLocation = () => "${id}"; const hasLiveHostBinding = () => true;
+      const nativeDesktopServices = async () => null;
       const requestHost = async () => {
         if (window.usageFailure) throw new Error("Read timed out");
         return window.usageResult ?? ({ usage: { speed: 20, outputTokens: 200, inputTokens: 100, cachedInputTokens: 81, cache: 81, totalTokens: 300, turnId: "first", startedAt: Date.now() - 10000, endedAt: Date.now(), observedAt: Date.now(), inProgress: false } });
@@ -132,7 +133,7 @@ test("composer status follows its own thread and removes values on Home", async 
     assert.equal(line.nextElementSibling.textContent, "模型");
     dom.window.renderUsage(line, { speed: null, cache: null, inProgress: true });
     assert.equal(line.querySelectorAll('.codex-panel-usage-dots i').length, 3);
-    assert.equal(line.querySelector('[data-usage-speed]').textContent, '等待输出');
+    assert.match(line.querySelector('[data-usage-speed]').textContent, /--\s*tok\/s/);
     const dots = line.querySelector('.codex-panel-usage-dots');
     dom.window.renderUsage(line, { speed: null, cache: null, inProgress: true });
     assert.equal(line.querySelector('.codex-panel-usage-dots'), dots);
@@ -155,9 +156,9 @@ test("composer status follows its own thread and removes values on Home", async 
       notify(method, { turnId: "live", delta: "a".repeat(400) });
     }
     assert.equal([...dom.window.usageStates.values()][0].pendingTokens, 0);
-    assert.equal(line.querySelector('[data-usage-speed]').textContent, '等待输出');
+    assert.match(line.querySelector('[data-usage-speed]').textContent, /--\s*tok\/s/);
     notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
-    assert.equal(line.querySelector('[data-usage-speed]').textContent, '等待输出');
+    assert.match(line.querySelector('[data-usage-speed]').textContent, /--\s*tok\/s/);
     now += 1_000;
     notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
     assert.match(line.textContent, /100.0\s*tok\/s/);
@@ -168,19 +169,19 @@ test("composer status follows its own thread and removes values on Home", async 
     assert.match(line.textContent, /100.0\s*tok\/s/, "the last body sample must not decay between arrivals");
     now += 2_500;
     dom.window.tickUsage();
-    assert.equal(line.querySelector('[data-usage-speed]').textContent, '等待输出');
+    assert.match(line.textContent, /100.0\s*tok\/s/);
     dom.window.usageFailure = true;
     await dom.window.pollUsage();
-    assert.equal(line.querySelector('[data-usage-speed]').textContent, '等待输出');
+    assert.match(line.textContent, /100.0\s*tok\/s/);
     assert.equal([...dom.window.usageStates.values()][0].usage.turnId, "live");
     dom.window.usageFailure = false;
     dom.window.usageResult = { usage: null };
     await dom.window.pollUsage();
-    assert.equal(line.querySelector('[data-usage-speed]').textContent, '等待输出');
-    notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
-    assert.equal(line.querySelector('[data-usage-speed]').textContent, '等待输出');
+    assert.match(line.textContent, /100.0\s*tok\/s/);
+    notify("item/agentMessage/delta", { turnId: "live", itemId: "next-body", delta: "a".repeat(400) });
+    assert.match(line.textContent, /100.0\s*tok\/s/);
     now += 1_000;
-    notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
+    notify("item/agentMessage/delta", { turnId: "live", itemId: "next-body", delta: "a".repeat(400) });
     assert.match(line.textContent, /100.0\s*tok\/s/);
     delete dom.window.usageResult;
     const actual = { turnId: "live", tokenUsage: { last: { outputTokens: 4090, inputTokens: 100, cachedInputTokens: 80 }, total: { totalTokens: 4490 } } };
@@ -211,7 +212,62 @@ test("composer status follows its own thread and removes values on Home", async 
   } finally { dom.window.close(); }
 });
 
-test("batch and short body streams stay unknown instead of inventing a final speed", async () => {
+test("native manager streams update TPS once and release every subscription when hidden", async () => {
+  const source = await readFile(new URL("../inject/codex-panel.user.js", import.meta.url), "utf8");
+  const block = source.slice(source.indexOf("  const usageLines = new Map();"), source.indexOf("  function mount() {"));
+  const dom = new JSDOM(`<div data-codex-composer-root data-composer-placement="thread"><span data-above-composer-conversation-id="local:${id}"></span><div id="card"><div id="line"><svg><path data-usage-needle></path></svg><span data-usage-speed></span><span data-usage-cache></span></div></div></div>`, { runScripts: "outside-only", pretendToBeVisual: true });
+  try {
+    let now = 10_000;
+    const disposed = [];
+    let onManager, onDelta, breakStream;
+    const resource = name => ({ [Symbol.dispose]() { disposed.push(name); }, onRpcBroken() {} });
+    const stream = Object.assign(Promise.resolve(resource("stream lease")), resource("stream pending"));
+    stream.onRpcBroken = callback => { breakStream = callback; };
+    const client = { ...resource("client"), subscribe(options) {
+      assert.equal(options.type, "notification");
+      assert.equal(options.key.hostId, "local");
+      assert.equal(options.methods, "item/agentMessage/delta");
+      onDelta = options.listener;
+      return stream;
+    } };
+    const managers = { ...resource("managers"), subscribe(host, listener) {
+      assert.equal(host, "local");
+      onManager = listener;
+      return Object.assign(Promise.resolve(resource("manager lease")), resource("manager pending"));
+    } };
+    dom.window.services = { appServerManagers: { dup: () => managers } };
+    dom.window.Date.now = () => now;
+    dom.window.matchMedia = () => ({ matches: true });
+    dom.window.eval(`let destroyed = false; let showThreadUsage = true; let usageDotMatrix = true; let usageAnimationMode = "smooth";
+      const nativeDesktopServices = async () => window.services;
+      const normalizeThreadId = value => value.replace(/^local:/, "");
+      ${block}\nwindow.state = { threadId: "${id}", line: document.getElementById("line"), pendingTokens: 0, revision: 0,
+        usage: { turnId: "turn", inProgress: true, outputTokens: 0, cache: 80 } };
+      usageLines.set(document.getElementById("card"), window.state);
+      window.connectUsage = connectNativeUsage; window.notifyUsage = onUsageNotification;
+      window.hideUsage = () => setThreadUsageVisible(false);`);
+    await dom.window.connectUsage();
+    onManager({ status: "ready", manager: { dup: () => client } });
+    await Promise.resolve();
+    const notification = { method: "item/agentMessage/delta", params: { threadId: id, turnId: "turn", itemId: "body", delta: "a".repeat(400) } };
+    onDelta(notification);
+    // 新版没有旧广播，直接 RPC 也必须让正文速度工作。
+    now += 1_000;
+    onDelta(notification);
+    assert.match(dom.window.document.querySelector("[data-usage-speed]").textContent, /100.0\s*tok\/s/);
+    assert.equal(dom.window.state.pendingTokens, 200);
+    dom.window.notifyUsage({ source: null, origin: "", data: { type: "mcp-notification", hostId: "local", ...notification } });
+    assert.equal(dom.window.state.pendingTokens, 200, "原生直连和旧广播不得重复计数");
+    breakStream();
+    assert.deepEqual(disposed.toSorted(), ["client", "manager lease", "manager pending", "managers", "stream lease", "stream pending"].toSorted());
+    dom.window.hideUsage();
+    onDelta(notification);
+    assert.equal(dom.window.state.pendingTokens, 200, "关闭后晚到的正文回调不得更新");
+    assert.equal(new Set(disposed).size, disposed.length, "释放操作须可重复调用而不重复释放资源");
+  } finally { dom.window.close(); }
+});
+
+test("sparse body arrivals keep measuring and preserve the last speed between messages", async () => {
   const source = await readFile(new URL("../inject/codex-panel.user.js", import.meta.url), "utf8");
   const block = source.slice(source.indexOf("  const usageLines = new Map();"), source.indexOf("  function mount() {"));
   const dom = new JSDOM('<div id="line"><svg><path data-usage-needle></path></svg><span data-usage-speed></span><span data-usage-cache></span></div>', { runScripts: "outside-only", pretendToBeVisual: true });
@@ -224,7 +280,7 @@ test("batch and short body streams stay unknown instead of inventing a final spe
         window.current = { line: document.getElementById("line"), pendingTokens: 0,
           usage: { inProgress: true, startedAt: 0, outputTokens: 0, cache: 80 } };
       };
-      window.addTokens = tokens => { recordUsageDelta(window.current, tokens); renderUsageState(window.current); };
+      window.addTokens = (tokens, itemId) => { recordUsageDelta(window.current, tokens, itemId); renderUsageState(window.current); };
       window.drawUsage = () => renderUsageState(window.current);
       window.finishUsage = () => { window.current.usage.inProgress = false; window.current.usage.endedAt = Date.now(); renderUsageState(window.current); };
       window.resetUsage();`);
@@ -232,7 +288,7 @@ test("batch and short body streams stay unknown instead of inventing a final spe
     for (let count = 0; count < 100; count++) dom.window.addTokens(1);
     now += 4_000;
     dom.window.drawUsage();
-    assert.equal(text(), "等待输出", "one arrival timestamp cannot establish a speed");
+    assert.match(text(), /--\s*tok\/s/, "单次到达无法测速，但不能误报等待输出");
     dom.window.finishUsage();
     assert.match(text(), /--\s*tok\/s/);
 
@@ -252,9 +308,25 @@ test("batch and short body streams stay unknown instead of inventing a final spe
     dom.window.addTokens(100);
     now += 4_000;
     dom.window.drawUsage();
-    assert.equal(text(), "等待输出");
+    assert.match(text(), /100.0\s*tok\/s/, "短暂停顿不能清空已测得的读数");
     dom.window.finishUsage();
     assert.match(text(), /100.0\s*tok\/s/, "completion preserves output speed instead of idle zero");
+
+    dom.window.resetUsage();
+    dom.window.addTokens(100, "body-a");
+    for (let arrival = 0; arrival < 3; arrival++) {
+      now += 4_000;
+      dom.window.addTokens(100, "body-a");
+      assert.match(text(), /25.0\s*tok\/s/, "每四秒到一批的同一正文也必须显示速度");
+    }
+    now += 60_000;
+    dom.window.drawUsage();
+    assert.match(text(), /25.0\s*tok\/s/);
+    dom.window.addTokens(100, "body-b");
+    assert.match(text(), /25.0\s*tok\/s/, "新消息采样期间保留上一读数");
+    now += 1_000;
+    dom.window.addTokens(100, "body-b");
+    assert.match(text(), /100.0\s*tok\/s/, "新正文不得计入两条消息之间的工具等待");
   } finally { dom.window.close(); }
 });
 
@@ -347,7 +419,7 @@ test("body TPS holds its sample between arrivals and does not recalculate at com
     assert.equal(value(), 80);
     assert.equal(frames.size, 0, "a settled rate needs no animation frames while waiting for new samples");
     dom.window.drawLiveUsage();
-    assert.equal(dom.window.document.querySelector('[data-usage-speed]').textContent, '等待输出');
+    assert.match(dom.window.document.querySelector('[data-usage-speed]').textContent, /80.0\s*tok\/s/);
     dom.window.liveUsage.speedSamples = [{ at: time - 1000, tokens: 0 }, { at: time, tokens: 100 }];
     dom.window.liveUsage.lastSpeed = 100;
     dom.window.drawLiveUsage();
