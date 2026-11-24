@@ -3773,6 +3773,7 @@
   }
 
   const usageLines = new Map();
+  const usageSpeedWindowMs = 3_000;
   const usageValueAnimations = new WeakMap();
   const usageDigitPatterns = {
     "0": "01110/10001/10001/10001/10001/10001/01110",
@@ -3823,21 +3824,25 @@
 
   function currentUsageSpeed(state, now = Date.now()) {
     if (!state.usage) return null;
-    if (!state.usage.inProgress) return state.lastSpeed ?? null;
     const samples = state.speedSamples ?? [];
+    const finished = !state.usage.inProgress;
+    // 单批到达没有可测间隔，暂停再久也不能把“未知速度”当作零。
+    if (samples.length < 2) return finished ? state.lastSpeed ?? null : null;
     const last = samples.at(-1);
-    if (!last) return null;
-    if (now - last.at >= 3_000) return 0;
-    const cutoff = now - 3_000;
+    if (finished) now = last.at;
+    if (now - last.at >= usageSpeedWindowMs) return 0;
+    const cutoff = now - usageSpeedWindowMs;
     while (samples.length > 2 && samples[1].at <= cutoff) samples.shift();
-    if (samples.length < 2) return null;
     const [first, second] = samples;
     const start = Math.max(first.at, cutoff);
     const elapsed = now - start;
-    // 首段没有可测的到达间隔；积累至少 250ms，避免同一批事件形成虚高峰值。
-    if (elapsed < 250) return null;
+    // 输出中先积累 250ms；短回复结束后使用真实到达间隔收尾，不补造采样时长。
+    if (elapsed <= 0 || (!finished && elapsed < 250)) return null;
     const baseline = first.tokens + (second.tokens - first.tokens) * (start - first.at) / (second.at - first.at);
-    return Math.max(0, (last.tokens - baseline) / (elapsed / 1000));
+    const speed = Math.max(0, (last.tokens - baseline) / (elapsed / 1000));
+    // 仅保存输出时的测量，工具等待后的衰减值不能覆盖最后有效速度。
+    if (now === last.at) state.lastSpeed = speed;
+    return speed;
   }
 
   function recordUsageDelta(state, tokens) {
@@ -3845,12 +3850,11 @@
     const samples = state.speedSamples ??= [];
     const previous = samples.at(-1);
     // 工具等待后的新一段单独采样；用量补报不进入窗口，避免把整次调用算成瞬时输出。
-    if (previous && now - previous.at >= 3_000) samples.length = 0;
+    if (previous && now - previous.at >= usageSpeedWindowMs) samples.length = 0;
     const last = samples.at(-1);
     if (last?.at === now) last.tokens += tokens;
     else samples.push({ at: now, tokens: (last?.tokens ?? 0) + tokens });
-    const speed = currentUsageSpeed(state, now);
-    if (speed != null) state.lastSpeed = speed;
+    currentUsageSpeed(state, now);
   }
 
   function renderUsageState(state) {
@@ -4211,7 +4215,9 @@
     const speedLabel = line.querySelector("[data-usage-speed]");
     const cacheLabel = line.querySelector("[data-usage-cache]");
     const loading = !unavailable && usage?.inProgress ? (zh ? "统计中" : "Calculating") : "";
-    renderUsageValue(speedLabel, usage?.speed ?? null, "", " tok/s", loading, liveState);
+    const lastSample = liveState?.speedSamples?.at(-1);
+    const speedLoading = lastSample && Date.now() - lastSample.at >= usageSpeedWindowMs ? "" : loading;
+    renderUsageValue(speedLabel, usage?.speed ?? null, "", " tok/s", speedLoading, liveState);
     renderUsageValue(cacheLabel, usage?.cache ?? null, `${zh ? "缓存命中" : "Cache hit"} `, usage?.cache == null ? "" : "%", loading);
     if (usage?.speed == null) line.querySelector("[data-usage-needle]")?.setAttribute("transform", "rotate(-90 12 15)");
     line.title = unavailable ? (zh ? "暂时无法读取本机会话用量" : "Local usage is unavailable")
@@ -4225,8 +4231,8 @@
         ? ` 本轮 ${Math.round(usage.outputTokens)} 输出 Token / ${((end - usage.startedAt) / 1000).toFixed(1)} 秒。`
         : ` This turn: ${Math.round(usage.outputTokens)} output tokens / ${((end - usage.startedAt) / 1000).toFixed(1)} seconds.`;
     }
-    line.title += zh ? " 指针刻度为 0–100 tok/s，超过 100 时保持满格。" : " Needle scale: 0–100 tok/s; higher rates keep the needle at full scale.";
-    if (loading && (usage.speed == null || usage.cache == null)) line.title += zh ? " 本轮数据统计中…" : " Calculating this turn’s usage…";
+    line.title += zh ? " 指针量程为 0–100 tok/s，超过时仅指针到顶，数字仍显示实际速度。" : " Needle range: 0–100 tok/s; only the needle stops at the limit, while the number shows the actual rate.";
+    if ((speedLoading && usage.speed == null) || (loading && usage.cache == null)) line.title += zh ? " 本轮数据统计中…" : " Calculating this turn’s usage…";
     line.style.opacity = usage?.observedAt && Date.now() - usage.observedAt > 120_000 ? "0.55" : "1";
   }
 

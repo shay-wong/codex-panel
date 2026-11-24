@@ -203,6 +203,55 @@ test("composer status follows its own thread and removes values on Home", async 
   } finally { dom.window.close(); }
 });
 
+test("batch output stays unknown and short streams retain their measured speed after completion", async () => {
+  const source = await readFile(new URL("../inject/codex-panel.user.js", import.meta.url), "utf8");
+  const block = source.slice(source.indexOf("  const usageLines = new Map();"), source.indexOf("  function mount() {"));
+  const dom = new JSDOM('<div id="line"><svg><path data-usage-needle></path></svg><span data-usage-speed></span><span data-usage-cache></span></div>', { runScripts: "outside-only", pretendToBeVisual: true });
+  try {
+    let now = 10_000;
+    dom.window.Date.now = () => now;
+    dom.window.matchMedia = () => ({ matches: true });
+    dom.window.eval(`let usageDotMatrix = true; let usageAnimationMode = "smooth"; let usageAnimationMinSpeed = 5; let usageAnimationMaxSpeed = 40;
+      ${block}\nwindow.resetUsage = () => {
+        window.current = { line: document.getElementById("line"), pendingTokens: 0,
+          usage: { inProgress: true, startedAt: 0, outputTokens: 0, cache: 80 } };
+      };
+      window.addTokens = tokens => { recordUsageDelta(window.current, tokens); renderUsageState(window.current); };
+      window.drawUsage = () => renderUsageState(window.current);
+      window.finishUsage = () => { window.current.usage.inProgress = false; window.current.usage.endedAt = Date.now(); renderUsageState(window.current); };
+      window.resetUsage();`);
+    const text = () => dom.window.document.querySelector('[data-usage-speed]').textContent;
+    for (let count = 0; count < 100; count++) dom.window.addTokens(1);
+    now += 4_000;
+    dom.window.drawUsage();
+    assert.match(text(), /--\s*tok\/s/, "one arrival timestamp cannot establish a speed");
+    dom.window.finishUsage();
+    assert.match(text(), /--\s*tok\/s/);
+
+    dom.window.resetUsage();
+    dom.window.addTokens(20);
+    now += 100;
+    dom.window.addTokens(50);
+    dom.window.finishUsage();
+    assert.match(text(), /500.0\s*tok\/s/, "a completed short stream uses its actual arrival interval");
+    assert.match(dom.window.document.querySelector('#line').title, /仅指针/);
+    assert.equal(dom.window.document.querySelector('[data-usage-needle]').getAttribute('transform'), 'rotate(90 12 15)');
+    now += 5_000;
+    dom.window.drawUsage();
+    assert.match(text(), /500.0\s*tok\/s/);
+
+    dom.window.resetUsage();
+    dom.window.addTokens(20);
+    now += 1_000;
+    dom.window.addTokens(100);
+    now += 4_000;
+    dom.window.drawUsage();
+    assert.match(text(), /0.0\s*tok\/s/);
+    dom.window.finishUsage();
+    assert.match(text(), /100.0\s*tok\/s/, "completion preserves output speed instead of idle zero");
+  } finally { dom.window.close(); }
+});
+
 test("usage retargeting changes velocity gradually while keeping the current value", async () => {
   const source = await readFile(new URL("../inject/codex-panel.user.js", import.meta.url), "utf8");
   const block = source.slice(source.indexOf("  const usageLines = new Map();"), source.indexOf("  function mount() {"));
