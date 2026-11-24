@@ -319,7 +319,9 @@ Fork releases use independent versions starting at `0.0.1-fork`, tagged `v0.0.1-
 
 When the local Codex CLI cannot be found, `GET /api/local/ai/catalog` returns HTTP 200 with `available: false`, empty `models`, `skills` and `commands`, and the supported sandbox options. A normal catalog omits `available`; API clients should check `available !== false`. An unavailable workspace still returns HTTP 409, and other errors keep their existing response. Creating and running conversations requires a working Codex CLI.
 
-缺少本地 Codex CLI 时，`GET /api/local/ai/catalog` 返回 HTTP 200、`available: false`，模型、Skill 和命令列表为空，保留支持的沙箱选项。正常目录不包含 `available` 字段，API 调用方应以 `available !== false` 判断。工作区不可用仍返回 HTTP 409，其他错误保留原有响应；创建和运行对话仍需可用的 Codex CLI。
+Models remain required for both local and app-server catalog discovery. If an optional Skill or command lookup fails, only its own list becomes empty and available models remain usable. Model discovery still reads every metadata page, and the separate Skill/workflow lookup continues to report its own failures rather than treating them as an empty configuration.
+
+缺少本地 Codex CLI 时，`GET /api/local/ai/catalog` 返回 HTTP 200、`available: false`，模型、Skill 和命令列表为空，保留支持的沙箱选项。正常目录不包含 `available` 字段，API 调用方应以 `available !== false` 判断。工作区不可用仍返回 HTTP 409，其他错误保留原有响应；创建和运行对话仍需可用的 Codex CLI。本地与 app-server 的目录发现都要求模型可用，可选 Skill 或命令读取失败时仅对应列表为空，保留完整模型分页和元数据；独立 Skill/工作流读取仍严格报告失败，不当成空配置。
 
 ## Link embedded AI conversations to issues
 

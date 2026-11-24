@@ -169,7 +169,7 @@ npm run panelctl -- issue create \
 
 ## 配置 AI 工作流
 
-缺少本地 Codex CLI 时，AI 目录返回不可用状态，模型、Skill 和命令列表为空。创建和运行对话仍需可用的 CLI。详见[本地 AI 目录可用性](docs/fork-capabilities.md#local-ai-catalog-availability)。
+缺少本地 Codex CLI 时，AI 目录返回不可用状态，模型、Skill 和命令列表为空。模型读取成功时，可选的 Skill 或命令目录读取失败只使对应列表为空；模型目录仍必须可用。创建和运行对话仍需可用的 CLI。详见[本地 AI 目录可用性](docs/fork-capabilities.md#local-ai-catalog-availability)。
 
 读取关联的飞书/Lark Docx 或 Wiki 正文时，Manage Panel 指引 Agent 优先使用 `lark-doc` 和 `lark-cli docs +fetch --as user`，复用已有访问权限；缺少授权或 scope 时先说明原因并询问你能否授权，只有你明确选择后才改用浏览器。
 

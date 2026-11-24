@@ -1095,8 +1095,8 @@ export async function discoverAiCatalog({
   try {
     const [models, skillCatalog, commands] = await Promise.all([
       listModels(appServer),
-      discoverSkillCatalog({ codexExecutable, workspacePath, processEnv, skillsDirectory }),
-      loadSlashCommands(),
+      discoverSkillCatalog({ codexExecutable, workspacePath, processEnv, skillsDirectory }).catch(() => ({ skills: [] })),
+      loadSlashCommands().catch(() => []),
     ]);
     return {
       models,
@@ -1112,8 +1112,8 @@ export async function discoverAiCatalog({
 export async function discoverAppServerAiCatalog({ appServer, workspacePath }) {
   const [models, skillEntries, commands] = await Promise.all([
     listModels(appServer),
-    appServer.listSkills(workspacePath, { forceReload: false }),
-    loadSlashCommands(),
+    appServer.listSkills(workspacePath, { forceReload: false }).catch(() => []),
+    loadSlashCommands().catch(() => []),
   ]);
   return {
     models,

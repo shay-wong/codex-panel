@@ -791,14 +791,16 @@ if (args[0] === "app-server") {
       const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
       if (!line.trim()) continue;
       const message = JSON.parse(line);
-      if (message.method === "model/list") process.stdout.write(JSON.stringify({ id: message.id, result: { data: [{
+      if (message.method === "model/list" && process.env.FAKE_MODELS_FAILURE) process.stdout.write(JSON.stringify({ id: message.id, error: { message: "models unavailable" } }) + "\\n");
+      else if (message.method === "model/list") process.stdout.write(JSON.stringify({ id: message.id, result: { data: [{
         model: "gpt-real", displayName: "GPT Real", description: "Real fixture",
         defaultReasoningEffort: "medium",
         supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "medium" }, { reasoningEffort: "high" }],
         serviceTiers: [{ id: "priority", name: "Fast", description: "fixture" }],
       }], nextCursor: null } }) + "\\n");
       if (message.id === 1) process.stdout.write('{"id":1,"result":{"platformFamily":"unix"}}\\n');
-      if (message.method === "skills/list") process.stdout.write('{"id":2,"result":{"data":[{"skills":[{"name":"handoff","enabled":true,"scope":"user","path":"/fixture/handoff/SKILL.md","description":"Write a temporary handoff","interface":{"displayName":"Handoff"}},{"name":"real-skill","enabled":true,"scope":"repo","description":"Real fixture skill","path":"/fixture/real-skill/SKILL.md","interface":{"displayName":"Real Skill"}},{"name":"disabled","enabled":false,"scope":"user"}]}]}}\\n');
+      if (message.method === "skills/list" && process.env.FAKE_SKILLS_FAILURE) process.stdout.write(JSON.stringify({ id: message.id, error: { message: "skills unavailable" } }) + "\\n");
+      else if (message.method === "skills/list") process.stdout.write('{"id":2,"result":{"data":[{"skills":[{"name":"handoff","enabled":true,"scope":"user","path":"/fixture/handoff/SKILL.md","description":"Write a temporary handoff","interface":{"displayName":"Handoff"}},{"name":"real-skill","enabled":true,"scope":"repo","description":"Real fixture skill","path":"/fixture/real-skill/SKILL.md","interface":{"displayName":"Real Skill"}},{"name":"disabled","enabled":false,"scope":"user"}]}]}}\\n');
     }
   });
 } else if (args[0] === "exec") {
@@ -929,7 +931,7 @@ if (args[0] === "app-server") {
   };
 }
 
-test("model discovery reads every metadata page and preserves selection fields", async () => {
+test("model discovery reads every metadata page when optional skills fail", async () => {
   const cursors = [];
   const catalog = await discoverAppServerAiCatalog({
     workspacePath: "/fixture/workspace",
@@ -949,7 +951,7 @@ test("model discovery reads every metadata page and preserves selection fields",
           nextCursor: params.cursor === null ? "page-2" : null,
         };
       },
-      async listSkills() { return []; },
+      async listSkills() { throw new Error("skills unavailable"); },
     },
   });
   assert.deepEqual(cursors, [null, "page-2"]);
@@ -957,6 +959,36 @@ test("model discovery reads every metadata page and preserves selection fields",
   assert.equal(catalog.models[1].defaultReasoningEffort, "high");
   assert.deepEqual(catalog.models[1].supportedReasoningEfforts, ["high"]);
   assert.deepEqual(catalog.models[1].serviceTiers, [{ id: "priority", name: "Fast" }]);
+  assert.deepEqual(catalog.skills, []);
+  assert.ok(catalog.commands.length > 0);
+  const modelError = new Error("models unavailable");
+  await assert.rejects(discoverAppServerAiCatalog({
+    workspacePath: "/fixture/workspace",
+    appServer: {
+      async request() { throw modelError; },
+      async listSkills() { throw new Error("skills unavailable"); },
+    },
+  }), (error) => error === modelError);
+});
+
+test("local catalogs keep models when skills fail while required models and standalone skills stay strict", async () => {
+  const fixture = await createFixture();
+  try {
+    fixture.service.processEnv.FAKE_SKILLS_FAILURE = "1";
+    const catalog = await fixture.service.getCatalog("project");
+    assert.deepEqual(catalog.models.map((model) => model.slug), ["gpt-real"]);
+    assert.equal(catalog.models[0].defaultReasoningEffort, "medium");
+    assert.deepEqual(catalog.models[0].serviceTiers, [{ id: "priority", name: "Fast" }]);
+    assert.deepEqual(catalog.skills, []);
+    assert.ok(catalog.commands.length > 0);
+    await assert.rejects(fixture.service.getSkillCatalog("project"), /could not list skills/);
+    fixture.service.processEnv.FAKE_MODELS_FAILURE = "1";
+    await assert.rejects(fixture.service.getCatalog("project"), /models unavailable/);
+    fixture.service.codexExecutable = path.join(fixture.directory, "missing-codex");
+    await assert.rejects(fixture.service.getCatalog("project"), (error) => error.code === "ENOENT");
+  } finally {
+    await fixture.close();
+  }
 });
 
 test("local model discovery keeps each repository's working directory", async () => {

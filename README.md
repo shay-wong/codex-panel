@@ -168,7 +168,7 @@ In a Jira planning conversation, an explicitly requested repository link can be 
 
 ## Configure AI workflows
 
-If the local Codex CLI is missing, the AI catalog returns an unavailable state with empty model, Skill and command lists. Creating and running conversations still requires a working CLI. See [local AI catalog availability](docs/fork-capabilities.md#local-ai-catalog-availability).
+If the local Codex CLI is missing, the AI catalog returns an unavailable state with empty model, Skill and command lists. When models load successfully, an unavailable optional Skill or command catalog leaves only that list empty; model discovery remains required. Creating and running conversations still requires a working CLI. See [local AI catalog availability](docs/fork-capabilities.md#local-ai-catalog-availability).
 
 For linked Feishu/Lark Docx or Wiki content, Manage Panel directs the agent to `lark-doc` and `lark-cli docs +fetch --as user`. Existing access is reused; missing authorization or scopes are explained before asking whether you can authorize the required access. Browser fallback requires your explicit choice.
 
