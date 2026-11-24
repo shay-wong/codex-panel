@@ -187,9 +187,10 @@ Ultrafast 设置说明：`launcher/src/App.tsx` 将适用模型、必需的 `fea
 本轮合入上游 PR #460：本地 Codex CLI 缺失导致 `ENOENT` 时，`GET /api/local/ai/catalog` 返回 HTTP 200、`available:false` 和空模型/Skill/命令目录；工作区无效等其他错误保留原状态。同步 `AI_SANDBOX_MODES`、类型声明和隔离服务端/浏览器测试。机械冲突解决保留 Fork 的 app-server 模型分页、独立 Skill 目录与去重、远端执行、现有 `ApiError` 和引用模块路径；不改变创建对话的 CLI 前提。上次合入的 E2E/CI 与 Fork 隔离适配继续保留。本次不改变 Fork 发布版本，用户说明见中英文 README、`docs/fork-capabilities.md#local-ai-catalog-availability` 和未发布更新日志。
 
 
-本次选择性移植（2026-11-24）只吸收 `0bf90db15c295c69f68431e8202b674b38b36dd4` 的可选 AI 目录失败隔离；不是完整合并 PR #471/#472，不引入 capnweb，不改变版本。精确已合并上游基线仍为 `bc25451c5c49a14abb6c4e8250b62c626b007f8a`。
+本次选择性移植（2026-11-24）只吸收 `0bf90db15c295c69f68431e8202b674b38b36dd4` 的可选 AI 目录失败隔离、`574b1605b919f96f92f6a8454e710cbb7918df42` 的旧 renderer fetch 拒绝清理；不是完整合并 PR #471/#472，不引入 capnweb，不改变版本。精确已合并上游基线仍为 `bc25451c5c49a14abb6c4e8250b62c626b007f8a`。
 
 - 可选目录（沿用本地 AI 目录能力）：`server/ai-chat-catalog.mjs` 的 `discoverAiCatalog` / `discoverAppServerAiCatalog` 仅将 Skill、commands 各自失败降级为空列表；models 仍必需，保留模型全分页元数据、符号链接 Skill 补齐，以及独立 Skill/工作流查询的严格失败语义。合并时不得将模型失败一并吞掉。验证入口：`test/ai-chat-runner.test.mjs` 的目录主路径。
+- 旧 fetch 兼容（等待上游吸收）：`inject/codex-panel.user.js` 的 `requestNativeFetch` 在旧 IPC 异步拒绝时立即完成并清除监听器和定时器，仅明确包含 HTTP fetch service 的失效才记住停用旧回退；原生 catalog/roots 仍先于该标记查询，之后热就绪可直接恢复，不改其他错误语义。验证入口：`test/inject.test.mjs` 的 native project fetch 与服务就绪路径；原生提供等价稳定目录接口后随旧回退评估移除。
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 

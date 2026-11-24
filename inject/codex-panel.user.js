@@ -822,6 +822,7 @@
     }
     const bridge = window.electronBridge;
     if (!bridge || typeof bridge.sendMessageFromView !== "function") return Promise.resolve(undefined);
+    if (requestNativeFetch.nativeFetchUnavailable === true) return undefined;
     return new Promise((resolve) => {
       const requestId = `panel-native-fetch-${crypto.randomUUID()}`;
       let settled = false;
@@ -853,14 +854,21 @@
       const timeout = window.setTimeout(() => finish(undefined), 1_000);
       window.addEventListener("message", onMessage);
       try {
-        bridge.sendMessageFromView({
+        const pending = bridge.sendMessageFromView({
           type: "fetch",
           requestId,
           method: "POST",
           url: `vscode://codex/${path}`,
           body: JSON.stringify(body),
         });
-      } catch (_) {
+        if (pending && typeof pending.then === "function") {
+          pending.then(undefined, error => {
+            if (/HTTP fetch service/i.test(String(error?.message ?? error))) requestNativeFetch.nativeFetchUnavailable = true;
+            finish(undefined);
+          });
+        }
+      } catch (error) {
+        if (/HTTP fetch service/i.test(String(error?.message ?? error))) requestNativeFetch.nativeFetchUnavailable = true;
         finish(undefined);
       }
     });

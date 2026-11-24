@@ -261,6 +261,8 @@ Moving or deleting the source repository does not break an already installed run
 
 The standalone launcher waits up to 30 seconds for Codex's main renderer after CDP becomes reachable. It ignores auxiliary renderers such as global dictation and the avatar overlay, then waits for the main renderer's initial `app://` document to reach `complete`. Only then does it enable the CSP bypass and reload once, allowing the registered document-start injection to run without aborting the official desktop bootstrap. The automatic Panel-open request is a one-shot latch claimed by the first available main renderer, so a later iframe failure keeps the supervised service and manual retry available without repeatedly overriding native conversation navigation.
 
+Project reads prefer the native project catalog. If a legacy renderer fetch request is rejected asynchronously, Panel immediately clears its response listener and timeout. Only an explicit HTTP fetch service failure disables subsequent legacy fallback requests; a native catalog that becomes ready afterward is still used without a reload.
+
 Chromium 151 applies Local Network Access checks to loopback subframe navigation. The manager-owned injector therefore passes `--disable-features=LocalNetworkAccessForSubframeNavigations`, and the managed iframe delegates `local-network-access`, `loopback-network`, and `local-network`. The compatibility switch is limited to subframe navigation; fetch, WebSocket, and other Local Network Access checks are not disabled.
 
 Run the launcher as documented in [Embed in Codex](../README.md#embed-in-codex):

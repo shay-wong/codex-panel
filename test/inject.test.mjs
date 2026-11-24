@@ -1221,6 +1221,22 @@ test("native fetch preserves successful null bodies and returns undefined when u
     await loadRequestNativeFetch(throwingWindow)("get-global-state", {}),
     undefined,
   );
+
+  for (const message of ["HTTP requests must use the HTTP fetch service.", "Temporary bridge failure"]) {
+    let calls = 0, timers = 0, listeners = 0;
+    const request = loadRequestNativeFetch({
+      electronBridge: { sendMessageFromView() { calls++; return Promise.reject(new Error(message)); } },
+      setTimeout() { timers++; return 1; },
+      clearTimeout() { timers--; },
+      addEventListener() { listeners++; },
+      removeEventListener() { listeners--; },
+    });
+    assert.equal(await request("get-global-state", {}), undefined);
+    assert.equal(await request("get-global-state", {}), undefined);
+    assert.equal(calls, message.includes("HTTP fetch service") ? 1 : 2);
+    assert.equal(timers, 0, "a rejected bridge request must cancel its timeout");
+    assert.equal(listeners, 0, "a rejected bridge request must remove its listener");
+  }
 });
 
 test("host context captures all Codex projects even when the sidebar section is collapsed", () => {
@@ -2006,6 +2022,7 @@ test("native project reads use Rspack services without legacy asset names", asyn
       },
     },
   });
+  api.requestNativeFetch.nativeFetchUnavailable = true;
   assert.equal(await api.selectedNativeProjectId(), "before");
   selection = { type: "local", projectId: "fixture" };
   assert.equal(await api.selectedNativeProjectId(), "fixture");
