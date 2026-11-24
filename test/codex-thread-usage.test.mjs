@@ -158,52 +158,52 @@ test("composer status follows its own thread and removes values on Home", async 
     assert.equal([...dom.window.usageStates.values()][0].pendingTokens, 0);
     assert.match(line.querySelector('[data-usage-speed]').textContent, /--\s*tok\/s/);
     notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
-    assert.match(line.querySelector('[data-usage-speed]').textContent, /--\s*tok\/s/);
+    assert.match(line.querySelector('[data-usage-speed]').textContent, /33.3\s*tok\/s/);
     now += 1_000;
     notify("item/agentMessage/delta", { turnId: "live", delta: "a".repeat(400) });
-    assert.match(line.textContent, /100.0\s*tok\/s/);
+    assert.match(line.textContent, /66.7\s*tok\/s/);
     assert.doesNotMatch(line.textContent, /≈/);
     assert.match(line.title, /估算/);
     now += 500;
     dom.window.tickUsage();
-    assert.match(line.textContent, /100.0\s*tok\/s/, "the last body sample must not decay between arrivals");
+    assert.match(line.textContent, /66.7\s*tok\/s/, "the last body sample must not decay between arrivals");
     now += 2_500;
     dom.window.tickUsage();
-    assert.match(line.textContent, /100.0\s*tok\/s/);
+    assert.match(line.textContent, /66.7\s*tok\/s/);
     dom.window.usageFailure = true;
     await dom.window.pollUsage();
-    assert.match(line.textContent, /100.0\s*tok\/s/);
+    assert.match(line.textContent, /66.7\s*tok\/s/);
     assert.equal([...dom.window.usageStates.values()][0].usage.turnId, "live");
     dom.window.usageFailure = false;
     dom.window.usageResult = { usage: null };
     await dom.window.pollUsage();
-    assert.match(line.textContent, /100.0\s*tok\/s/);
+    assert.match(line.textContent, /66.7\s*tok\/s/);
     notify("item/agentMessage/delta", { turnId: "live", itemId: "next-body", delta: "a".repeat(400) });
-    assert.match(line.textContent, /100.0\s*tok\/s/);
+    assert.match(line.textContent, /33.3\s*tok\/s/);
     now += 1_000;
     notify("item/agentMessage/delta", { turnId: "live", itemId: "next-body", delta: "a".repeat(400) });
-    assert.match(line.textContent, /100.0\s*tok\/s/);
+    assert.match(line.textContent, /66.7\s*tok\/s/);
     delete dom.window.usageResult;
     const actual = { turnId: "live", tokenUsage: { last: { outputTokens: 4090, inputTokens: 100, cachedInputTokens: 80 }, total: { totalTokens: 4490 } } };
     notify("thread/tokenUsage/updated", actual);
-    assert.match(line.textContent, /100.0\s*tok\/s.*缓存命中\s*80.0%/);
+    assert.match(line.textContent, /66.7\s*tok\/s.*缓存命中\s*80.0%/);
     assert.match(line.title, /估算/);
     notify("thread/tokenUsage/updated", actual);
-    assert.match(line.textContent, /100.0\s*tok\/s/);
+    assert.match(line.textContent, /66.7\s*tok\/s/);
     notify("turn/completed", { turn: { id: "live", durationMs: 15_000 } });
     now += 100_000;
     dom.window.tickUsage();
-    assert.match(line.textContent, /100.0\s*tok\/s/);
+    assert.match(line.textContent, /66.7\s*tok\/s/);
     notify("item/agentMessage/delta", { turnId: "live", delta: "ignored" });
     assert.match(line.title, /估算/);
     notify("turn/started", { turn: { id: "remote" } }, "remote");
-    assert.match(line.textContent, /100.0\s*tok\/s/);
+    assert.match(line.textContent, /66.7\s*tok\/s/);
     const live = [...dom.window.usageStates.values()][0];
     live.pendingTokens = 900;
     dom.window.usageResult = { usage: { ...live.usage } };
     await dom.window.pollUsage();
     assert.equal(live.pendingTokens, 0);
-    assert.match(line.textContent, /100.0\s*tok\/s/);
+    assert.match(line.textContent, /66.7\s*tok\/s/);
     notify("turn/started", { turn: { id: "next" } });
     assert.equal(line.querySelectorAll('.codex-panel-usage-dots i').length, 3);
     dom.window.document.querySelector("[data-codex-composer-root]").setAttribute("data-composer-placement", "home");
@@ -250,11 +250,12 @@ test("native manager streams update TPS once and release every subscription when
     onManager({ status: "ready", manager: { dup: () => client } });
     await Promise.resolve();
     const notification = { method: "item/agentMessage/delta", params: { threadId: id, turnId: "turn", itemId: "body", delta: "a".repeat(400) } };
-    onDelta(notification);
+    onDelta(notification, now - 500);
     // 新版没有旧广播，直接 RPC 也必须让正文速度工作。
     now += 1_000;
-    onDelta(notification);
-    assert.match(dom.window.document.querySelector("[data-usage-speed]").textContent, /100.0\s*tok\/s/);
+    onDelta(notification, now - 500);
+    assert.equal(dom.window.state.speedSamples.at(-1).at, now - 500, "原生接收时刻独立于界面回调时间");
+    assert.match(dom.window.document.querySelector("[data-usage-speed]").textContent, /66.7\s*tok\/s/);
     assert.equal(dom.window.state.pendingTokens, 200);
     dom.window.notifyUsage({ source: null, origin: "", data: { type: "mcp-notification", hostId: "local", ...notification } });
     assert.equal(dom.window.state.pendingTokens, 200, "原生直连和旧广播不得重复计数");
@@ -267,7 +268,7 @@ test("native manager streams update TPS once and release every subscription when
   } finally { dom.window.close(); }
 });
 
-test("sparse body arrivals keep measuring and preserve the last speed between messages", async () => {
+test("fixed receive windows show same-tick bursts and preserve readings between messages", async () => {
   const source = await readFile(new URL("../inject/codex-panel.user.js", import.meta.url), "utf8");
   const block = source.slice(source.indexOf("  const usageLines = new Map();"), source.indexOf("  function mount() {"));
   const dom = new JSDOM('<div id="line"><svg><path data-usage-needle></path></svg><span data-usage-speed></span><span data-usage-cache></span></div>', { runScripts: "outside-only", pretendToBeVisual: true });
@@ -280,27 +281,36 @@ test("sparse body arrivals keep measuring and preserve the last speed between me
         window.current = { line: document.getElementById("line"), pendingTokens: 0,
           usage: { inProgress: true, startedAt: 0, outputTokens: 0, cache: 80 } };
       };
-      window.addTokens = (tokens, itemId) => { recordUsageDelta(window.current, tokens, itemId); renderUsageState(window.current); };
+      window.addTokens = (tokens, itemId, receivedAtMs) => { recordUsageDelta(window.current, tokens, itemId, receivedAtMs); renderUsageState(window.current); };
       window.drawUsage = () => renderUsageState(window.current);
       window.finishUsage = () => { window.current.usage.inProgress = false; window.current.usage.endedAt = Date.now(); renderUsageState(window.current); };
       window.resetUsage();`);
     const text = () => dom.window.document.querySelector('[data-usage-speed]').textContent;
     for (let count = 0; count < 100; count++) dom.window.addTokens(1);
+    assert.match(text(), /33.3\s*tok\/s/, "同一毫秒收到的正文也立即计入固定窗口");
     now += 4_000;
     dom.window.drawUsage();
-    assert.match(text(), /--\s*tok\/s/, "单次到达无法测速，但不能误报等待输出");
+    assert.match(text(), /33.3\s*tok\/s/);
     dom.window.finishUsage();
-    assert.match(text(), /--\s*tok\/s/);
+    assert.match(text(), /33.3\s*tok\/s/);
+
+    dom.window.resetUsage();
+    dom.window.addTokens(43.5, "batched-body");
+    now += 2;
+    dom.window.addTokens(122.75, "batched-body");
+    assert.match(text(), /55.4\s*tok\/s/, "复现现场 2ms 两批正文，不能持续 -- 或按 2ms 算出虚高速率");
+    dom.window.finishUsage();
+    assert.match(text(), /55.4\s*tok\/s/);
 
     dom.window.resetUsage();
     dom.window.addTokens(20);
     now += 100;
     dom.window.addTokens(50);
     dom.window.finishUsage();
-    assert.match(text(), /--\s*tok\/s/, "completion must not bypass the 250ms sampling interval");
+    assert.match(text(), /23.3\s*tok\/s/, "短回复按固定窗口计数，不再要求最短回调间隔");
     now += 5_000;
     dom.window.drawUsage();
-    assert.match(text(), /--\s*tok\/s/);
+    assert.match(text(), /23.3\s*tok\/s/);
 
     dom.window.resetUsage();
     dom.window.addTokens(20);
@@ -308,25 +318,37 @@ test("sparse body arrivals keep measuring and preserve the last speed between me
     dom.window.addTokens(100);
     now += 4_000;
     dom.window.drawUsage();
-    assert.match(text(), /100.0\s*tok\/s/, "短暂停顿不能清空已测得的读数");
+    assert.match(text(), /40.0\s*tok\/s/, "短暂停顿不能清空已测得的读数");
     dom.window.finishUsage();
-    assert.match(text(), /100.0\s*tok\/s/, "completion preserves output speed instead of idle zero");
+    assert.match(text(), /40.0\s*tok\/s/, "completion preserves output speed instead of idle zero");
 
     dom.window.resetUsage();
     dom.window.addTokens(100, "body-a");
     for (let arrival = 0; arrival < 3; arrival++) {
       now += 4_000;
       dom.window.addTokens(100, "body-a");
-      assert.match(text(), /25.0\s*tok\/s/, "每四秒到一批的同一正文也必须显示速度");
+      assert.match(text(), /33.3\s*tok\/s/, "新批次到达时仅计入最近三秒收到的 Token");
     }
     now += 60_000;
     dom.window.drawUsage();
-    assert.match(text(), /25.0\s*tok\/s/);
+    assert.match(text(), /33.3\s*tok\/s/);
     dom.window.addTokens(100, "body-b");
-    assert.match(text(), /25.0\s*tok\/s/, "新消息采样期间保留上一读数");
+    assert.match(text(), /33.3\s*tok\/s/, "新消息不得混入上一条正文的 Token");
     now += 1_000;
     dom.window.addTokens(100, "body-b");
-    assert.match(text(), /100.0\s*tok\/s/, "新正文不得计入两条消息之间的工具等待");
+    assert.match(text(), /66.7\s*tok\/s/, "新正文不得计入两条消息之间的工具等待");
+
+    dom.window.resetUsage();
+    for (let second = 0; second < 6; second++) {
+      dom.window.addTokens(300, "continuous-body");
+      if (second >= 2) assert.match(text(), /300.0\s*tok\/s/, "稳定流持续使用完整三秒窗口");
+      now += 1_000;
+    }
+
+    dom.window.resetUsage();
+    dom.window.addTokens(300, "queued-body", now - 4_000);
+    dom.window.addTokens(300, "queued-body", now);
+    assert.match(text(), /100.0\s*tok\/s/, "同一回调批次仍按原始接收时刻排除窗口外片段");
   } finally { dom.window.close(); }
 });
 

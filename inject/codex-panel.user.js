@@ -3830,10 +3830,10 @@
         const broken = () => { if (active()) connection.stop(); };
         pending = client.subscribe({
           type: "notification", key: { hostId: "local" }, methods: "item/agentMessage/delta",
-          listener: notification => {
+          listener: (notification, receivedAtMs) => {
             if (active()) onUsageNotification({ source: null, origin: "", data: {
               type: "mcp-notification", hostId: "local", method: notification.method, params: notification.params,
-            } }, true);
+            } }, true, receivedAtMs);
           },
         });
         connection.direct = true;
@@ -3892,8 +3892,9 @@
     return state.usage ? state.lastSpeed ?? null : null;
   }
 
-  function recordUsageDelta(state, tokens, itemId) {
-    const now = Date.now();
+  function recordUsageDelta(state, tokens, itemId, receivedAtMs) {
+    // 直连携带原始接收时刻，避免界面队列把不同时间的片段压到同一回调批次。
+    const now = Number.isFinite(receivedAtMs) ? receivedAtMs : Date.now();
     const samples = state.speedSamples ??= [];
     // 同一正文可以隔几秒到一批；只在切换消息时重采样，排除消息之间的工具等待。
     if (typeof itemId === "string" && itemId !== state.speedItemId) {
@@ -3902,17 +3903,11 @@
     }
     const last = samples.at(-1);
     if (last?.at === now) last.tokens += tokens;
-    else samples.push({ at: now, tokens: (last?.tokens ?? 0) + tokens });
+    else samples.push({ at: now, tokens });
     const cutoff = now - usageSpeedWindowMs;
-    while (samples.length > 2 && samples[1].at <= cutoff) samples.shift();
-    if (samples.length < 2) return;
-    const [first, second] = samples;
-    const start = Math.max(first.at, cutoff);
-    const elapsed = now - start;
-    if (elapsed < 250) return;
-    const baseline = first.tokens + (second.tokens - first.tokens) * (start - first.at) / (second.at - first.at);
-    // 只在正文到达时记录同一口径的速度，等待和完成均不重新缩放分母。
-    state.lastSpeed = Math.max(0, (samples.at(-1).tokens - baseline) / (elapsed / 1000));
+    while (samples.length && samples[0].at <= cutoff) samples.shift();
+    // 客户端会集中回传整段正文；固定窗口计数不能用几毫秒的回调间隔冒充生成耗时。
+    state.lastSpeed = samples.reduce((sum, sample) => sum + sample.tokens, 0) / (usageSpeedWindowMs / 1000);
   }
 
   function renderUsageState(state) {
@@ -3929,7 +3924,7 @@
     for (const state of usageLines.values()) renderUsageState(state);
   }
 
-  function onUsageNotification(event, fromNative = false) {
+  function onUsageNotification(event, fromNative = false, receivedAtMs = null) {
     if (!showThreadUsage) return;
     // 原生 preload 通过无 source/origin 的 MessageEvent 广播；排除嵌入页面消息。
     if (event.source !== null && (event.source !== window || event.origin !== window.location.origin)) return;
@@ -3967,7 +3962,7 @@
           let tokens = 0;
           for (const character of params.delta) tokens += character.codePointAt(0) < 128 ? 0.25 : 1;
           state.pendingTokens += tokens;
-          recordUsageDelta(state, tokens, params.itemId);
+          recordUsageDelta(state, tokens, params.itemId, receivedAtMs);
           state.revision++;
           renderUsageState(state);
           continue;
@@ -4274,9 +4269,9 @@
     renderUsageValue(cacheLabel, usage?.cache ?? null, `${zh ? "缓存命中" : "Cache hit"} `, usage?.cache == null ? "" : "%", loading);
     if (usage?.speed == null) line.querySelector("[data-usage-needle]")?.setAttribute("transform", "rotate(-90 12 15)");
     line.title = unavailable ? (zh ? "暂时无法读取本机会话用量" : "Local usage is unavailable")
-      : zh ? "正文实时 TPS：按最近 3 秒正文采样，在新正文到达时更新；两次采样之间及结束后保留最后有效速度，首次采样不足显示 --。缓存命中：同轮缓存输入 ÷ 输入 Token。"
-        : "Live response TPS: measured over the last 3 seconds and updated when response text arrives; keep the last measured rate between samples and after completion. Insufficient initial samples show --. Cache hit is cached/input tokens within the turn.";
-    if (usage?.estimated) line.title += zh ? " 速度按正文文本估算，不计入思考摘要、计划或工具内容；原生用量补报仅用于本轮统计。" : "Speed is estimated from response text, excluding reasoning summaries, plans and tool content; reported usage only updates turn totals.";
+      : zh ? "正文接收速率：最近 3 秒收到的正文 Token 数 ÷ 3，首批正文即可显示；两次接收之间及结束后保留最后读数，无正文时显示 --。缓存命中：同轮缓存输入 ÷ 输入 Token。"
+        : "Response receive rate: text tokens received in the last 3 seconds divided by 3, available from the first text. Keep the last reading between arrivals and after completion; show -- before text arrives. Cache hit is cached/input tokens within the turn.";
+    if (usage?.estimated) line.title += zh ? " Token 数按正文文本估算；集中传输无法还原模型的真实生成速度，不计入思考摘要、计划或工具内容。" : "Token counts are estimated from response text; batched delivery cannot reveal the model's true generation speed. Reasoning summaries, plans and tool content are excluded.";
     if (usage?.partial) line.title += zh ? " 日志尾部缺少轮边界，仅显示最近一次调用。" : " Turn boundary unavailable; latest call only.";
     const end = usage?.inProgress ? Date.now() : usage?.endedAt;
     if (Number.isFinite(usage?.outputTokens) && Number.isFinite(usage?.startedAt) && Number.isFinite(end) && end >= usage.startedAt) {

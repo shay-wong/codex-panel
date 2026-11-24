@@ -6,7 +6,7 @@ This file records user-visible changes introduced by the fork.
 
 ## Unreleased
 
-- Fix missing speed readings while newer Codex clients are already displaying response text by subscribing to their native text notifications, while preserving older clients without double counting. Keep the last valid output speed visible during pauses instead of showing “Waiting for output”; preserve sparse samples within one message, start a fresh sample window for the next, and show `--` only before a valid speed is available.
+- Fix missing readings while newer Codex clients are already displaying response text by subscribing to their native text notifications, while preserving older clients without double counting. Show received response tokens over a fixed three-second window from the first fragment, so batched and short output no longer stays `--` or produces a millisecond-interval spike. Keep the last reading during pauses and after completion; start a fresh window for each message and show `--` only before response text arrives. This receive rate does not reconstruct the model’s exact generation speed.
 
 ## 0.6.5-fork
 
