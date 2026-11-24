@@ -37,10 +37,7 @@ button, input { font: inherit; }
 .status-panel { margin-bottom: 14px; padding: 16px 18px; border: 1px solid var(--gray-4); border-radius: 16px; background: linear-gradient(135deg, var(--gray-2), var(--gray-1)); box-shadow: 0 8px 24px rgb(0 0 0 / 4%); }
 .status-panel #message { line-height: 1.55; }
 .status-panel-summary { flex: 1; min-width: 0; }
-.status-panel:has(.native-adapters-progress) .status-panel-summary { flex: 0 0 174px; }
-.native-adapters-progress { flex: 1; min-width: 0; }
-#nativeAdaptersComponent { overflow-wrap: anywhere; }
-#nativeAdaptersMessage { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.status-panel-content:has(.native-adapter-graph) { flex-direction: column; align-items: stretch; }
 .status-symbol { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 15px; background: var(--gray-3); color: var(--gray-11); flex-shrink: 0; box-shadow: 0 0 0 5px var(--gray-2); }
 .status-symbol.running { background: var(--green-3); color: var(--green-11); }
 .status-symbol.error { background: var(--red-3); color: var(--red-11); }

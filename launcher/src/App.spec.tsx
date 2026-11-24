@@ -569,6 +569,7 @@ it("opens pets from its own navigation page and refreshes the real selection whe
 });
 
 it("shows adapter progress inside the status panel alongside the independent connection status", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const snapshot: LauncherSnapshot = {
@@ -617,11 +618,23 @@ it("shows adapter progress inside the status panel alongside the independent con
   expect(progress.textContent).toContain("正在并行适配 2 项功能");
   expect(progress.textContent).toContain("模块 42 · 2/10");
   expect(progress.textContent).toContain("模块 75 · 3/10");
-  expect(progress.textContent).not.toContain("已启用");
+  expect(within(progress).getByRole("button", { name: "宠物：已启用" }).getAttribute("data-phase")).toBe("ready");
+  expect(within(progress).getByRole("button", { name: "会话菜单：适配中" }).getAttribute("data-phase")).toBe("loading");
   expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("42");
   expect(within(progress).getByText("适配中 · 阶段进度 42%")).toBeTruthy();
   expect(document.getElementById("threadTabsComponent")?.querySelector("details")).toBeNull();
-  for (const phase of ["ready", "partial", "failed", "waiting"]) {
+  await act(async () => { statusListener({ payload: { ...snapshot,
+    nativeAdaptersPhase: "ready", nativeAdaptersMessage: "Codex 适配已结束",
+    nativeAdaptersFeatures: [{ feature: "quota", phase: "ready", message: "已启用" }],
+  } }); });
+  expect(progress.classList.contains("collecting")).toBe(true);
+  await act(async () => { vi.advanceTimersByTime(1050); });
+  expect(progress.classList.contains("success")).toBe(true);
+  await act(async () => { vi.advanceTimersByTime(750); });
+  expect(document.getElementById("nativeAdaptersComponent")).toBeNull();
+  expect(document.getElementById("overviewTitle")?.textContent).toBe("Panel 已就绪");
+  for (const phase of ["partial", "failed", "waiting"]) {
+    await act(async () => { statusListener({ payload: snapshot }); });
     await act(async () => { statusListener({ payload: { ...snapshot,
       nativeAdaptersPhase: phase, nativeAdaptersMessage: "Codex 适配已结束",
       nativeAdaptersFeatures: [{ feature: "quota", phase: "ready", message: "已启用" }],

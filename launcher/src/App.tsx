@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import ReactMarkdown from "react-markdown";
-import { AlertDialog, Badge, Box, Button, Callout, Dialog, Flex, Heading, IconButton, Progress, Select, Separator, Switch, Tabs, Text, TextField, Tooltip } from "@radix-ui/themes";
+import { AlertDialog, Badge, Box, Button, Callout, Dialog, Flex, Heading, IconButton, Select, Separator, Switch, Tabs, Text, TextField, Tooltip } from "@radix-ui/themes";
 import { LinearIcon } from "../../web/src/components/LinearIcon";
 import { ModelContextSettings } from "./ModelContextSettings";
 import { PetAnimationSettings } from "./PetAnimationSettings";
+import { NativeAdapterGraph } from "./NativeAdapterGraph";
 
 export type LauncherSnapshot = {
   phase: string;
@@ -322,12 +323,6 @@ export function App() {
   }
 
   const threadTabsLabels: Record<string, string> = { waiting: "等待连接", loading: "加载中", prepared: "已准备，等待页面加载", ready: "已加载", failed: "加载失败" };
-  const nativeAdaptersInProgress = !["error", "restart_required", "stopped"].includes(snapshot.phase)
-    && ["reading", "adapting", "prepared", "applying"].includes(snapshot.nativeAdaptersPhase);
-  const adapterStageLabel = snapshot.nativeAdaptersPhase === "reading" ? "读取资源" : "适配中";
-  const adapterFeatureLabels: Record<string, string> = { quota: "API 发送限制", ultrafast: "Ultrafast", dot: "Dot 入口", tabs: "会话菜单", queue: "排队消息", pets: "宠物", projectlessChat: "无项目聊天", nativeUpdate: "Codex 更新", nativeServices: "原生服务" };
-  const activeAdapterModules = snapshot.nativeAdaptersFeatures?.filter(feature => feature.phase === "loading")
-    .map(feature => `${adapterFeatureLabels[feature.feature] || feature.feature} · ${feature.message}`).join("；");
 
   const componentStates = [
     { id: "panel", label: "Panel 服务", text: snapshot.phase === "error" ? "启动异常" : hasProcess ? `运行中 · PID ${snapshot.childPid}` : "未启动", tone: snapshot.phase === "error" ? "error" : hasProcess ? "running" : "stopped" },
@@ -374,7 +369,7 @@ export function App() {
       </Callout.Root>}
           <Tabs.Content value="overview" id="overviewView">
             <section className="status-panel">
-              <Flex align="center" justify="between" gap="4">
+              <Flex className="status-panel-content" align="center" justify="between" gap="4">
                 <Box className="status-panel-summary">
                   <Flex align="center" gap="3">
                     <div className={`status-symbol ${snapshot.phase}`}><LinearIcon name={snapshot.phase === "error" ? "alert" : ready ? "check" : "terminal"} /></div>
@@ -385,12 +380,13 @@ export function App() {
                   </Flex>
                   <Text as="p" id="message" size="2" color="gray" mt="2" aria-live="polite">{snapshot.message}</Text>
                 </Box>
-                {nativeAdaptersInProgress && <Box id="nativeAdaptersComponent" className="native-adapters-progress" role="status" aria-live="polite">
-                  <Text as="p" size="1" color="gray" mb="2">{snapshot.nativeAdaptersProgress == null ? adapterStageLabel : `${adapterStageLabel} · 阶段进度 ${Math.round(snapshot.nativeAdaptersProgress)}%`}</Text>
-                  <Progress value={snapshot.nativeAdaptersProgress ?? null} size="2" aria-label="Codex 当前阶段适配进度" />
-                  <Text as="p" id="nativeAdaptersMessage" size="1" color="gray" mt="2" title={snapshot.nativeAdaptersMessage}>{snapshot.nativeAdaptersMessage.replace(" · ", "\n")}</Text>
-                  {activeAdapterModules && <Text as="p" size="1" color="gray" mt="1">{activeAdapterModules}</Text>}
-                </Box>}
+                <NativeAdapterGraph
+                  enabled={!["error", "restart_required", "stopped"].includes(snapshot.phase)}
+                  phase={snapshot.nativeAdaptersPhase}
+                  message={snapshot.nativeAdaptersMessage}
+                  progress={snapshot.nativeAdaptersProgress}
+                  features={snapshot.nativeAdaptersFeatures}
+                />
               </Flex>
             </section>
             <section className="overview-section" aria-labelledby="connectionStatusTitle">
