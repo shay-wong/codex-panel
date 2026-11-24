@@ -19,6 +19,12 @@ const CLAIM_SOURCE_RANK = Object.freeze({ manual: 0, resume: 1, jira: 2, scan: 2
 const CLAIM_SOURCE_RANK_SQL = Object.entries(CLAIM_SOURCE_RANK)
   .map(([source, rank]) => `WHEN '${source}' THEN ${rank}`)
   .join(" ");
+const AUTO_CLAIM_BLOCKING_LABELS = new Set(["ssh-import", "no-auto-claim"]);
+
+function blocksAutomaticClaim(labels) {
+  return labels.some(label => AUTO_CLAIM_BLOCKING_LABELS.has(String(label).trim().toLowerCase()));
+}
+
 const JIRA_SIMPLE_START_ITEMS_TABLE = `
   CREATE TABLE jira_simple_start_items (
     operation_id TEXT NOT NULL REFERENCES jira_simple_start_operations(id) ON DELETE CASCADE,
@@ -4676,7 +4682,7 @@ export class PanelDatabase {
       }
     }
     const candidates = this.database.prepare(`
-      SELECT linked.task_id
+      SELECT linked.task_id, issues.labels
       FROM jira_task_links AS linked
       JOIN tasks AS issues ON issues.id = linked.task_id
       JOIN tasks AS jira ON jira.id = linked.jira_task_id
@@ -4694,7 +4700,8 @@ export class PanelDatabase {
         )
       ORDER BY issues.project_id, issues.sort_order, issues.created_at, issues.id
     `).all();
-    return candidates.map(({ task_id: taskId }) => this.enqueueClaim(taskId, "jira"));
+    return candidates.filter(row => !blocksAutomaticClaim(JSON.parse(row.labels)))
+      .map(({ task_id: taskId }) => this.enqueueClaim(taskId, "jira"));
   }
 
   enqueueDueProjectScans(at = now()) {
@@ -4708,7 +4715,7 @@ export class PanelDatabase {
     const queued = [];
     for (const policy of due) {
       const tasks = this.database.prepare(`
-        SELECT tasks.id
+        SELECT tasks.id, tasks.labels
         FROM tasks
         WHERE tasks.project_id = ?
           AND tasks.archived_at IS NULL
@@ -4723,7 +4730,7 @@ export class PanelDatabase {
               AND queued.state IN ('queued', 'running', 'retry_wait')
           )
         ORDER BY tasks.sort_order, tasks.created_at, tasks.id
-      `).all(policy.project_id);
+      `).all(policy.project_id).filter(row => !blocksAutomaticClaim(JSON.parse(row.labels)));
       for (const task of tasks) queued.push(this.enqueueClaim(task.id, "scan", at));
       const nextScanAt = new Date(
         new Date(at).getTime() + Number(policy.interval_minutes) * 60_000,
@@ -4899,7 +4906,7 @@ export class PanelDatabase {
         claim: this.getClaimQueueItem(row.task_id),
         policy: this.getProjectAutomationPolicy(task.projectId),
       };
-    });
+    }).filter(({ task, claim }) => !["scan", "jira"].includes(claim.source) || !blocksAutomaticClaim(task.labels));
   }
 
   nextClaim(at = now()) {

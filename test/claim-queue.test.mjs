@@ -151,6 +151,40 @@ test("claim queue persists source order, priority, retry delay, and restart reco
   }
 });
 
+test("automatic claims skip excluded labels while manual execution and label removal remain available", async () => {
+  const item = await fixture();
+  const setLabels = (task, labels) => item.database.updateTask(task.id,
+    item.database.getTask(task.id).version, { labels }, undefined, undefined, actor);
+  try {
+    const normal = item.createTask("Ordinary task");
+    const imported = item.createTask("Imported history");
+    const excluded = item.createTask("Excluded task");
+    setLabels(imported, [" SSH-IMPORT "]);
+    setLabels(excluded, ["No-Auto-Claim"]);
+    assert.deepEqual(item.database.enqueueDueProjectScans().map(claim => claim.taskId), [normal.id]);
+    assert.equal(item.database.getClaimQueueItem(imported.id), null);
+    assert.equal(item.database.getClaimQueueItem(excluded.id), null);
+
+    setLabels(normal, ["no-auto-claim"]);
+    assert.equal(item.database.nextClaim(), null, "queued automatic claims recheck labels before dispatch");
+    assert.equal(item.database.getClaimQueueItem(normal.id).state, "queued");
+    setLabels(normal, []);
+    assert.equal(item.database.nextClaim().task.id, normal.id);
+    item.database.markClaimRunning(normal.id);
+    item.database.scheduleClaimRetry(normal.id, "temporary failure", new Date().toISOString());
+    setLabels(normal, ["ssh-import"]);
+    assert.equal(item.database.nextClaim().claim.source, "resume", "retries of started work retain their existing resume semantics");
+    item.database.markClaimRunning(normal.id);
+    item.database.finishClaim(normal.id, "completed");
+
+    item.database.enqueueClaim(imported.id, "jira");
+    assert.equal(item.database.nextClaim(), null, "the shared dispatch path also excludes automatic Jira claims");
+    item.database.enqueueClaim(imported.id, "manual");
+    item.database.enqueueClaim(excluded.id, "resume");
+    assert.deepEqual(item.database.listReadyClaims().map(({ task }) => task.id), [imported.id, excluded.id]);
+  } finally { await item.close(); }
+});
+
 test("native claim starts only after Codex returns a complete project binding", async () => {
   const item = await fixture();
   const task = item.createTask("Native execution");
@@ -312,6 +346,10 @@ test("Jira native claims use the external key for task and branch context", asyn
   item.database.setJiraProjects(jira.id, jira.version, ["claim-project"], actor);
   jira = item.database.getTask(jira.id);
   item.database.addJiraTaskLink(jira.id, jira.version, task.id, actor);
+  item.database.updateTask(task.id, item.database.getTask(task.id).version, { labels: [" No-Auto-Claim "] }, undefined, undefined, actor);
+  assert.ok(item.database.enqueueAuthorizedJiraClaims().every(claim => claim.taskId !== task.id));
+  assert.equal(item.database.getClaimQueueItem(task.id), null);
+  item.database.updateTask(task.id, item.database.getTask(task.id).version, { labels: [] }, undefined, undefined, actor);
   const sibling = item.createTask("Same Jira next ticket");
   jira = item.database.getTask(jira.id);
   item.database.addJiraTaskLink(jira.id, jira.version, sibling.id, actor);
