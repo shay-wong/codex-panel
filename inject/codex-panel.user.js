@@ -3264,10 +3264,13 @@
     const tabs = quickPhrasesDialog.querySelector('[role="tablist"]');
     tabs.replaceChildren();
     tabs.dataset.projectId = quickPhrasesProjectId;
-    const name = projectRowById(quickPhrasesProjectId)?.getAttribute("data-app-action-sidebar-project-label") || quickPhrasesProjectId;
+    const currentProjectId = quickPhrasesProjectId;
+    const name = readCodexProjects().find(project => project.id === currentProjectId)?.name;
+    const currentLabel = name && name !== currentProjectId
+      ? hostText("当前仓库：", "Current repository: ") + name : hostText("当前仓库", "Current repository");
     for (const [id, projectId, label] of [
       ["base", "", hostText("基础配置", "Base phrases")],
-      ...(quickPhrasesProjectId ? [["repository", quickPhrasesProjectId, hostText("当前仓库：", "Current repository: ") + name]] : []),
+      ...(currentProjectId ? [["repository", currentProjectId, currentLabel]] : []),
     ]) {
       const tab = document.createElement("button");
       tab.type = "button";
@@ -3281,6 +3284,16 @@
       tab.textContent = label;
       tab.title = label;
       tabs.append(tab);
+    }
+    if (currentProjectId && (!name || name === currentProjectId)) {
+      const tab = tabs.querySelector("#codex-panel-phrases-tab-repository");
+      void quickPhraseRepositories().then(projects => {
+        const name = projects.find(project => project.id === currentProjectId)?.name;
+        if (!name || name === currentProjectId || !tab.isConnected
+          || tab.dataset.projectId !== currentProjectId || quickPhrasesProjectId !== currentProjectId) return;
+        tab.textContent = hostText("当前仓库：", "Current repository: ") + name;
+        tab.title = tab.textContent;
+      }).catch(() => {});
     }
     quickPhrasesDialog.querySelector('[role="tabpanel"]').setAttribute("aria-labelledby", tabs.querySelector('[aria-selected="true"]').id);
     quickPhrasesDialog.querySelector(".codex-panel-phrases-reset").hidden = !quickPhrasesProjectId;
