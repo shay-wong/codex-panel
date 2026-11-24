@@ -38,12 +38,11 @@ features = [ "v4" ]
 [target."cfg(target_os = \"macos\")".dependencies]
 dispatch2 = "0.3.1"
 objc2 = "0.6.4"
-pulldown-cmark = { version = "0.13", default-features = false }
 
 [target."cfg(target_os = \"macos\")".dependencies.objc2-app-kit]
 version = "0.3.2"
 default-features = false
-features = [ "std", "libc", "NSAlert", "NSApplication", "NSAttributedString", "NSButton", "NSColor", "NSControl", "NSFont", "NSFontDescriptor", "NSFontManager", "NSImage", "NSProgressIndicator", "NSResponder", "NSRunningApplication", "NSMenu", "NSScrollView", "NSText", "NSTextContainer", "NSTextStorage", "NSTextView", "NSView", "NSWindow" ]
+features = [ "std", "libc", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSImage", "NSProgressIndicator", "NSResponder", "NSRunningApplication", "NSMenu", "NSView", "NSWindow" ]
 
 [target."cfg(target_os = \"macos\")".dependencies.objc2-foundation]
 version = "0.3.2"

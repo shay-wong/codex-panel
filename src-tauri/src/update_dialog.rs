@@ -1,8 +1,5 @@
 // Native confirmation and installation display adapted from upstream UpdateDialog.
 #[cfg(target_os = "macos")]
-mod markdown;
-
-#[cfg(target_os = "macos")]
 use dispatch2::{run_on_main, MainThreadBound};
 #[cfg(target_os = "macos")]
 use objc2::{
@@ -13,11 +10,10 @@ use objc2::{
 };
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSAutoresizingMaskOptions, NSButton, NSFont, NSProgressIndicator,
-    NSProgressIndicatorStyle, NSScrollView, NSTextView, NSWindow,
+    NSAlert, NSApplication, NSButton, NSProgressIndicator, NSProgressIndicatorStyle, NSWindow,
 };
 #[cfg(target_os = "macos")]
-use objc2_foundation::{NSObject, NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{NSObject, NSSize, NSString};
 #[cfg(target_os = "macos")]
 use std::{cell::RefCell, sync::Arc};
 use tauri::{AppHandle, Manager, WebviewWindow};
@@ -112,14 +108,14 @@ pub(super) struct UpdateDialog {
 
 #[cfg(target_os = "macos")]
 impl UpdateDialog {
-    pub(super) fn prompt(app: &AppHandle, version: &str, notes: Option<&str>) -> Option<Self> {
+    pub(super) fn prompt(app: &AppHandle, version: &str) -> Option<Self> {
         let message = format!("{version} 已下载并通过签名验证。是否安装并重启 Codex Panel？");
+        // 版本说明在更新页阅读，安装确认只保留本次操作及按钮。
         Self::prompt_message(
             app,
             "Codex Panel 更新",
             message,
             "安装并重启",
-            Some(notes.filter(|text| !text.trim().is_empty()).unwrap_or("该版本暂无版本说明。")),
         )
     }
 
@@ -128,7 +124,6 @@ impl UpdateDialog {
         title: &'static str,
         message: String,
         confirm: &'static str,
-        notes: Option<&str>,
     ) -> Option<Self> {
         let host = match prepare_dialog_window(app) {
             Ok(host) => host,
@@ -137,7 +132,6 @@ impl UpdateDialog {
                 return None;
             }
         };
-        let notes = notes.map(str::to_owned);
         let (response, result) = std::sync::mpsc::channel();
         let dialog = run_on_main(move |mtm| {
             let pointer = host.ns_window().ok()?;
@@ -154,46 +148,6 @@ impl UpdateDialog {
             progress_indicator.setDisplayedWhenStopped(true);
             alert.setMessageText(&NSString::from_str(title));
             alert.setInformativeText(&NSString::from_str(&message));
-            if let Some(notes) = notes {
-                // 发行版正文可能很长；固定阅读区只滚动说明，不挤走安装按钮。
-                let scroll = NSScrollView::initWithFrame(
-                    NSScrollView::alloc(mtm),
-                    NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(440.0, 220.0)),
-                );
-                scroll.setHasVerticalScroller(true);
-                scroll.setAutohidesScrollers(true);
-                scroll.setDrawsBackground(false);
-                let text = NSTextView::initWithFrame(
-                    NSTextView::alloc(mtm),
-                    NSRect::new(NSPoint::new(0.0, 0.0), scroll.contentSize()),
-                );
-                text.setEditable(false);
-                text.setSelectable(true);
-                text.setRichText(true);
-                text.setDrawsBackground(false);
-                text.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-                text.setTextContainerInset(NSSize::new(8.0, 8.0));
-                text.setMinSize(NSSize::new(0.0, scroll.contentSize().height));
-                text.setMaxSize(NSSize::new(f64::MAX, f64::MAX));
-                text.setVerticallyResizable(true);
-                text.setHorizontallyResizable(false);
-                text.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
-                // text 保持存活，容器仅在本次设置期间借用。
-                unsafe {
-                    if let Some(container) = text.textContainer() {
-                        container.setContainerSize(NSSize::new(scroll.contentSize().width, f64::MAX));
-                        container.setWidthTracksTextView(true);
-                    }
-                }
-                // 将说明写入原生富文本缓冲区，滚动区域和确认按钮仍由 AppKit 布局。
-                unsafe {
-                    if let Some(storage) = text.textStorage() {
-                        storage.setAttributedString(&markdown::release_notes(&notes, mtm));
-                    }
-                }
-                scroll.setDocumentView(Some(&text));
-                alert.setAccessoryView(Some(&scroll));
-            }
             let install_button = alert.addButtonWithTitle(&NSString::from_str(confirm));
             let defer_button = alert.addButtonWithTitle(&NSString::from_str("稍后"));
             // 交由 AppKit 建立原生 Sheet 生命周期，不能只把 Alert 窗口置前。
@@ -236,10 +190,6 @@ impl UpdateDialog {
                 .setInformativeText(&NSString::from_str(&message));
             native.progress_indicator.setIndeterminate(false);
             native.progress_indicator.setDoubleValue(100.0);
-            // 已显示的 Sheet 更换附件时，AppKit 不会移除旧的版本说明视图。
-            if let Some(notes) = native.alert.accessoryView() {
-                notes.removeFromSuperview();
-            }
             native
                 .alert
                 .setAccessoryView(Some(&native.progress_indicator));
@@ -267,13 +217,12 @@ pub(super) struct UpdateDialog;
 
 #[cfg(not(target_os = "macos"))]
 impl UpdateDialog {
-    pub(super) fn prompt(app: &AppHandle, version: &str, notes: Option<&str>) -> Option<Self> {
+    pub(super) fn prompt(app: &AppHandle, version: &str) -> Option<Self> {
         Self::prompt_message(
             app,
             "Codex Panel 更新",
             format!("{version} 已下载并通过签名验证。是否安装并重启 Codex Panel？"),
             "安装并重启",
-            Some(notes.filter(|text| !text.trim().is_empty()).unwrap_or("该版本暂无版本说明。")),
         )
     }
 
@@ -282,12 +231,7 @@ impl UpdateDialog {
         title: &'static str,
         message: String,
         confirm: &'static str,
-        notes: Option<&str>,
     ) -> Option<Self> {
-        let message = match notes {
-            Some(notes) => format!("{message}\n\n版本说明：\n{notes}"),
-            None => message,
-        };
         app.dialog()
             .message(message)
             .title(title)
@@ -314,7 +258,7 @@ impl UpdateDialog {
             "Codex 将退出并安装{update}，正在运行的任务会中断。安装完成后由 Panel 启动并连接。"
         );
         let Some(dialog) = Self::prompt_message(app, "安装 Codex 更新并重启",
-            message, "安装并重启", None) else { return false; };
+            message, "安装并重启") else { return false; };
         dialog.close();
         true
     }
@@ -323,7 +267,7 @@ impl UpdateDialog {
         // 复用可置前的原生确认框，避免后台启动器的 Tauri 弹窗不可见而卡住恢复。
         let Some(dialog) = Self::prompt_message(app, "需要重启 Codex",
             "将退出并重新启动 Codex，正在运行的任务会中断。请先保存工作。".into(),
-            "重启 Codex 并连接", None) else {
+            "重启 Codex 并连接") else {
             return false;
         };
         dialog.close();

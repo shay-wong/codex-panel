@@ -275,7 +275,7 @@ The loading error page offers **Reload**, which retries service readiness and pa
 
 ## Signed in-app updates
 
-When an update is available, **About → Version updates** displays the selected GitHub release’s notes, and the installation confirmation includes the same notes. Automatic checks, manual checks and cached results carry the notes with the selected version. The macOS confirmation renders Markdown headings, lists, and inline formatting, with links displayed as text. Long notes scroll in both views. A release with no notes displays “该版本暂无版本说明。” (No release notes provided). **View release notes** continues to open the GitHub release. Download progress, signature verification, installation and restart actions keep their existing behavior.
+When an update is available, **About → Version updates** displays the selected GitHub release’s notes with Markdown headings, lists, inline formatting, and scrolling for long content. Automatic checks, manual checks and cached results carry the notes with the selected version. A release with no notes displays “该版本暂无版本说明。” (No release notes provided). **View release notes** continues to open the GitHub release. After download and signature verification, the installation confirmation on macOS and other platforms shows only the target version, confirmation message, and **Later / Install and restart** buttons, without repeating the notes. Download progress, signature verification, installation and restart actions keep their existing behavior.
 
 macOS releases use ad-hoc App signing without Apple notarization, while update archives retain Tauri signature verification. First launch may require allowing the app in System Settings → Privacy & Security.
 

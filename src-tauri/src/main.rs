@@ -3743,8 +3743,7 @@ fn install_prepared_update(app: &AppHandle, state: &Arc<LauncherState>) -> Resul
     let Some((update, bytes)) = prepared else {
         return Err("更新尚未完成下载和签名验证，请先检查更新。".into());
     };
-    let notes = state.snapshot.lock().unwrap().update_notes.clone();
-    let Some(dialog) = UpdateDialog::prompt(app, &update.version, notes.as_deref()) else {
+    let Some(dialog) = UpdateDialog::prompt(app, &update.version) else {
         *state.prepared_update.lock().unwrap() = Some((update, bytes));
         return Ok(());
     };
