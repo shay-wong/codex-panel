@@ -11,6 +11,13 @@ function changelogEntries(content) {
   return content.split(/\n(?=- )/).map(entry => entry.split(/^## /m)[0].trim()).filter(entry => entry.startsWith("- "));
 }
 
+function changelogAtTag(git, tag) {
+  // 已发布标签保留原中文路径，迁移后仍用同一语言去重和归档。
+  const files = git("ls-tree", "--name-only", tag, "--", "CHANGELOG.md", "CHANGELOG.zh-CN.md").split("\n");
+  const file = files.includes("CHANGELOG.zh-CN.md") ? "CHANGELOG.zh-CN.md" : files.find(file => file === "CHANGELOG.md");
+  return file ? git("show", `${tag}:${file}`) : "";
+}
+
 export function prepareForkRelease(root, tag, notesPath) {
   const version = tag?.startsWith("v") ? tag.slice(1) : "";
   const metadata = releaseMetadata(version, tag, ["arm64", "x86_64"]);
@@ -28,18 +35,11 @@ export function prepareForkRelease(root, tag, notesPath) {
   const git = (...args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
   const previous = git("tag", "--merged", "HEAD", "--sort=-version:refname")
     .split("\n").find((value) => value !== tag && /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-fork$/.test(value));
-  const entries = (content, heading) => {
-    const section = content.split(`## ${heading}\n`)[1]?.split(/^## /m)[0] || "";
-    return changelogEntries(section);
-  };
-  const notes = [["CHANGELOG.zh-CN.md", "未发布", "更新内容"], ["CHANGELOG.md", "Unreleased", "Changes"]]
-    .map(([file, heading, title]) => {
-      const current = read(file);
-      // 历史条目可能仍在未发布段，也可能已归档；两种情况都不能重复发到新版说明。
-      const oldEntries = new Set(previous ? changelogEntries(git("show", `${previous}:${file}`)) : []);
-      const changes = entries(current, heading).filter((entry) => !oldEntries.has(entry));
-      return `## ${title}\n\n${changes.join("\n\n") || (heading === "未发布" ? "- 本次无新增更新日志条目。" : "- No new changelog entries for this release.")}`;
-    }).join("\n\n");
+  const section = read("CHANGELOG.md").split("## 未发布\n")[1]?.split(/^## /m)[0] || "";
+  // 历史条目可能仍在未发布段，也可能已归档；两种情况都不能重复发到新版说明。
+  const oldEntries = new Set(previous ? changelogEntries(changelogAtTag(git, previous)) : []);
+  const changes = changelogEntries(section).filter(entry => !oldEntries.has(entry));
+  const notes = `## 更新内容\n\n${changes.join("\n\n") || "- 本次无新增更新日志条目。"}`;
   const compare = previous ? `\n\nhttps://github.com/shay-wong/codex-panel/compare/${previous}...${tag}` : "";
   writeFileSync(notesPath, `${notes}${compare}\n`);
   for (const [file, value] of [["package.json", pkg], ["package-lock.json", lock], ["src-tauri/tauri.conf.json", tauri]]) {
@@ -67,33 +67,30 @@ export function archivePublishedChangelogs(root, tag) {
   const git = (...args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
   const tags = git("tag", "--merged", tag, "--sort=version:refname").split("\n")
     .filter(value => /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-fork$/.test(value));
-  for (const [file, heading] of [["CHANGELOG.md", "Unreleased"], ["CHANGELOG.zh-CN.md", "未发布"]]) {
-    const filename = path.join(root, file);
-    const content = readFileSync(filename, "utf8");
-    const marker = `## ${heading}\n`;
-    const start = content.indexOf(marker);
-    assert.ok(start >= 0, `Missing ${heading} in ${file}`);
-    const bodyStart = start + marker.length;
-    const next = content.slice(bodyStart).search(/^## /m);
-    const end = next < 0 ? content.length : bodyStart + next;
-    const pending = changelogEntries(content.slice(bodyStart, end));
-    const remaining = new Set(pending);
-    const sections = [];
-    for (const releasedTag of tags) {
-      const files = git("ls-tree", "--name-only", releasedTag, "--", file);
-      if (!files) continue;
-      const snapshot = git("show", `${releasedTag}:${file}`);
-      const section = snapshot.split(marker)[1]?.split(/^## /m)[0] ?? "";
-      const released = changelogEntries(section).filter(entry => remaining.has(entry));
-      if (!released.length) continue;
-      const version = releasedTag.slice(1);
-      assert.ok(!content.split("\n").some(line => line === `## ${version}` || line.startsWith(`## ${version} —`)), `Version ${version} already exists while entries remain unreleased in ${file}`);
-      sections.unshift(`## ${version}\n\n${released.join("\n\n")}\n\n`);
-      released.forEach(entry => remaining.delete(entry));
-    }
-    const rest = pending.filter(entry => remaining.has(entry));
-    writeFileSync(filename, content.slice(0, bodyStart) + "\n" + (rest.length ? rest.join("\n\n") + "\n\n" : "") + sections.join("") + content.slice(end));
+  const file = "CHANGELOG.md", heading = "未发布";
+  const filename = path.join(root, file);
+  const content = readFileSync(filename, "utf8");
+  const marker = `## ${heading}\n`;
+  const start = content.indexOf(marker);
+  assert.ok(start >= 0, `Missing ${heading} in ${file}`);
+  const bodyStart = start + marker.length;
+  const next = content.slice(bodyStart).search(/^## /m);
+  const end = next < 0 ? content.length : bodyStart + next;
+  const pending = changelogEntries(content.slice(bodyStart, end));
+  const remaining = new Set(pending);
+  const sections = [];
+  for (const releasedTag of tags) {
+    const snapshot = changelogAtTag(git, releasedTag);
+    const section = snapshot.split(marker)[1]?.split(/^## /m)[0] ?? "";
+    const released = changelogEntries(section).filter(entry => remaining.has(entry));
+    if (!released.length) continue;
+    const version = releasedTag.slice(1);
+    assert.ok(!content.split("\n").some(line => line === `## ${version}` || line.startsWith(`## ${version} —`)), `Version ${version} already exists while entries remain unreleased in ${file}`);
+    sections.unshift(`## ${version}\n\n${released.join("\n\n")}\n\n`);
+    released.forEach(entry => remaining.delete(entry));
   }
+  const rest = pending.filter(entry => remaining.has(entry));
+  writeFileSync(filename, content.slice(0, bodyStart) + "\n" + (rest.length ? rest.join("\n\n") + "\n\n" : "") + sections.join("") + content.slice(end));
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {

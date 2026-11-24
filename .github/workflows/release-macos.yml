@@ -48,7 +48,7 @@ jobs:
             exit 0
           fi
           node scripts/prepare-fork-release.mjs "$RELEASE_TAG" "$RUNNER_TEMP/version-sync-notes.md" --archive-changelog
-          git add -- package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json CHANGELOG.md CHANGELOG.zh-CN.md
+          git add -- package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json CHANGELOG.md
           if git diff --cached --quiet; then exit 0; fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -217,15 +217,15 @@ jobs:
           set -euo pipefail
           assets=("$RUNNER_TEMP/release-assets/latest.json" "$RUNNER_TEMP/release-assets/$RELEASE_DMG" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE" "$RUNNER_TEMP/release-assets/$RELEASE_ARCHIVE.sig" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS" "$RUNNER_TEMP/release-assets/$RELEASE_WINDOWS.sig")
           {
-            printf '\nmacOS 通用版，支持 Apple Silicon 与 Intel。使用临时签名，未经 Apple 公证；首次打开可能需要在“隐私与安全性”中允许。\nUniversal macOS build for Apple Silicon and Intel. Ad-hoc signed, not Apple-notarized.\n'
+            printf '\nmacOS 通用版，支持 Apple Silicon 与 Intel。使用临时签名，未经 Apple 公证；首次打开可能需要在“隐私与安全性”中允许。\n'
             if [ "$WINDOWS_SIGNED" = true ]; then
-              printf '\nWindows x64 安装器带 Authenticode 签名。The Windows x64 installer is Authenticode-signed.\n'
+              printf '\nWindows x64 安装器带 Authenticode 签名。\n'
             else
-              printf '\nWindows x64 安装器未进行 Authenticode 签名，系统可能提示未知发布者或阻止运行。The Windows x64 installer is not Authenticode-signed; Windows may warn or block it.\n'
+              printf '\nWindows x64 安装器未进行 Authenticode 签名，系统可能提示未知发布者或阻止运行。\n'
             fi
-            printf '\nWindows 与 macOS 更新包均使用 Codex Panel 更新密钥验签。旧 Windows 测试版需先手动安装一次。Update packages use the Codex Panel verification key. Older Windows test builds require one manual installation.\n'
-            printf '\n已有本地 0.1.0 开发版需手动安装一次，以切换到独立 Fork 版本线。Local 0.1.0 development builds require a one-time manual installation.\n'
-            printf '\n[中文更新日志](https://github.com/%s/blob/%s/CHANGELOG.zh-CN.md) · [Changelog](https://github.com/%s/blob/%s/CHANGELOG.md)\n' "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$GITHUB_REPOSITORY" "$RELEASE_TAG"
+            printf '\nWindows 与 macOS 更新包均使用 Codex Panel 更新密钥验签。旧 Windows 测试版需先手动安装一次。\n'
+            printf '\n已有本地 0.1.0 开发版需手动安装一次，以切换到独立 Fork 版本线。\n'
+            printf '\n[更新日志](https://github.com/%s/blob/%s/CHANGELOG.md)\n' "$GITHUB_REPOSITORY" "$RELEASE_TAG"
           } >> "$RUNNER_TEMP/release-assets/release-notes.md"
           gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" --draft --title "Codex Panel $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-assets/release-notes.md" "${assets[@]}"
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[]' | jq -s --arg tag "$RELEASE_TAG" 'map(select(.tag_name == $tag and .draft == true)) | if length == 1 then .[0] else error("Expected one draft release") end' > "$RUNNER_TEMP/uploaded-assets.json"

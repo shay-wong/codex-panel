@@ -181,7 +181,7 @@ Use this local review classification:
 ## 10. Release
 
 - Release only when the user requests it or explicitly includes release in the task.
-- Merge all included product PRs first. The release tag supplies the version. Actions updates the build versions and, after successful publication, automatically commits the five version files and both changelogs back to main with [skip ci]. Archive released entries under their version headings using the release-tag snapshot; keep later main changes unreleased. Do not require a manual version-bump commit; do not move published tags or alter release infrastructure without a separate requirement.
+- Merge all included product PRs first. The release tag supplies the version. Actions updates the build versions and, after successful publication, automatically commits the five version files and the Chinese `CHANGELOG.md` back to main with [skip ci]. Archive released entries under their version headings using the release-tag snapshot; keep later main changes unreleased. Do not require a manual version-bump commit; do not move published tags or alter release infrastructure without a separate requirement.
 - Use an independent Fork version starting at `0.0.1-fork` and a tag in the form `vX.Y.Z-fork`. Release notes contain product changes only.
 - Verify the release asset set and signatures; asset display order must not block publication.
 - Record live build, signing, notarization, upload, and publication progress in the Panel.
@@ -209,6 +209,8 @@ A requested batch is complete only when:
 Before completing work that adds, changes, or removes intentional fork behavior, or that merges upstream, invoke `$fork-doc`. If that skill is unavailable, follow the maintenance contract in `FORK.md` manually.
 
 Reuse decisions in `FORK.md` while current evidence still supports them. Reconsider a decision only when new evidence adds, contradicts, invalidates, or leaves it unresolved.
+
+Maintain release notes only in Chinese in `CHANGELOG.md`, under `未发布` until release. Both README languages and the capability index link to this single changelog.
 
 Fork releases use independent `X.Y.Z-fork` versions starting at `0.0.1-fork`, with `vX.Y.Z-fork` tags. Increment the Fork version for its own releases; upstream merges do not change or reset it. This rule does not override the test-authorization requirements above.
 

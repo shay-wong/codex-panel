@@ -86,7 +86,7 @@ Jira 会话绑定、规划初始化和聊天模型选择统一使用分页模型
 
 显式绑定 Jira 会话时会补建缺失的规划记录，让同一会话可以继续保存 Spec 和发布 tickets；已有规划保持不变。参见 [Jira 规划](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues)。
 
-[English](README.md) | [Fork 能力（英文）](docs/fork-capabilities.md) | [更新日志](CHANGELOG.zh-CN.md)
+[English](README.md) | [Fork 能力（英文）](docs/fork-capabilities.md) | [更新日志](CHANGELOG.md)
 
 一个本地优先的 Issue 看板，可在浏览器中运行，也可以通过独立 CDP 启动器或注入脚本嵌入 Codex。React UI 与随附 Codex Skill 使用的 `panelctl` CLI 共用同一套 HTTP API。
 
@@ -229,7 +229,7 @@ open "$HOME/Applications/Codex Panel.app"
 
 Panel 会在运行概览的会话菜单卡片中显示加载状态，失败时可手动重试而无需重启 Codex。
 
-发布成功后，流水线自动把版本文件和中英文更新日志提交回 main：已发布条目按标签快照归档到对应版本，标签之后新增的条目仍保留在“未发布”。拉取 main 的版本同步提交后，源码编译和本地重装即可使用对应版本。
+发布成功后，流水线自动把 5 个版本文件和单份中文[更新日志](CHANGELOG.md)提交回 main：已发布条目按标签快照归档到对应版本，标签之后新增的条目仍保留在“未发布”。拉取 main 的版本同步提交后，源码编译和本地重装即可使用对应版本。
 
 Fork 从 `0.0.1-fork`（标签 `v0.0.1-fork`）开始独立版本，不再随上游版本变化。已有本地 `0.1.0` 开发版需手动安装一次以切换到新版本线。
 

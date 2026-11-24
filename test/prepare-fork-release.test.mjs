@@ -8,7 +8,7 @@ import { parse } from "smol-toml";
 import yaml from "js-yaml";
 import { archivePublishedChangelogs, prepareForkRelease } from "../scripts/prepare-fork-release.mjs";
 
-test("a new tag prepares build versions and only new bilingual notes without a version commit", () => {
+test("a new tag prepares versions and Chinese notes after migrating the changelog path", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "panel-tag-release-"));
   try {
     const files = ["package.json", "package-lock.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json"];
@@ -16,13 +16,14 @@ test("a new tag prepares build versions and only new bilingual notes without a v
     const git = (...args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
     const read = (file) => readFileSync(path.join(root, file), "utf8");
     const json = (file) => JSON.parse(read(file));
-    const changelogs = [["CHANGELOG.md", "Unreleased"], ["CHANGELOG.zh-CN.md", "未发布"]];
-    for (const [file, heading] of changelogs) writeFileSync(path.join(root, file), `# Changes\n\n## ${heading}\n\n- Already released\n`);
+    writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- Already released\n");
+    writeFileSync(path.join(root, "CHANGELOG.zh-CN.md"), "# 更新日志\n\n## 未发布\n\n- 已发布条目\n");
     git("init", "-q");
     git("add", ".");
     git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "baseline");
     git("tag", "v8.0.0-fork");
-    for (const [file] of changelogs) writeFileSync(path.join(root, file), `${read(file)}\n- New change\n  with detail\n`);
+    writeFileSync(path.join(root, "CHANGELOG.md"), `${read("CHANGELOG.zh-CN.md")}\n- 新增条目\n  补充说明\n`);
+    rmSync(path.join(root, "CHANGELOG.zh-CN.md"));
     git("add", ".");
     git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "change");
     git("tag", "v8.0.1-fork");
@@ -45,8 +46,9 @@ test("a new tag prepares build versions and only new bilingual notes without a v
     }
     assert.equal(metadata.archive, "Codex.Panel_8.0.1-fork_universal.app.tar.gz");
     const notes = read("notes.md");
-    assert.equal(notes.match(/New change\n  with detail/g)?.length, 2);
-    assert.ok(!notes.includes("Already released"));
+    assert.equal(notes.match(/新增条目\n  补充说明/g)?.length, 1);
+    assert.match(notes, /^## 更新内容\n/);
+    assert.doesNotMatch(notes, /Already released|已发布条目|## Changes/);
     assert.ok(notes.includes("v8.0.0-fork...v8.0.1-fork"));
     assert.equal(git("rev-parse", "HEAD"), head);
   } finally {
@@ -54,14 +56,14 @@ test("a new tag prepares build versions and only new bilingual notes without a v
   }
 });
 
-test("release workflow archives bilingual changelogs, preserves newer entries, and is repeatable", () => {
+test("release workflow archives the Chinese changelog, preserves newer entries, and is repeatable", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "panel-version-sync-"));
   try {
     const repo = path.join(root, "workspace");
     const remote = path.join(root, "remote.git");
     const git = (...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" }).trim();
     execFileSync("git", ["init", "--bare", "--quiet", remote]);
-    for (const file of ["package.json", "package-lock.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json", "scripts/prepare-fork-release.mjs", "scripts/release-metadata.mjs", "CHANGELOG.md", "CHANGELOG.zh-CN.md"]) {
+    for (const file of ["package.json", "package-lock.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json", "scripts/prepare-fork-release.mjs", "scripts/release-metadata.mjs", "CHANGELOG.md"]) {
       cpSync(new URL(`../${file}`, import.meta.url), path.join(repo, file), { recursive: true });
     }
     // 只复制脚本实际使用的解析器，不读取用户配置或启动真实服务。
@@ -70,17 +72,18 @@ test("release workflow archives bilingual changelogs, preserves newer entries, a
     git("config", "user.name", "Fixture");
     git("config", "user.email", "fixture@example.invalid");
     git("config", "commit.gpgsign", "false");
-    const changelogs = [["CHANGELOG.md", "Unreleased"], ["CHANGELOG.zh-CN.md", "未发布"]];
     const read = file => readFileSync(path.join(repo, file), "utf8");
-    for (const [file, heading] of changelogs) writeFileSync(path.join(repo, file), `# Changes\n\n## ${heading}\n\n- Earlier release\n`);
+    writeFileSync(path.join(repo, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- Earlier release\n");
+    writeFileSync(path.join(repo, "CHANGELOG.zh-CN.md"), "# 更新日志\n\n## 未发布\n\n- 历史版本\n");
     git("add", ".");
     git("commit", "-qm", "baseline");
     git("tag", "v8.0.0-fork");
-    for (const [file] of changelogs) writeFileSync(path.join(repo, file), `${read(file)}\n- Current release\n  with detail\n`);
+    writeFileSync(path.join(repo, "CHANGELOG.md"), `${read("CHANGELOG.zh-CN.md")}\n- 当前版本\n  补充说明\n`);
+    rmSync(path.join(repo, "CHANGELOG.zh-CN.md"));
     git("add", ".");
     git("commit", "-qm", "current release");
     git("tag", "v8.0.1-fork");
-    for (const [file, heading] of changelogs) writeFileSync(path.join(repo, file), read(file).replace(`## ${heading}\n`, `## ${heading}\n\n- Future release\n`));
+    writeFileSync(path.join(repo, "CHANGELOG.md"), read("CHANGELOG.md").replace("## 未发布\n", "## 未发布\n\n- 未来版本\n"));
     git("add", ".");
     git("commit", "-qm", "main advances during packaging");
     git("remote", "add", "origin", remote);
@@ -100,32 +103,26 @@ test("release workflow archives bilingual changelogs, preserves newer entries, a
     assert.equal(readFileSync(githubEnv, "utf8"), "RELEASE_DMG=Codex.Panel_8.0.1-fork_universal.dmg\nRELEASE_ARCHIVE=Codex.Panel_8.0.1-fork_universal.app.tar.gz\n");
     const head = git("rev-parse", "HEAD");
     assert.equal(git("rev-parse", "origin/main"), head);
-    assert.deepEqual(git("diff-tree", "--no-commit-id", "--name-only", "-r", head).split("\n").sort(), ["CHANGELOG.md", "CHANGELOG.zh-CN.md", "package-lock.json", "package.json", "src-tauri/Cargo.lock", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json"]);
+    assert.deepEqual(git("diff-tree", "--no-commit-id", "--name-only", "-r", head).split("\n").sort(), ["CHANGELOG.md", "package-lock.json", "package.json", "src-tauri/Cargo.lock", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json"]);
     assert.match(git("log", "-1", "--format=%s"), /\[skip ci\]/);
     assert.equal(JSON.parse(readFileSync(path.join(repo, "package.json"))).version, "8.0.1-fork");
-    for (const [file, heading] of changelogs) {
-      assert.equal(read(file), `# Changes\n\n## ${heading}\n\n- Future release\n\n## 8.0.1-fork\n\n- Current release\n  with detail\n\n## 8.0.0-fork\n\n- Earlier release\n\n`);
-    }
+    assert.equal(read("CHANGELOG.md"), "# 更新日志\n\n## 未发布\n\n- 未来版本\n\n## 8.0.1-fork\n\n- 当前版本\n  补充说明\n\n## 8.0.0-fork\n\n- 历史版本\n\n");
     run("v8.0.1-fork");
     run("v8.0.0-fork");
     assert.equal(git("rev-parse", "HEAD"), head);
     assert.match(git("status", "--short"), /\?\? unrelated.txt/);
     // 上一版已经归档的内容也要参与去重，不能在新版说明中重新出现。
     git("tag", "v8.0.2-fork");
-    for (const [file, heading] of changelogs) writeFileSync(path.join(repo, file), read(file).replace(`## ${heading}\n`, `## ${heading}\n\n- Next release\n\n- Earlier release\n`));
+    writeFileSync(path.join(repo, "CHANGELOG.md"), read("CHANGELOG.md").replace("## 未发布\n", "## 未发布\n\n- 下一版本\n\n- 历史版本\n"));
     const notesPath = path.join(root, "next-notes.md");
     prepareForkRelease(repo, "v8.0.3-fork", notesPath);
     const notes = readFileSync(notesPath, "utf8");
-    assert.equal(notes.match(/Next release/g)?.length, 2);
-    assert.ok(!notes.includes("Future release"));
-    assert.ok(!notes.includes("Current release"));
-    assert.ok(!notes.includes("Earlier release"));
-    for (const [file] of changelogs) writeFileSync(path.join(repo, file), read(file).replace("\n- Next release\n\n- Earlier release\n", ""));
+    assert.equal(notes.match(/下一版本/g)?.length, 1);
+    assert.doesNotMatch(notes, /未来版本|当前版本|历史版本/);
+    writeFileSync(path.join(repo, "CHANGELOG.md"), read("CHANGELOG.md").replace("\n- 下一版本\n\n- 历史版本\n", ""));
     archivePublishedChangelogs(repo, "v8.0.2-fork");
-    for (const [file, heading] of changelogs) {
-      assert.ok(read(file).includes(`## ${heading}\n\n## 8.0.2-fork\n\n- Future release`));
-      assert.equal(read(file).match(/## 8.0.1-fork/g)?.length, 1);
-    }
+    assert.ok(read("CHANGELOG.md").includes("## 未发布\n\n## 8.0.2-fork\n\n- 未来版本"));
+    assert.equal(read("CHANGELOG.md").match(/## 8.0.1-fork/g)?.length, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

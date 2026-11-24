@@ -85,7 +85,7 @@ Related Jira requirements can explicitly **Join existing planning conversation**
 
 Explicit Jira conversation binding initializes a missing planning record so the same conversation can save its Spec and publish tickets. Existing plans are preserved. See [Jira planning](docs/fork-capabilities.md#link-jira-requirements-to-repository-issues).
 
-[简体中文](README.zh-CN.md) | [Fork capabilities](docs/fork-capabilities.md) | [Changelog](CHANGELOG.md)
+[简体中文](README.zh-CN.md) | [Fork capabilities](docs/fork-capabilities.md) | [Changelog (Chinese)](CHANGELOG.md)
 
 A local-first issue board that runs in a browser and can be embedded in Codex through the standalone CDP launcher or its injection script. The same HTTP API powers the React UI and the `panelctl` CLI used by the bundled Codex Skill.
 
@@ -226,7 +226,7 @@ The management window uses React and Radix Themes in Tauri's WebView. Runtime ov
 
 The conversation-menu card in Runtime overview shows loading status and offers a manual retry after failure without restarting Codex.
 
-After a release is published, the workflow automatically commits its version files and both changelogs to main. Released entries move under their version headings using the tag snapshot; later changes stay in Unreleased. Pull main before building or reinstalling locally to use that version.
+After a release is published, the workflow automatically commits the five version files and the Chinese [changelog](CHANGELOG.md) to main. Released entries move under their version headings using the tag snapshot; later changes stay in `未发布` (Unreleased). Pull main before building or reinstalling locally to use that version.
 
 Fork versions are independent of upstream, starting at `0.0.1-fork` with tag `v0.0.1-fork`. Upstream merges do not change the Fork version. Existing local `0.1.0` development builds require a one-time manual installation to switch to this version line.
 

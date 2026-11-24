@@ -1,5 +1,7 @@
 # Fork capabilities
 
+[Changelog (Chinese)](../CHANGELOG.md)
+
 ## Local build numbers
 
 Local `app:build*` commands and `npm run tauri -- build` assign one increasing build number when Tauri packaging starts. `codex:install` reserves and prints its build number before preparing resources, then reuses that number for Tauri and streams preparation and compilation output. About shows the product version followed by `Build N`, and startup logs include the same number. macOS stores it as `CFBundleVersion`. The counter is local to the Git common directory, shared across its worktrees; source archives keep an ignored counter file at their root. It does not change the product version or update comparison. A failed attempt can consume a number. Preparing assets on their own, running development mode or starting the App does not increment it. GitHub Actions release builds retain their release version without a local build number.
@@ -309,7 +311,7 @@ Panel uses Tauri's updater to download and verify an available fork release befo
 
 macOS and Windows build independently in parallel. A single publication job waits for both results even if one fails, publishes only successful platform artifacts, and advertises only those platforms in `latest.json` and download notifications. Two failed builds stop publication with an explicit error.
 
-Release tags supply the build version. After publication, the workflow commits the five version files and both changelogs back to main automatically without triggering another build. Released changelog entries move under their version headings using the release-tag snapshot; changes added to main after that tag stay unreleased. Older accumulated entries are archived under the earliest matching Fork tag. Pull that commit before building or reinstalling locally. Published tags remain unchanged; a failed version sync does not remove published assets.
+Release tags supply the build version. After publication, the workflow commits the five version files and the single Chinese [changelog](../CHANGELOG.md) back to main automatically without triggering another build. Released changelog entries move under their version headings using the release-tag snapshot; changes added to main after that tag stay in `未发布` (Unreleased). Older accumulated entries are archived under the earliest matching Fork tag. Pull that commit before building or reinstalling locally. Published tags remain unchanged; a failed version sync does not remove published assets.
 
 Fork releases use independent versions starting at `0.0.1-fork`, tagged `v0.0.1-fork`; upstream merges only update the recorded baseline. Existing local `0.1.0` builds need a one-time manual installation because `0.0.1-fork` is lower; subsequent updates follow normal increasing version order.
 

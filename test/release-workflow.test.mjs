@@ -172,8 +172,10 @@ test("publication downloads both platform artifacts directly and selects exactly
       assert.deepEqual(selected, expected.map(file => path.join(directory, "release-assets", file)));
       const notes = await readFile(notesPath, "utf8");
       assert.match(notes, /^Fixture notes\n/);
-      assert.match(notes, /Universal macOS build for Apple Silicon and Intel/);
-      assert.match(notes, signed ? /installer is Authenticode-signed/ : /installer is not Authenticode-signed/);
+      assert.match(notes, /macOS 通用版，支持 Apple Silicon 与 Intel/);
+      assert.match(notes, signed ? /安装器带 Authenticode 签名/ : /安装器未进行 Authenticode 签名/);
+      assert.ok(notes.includes(`/blob/${tag}/CHANGELOG.md`));
+      assert.doesNotMatch(notes, /CHANGELOG\.zh-CN\.md|Universal macOS build/);
       assert.doesNotMatch(notes, /No (?:macOS|Windows) package or updater/);
     } finally {
       await rm(directory, { recursive: true, force: true });

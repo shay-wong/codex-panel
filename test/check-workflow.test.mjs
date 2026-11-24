@@ -33,7 +33,7 @@ test('main pushes run types and tests without builds while PR and manual runs re
     assert.ok(workflow.jobs[name].if.includes("github.event_name != 'push'"), name);
   }
   assert.ok(workflow.jobs.check.steps.some(step => step.run === 'npm run check'));
-  const web = scope('pull_request', ['web/src/App.tsx', 'CHANGELOG.zh-CN.md']);
+  const web = scope('pull_request', ['web/src/App.tsx', 'CHANGELOG.md']);
   assert.equal(web.native, false);
   assert.deepEqual(web.args.slice(-2), ['HEAD^1', 'HEAD']);
   assert.equal(scope('pull_request', ['src-tauri/src/main.rs']).native, true);
