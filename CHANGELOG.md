@@ -16,6 +16,10 @@ This file records user-visible changes introduced by the fork.
 
 - Show live adaptation in a three-dimensional graph inside the status card, with module states, curved light flows, drag rotation and selectable details. Keep its height stable as modules grow, preserve stage progress and the separate connection state, and show the completion animation only when everything is ready.
 
+## 0.6.5-fork
+
+- Measure live speed from response text only, excluding reasoning summaries, plans and tool content. Update on new text, show “Waiting for output” during pauses, and retain the same measured rate after completion without a final spike.
+
 ## 0.6.4-fork
 
 - Keep release notes on the version-update page and remove their duplicate display from the installation confirmation, leaving the target version and confirmation buttons.

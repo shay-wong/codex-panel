@@ -4042,25 +4042,12 @@
 
   function currentUsageSpeed(state, now = Date.now()) {
     if (!state.usage) return null;
+    if (!state.usage.inProgress) return state.lastSpeed ?? null;
     const samples = state.speedSamples ?? [];
-    const finished = !state.usage.inProgress;
-    // 单批到达没有可测间隔，暂停再久也不能把“未知速度”当作零。
-    if (samples.length < 2) return finished ? state.lastSpeed ?? null : null;
     const last = samples.at(-1);
-    if (finished) now = last.at;
-    if (now - last.at >= usageSpeedWindowMs) return 0;
-    const cutoff = now - usageSpeedWindowMs;
-    while (samples.length > 2 && samples[1].at <= cutoff) samples.shift();
-    const [first, second] = samples;
-    const start = Math.max(first.at, cutoff);
-    const elapsed = now - start;
-    // 输出中先积累 250ms；短回复结束后使用真实到达间隔收尾，不补造采样时长。
-    if (elapsed <= 0 || (!finished && elapsed < 250)) return null;
-    const baseline = first.tokens + (second.tokens - first.tokens) * (start - first.at) / (second.at - first.at);
-    const speed = Math.max(0, (last.tokens - baseline) / (elapsed / 1000));
-    // 仅保存输出时的测量，工具等待后的衰减值不能覆盖最后有效速度。
-    if (now === last.at) state.lastSpeed = speed;
-    return speed;
+    // 新一段正文须重新取得有效间隔；静默表示等待，不能解释为模型生成速度为零。
+    if (samples.length < 2 || last.at - samples[0].at < 250 || now - last.at >= usageSpeedWindowMs) return null;
+    return state.lastSpeed ?? null;
   }
 
   function recordUsageDelta(state, tokens) {
@@ -4072,7 +4059,16 @@
     const last = samples.at(-1);
     if (last?.at === now) last.tokens += tokens;
     else samples.push({ at: now, tokens: (last?.tokens ?? 0) + tokens });
-    currentUsageSpeed(state, now);
+    const cutoff = now - usageSpeedWindowMs;
+    while (samples.length > 2 && samples[1].at <= cutoff) samples.shift();
+    if (samples.length < 2) return;
+    const [first, second] = samples;
+    const start = Math.max(first.at, cutoff);
+    const elapsed = now - start;
+    if (elapsed < 250) return;
+    const baseline = first.tokens + (second.tokens - first.tokens) * (start - first.at) / (second.at - first.at);
+    // 只在正文到达时记录同一口径的速度，等待和完成均不重新缩放分母。
+    state.lastSpeed = Math.max(0, (samples.at(-1).tokens - baseline) / (elapsed / 1000));
   }
 
   function renderUsageState(state) {
@@ -4080,7 +4076,7 @@
     const usage = { ...state.usage, speed: currentUsageSpeed(state) };
     usage.estimated = usage.speed != null;
     usage.outputTokens += state.pendingTokens;
-    renderUsageLine(state.line, usage, false, state);
+    renderUsageLine(state.line, usage);
   }
 
   function setUsageDotMatrix(enabled) {
@@ -4098,7 +4094,8 @@
     if (message?.type !== "mcp-notification" || message.hostId !== "local") return;
     const { method, params } = message;
     if (!params || typeof params.threadId !== "string") return;
-    const delta = ["item/agentMessage/delta", "item/plan/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta"].includes(method);
+    // 思考摘要按批次到达，不能代表模型的连续输出；仅正文参与实时速度采样。
+    const delta = method === "item/agentMessage/delta";
     if (!delta && !["turn/started", "turn/completed", "thread/tokenUsage/updated"].includes(method)) return;
     const turnId = params.turn?.id ?? params.turnId;
     if (typeof turnId !== "string") return;
@@ -4213,7 +4210,7 @@
   }
 
   function drawUsageNumber(state) {
-    const settled = state.value === state.target && !state.liveState?.usage?.inProgress;
+    const settled = state.value === state.target;
     const scaled = settled ? Math.round(state.value * 10) : state.value * 10;
     const count = Math.max(2, String(Math.floor(scaled)).length);
     while (state.columns.length < count) {
@@ -4333,7 +4330,7 @@
     svg.style.removeProperty("width");
   }
 
-  function renderUsageNumber(label, number, prefix, suffix, liveState) {
+  function renderUsageNumber(label, number, prefix, suffix) {
     if (!usageDotMatrix || usageAnimationMode === "morph") {
       if (usageDotMatrix) renderUsageDotMorph(label, Number(number).toFixed(1), prefix, suffix);
       else renderUsagePlainMorph(label, Number(number).toFixed(1), prefix, suffix);
@@ -4358,8 +4355,6 @@
       replaceUsageLabel(label, [odometer, accessible], prefix, suffix);
       usageValueAnimations.set(label, state);
     }
-    state.liveState = liveState;
-    // 实时窗口随输出暂停而下降，不能先追到已过时的高值再回落。
     state.target = target;
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     if (reducedMotion) {
@@ -4369,17 +4364,12 @@
       state.velocity = 0;
     }
     drawUsageNumber(state);
-    if (reducedMotion || state.frame || (state.value === state.target && !liveState?.usage?.inProgress)) return;
+    if (reducedMotion || state.frame || state.value === state.target) return;
     state.updatedAt = performance.now();
     const tick = now => {
       if (!label.isConnected) { state.frame = 0; return; }
       const dt = (now - state.updatedAt) / 1000;
       state.updatedAt = now;
-      const live = state.liveState?.usage?.inProgress === true;
-      if (live) {
-        const latest = currentUsageSpeed(state.liveState);
-        if (latest != null) state.target = latest;
-      }
       const difference = state.target - state.value;
       const distance = Math.abs(difference);
       const speed = Math.min(usageAnimationMaxSpeed, Math.max(usageAnimationMinSpeed, distance * 2));
@@ -4396,12 +4386,12 @@
         if (next < 0) state.velocity = 0;
       }
       drawUsageNumber(state);
-      state.frame = state.value === state.target && !live ? 0 : window.requestAnimationFrame(tick);
+      state.frame = state.value === state.target ? 0 : window.requestAnimationFrame(tick);
     };
     state.frame = window.requestAnimationFrame(tick);
   }
 
-  function renderUsageValue(label, number, prefix, suffix, loading, liveState) {
+  function renderUsageValue(label, number, prefix, suffix, loading, emptyLabel = "--") {
     if (number == null && loading) {
       cancelUsageAnimations(usageValueAnimations.get(label));
       usageValueAnimations.delete(label);
@@ -4420,28 +4410,27 @@
     if (number == null) {
       cancelUsageAnimations(usageValueAnimations.get(label));
       usageValueAnimations.delete(label);
-      const value = number ?? "--";
+      const value = number ?? emptyLabel;
       const text = prefix.trimEnd() + value + suffix.trimStart();
       if (label.textContent !== text || label.querySelector("svg")) replaceUsageLabel(label, [value], prefix, suffix);
       return;
     }
-    renderUsageNumber(label, number, prefix, suffix, liveState);
+    renderUsageNumber(label, number, prefix, suffix);
   }
 
-  function renderUsageLine(line, usage, unavailable = false, liveState) {
+  function renderUsageLine(line, usage, unavailable = false) {
     const zh = !document.documentElement.lang || document.documentElement.lang.startsWith("zh");
     const speedLabel = line.querySelector("[data-usage-speed]");
     const cacheLabel = line.querySelector("[data-usage-cache]");
     const loading = !unavailable && usage?.inProgress ? (zh ? "统计中" : "Calculating") : "";
-    const lastSample = liveState?.speedSamples?.at(-1);
-    const speedLoading = lastSample && Date.now() - lastSample.at >= usageSpeedWindowMs ? "" : loading;
-    renderUsageValue(speedLabel, usage?.speed ?? null, "", " tok/s", speedLoading, liveState);
+    const waitingForOutput = !unavailable && usage?.inProgress && usage.speed == null;
+    renderUsageValue(speedLabel, usage?.speed ?? null, "", waitingForOutput ? "" : " tok/s", "", waitingForOutput ? (zh ? "等待输出" : "Waiting for output") : "--");
     renderUsageValue(cacheLabel, usage?.cache ?? null, `${zh ? "缓存命中" : "Cache hit"} `, usage?.cache == null ? "" : "%", loading);
     if (usage?.speed == null) line.querySelector("[data-usage-needle]")?.setAttribute("transform", "rotate(-90 12 15)");
     line.title = unavailable ? (zh ? "暂时无法读取本机会话用量" : "Local usage is unavailable")
-      : zh ? "实时 TPS：最近 3 秒流式输出的 Token ÷ 采样秒数；停止输出后回落至 0，结束后保留最后有效速度。缓存命中：同轮缓存输入 ÷ 输入 Token。缺少流式样本时显示 --。"
-        : "Live TPS: streamed tokens over the last 3 seconds / sampled seconds; falls to zero without output, and keeps the last measured rate after completion. Cache hit is cached/input tokens within the turn. Missing stream samples show --.";
-    if (usage?.estimated) line.title += zh ? " 速度按流式文本估算，不包含未公开的思考 Token；原生用量补报仅用于本轮统计。" : "Speed is estimated from streamed text and excludes hidden reasoning tokens; reported usage only updates turn totals.";
+      : zh ? "正文实时 TPS：按最近 3 秒正文采样，在新正文到达时更新；思考或暂停输出时显示等待输出，结束后保留最后有效速度。缓存命中：同轮缓存输入 ÷ 输入 Token。没有有效采样的已结束回复显示 --。"
+        : "Live response TPS: measured over the last 3 seconds and updated when response text arrives; waiting or reasoning shows Waiting for output, and completion keeps the last measured rate. Cache hit is cached/input tokens within the turn. Completed replies without valid samples show --.";
+    if (usage?.estimated) line.title += zh ? " 速度按正文文本估算，不计入思考摘要、计划或工具内容；原生用量补报仅用于本轮统计。" : "Speed is estimated from response text, excluding reasoning summaries, plans and tool content; reported usage only updates turn totals.";
     if (usage?.partial) line.title += zh ? " 日志尾部缺少轮边界，仅显示最近一次调用。" : " Turn boundary unavailable; latest call only.";
     const end = usage?.inProgress ? Date.now() : usage?.endedAt;
     if (Number.isFinite(usage?.outputTokens) && Number.isFinite(usage?.startedAt) && Number.isFinite(end) && end >= usage.startedAt) {
@@ -4450,7 +4439,7 @@
         : ` This turn: ${Math.round(usage.outputTokens)} output tokens / ${((end - usage.startedAt) / 1000).toFixed(1)} seconds.`;
     }
     line.title += zh ? " 指针量程为 0–100 tok/s，超过时仅指针到顶，数字仍显示实际速度。" : " Needle range: 0–100 tok/s; only the needle stops at the limit, while the number shows the actual rate.";
-    if ((speedLoading && usage.speed == null) || (loading && usage.cache == null)) line.title += zh ? " 本轮数据统计中…" : " Calculating this turn’s usage…";
+    if (loading && usage.cache == null) line.title += zh ? " 本轮数据统计中…" : " Calculating this turn’s usage…";
     line.style.opacity = usage?.observedAt && Date.now() - usage.observedAt > 120_000 ? "0.55" : "1";
   }
 
