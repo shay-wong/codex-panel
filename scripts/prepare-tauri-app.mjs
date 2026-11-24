@@ -353,6 +353,7 @@ async function copyApplicationResources() {
     "codex-rspack-tabs.mjs",
     "codex-rspack-capabilities.mjs",
     "codex-rspack-pets.mjs",
+    "codex-repository-branch-prefix.mjs",
     "pet-animations.mjs",
     "codex-provider-quota.mjs",
     "codex-provider-ultrafast.mjs",

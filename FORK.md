@@ -650,6 +650,14 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 - 仅 `task_started` / `turn_started` 确认轮起点；`turn_context` 可重复，缺真实起点继续扩读至现有 8 MiB 上限，仍缺时不显示 TPS。完成日志清除残留估算，tooltip 分子包含当前估算。真实日志修复前 9009/443.519=20.3，修复后与完整读取一致为 14087/627.837=22.4 tok/s。
 - 验证：`test/codex-thread-usage.test.mjs` 覆盖截断上下文、完成校准与模式/样式切换；隔离实际 Launcher 页面与模拟宿主验证保存、重读及动画。未安装、未核实用户现场视觉效果。来源：`git log -S'usageAnimationMode' -- inject/codex-panel.user.js`。与既有会话用量能力共同维护。
 
+## 按仓库分支前缀（2026-11-24，长期保留）
+
+- 目的与入口：原生「设置 → Git → 分支前缀」旁提供「按仓库配置…」，仓库列表显示实际名称及所选路径，提供使用全局、自定义和不添加前缀三种模式。
+- 不变量：映射保存在当前 Codex profile 的 `localStorage`（`codex-panel.repository-branch-prefixes.v1`），按原生项目 ID、来源 host 和根路径匹配目标会话，不能用当前 UI 选中的仓库改写全局设置。未配置沿用原生全局值，显式空字符串表示不加前缀，必须忽略原生 `code/` / `codex/` 默认。保留其他 developer instructions 及用户显式分支名称或前缀要求。新建会话通过原生 `additionalDeveloperInstructions` 追加覆盖，普通冷恢复通过 `threadConfiguration.readDeveloperInstructions` 的结果和原生会话仓库归属再次覆盖，保留原结果其他字段；创建分支界面通过同一原生归属信号匹配，同仓库的独立 worktree 共用配置，无会话归属时才按 cwd/host 匹配根路径。原生活跃订阅会话不热更新，特殊 aeon/appearance 恢复模式保留服务端指令，不能承诺已有会话全部更新，用户需新建会话以确保当前配置生效。
+- 代码：`inject/codex-panel.user.js`、`scripts/codex-repository-branch-prefix.mjs`、`scripts/codex-rspack.mjs`、`scripts/codex-rspack-revisions.mjs`、`scripts/codex-injector.mjs` 及两个运行时打包清单。适配沿原生调用、参数和属性绑定识别，不依赖模块位置、生成文件名或变量名。
+- 验证方式：独立临时数据、工作区和浏览器中保存两个仓库的自定义与空前缀、重开及刷新持久化、恢复全局、名称建议与新建会话参数检查；静态核对真实原生工厂改写及语法，沿用 `test/codex-rspack-cache.test.mjs`、`test/codex-rspack-revisions.test.mjs`、`test/codex-rspack.test.mjs`，新能力未新增回归测试。安装后的真实会话与模型创建分支须单独验收。
+- 用户说明：中英文 README、`docs/fork-capabilities.md#repository-branch-prefixes`；发布记录：中英文未发布更新日志。来源：本次变更，提交后用 `git log -S'createRepositoryBranchPrefixRuntime' -- scripts/codex-repository-branch-prefix.mjs` 定位。合并时保持全局回退、显式空前缀和目标仓库隔离；上游提供等价的仓库级前缀配置和指令路径后评估移除。
+
 ## 会话快捷短语（2026-11-05，长期保留）
 
 - 目的：实现用户确认的“轻量列表” demo，在会话右侧项目摘要下方直接发送常用短语。
