@@ -217,6 +217,8 @@ test("native manager streams update TPS once and release every subscription when
   const block = source.slice(source.indexOf("  const usageLines = new Map();"), source.indexOf("  function mount() {"));
   const dom = new JSDOM(`<div data-codex-composer-root data-composer-placement="thread"><span data-above-composer-conversation-id="local:${id}"></span><div id="card"><div id="line"><svg><path data-usage-needle></path></svg><span data-usage-speed></span><span data-usage-cache></span></div></div></div>`, { runScripts: "outside-only", pretendToBeVisual: true });
   try {
+    // Node 22 的模拟窗口缺少此原生浏览器符号，测试资源与窗口须共用同一释放契约。
+    if (!dom.window.Symbol.dispose) Object.defineProperty(dom.window.Symbol, "dispose", { value: Symbol.dispose });
     let now = 10_000;
     const disposed = [];
     let onManager, onDelta, breakStream;
