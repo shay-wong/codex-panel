@@ -2377,6 +2377,7 @@ function installPanelHostBinding(
           let customProviderUltrafast = false;
           let showCustomProviderDot = false;
           let defaultProjectlessChat = false;
+          let nativeSettingsMode = "system";
           const preferencesFile = panelEnvironment("PREFERENCES_FILE");
           if (preferencesFile) {
             try {
@@ -2392,6 +2393,7 @@ function installPanelHostBinding(
               customProviderUltrafast = preferences.customProviderUltrafast === true;
               showCustomProviderDot = preferences.showCustomProviderDot === true;
               defaultProjectlessChat = preferences.defaultProjectlessChat === true;
+              nativeSettingsMode = ["dialog", "page"].includes(preferences.nativeSettingsMode) ? preferences.nativeSettingsMode : "system";
             } catch {}
           }
           await cdp.send("Runtime.evaluate", {
@@ -2411,6 +2413,7 @@ function installPanelHostBinding(
               customProviderUltrafast: ${JSON.stringify(customProviderUltrafast)},
               showCustomProviderDot: ${JSON.stringify(showCustomProviderDot)},
               defaultProjectlessChat: ${JSON.stringify(defaultProjectlessChat)},
+              nativeSettingsMode: ${JSON.stringify(nativeSettingsMode)},
               startupToken: ${JSON.stringify(startupToken)}
             }, window.location.origin)`,
             returnByValue: true,
@@ -2767,7 +2770,7 @@ async function injectTarget(
     };
     cdp.threadTabsPhase = "loading";
     cdp.threadTabsError = "";
-    const featureLabels = { quota: "账号额度限制", ultrafast: "Ultrafast", dot: "Dot 入口", tabs: "会话菜单", queue: "排队消息", pets: "宠物动画", projectlessChat: "无项目聊天", nativeUpdate: "Codex 更新", nativeServices: "原生服务" };
+    const featureLabels = { quota: "账号额度限制", ultrafast: "Ultrafast", dot: "Dot 入口", tabs: "会话菜单", queue: "排队消息", pets: "宠物动画", projectlessChat: "无项目聊天", repositoryBranchPrefix: "仓库分支前缀", settingsPresentation: "设置界面", nativeUpdate: "Codex 更新", nativeServices: "原生服务" };
     const features = new Map();
     let adapterProgress = null;
     const publishAdapters = (phase, message, progress = phase === "adapting" ? adapterProgress : null) => {
@@ -3111,7 +3114,7 @@ async function currentInjectionSource() {
   const providerUltrafast = await readFile(new URL("./codex-provider-ultrafast.mjs", import.meta.url), "utf8");
   const dotEntry = await readFile(new URL("./codex-dot-entry.mjs", import.meta.url), "utf8");
   const threadTabs = await readFile(new URL("./codex-thread-tabs.mjs", import.meta.url), "utf8");
-  const rspack = await Promise.all(["codex-rspack.mjs", "codex-rspack-source.mjs", "codex-rspack-worker.mjs", "codex-source-ast.mjs", "codex-update.mjs", "codex-rspack-quota.mjs", "codex-rspack-tabs.mjs", "codex-rspack-capabilities.mjs", "codex-rspack-pets.mjs", "pet-animations.mjs"]
+  const rspack = await Promise.all(["codex-rspack.mjs", "codex-rspack-source.mjs", "codex-rspack-worker.mjs", "codex-source-ast.mjs", "codex-update.mjs", "codex-rspack-quota.mjs", "codex-rspack-tabs.mjs", "codex-rspack-capabilities.mjs", "codex-rspack-pets.mjs", "codex-repository-branch-prefix.mjs", "codex-settings-presentation.mjs", "pet-animations.mjs"]
     .map(file => readFile(new URL(file, import.meta.url), "utf8")));
   const lumi = await Promise.all(["pet.json", "spritesheet.webp", "animation.json", "hover.webp", "dance.m4a"]
     .map(async file => createHash("sha256").update(await readFile(path.join(projectRoot, "inject/pets/lumi", file))).digest("hex")));

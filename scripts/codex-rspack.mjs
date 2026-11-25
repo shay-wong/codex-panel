@@ -13,8 +13,10 @@ import { buildNativeServiceBindings, createPetAnimationRuntime, rewriteRspackPet
 import { readBuiltinLumi } from './pet-animations.mjs';
 import { buildCodexUpdateBindings, findCodexRspackRequire } from './codex-update.mjs';
 import { getCodexRspackRevisions } from './codex-rspack-revisions.mjs';
+import { createRepositoryBranchPrefixRuntime, rewriteRspackRepositoryBranchPrefix } from './codex-repository-branch-prefix.mjs';
+import { createSettingsPresentationRuntime, rewriteRspackSettingsPresentation } from './codex-settings-presentation.mjs';
 
-const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltrafast, dot: rewriteRspackDot, tabs: rewriteRspackThreadTabs, queue: rewriteRspackQueue, pets: rewriteRspackPets, projectlessChat: rewriteRspackProjectlessChat };
+const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltrafast, dot: rewriteRspackDot, tabs: rewriteRspackThreadTabs, queue: rewriteRspackQueue, pets: rewriteRspackPets, projectlessChat: rewriteRspackProjectlessChat, repositoryBranchPrefix: rewriteRspackRepositoryBranchPrefix, settingsPresentation: rewriteRspackSettingsPresentation };
 const responsePatches = new WeakMap();
 const preparedPlans = new Map();
 const preparedFeatures = new Map();
@@ -25,6 +27,8 @@ const featureTerms = {
   tabs: ['paneItems', 'dataAttributes', 'navigationState'], queue: ['queuedMessages', 'QueuedMessageList'],
   pets: ['The original Codex companion.', '/settings/account_user_setting', 'data-codex-pet-state'],
   projectlessChat: ['canStartProjectlessChat', 'startNewConversation'],
+  repositoryBranchPrefix: ['branchPrefix', 'startConversation', 'readDeveloperInstructions'],
+  settingsPresentation: ['3561799561'],
 };
 
 export function rewriteRspackQueue(source, context) {
@@ -555,6 +559,9 @@ export async function prepareCodexRspack(cdp, appPath, preferencesFile, report =
     const projectless=globalThis.__codexPanelProjectlessChatV1__??=createState(${preferences.defaultProjectlessChat === true});
     quota.setEnabled(${preferences.customProviderQuotaFix === true});speed.setEnabled(${preferences.customProviderUltrafast === true});dot.setEnabled(${preferences.showCustomProviderDot === true});
     projectless.setEnabled(${preferences.defaultProjectlessChat === true});
+    const settingsPresentation=globalThis.__codexPanelSettingsPresentationV1__??=(${createSettingsPresentationRuntime})(${JSON.stringify(preferences.nativeSettingsMode ?? 'system')});
+    settingsPresentation.setMode(${JSON.stringify(preferences.nativeSettingsMode ?? 'system')});
+    ${plan.prepared.repositoryBranchPrefix ? `globalThis.__codexPanelRepositoryBranchPrefixV1__??=(${createRepositoryBranchPrefixRuntime})();` : ''}
     ${petSource}
     const plan=${JSON.stringify(plan)};
     if(globalThis.__codexPanelRspack__){globalThis.__codexPanelRspack__.mergeDescriptors?.(plan);return;}

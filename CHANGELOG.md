@@ -1,543 +1,530 @@
-# Changelog
+# 更新日志
 
-English | [简体中文](CHANGELOG.zh-CN.md)
+本文记录 Fork 引入的用户可见变更。
 
-This file records user-visible changes introduced by the fork.
+## 未发布
 
-## Unreleased
+- 关于页支持 GitHub 设备授权登录，以账号额度检查公开发布，凭据保存在系统凭据库；退出后恢复本机 `gh` 或匿名检查，手动检查仍遵守有效限流。
 
-- Fix missing readings while newer Codex clients are already displaying response text by subscribing to their native text notifications, while preserving older clients without double counting. Show received response tokens over a fixed three-second window from the first fragment, so batched and short output no longer stays `--` or produces a millisecond-interval spike. Keep the last reading during pauses and after completion; start a fresh window for each message and show `--` only before response text arrives. This receive rate does not reconstruct the model’s exact generation speed.
+- Panel 偏好设置可选择原生 Codex 设置跟随 Codex、弹窗或整页显示，重新打开设置后生效，无需重启。
+
+- 原生 Git 设置以列表管理仓库分支前缀，可添加未配置仓库、在行内直接编辑前缀并失焦或按 Enter 保存，留空表示不加前缀，删除配置恢复全局；自定义和不添加前缀应用于新建会话和分支名称建议，不加前缀时也忽略原生 `codex/` 默认值。
+
+- 快捷短语配置的当前仓库页签显示实际仓库名称，不再显示内部项目 ID。
+
+- 状态卡内以真实状态驱动三维适配图谱，展示模块状态和弧形光流，支持拖动旋转、点击查看详情，模块增加时高度不变；保留阶段进度和独立连接状态，仅整体就绪后显示完成动画并收起。
+
+- 修复新版 Codex 正文已输出但速度没有数据的问题，改从原生通道订阅正文，兼容旧版且不重复计数。首批正文即按固定 3 秒窗口统计接收速率，集中到达和短回复不再持续显示 `--`，也不因毫秒级回调间隔出现虚高值；暂停和结束后保留最后读数，新消息重建窗口，仅在尚未收到正文时显示 `--`。此数值为接收速率，不能还原模型精确生成速度。
 
 ## 0.6.5-fork
 
-- Measure live speed from response text only, excluding reasoning summaries, plans and tool content. Update on new text, show “Waiting for output” during pauses, and retain the same measured rate after completion without a final spike.
+- 实时速度仅统计正文，排除思考摘要、计划和工具内容；仅在新正文到达时更新，暂停时显示“等待输出”，结束后保留同一口径的有效读数，避免归零和结束瞬间跳高。
 
 ## 0.6.4-fork
 
-- Keep release notes on the version-update page and remove their duplicate display from the installation confirmation, leaving the target version and confirmation buttons.
+- 版本日志仅在版本更新页展示，安装确认弹窗不再重复显示日志，只保留目标版本和确认按钮。
 
 ## 0.6.3-fork
 
-- Fix false zero speed for batched streaming output and lost readings after short replies; show `--` without a measurable interval, preserve the last output rate on completion, and clarify that the 0–100 range only limits the gauge needle.
+- 修复流式输出集中到达时速度误显示为 0、短回复结束丢失读数的问题；缺少可测间隔时显示 `--`，结束时保留最后输出速度，并明确 0–100 仅限制表盘指针。
 
 ## 0.6.2-fork
 
-- Show live output speed from a three-second streaming window instead of the whole-turn average; tool waits no longer dilute the rate, delayed usage reports do not cause spikes, and completion retains the last measured speed.
+- 输入框速度改为最近 3 秒流式输出的实时速率，工具等待不再摊低数值，用量延迟补报不形成尖峰，结束后保留最后一次有效速度。
 
-- Fix Backspace and Delete in the quick-phrase editor for multiline selections, including Skill mentions and selecting all.
+- 修复快捷短语配置中选中多行后 Backspace/Delete 无法删除的问题，包含 Skill 标签和全选。
 
-- Restore conversation-tab adaptation on Codex 26.1111.21308: recognize native focus functions that take a tab ID and sidebar rows whose presentation does not forward the conversation ID.
+- 修复 Codex 26.1111.21308 的会话标签适配：恢复识别以标签 ID 为参数的焦点函数，以及展示组件不转发会话 ID 的旧侧栏结构。
 
 ## 0.6.1-fork
 
-- Choose a Codex upgrade target on macOS. Panel prefers versions with verified source adapters when the official feed offers a matching delta.
+- macOS 支持选择 Codex 升级目标，官方清单有对应增量包时优先推荐已验证源码适配的版本。
 
 ## 0.6.0-fork
 
-- Change quick-phrase mode from the card or Configure dialog with an explanation of each mode: fill the composer, join the queue, or steer a running task; queue and steer send normally when idle.
+- 快捷短语卡片和配置弹窗均可切换填入输入框、加入队列或直接引导，两处即时同步并展示对应模式说明，支持正在执行的会话；会话空闲时排队和引导均正常发送。
 
-- Keep the checked Codex release feed for its download, avoiding mismatched rollout targets; show Check for updates after a download failure.
+- Codex 下载复用检查时的官方清单，避免灰度分流导致目标版本找不到；下载失败后切回“检查更新”按钮。
 
-- Assign increasing local package build numbers, show them in About and startup logs, and include them in macOS bundle metadata. `codex:install` prints its build number before preparing resources and streams build output.
+- 本地每次打包自动递增构建号，在“关于”和启动日志显示，并写入 macOS 包元数据；`codex:install` 在准备资源前打印构建号，实时显示构建输出。
 
-- Connect Panel before preparing native adapters, group ongoing adaptation text and its progress bar on the right of the launcher’s main status panel while preserving the independent connection status on the left, run independent adapters concurrently, and apply interface patches with one final reload. Only the adaptation details and progress bar disappear when adaptation ends. Expand the progress area into the remaining width, label resource reading separately, and truncate long paths with their full text on hover.
+- Panel 先连接、后台适配，在启动器顶部状态模块左侧保留连接状态，右侧集中显示适配文字和阶段进度条，结束后只移除适配详情及进度条；独立能力并发处理，需要刷新的界面补丁最后统一刷新一次；进度区域占用右侧剩余宽度，单独标明资源读取，长路径单行省略并支持悬停看全文。
 
-- Make all Launcher settings toggle only through the switch itself or keyboard activation, including pet sounds.
+- 启动器设置统一仅通过开关本身或键盘切换，包含宠物声音，点击标题、说明或空白不触发。
 
-- Cache native adaptation features independently across restarts using package contents; copying the same package or changing file attributes keeps the cache, UI changes reuse it, and only changed or failed features rebuild. The first connection after upgrading rebuilds the cache once; later starts reuse it.
+- 原生适配按模块和安装包内容独立缓存并跨进程复用，同内容复制、文件属性变化和普通界面更新不再触发重算；仅重算受影响或失败项。升级后首次连接需重建一次缓存，后续启动复用。
 
-- Locate native adapters through syntax trees, exports and calls, removing generated-filename, module co-location, declaration-adjacency and field-order assumptions; support Codex 26.1117.31558 quota, speed settings, conversation menus and notification structures.
+- 原生适配统一按语法树、导出与调用关系定位，移除生成文件名、模块共现、声明相邻和字段顺序依赖；适配 Codex 26.1117.31558 的额度、速度档位、会话菜单及通知结构。
 
-- Resume valid partial Codex downloads after network interruptions or timeouts when retrying the same version during the current Panel run.
+- Codex 下载在网络中断或超时后保留有效进度，同一次 Panel 运行中重试相同版本可续传。
 
-- Filter quick-phrase Skill suggestions as you type `@`/`$`, rank matching names first, and allow continuous deletion across lines. Keep native Skill labels and icons consistent between the card and editor, including after saving and reopening.
+- 快捷短语配置输入 `@`/`$` 随输入实时筛选命令，名称匹配优先排序，行首退格和行尾删除可连续跨行编辑；卡片和配置区的原生 Skill 名称及图标保持一致，保存、重新打开后不变。
 
-- Keep multiple repository quick-phrase configuration tabs open, focus an existing tab when selected again, and scroll the tab row horizontally.
+- 快捷短语配置可连续打开多个仓库页签；重复选择会聚焦已有页签，页签较多时支持横向滚动。
 
-- Configure a shared base quick-phrase list or a complete override per repository, restore base phrases, edit Skill links with native labels and icons, switch between base and current-repository underline tabs, edit other repositories without leaving the current chat, and explicitly select one or more phrases or all phrases before applying them to existing custom lists without duplicating identical entries.
+- 快捷短语支持基础配置与按仓库整份覆盖，可恢复基础配置，支持用原生标签及图标编辑 Skill 链接，以顶部下划线页签切换基础和当前仓库配置，通过“其他仓库”入口编辑其他仓库而无需切换会话，点击应用后明确勾选一条、多条或全选短语，再应用到全部已有的自定义仓库，相同条目不重复添加。
 
 ## 0.5.17-fork
 
-- Keep scrolled model rows from showing through the gap below the fixed model table header.
+- 修复模型表格滚动时，后方内容从固定表头下方缝隙露出的问题。
 
-- Refresh always requests the current provider, including when an original local catalog file exists; failed requests keep the existing catalog. Distinguish unchanged model catalogs, updated candidates and active catalog changes. Refreshing and saving retain enabled Ultrafast tiers; JSON field order and model enumeration order no longer cause a false update or restart reminder.
+- 刷新始终请求当前服务商，不再被原始本地目录文件截住，请求失败保留现有目录；明确区分无变化、候选更新和生效目录更新；刷新和保存保留已启用的 Ultrafast 档位，JSON 字段或模型排列顺序变化不再误报更新或新增重启提醒。
 
 ## 0.5.16-fork
 
-- Restore sidebar focus and active-row highlighting for existing conversation tabs and split panes on Codex 26.1111.71704.
+- 适配 Codex 26.1111.71704，恢复侧栏点击已打开标签或分栏会话时的焦点切换和高亮同步。
 
-- Fix model catalog refresh to fetch the current provider's complete catalog, preserving provider metadata and saved model settings. Official OpenAI reuses the current Codex subscription or API-key account with file credential storage; custom providers use their own configured credentials. Unchanged catalogs no longer prompt for a restart; failed refreshes keep the saved catalog and configuration.
+- 修复模型目录刷新来源，获取当前服务商的完整目录，保留服务商元数据与已保存的模型设置；官方 OpenAI 复用以文件保存的当前 Codex 订阅或 API key 登录，自定义服务商使用自己的配置凭据。目录无变化时不再提示重启，刷新失败时保留已保存的目录与配置。
 
-- Fill missing provider model defaults and reasoning capabilities from the same model in the current Codex CLI's official catalog, restoring editable main-agent reasoning levels while preserving user settings and explicit provider limits.
+- 服务商缺失的模型默认值和推理范围由当前 Codex 官方目录的同名模型补齐，恢复主代理推理强度的可编辑选项，保留用户设置及服务商明确声明的限制。
 
-- Keep the model table header visible while scrolling and put newer numeric model versions first in both Panel and Codex's main model picker, without changing the saved source catalog.
+- 模型表头滚动时保持可见；Panel 列表及 Codex 主模型菜单都按数字版本从大到小排列，不改动已保存的源目录。
 
-- Choose which models to keep from the intersection of the provider's list and Codex's official GPT models. Save applies the selection; refresh retains it and leaves new models unchecked, while preserving source metadata and existing settings. Official models absent from the provider are not added.
+- 仅在服务商列表与 Codex 官方 GPT 清单的交集中勾选要保留的模型，保存后生效；刷新记住选择，新模型默认不勾选，源元数据与已有设置继续保留。官方支持但服务商未提供的模型不会加入。
 
 ## 0.5.15-fork
 
-- Render Markdown headings, lists, and inline formatting in the macOS update confirmation.
+- macOS 更新确认框可渲染版本说明的 Markdown 标题、列表和行内格式。
 
 ## 0.5.14-fork
 
-- Restore the full-height workflow editor and return to the Workflow tab after saving or closing it.
+- 恢复占满右侧区域的工作流编辑页，保存或关闭后回到「工作流」标签。
 
-- Fix release notes overlapping the macOS update dialog after installation starts.
+- 修复 macOS 开始安装更新后，旧版本说明遮挡安装弹窗的问题。
 
 ## 0.5.13-fork
 
-- Organize Preferences into General, Chat, Models & advanced, and Workflow tabs. Keep the Workflow editor within its tab so you can switch categories without losing your draft.
+- 偏好设置按「常用」「聊天」「模型与高级」「工作流」四个标签组织。工作流编辑器在标签内打开，切换分类时保留草稿。
 
 ## 0.5.12-fork
 
-- Click the selected **Panel** entry in the Codex sidebar to hide the task panel and return to the previous page while the Panel app and background service keep running.
+- 再次点击 Codex 左侧已选中的“任务面板”可收起面板并返回之前的页面，Panel 应用和后台服务继续运行。
 
 ## 0.5.11-fork
 
-- Show release notes directly in About → Version updates and the installation confirmation, with scrolling for long notes on macOS.
+- 在“关于 → 版本更新”和安装确认框直接显示版本说明，macOS 确认框支持滚动阅读长内容。
 
 ## 0.5.10-fork
 
-- Add **刷新模型目录** in model settings to load newly discovered Codex models without resetting saved context, compaction or subagent settings; restart Codex to apply the updated catalog.
+- 模型设置新增“刷新模型目录”，加载 Codex 新发现的模型并保留已保存的上下文、压缩阈值和子代理设置；重启 Codex 后应用新目录。
 
 ## 0.5.9-fork
 
-- Restore Fast and Ultrafast selection for `gpt-6.2-astra` and `gpt-6.2-sol` on local custom providers by updating the native menu and model catalog adapters.
+- 更新原生菜单与模型目录适配，恢复本地自定义服务商的 `gpt-6.2-astra` 和 `gpt-6.2-sol` 快速、超快档位选择。
 
 ## 0.5.8-fork
 
-- Restore native queued-message visibility when the core reports queue support after settings have already loaded.
+- 修复设置已就绪、核心队列能力随后就绪时，原生排队消息仍保持空白的问题。
 
-- Import new local pets with use, cancel and remove actions. Add optional animation audio and a sound switch; complete Lumi’s preparation and four-beat closing gesture around the full music phrase, fade on the last beat, and drive frames from the audio clock to prevent cumulative drift.
+- 支持导入新本地宠物并使用、取消和移除；动画包可附带音频，新增声音开关；按有声前奏补齐 Lumi 举臂、比心和落臂动作，保留完整乐句并跟随最后四拍收势、末拍渐出；以音乐时钟推进画面，避免逐帧累积偏拍。
 
-- Show a short message for network failures during Codex update checks and downloads, keeping full system diagnostics in the runtime log.
+- Codex 更新检查和下载遇到网络错误时显示简短中文提示，完整系统诊断保留在运行日志中。
 
-- Restore queued messages hidden by a queue panel stuck collapsed on Codex 26.1111.21308, preserving native send, pause, delete and exit behavior.
+- 修复 Codex 26.1111.21308 排队面板卡在折叠状态、消息已加载却不显示的问题，保留原生发送、暂停、删除和退出动画。
 
 ## 0.5.7-fork
 
-- Add a default-off **新聊天默认不带项目** switch: ordinary and Recent new-chat actions start outside projects, while creation from a specific project keeps that project. Existing chats remain unchanged.
+- 新增默认关闭的“新聊天默认不带项目”开关：普通新建和“最近”里的新建不关联项目，从具体项目内新建时保留项目，不改变已有聊天。
 
 ## 0.5.6-fork
 
-- Add optional, default-off App/CLI shared sessions for macOS and Windows. The connection settings provide a terminal command that reuses Codex's existing backend without restarting the App. Native approvals remain in the App; disabling sharing disconnects terminal views without canceling App tasks. Ordinary CLI launches remain independent and can still conflict. Existing chats are continued from the CLI; create or fork in the App first. The isolated macOS main flow passed; Windows runtime acceptance is pending; see the [guide](docs/shared-sessions.md).
+- macOS / Windows 新增默认关闭的 App / CLI 共享会话，连接设置可复制终端命令，复用 Codex 当前后台，无需重启 App。原生审批仍在 App 处理；关闭共享只断开终端视图，不取消 App 任务。普通 CLI 启动仍独立，同一会话仍可能冲突。共享 CLI 续接已有会话，新建和分叉先在 App 完成。macOS 隔离主流程已通过，Windows 实机验收待完成，详见[使用指南](docs/shared-sessions.md)。
 
 ## 0.5.5-fork
 
-- Add a separate Pets page with matching preview cards for built-in and imported resources. Lumi shows its actual native selection and can be canceled to restore the default Codex pet. Built-in Lumi, its custom override, and identical imported copies share a single card. Identical animations use the built-in resource directly, without a duplicate override or restore action.
+- 新增独立的宠物页面，内置与导入资源统一显示预览卡片。Lumi 根据原生选择显示正在使用，支持取消并恢复默认 Codex；内置项、自定义覆盖和相同副本合并为一张卡片；相同动画直接使用内置资源，不再重复保存覆盖或显示恢复按钮。
 
-- Bundle the updated Lumi with nine native actions, sixteen look directions, cleaned hair edges, a consistent curved outfit hem, and a 15-second hover dance with an aligned arm-lowering transition. Import custom animation packs on the Pets page, with configurable state sequences, timing, loops and look directions; apply changes to main and floating pets without restarting Codex.
+- 内置新版 Lumi 的 9 个原生动作、16 个视线方向及 15 秒悬停舞蹈，清理头发边缘、统一弧形下摆，并调整落臂接舞蹈的节拍。宠物页面支持导入自定义动画包，配置状态帧序列、时长、循环和视线方向；主窗口与浮窗自动应用，无需重启 Codex。
 
 ## 0.5.4-fork
 
-- Windows: keep launcher, restart, and background PowerShell, Node, and CLI checks hidden to prevent console windows flashing.
+- Windows：隐藏启动、重启和后台检查时的 PowerShell、Node 与 CLI 控制台窗口，避免连续弹出黑框。
 
 ## 0.5.3-fork
 
-- Move conversation usage into the composer toolbar between permissions and model controls, retaining the above-composer option and a compact narrow-window layout.
+- 将默认会话用量统计移入输入框工具栏，放在权限与模型选择之间；保留上方显示选项，窄窗口采用紧凑布局。
 
-- Return an unavailable local AI catalog when the Codex CLI is missing, instead of a server error; preserve workspace and other error responses.
+- 缺少本地 Codex CLI 时，模型、Skill 和命令目录返回不可用状态，不再报服务器错误；工作区无效等其他错误继续保留。
 
 ## 0.5.2-fork
 
-- Add a macOS switch in the Codex update card to disable Codex’s built-in updater on the next Panel-managed launch, while retaining manual updates in Panel. It defaults to off; an already downloaded native update may still install on the first exit.
+- macOS 的 Codex 更新卡片新增“禁止 Codex 自动更新”开关，下次通过 Panel 启动 Codex 后关闭内置更新器，保留 Panel 手动更新。开关默认关闭；此前已下载的原生更新仍可能在首次退出时安装。
 
-- Restore custom-provider quota and Fast/Ultrafast controls on Codex 26.1106.51428; support its renamed worktree settings, GPT-6 Plus quota banner and legacy automation migration.
+- 恢复 Codex 26.1106.51428 的自定义服务额度与 Fast/Ultrafast 适配，支持新版工作树设置名称、GPT-6 Plus 额度横幅及旧自动任务迁移。
 
-- Restore conversation tab and split-view menu actions on Codex 26.1106.51428 after its active-conversation helper was removed, and recognize full-width tabs correctly when switching views.
+- 适配 Codex 26.1106.51428 移除旧会话定位函数后的原生结构，恢复会话标签和右侧并排菜单入口，正确识别全宽标签以切换显示方式。
 
-- Refresh native queued-message visibility when Codex settings finish loading after a Panel update, without switching chats or restarting Codex.
+- Panel 更新后，Codex 设置加载完成时自动恢复原生排队消息显示，无需切换会话或重启 Codex。
 
 ## 0.5.1-fork
 
-- Build macOS and Windows packages in parallel, wait for both results, and publish the successful platforms even when the other build fails.
+- macOS 与 Windows 并行打包，等待两边结束后统一发布成功平台的产物，一边失败不再阻塞另一边。
 
-- Windows: publish x64 NSIS installers with optional Authenticode signing and verified in-app updates. Builds without a certificate can run; older test builds require one manual installation. Initial Windows release support by @InTheManXG.
+- Windows：发布 x64 NSIS 安装器，Authenticode 签名可选，无证书也可构建和使用；保留更新包验签及安装确认，旧测试版需先手动安装一次。初始 Windows 发布支持由 @InTheManXG 贡献。
 
-- Prefer Lark CLI for linked document content, ask before requesting authorization, and require an explicit choice before switching to a browser.
+- 关联飞书文档正文优先用 Lark CLI 读取，缺少授权时先询问，改用浏览器须由用户明确选择。
 
-- Restore automatic issue-conversation naming and linking after the native composer is rebuilt or an unsent draft is restored, for both Enter and Send.
+- 修复原生输入框重建或未发送草稿恢复后，按 Enter 或点击发送未继续完成议题会话命名与关联的问题。
 
-- Focus the existing conversation tab or right split pane when clicking a plain conversation notification, including after navigating to another conversation.
+- 点击普通会话通知时回到已有标签页或右侧并排会话，从其他会话页面进入也会先回到所属页面。
 
-- Restore custom-provider sending on Codex 26.1103.60933 after native submission checks switched to a list of blocking reasons, preserving all non-quota blockers.
+- 适配 Codex 26.1103.60933 改用发送禁用原因列表后的自定义 API 发送，保留所有非额度限制。
 
-- Check Codex releases directly from the official feed, so skipping a version in the native dialog no longer hides it in Panel; manual checks refresh the result.
+- 直接查询官方清单检测 Codex 更新，原生弹窗跳过版本后 Panel 仍可发现该版本，手动检查重新查询。
 
-- Configure the default subagent model and reasoning effort, plus each personal role’s model and reasoning effort, in the model context dialog; restore inheritance per field or reset all settings together.
+- 模型上下文弹窗新增“子代理”页，可设置全局默认及每个个人角色的模型、推理强度，支持逐项恢复继承和全部恢复默认。
 
-- Recover Panel connections after heartbeat timeouts without waiting for a WebSocket close response; preserve current usage statistics through failed or empty reads.
+- 修复心跳超时后连接无法恢复的问题；统计读取失败或暂时为空时保留本轮数据，避免仍在运行却显示 `--`。
 
 ## 0.5.0-fork
 
-- Use the Windows Shell API to open Codex, files, folders and links, avoiding false failures from Explorer exit codes while retaining real Shell errors.
+- 修复 Windows 打开 Codex 时误报“无法打开”：改用原生 Shell 接口判断打开请求是否被接受，保留真实错误码；文件、文件夹和链接共用此修复。
 
-- Include Fast (`priority`) alongside Ultrafast for supported custom-provider models, including native selection and catalog capabilities.
+- 为受支持的自定义服务商模型补齐“快速（priority）”，与“标准 / 超快”共同使用原生速度菜单，同步模型目录与选择权限。
 
-- Fix Windows Rspack chunks exporting `__rspack_esm_id` so Ultrafast modules can load; accept case and space variants of the two supported model IDs without changing request model names.
+- 修复 Windows Rspack 新增 `__rspack_esm_id` 导出导致 UF 模块读取失败；兼容两个受支持模型 ID 的大小写及空格写法，保留请求中的原始模型名。
 
-- Normalize safe Windows verbatim resource paths before passing scripts to Node, fixing startup `EISDIR` errors and model configuration entry points.
+- 修复 Windows 资源路径带 `\\?\` 前缀时 Node 报 `EISDIR` 并反复退出的问题，同时覆盖模型配置入口；保留签名与 runtime 完整性校验。
 
-- Clarify Ultrafast’s required configuration with separate lines.
+- 精简 Ultrafast 说明，分行展示适用模型、必需配置与重启要求。
 
-- Keep pending Codex restart reminders across Panel relaunches and reinstalls; clear them immediately after a confirmed restart is successfully initiated, or when an external restart is detected. Cancellation and startup failure keep the reminder.
+- 重开或重装 Panel 后保留 Codex 重启提醒；确认重启且成功发起启动后立即清除，也支持检测外部重启后清除，取消或启动失败则保留。
 
-- Remove the quick-phrase card’s empty status-row space and animate message expansion and collapse without abrupt jumps.
+- 移除快捷短语卡片底部空状态行的留白，提示出现和清除时平滑展开、收起。
 
-- Reset GPT-6.1 Sol to its official 500000-token default when the native catalog still contains the old 272000 value, preserving explicit settings and external catalogs.
+- 修正 Sol 原生旧目录的默认上下文：恢复默认后使用官方 500000，不再回到 272000；保留显式设置及外部目录。
 
-- Fix empty drafts after **Open in new conversation** on Rspack-based Codex builds by restoring target-project confirmation.
+- 修复新版 Rspack Codex 中“在新对话打开”因目标项目确认超时而留下空白输入框的问题。
 
-- Configure subagent reasoning effort per model, with choices and default values from its catalog; preserve the setting through Ultrafast changes.
+- 支持按模型设置子代理推理强度，选项和默认值来自模型目录，Ultrafast 切换时保留设置。
 
-- Fix Rspack startup errors caused by the Dot preference signal and shadowed module loaders in Ultrafast settings and the custom-provider composer.
+- 修复新版 Dot 偏好读取方式、Ultrafast 与自定义 API 发送模块的变量冲突导致的页面启动错误。
 
-- Adapt custom-provider sending, Ultrafast, Dot, conversation tabs and update status to Codex’s Rspack modules, including lazy-loaded modules, while retaining existing switches and conversation focus behavior.
+- 适配 Codex 新版 Rspack 模块及延迟加载，恢复自定义 API 发送限制开关、Ultrafast、Dot、会话标签与更新状态读取，保留已有设置和会话焦点行为。
 
-- Download matching official Codex delta updates through macOS system networking from Panel with spaced pause, resume, and cancel controls and distinct download and install/restart icons, then verify and stage the updated app for installation and managed restart without another download confirmation. Busy checks no longer retry on every status poll; stalled checks time out and allow manual retry.
+- 发现 Codex 新版时可在 Panel 通过 macOS 系统网络直接下载匹配当前版本的官方增量包，支持暂停、继续和取消，按钮保留间距并区分下载与安装重启图标；验证并合成新版后安装并通过 Panel 重启，无需另行确认下载；更新器忙碌时不再反复检查，检查超时后可手动重试。
 
-- Offer continuous tracking and dot morph for dot-matrix numbers; ordinary numbers use fading. Switching number style preserves the selected dot effect.
+- 点阵数字可选连续追踪和点阵变换，普通数字固定渐隐渐显；切换数字样式时保留点阵动画选择。
 
-- Move quick phrases with the native summary animation instead of lagging behind its position.
+- 快捷短语与原生摘要共用动画，修复延迟追踪位置导致的卡顿。
 
-- Correct TPS when truncated logs contain a repeated mid-turn context; clear residual estimates on final log calibration.
+- 修复截断日志把中途上下文当成轮起点导致 TPS 不准确，完成日志校准时清除残留估算。
 
 ## 0.4.18-fork
 
-- Allow collapsing the quick-phrase card to its heading while keeping configuration accessible.
+- 快捷短语支持点击标题栏收起或展开，收起后仍可打开配置。
 
-- Hide quick phrases while the right file or preview sidebar is open and restore them when it closes.
+- 打开右侧文件或预览栏时自动隐藏快捷短语，关闭后恢复，避免遮挡侧栏内容。
 
-- Prevent usage numbers and the TPS needle from drifting away when a new target reverses their direction.
+- 修复用量目标反向更新后数字和 TPS 指针仍沿旧方向下探或上冲的问题。
 
-- Let TPS reach its latest data target before decaying between samples; new data redirects the animation immediately.
+- TPS 数字先到达最新数据目标再回落，追赶期间不再被时间增长提前拉低；新数据仍可立即更新目标。
 
-- Style quick phrases as a native floating card matching the project summary's background, rounded corners and shadow.
+- 快捷短语采用原生浮窗卡片样式，背景、圆角和阴影与项目浮窗保持一致。
 
-- Show quick phrases in new Codex chats and allow sending the first message from a phrase.
+- 新会话页也显示快捷短语，并支持点击发送会话的第一条消息。
 
-- Keep quick phrases visible and usable when the conversation's project summary is hidden or absent.
+- 快捷短语独立于上方项目浮窗显示，浮窗隐藏或不存在时仍可使用。
 
-- Allow explicitly authorized task takeover from a new conversation, retaining the previous conversation in activity history and preserving the task’s Spec and development context.
+- 修复新会话无法接手已绑定任务的问题：明确授权后可转交执行绑定，保留旧会话历史、Spec 及分支和工作树。
 
 ## 0.4.17-fork
 
-- Center the quick-phrase configuration dialog under Codex's native reset styles.
+- 修复快捷短语配置弹窗受 Codex 全局样式影响而未居中的问题。
 
-- Add locally saved, line-configured quick phrases below the conversation's project summary, with one-click native sending.
+- 会话右侧项目摘要下方新增快捷短语，支持按行配置、本地保存和点击原生发送。
 
 ## 0.4.16-fork
 
-- Smooth velocity when usage targets change and reuse digit strips to reduce animation stutter.
+- 修复用量目标更新时速度硬切；保留速度平滑过渡，并复用数字条减少动画卡顿。
 
-- Group the four conversation usage preferences in a dedicated settings dialog, with one entry on the Preferences page.
+- 将会话用量的显示、位置、数字样式和速度四项配置集中到独立设置窗口，偏好页保留统一入口。
 
-- Make usage numbers continuously track their latest target with bounded, distance-dependent speed; add saved minimum and maximum speed settings that apply immediately.
+- 会话用量数字持续追踪最新目标，距离越远越快、越近越慢；新增最低和最高变化速度配置，保存后即时生效。
 
-- Add a saved conversation usage position preference: show statistics above or below the composer, defaulting to below and applying without restart.
+- 新增“会话用量位置”设置，可在输入框上方或下方显示统计，默认下方，保存后即时生效。
 
-- Move the speedometer needle with TPS updates on a 0–100 tok/s scale, synchronized with the rolling digits.
+- 速度表指针按 0–100 tok/s 刻度随 TPS 更新转动，与滚轮数字同步。
 
-- Align rolling usage digits, icons, labels and units along one vertical center.
+- 修复滚轮数字偏低，使会话用量图标、数字、标签和单位垂直居中对齐。
 
-- Animate TPS and cache hit rate with per-digit odometer rolling in both ordinary and dot-matrix styles; increases roll up, decreases roll down, and unchanged digits stay still.
+- TPS 与缓存命中率改为逐位滚轮动画，普通数字与点阵数字均支持：增大向上滚、减小向下滚，未变化的位数静止。
 
 ## 0.4.15-fork
 
-- Add a default-on “Show conversation usage” preference to hide or restore the entire usage row without restarting; add a separate switch for ordinary numbers with a fade transition or dot-matrix numbers, and improve small dot-matrix number clarity.
+- 新增默认开启的“显示会话用量”开关，可即时隐藏或恢复整条统计，无需重启；另增“使用点阵数字”开关切换带渐隐渐显动画的普通数字，并提升小尺寸点阵数字的清晰度。
 
-- Calculate output TPS from total turn output tokens and elapsed time with one decimal place; estimate live while streaming, correct with actual usage, and freeze the result when the turn ends.
+- 输出 TPS 改为本轮输出 Token ÷ 本轮总耗时，保留一位小数；输出中实时估算、每秒更新，真实用量到达后校准，结束后固定结果。
 
-- Show three bouncing dots while conversation usage metrics await data, then expand those dots into the reading; render numbers in a compact dot matrix that morphs into each new value without counting through intermediate numbers; keep labels and units in ordinary text; respect reduced-motion settings.
+- 会话用量统计中显示三个依次跳动的小圆点，数据就绪后三点直接展开组成数字；数字使用紧凑点阵，小点移动重组为新数值，单位和中文标签保留普通文字；均遵循减少动态效果设置。
 
-- Add speedometer and cache icons to the conversation usage row.
+- 为输入框用量条补齐速度表和缓存图标。
 
-- Fix unavailable conversation usage metrics for native session log filenames containing an additional UUID.
+- 修复原生日志文件名附加 UUID 时，输入框吞吐与缓存命中率无法读取的问题。
 
-- Restore the last normal window size after restarting.
+- 重启后恢复上次普通窗口尺寸。
 
-- Keep Runtime overview as cards: three equal-height connection cards and two maintenance cards, with icon actions, hover labels, readable dark-mode controls, and an update button that switches between check, checking and installation.
+- 运行概览保留卡片布局，上方三张等高连接卡片，下方独立展示菜单和更新；使用纯图标按钮及悬停说明，修正暗黑模式对比度，更新按钮区分检查、检查中和安装状态。
 
-- Show the native Codex update-check result and current version on macOS; offer installation through Panel only after an update is downloaded, and wait for the signed app replacement before reconnecting.
+- macOS 更新状态显示官方检查结果及当前版本，仅在下载完成后显示“安装 Codex 更新并重启”：通过 Panel 正常退出 Codex，等待已下载更新安装和签名校验完成后再启动连接。
 
-- Restore the macOS native Edit menu so launcher fields support copy, paste, cut and select-all shortcuts.
+- 恢复 macOS 原生编辑菜单，让管理窗口输入框支持复制、粘贴、剪切和全选快捷键。
 
-- Add per-model automatic compaction thresholds with token and percentage modes, numeric model defaults, and fixed cards showing global overrides. Allow per-model saves while preserving global configuration, and improve the settings dialog layout and scrolling. Restart Codex after saving to apply changes.
+- 新增按模型自动压缩阈值，支持 token 数与百分比模式、具体模型默认值及固定的全局配置来源卡片。保留全局配置并允许保存模型设置，优化弹窗布局与滚动；保存后重启 Codex 生效。
 
-- Show output throughput (tok/s) and cache hit rate below local Codex composers using local session logs. Missing data shows `--`; API requests are unchanged.
+- Codex 本地会话输入框下方显示输出吞吐（tok/s）和缓存命中率；读取本机会话日志，缺少数据时显示 `--`，不改变 API 请求。
 
 ## 0.4.14-fork
 
-- Fix conversation-menu preparation on newer Codex builds whose startup modules load through separate entry modules, including updated native focus and sidebar navigation code.
+- 修复新版 Codex 拆分启动模块后会话菜单加载失败，并适配原生聚焦与侧栏导航代码变化。
 
-- Fix signed update preparation for local Fork builds and clear stale update actions after a check or download failure.
+- 修复本地 Fork 构建无法准备签名更新的问题，并在检查或下载失败后清理过期的更新操作状态。
 
-- Restore the macOS manager window and attach native confirmations and messages as system-managed sheets, addressing blank or unclickable dialogs; error messages no longer block menu callbacks.
+- macOS 原生确认框和提示框弹出前先恢复管理窗口，并使用系统管理的模态弹窗，修复空白或无法点击的问题；错误提示不再阻塞菜单回调。
 
 ## 0.4.13-fork
 
-- Add per-model context window settings in Preferences, with catalog defaults, restore support, and a Codex restart reminder. Context settings compose with the existing custom-provider Ultrafast preference.
+- 在偏好设置中新增按模型配置上下文大小，支持目录默认值、恢复配置和重启 Codex 提醒，并与现有自定义 provider Ultrafast 设置组合生效。
 
-- Allow native Blocks / Blocked by relations across repositories through the issue picker, API and CLI; execution waits for unfinished prerequisites.
+- 支持通过详情选择器、API 和 CLI 创建跨仓库原生“阻塞 / 阻塞于”关系，未完成的前置任务会阻止执行。
 
-- Fix cross-repository shared Jira planning in both the conversation picker and explicit CLI binding; continuing a changed plan stays in its shared conversation without changing execution repositories.
+- 修复跨仓库共用 Jira 规划：页面选择和 CLI 显式绑定均可加入已有规划会话，需求变化后继续沿用该会话，不改变执行仓库。
 
-- Let Jira requirements sharing a plan explicitly group execution by repository, reusing conversations and worktrees sequentially while preserving each requirement’s authorization and progress.
+- 共用规划的 Jira 支持显式选择“同仓库一起实现”，按仓库串行复用执行会话和工作树，各自的授权、进度和验收仍独立。
 
-- Allow related Jira requirements to explicitly share an existing planning conversation while keeping their Specs, publication and execution independent; shared conversations stay available until all linked work is complete.
+- Jira 详情支持显式加入已有规划会话，共享讨论上下文，Spec、发布和执行仍各自独立；共用任务未全部完成时不会归档共享会话。
 
 ## 0.4.12-fork
 
-- Show conversation-menu loading status in Panel and allow a manual retry without restarting Codex.
+- Panel 现在显示会话菜单加载状态，并支持不重启 Codex 手动重试。
 
-- Recover conversation menus after Codex clears resource timing records by reusing prepared modules and following imports from the page entry script.
+- 修复 Codex 清空资源记录后会话菜单持续加载失败：复用已准备模块，并沿页面入口的模块引用找回菜单，恢复标签页和分栏入口。
 
 ## 0.4.11-fork
 
-- Archive published changelog entries under their release versions automatically, keeping newer changes in Unreleased.
+- 发布成功后自动将中英文更新日志归档到对应版本，尚未发布的新改动继续保留在“未发布”。
 
-- Prevent terminal locale variables from changing the macOS Codex UI language when launched through Panel.
+- macOS 从 Panel 启动 Codex 时不再传入终端语言变量，保留系统及应用的语言选择。
 
-- Fix missing conversation tab and split-view menu actions when loading large native Codex modules; automatically retry failed preparation in the background up to three times.
+- 修复读取较大的 Codex 原生模块时，右键菜单中的标签页和分栏选项未加载的问题；启动加载失败后自动在后台重试，最多 3 次。
 
 ## 0.4.10-fork
 
-- Fix the Panel entry widening the icon navigation rail after Codex switches sidebar layouts.
+- 修复 Codex 切换侧栏布局后，任务面板文字入口撑宽图标导航栏的问题。
 
-- Add sidebar conversation actions to open an existing Codex chat in a native tab or alongside the current chat in the same window, reuse already-open conversations and synchronize input focus and sidebar highlighting on sidebar clicks, and restore a tab or split conversation as a standalone page.
+- 会话右键菜单新增“在新标签页中打开”和“在右侧并排打开”，可在同一窗口切换或同时查看已有 Codex 会话；同一会话不重复打开，左侧点击同步切换输入光标和高亮，并可恢复为独立页面。
 
-- Automatically sync the published version back to main so source builds and local reinstalls use the correct version after pulling.
+- 发布成功后自动将版本同步回 main，拉取后源码编译与本地重装使用正确版本。
 
 ## 0.4.9-fork
 
-- Restore newer Codex compatibility for execution worktree selection, custom-provider quota bypass, workspace path verification, and migration of legacy automations. Report quota adapter preparation separately from actual module execution.
+- 适配新版 Codex 的执行工作树控件、自定义 API 额度限制开关、工作目录与路径核验，以及旧自动任务暂停迁移；区分额度适配准备成功和模块实际执行。
 
-- Fix planning conversation naming and association when the new conversation has not yet appeared in the Codex sidebar.
+- 修复规划会话尚未出现在 Codex 侧栏时，未按任务编号命名和关联的问题。
 
-- Fix AI planning timing out on newer Codex builds after the native project-state API moved to the project catalog service.
+- 修复新版 Codex 项目状态接口迁移后，AI 规划误报“未在限定时间内切换到目标项目或 worktree”。
 
 ## 0.4.8-fork
 
-- Restore the Dot entry on newer Codex builds and reduce sensitivity to changes in configuration field order, quoting, and capability nesting.
+- 修复新版 Codex 中“恢复 Dot 入口”失效，按原生能力名称判断，减少对配置字段顺序、引号和父子层级的依赖。
 
-- Make the Jira overview card clickable to open link management and access linked execution Issues.
+- Jira 概览卡片支持点击，直接打开关联管理并查看、跳转关联执行 Issue。
 
-- Expand Project Keys to 32 characters and allow multiple internal hyphens or dots, such as `TP-A-B`, `TP.ADMIN`, and `TP-A.B`; the latter produces Issue identifiers such as `TP-A.B-1`.
+- 项目 Key 上限扩展为 32 字符，支持多个内部连字符或点号，例如 `TP-A-B`、`TP.ADMIN`、`TP-A.B`，后者对应任务编号为 `TP-A.B-1`。
 
-- Open linked Jira requirements within the current Panel instead of reloading the embedded document and leaving its startup overlay visible.
+- 修复点击执行任务的关联 Jira 卡片后，内嵌面板重新加载并卡在“正在启动任务面板”的问题。
 
 ## 0.4.7-fork
 
-- Keep horizontal issue-list cards at their content height when many issues share a column, preventing priority and assignee controls from overflowing.
+- 修复横向列表议题较多时卡片被压缩、优先级和负责人溢出边框的问题。
 
-- Add a Jira project filter based on synchronized issue keys, with multi-selection and an All projects reset. Contributions by [@InTheManXG](https://github.com/InTheManXG) in [#29](https://github.com/shay-wong/codex-panel/pull/29).
+- 筛选菜单新增 Jira 项目选项，支持按已同步议题的项目编号多选，并可恢复全部项目。 感谢 [@InTheManXG](https://github.com/InTheManXG) 在 [#29](https://github.com/shay-wong/codex-panel/pull/29) 中的贡献。
 
-- Add an off-by-default preference to restore the Dot entry by skipping client-side account and provider checks while connected to Panel. Server authorization is unchanged.
+- 新增默认关闭的“恢复 Dot 入口”开关，跳过 Dot 的客户端账号权限与 Provider 限制；连接 Panel 时生效，不修改服务端授权。
 
-- The Panel entry follows the Codex interface language. On Windows, opening Panel brings its Codex window to the foreground while preserving maximized state.
+- Panel 入口跟随 Codex 界面语言；Windows 打开面板时将对应 Codex 窗口带到前台，并保留最大化状态。
 
-- Include the task title after the Jira planning or replanning label in new conversation names. Confirm submitted conversation titles without depending on rendered sidebar rows.
+- 新建会话在 Jira 规划／重新规划标记后追加任务标题；发送后的命名确认不再依赖侧栏条目，并回读已保存标题。
 
-- Allow explicitly authorized implementation to continue in the current Jira planning conversation after resolving, binding, and claiming the published execution Issue.
+- 明确要求实现时，允许在当前 Jira 规划会话继续；先确认已发布的执行 Issue 并完成绑定和领取，无需强制新建会话。
 
-- Local task planning and new conversations navigate by the saved Codex project ID without depending on rendered or expanded sidebar rows. Panel confirms the target project and workspace before prefilling the draft.
+- 本地任务继续规划和新建对话直接按已保存的 Codex 项目 ID 导航，不再依赖侧栏项目是否展开或渲染；确认目标项目与工作目录后才预填内容。
 
-- Keep the model catalog URL available when Ultrafast is switched off and back on without restarting Codex. Show a restart reminder after saving, with restart-now and later actions.
+- 修复未重启 Codex 时关闭再开启 Ultrafast 导致旧模型清单地址失效的问题；保存成功后提供立即重启或稍后的提醒。
 
-- Read the existing model-discovery configuration before toggling Ultrafast. Prompt only when enabling needs the setting or disabling can remove it, with two choices: update configuration or only toggle. Configuration read/write failures show an error and leave the switch unchanged.
+- 切换 Ultrafast 前先读取模型发现配置，仅在开启时尚未配置为 true、关闭时配置存在的情况下询问；只提供同时修改配置、仅切换两个选项。配置读取或修改失败会显示原因并保留原开关状态。
 
 ## 0.4.6-fork
 
-- Add a separate Restart Codex action to the Codex connection card to reload core configuration after confirmation.
+- 在 Codex 连接卡片增加独立的“重启 Codex”操作，确认后完整重启并重新加载核心配置。
 
-- Fix custom-provider Ultrafast selections losing their tier before API submission. First enable `api_key_model_discovery = true` under `[features]` in your Codex `config.toml`; Panel leaves this setting unchanged. Restart Codex after changing the Ultrafast switch and keep Panel running.
+- 修复自定义 API 选择 Ultrafast 后，核心在发送前丢弃速度参数的问题；需先在 Codex 的 `config.toml` 中开启 `[features]` 下的 `api_key_model_discovery = true`，Panel 不修改此设置；更改 Ultrafast 开关后需重启 Codex，并保持 Panel 运行。
 
-- Keep the macOS interface responsive while quitting by cleaning up managed processes once in the background.
+- 退出时在后台单次清理托管进程，避免 macOS 界面等待清理而卡住。
 
-- Keep the Panel entry attached to an available sidebar when hidden or inactive sidebars coexist, preserving its existing position.
+- 多个隐藏或不可交互的侧栏并存时，将面板入口挂到可用侧栏，保留原有入口位置。
 
-- Reuse prepared custom-provider module mappings during injection retries before the composer loads. The exit, sidebar, and injection fixes include contributions by [@InTheManXG](https://github.com/InTheManXG) in [#28](https://github.com/shay-wong/codex-panel/pull/28).
+- 输入框延迟加载期间，注入重试复用已准备的自定义 API 模块映射。上述退出、侧栏与注入修复包含 [@InTheManXG](https://github.com/InTheManXG) 在 [#28](https://github.com/shay-wong/codex-panel/pull/28) 的贡献。
 
-- Added an off-by-default preference to show Ultrafast in the native speed menu for GPT-6 Astra and GPT-6.1 Sol on local custom API providers, independently of ChatGPT account eligibility.
+- 新增默认关闭的独立开关，仅为本地自定义 API 的 GPT-6 Astra、GPT-6.1 Sol 显示原生 Ultrafast 速度选项，不再受 ChatGPT 账号资格影响。
 
-- Fix false missing-Skill errors after successful native task prefill or submission, and preserve conversation linking when the draft is sent immediately.
+- 修复原生任务草稿预填或发送成功后误报缺少 Skill 的问题，并保留立即发送时的对话关联。
 
 ## 0.4.5-fork
 
-- Fix Panel immediately closing, flickering, or opening the native profile menu. Keep automatic name and avatar capture, restore icon alignment and inactive color, and preserve Back/Forward navigation.
+- 修复面板打开后立即关闭、闪烁或误弹账号菜单的问题；保留自动读取姓名与头像，并恢复图标对齐、未选中颜色及正常的前进/返回导航。
 
-- Preserve the current Codex conversation and draft across Panel service restarts and mount retries when the patch code is unchanged. Installing or updating the patch still reloads once.
+- 补丁代码未变时，Panel 服务重启和挂载重试保留 Codex 当前会话页面与草稿，避免不必要的刷新；首次安装或更新补丁仍重载一次。
 
-- Keep the main window connected while other windows retry mounting. Exclude unsupported detached chats, standalone Page documents, and hidden prewarmed windows, and show the actual connection or mounting failure.
+- 改善多窗口连接状态：主窗口心跳不受其他窗口挂载重试影响，排除不支持面板的分离聊天、独立 Page 文档及隐藏预热窗口，并明确提示实际连接或挂载失败原因。
 
-- Support the new navigation rail and Free sidebars without Plugins. Place Panel below the complete New chat row without covering Quick chat or inheriting pet avatars and notification dots. Sidebar, sending, and reconnection compatibility includes contributions by [@InTheManXG](https://github.com/InTheManXG) in [#27](https://github.com/shay-wong/codex-panel/pull/27).
+- 适配新版导航栏及无插件入口的 Free 侧边栏；面板在“新聊天”整行下方独立显示，不遮挡快速聊天，不继承宠物头像或通知蓝点。新版侧边栏、发送与重连兼容包含 [@InTheManXG](https://github.com/InTheManXG) 在 [#27](https://github.com/shay-wong/codex-panel/pull/27) 的贡献。
 
-- Rediscover connection ports after Codex updates. If startup arguments are lost, offer Restart Codex and connect with confirmation; deferring keeps the service running.
+- Codex 更新后自动重新发现连接端口；启动参数丢失时提示“重启 Codex 并连接”，经确认后恢复，选择稍后不会停止服务。
 
-- Restore custom-provider sending adaptation from existing module mappings and support the updated composer in desktop 26.928.20755 while retaining session-state, settings-loading, and other native send blockers.
+- 恢复已通过模块映射加载的自定义 API 发送适配，并支持桌面版 26.928.20755 的新输入框结构，保留会话状态、设置加载及其他原生发送限制。
 
-- Support the updated macOS CLI layout and Windows Store companion executable caching. Add 6.1 Sol, 6 Sol, and 6 Luna project model choices.
+- 适配新版 macOS CLI 目录与 Windows Store 配套程序缓存；项目模型新增 6.1 Sol、6 Sol 和 6 Luna。
 
-- Preserve native titlebar dragging, unify stacked notifications and Undo, hide redundant Todo comment actions, and pause automatic claiming when all pending tasks await permission.
+- 保留原生标题栏拖动，统一叠放通知和撤销操作，隐藏重复的待认领评论操作；所有待办均等待授权时暂停自动认领。
 
 ## 0.4.1-fork
 
-- Fixed custom-provider sending after updating to ChatGPT desktop 26.917.71314. The adapter now discovers and matches the composer by code structure, tolerates asset hash and minified symbol changes, and retains 26.917.51856 compatibility.
+- 修复更新到 ChatGPT 桌面版 26.917.71314 后自定义 API 无法发送的问题；改为自动发现模块并按代码结构识别，兼容文件哈希和压缩变量名变化，同时保留 26.917.51856 旧版适配。
 
-- Adopted the upstream native macOS update confirmation dialog, keeping Fork release and signature validation while bringing the confirmation window to the front; other platforms retain the existing Tauri dialog.
+- 吸收上游的 macOS 原生更新确认弹窗，在保留 Fork Release 和签名校验的同时将确认窗口置于前台；其他平台继续使用现有 Tauri 对话框。
 
 ## 0.0.4-fork
 
-- Moved the main Open Panel action from the sidebar into Runtime overview beside the service status and maintenance controls; its state-based labels remain available without sidebar wrapping.
+- 将“打开面板”主操作从侧边栏移到“运行概览”的状态和服务操作区域，状态文案保持按当前连接状态显示，避免在侧边栏窄区域换行。
 
-- Added an independent, default-off **移除账号额度不足时 API 发送限制** launcher switch (the first adapter installation reloads the interface once; later changes apply immediately without restarting Panel or refreshing Codex) for ChatGPT desktop 26.917.51856 so local Codex conversations using a custom model provider can submit despite exhausted ChatGPT account usage, while keeping the existing login and native submission checks.
+- 新增默认关闭的“移除账号额度不足时 API 发送限制”独立开关，首次安装适配时重载一次，之后开关即时生效，无需重启 Panel 服务或刷新 Codex；适配 ChatGPT 桌面版 26.917.51856，修复登录账号额度耗尽时错误禁用本地自定义模型服务发送入口的问题，保留现有登录与原生提交检查。
 
-- Fixed Jira conversation binding and planning initialization failing with `INTERNAL_ERROR` for large model catalogs; chat model discovery now reads paginated metadata without exporting model prompts.
+- 修复模型目录较大时 Jira 会话绑定、规划初始化报 `INTERNAL_ERROR` 的问题；聊天模型查询统一读取分页元数据，不再导出模型完整提示词。
 
-- Fixed the unresponsive retry button on the Panel loading error page. **Reload** now retries within the open Panel; a disconnected launcher prompts you to start or restart its service.
+- 修复面板加载错误页按钮点击无反应；“重新加载”会在当前面板内重试，启动器断开时提示先启动或重启服务。
 
-- Jira **Create and start** no longer blocks later **Plan with AI**; the follow-up planning conversation can save a Spec while preserving existing execution work.
+- Jira“创建并开始”后仍可继续“AI 规划”；后续规划会话可以保存 Spec，并保留已有执行成果。
 
-- Jira details now show formal Codex conversations created for their linked execution issues after **Create and start**.
+- 修复 Jira 详情不显示“创建并开始”生成的关联执行会话；正式 Codex 会话现在会出现在活动记录中。
 
-- Moved Jira **Plan with AI** into the same top detail action area used by ordinary tasks.
+- 将 Jira“AI 规划”移动到与普通任务一致的详情页顶部操作区。
 
-- Moved Jira repository linking into the same top action area, while keeping the Jira summary below.
+- 将 Jira“关联仓库”也移到顶部操作区，下面保留 Jira 状态和关联摘要。
 
-- Synced upstream task sorting, optional creation dates, parent-based project progress and ordinary-task child creation (Jira keeps its planning flow), external Agent session resume commands, attachment display and local file actions, Jira Cloud search pagination, and account avatar fixes.
+- 同步上游任务排序、可选创建日期、按父任务计算项目进度及普通任务创建子任务（Jira 保留原规划流程）、外部 Agent 会话恢复命令、附件显示及本机文件操作、Jira Cloud 搜索分页和账号头像修复。
 
-- Fixed workflow configuration reads and planning preparation failing with `INTERNAL_ERROR` when the model catalog is too large; workflow Skill resolution no longer queries models.
+- 修复模型目录过大时，读取工作流配置及准备规划出现 `INTERNAL_ERROR` 的问题；工作流 Skill 解析不再查询模型列表。
 
 ## 0.0.3-fork — 2026-09-17
 
-- Added menu diagnostics to help investigate macOS menus that fail to dismiss; this release does not yet fix that issue.
-- Identify exhausted-usage banners by their business type instead of localized titles, so wording and language changes no longer break hiding.
+- 增加菜单诊断日志，便于排查 macOS 菜单无法收起的问题；本版本尚未修复该问题。
+- 隐藏额度耗尽提示改为识别业务类型，不再依赖标题文案或语言。
 
-- Fixed launcher error notices placing the close button below the message; long messages now wrap with the close button on the right.
+- 修复启动器错误提示的关闭按钮落到文字下方的问题；长提示正常换行，关闭按钮保持在右侧。
 
 ## 0.0.2-fork — 2026-09-16
 
-- Local tasks with an existing conversation can open a new unsent conversation with task and handoff context, without waiting for the old conversation to respond.
+- 已绑定会话的本地任务也可主动打开新会话，预填任务与交接内容，保持未发送状态，不再等待旧会话响应。
 
-- Fixed a missing callback during the first Codex injection that could interrupt startup and hide the original error.
+- 修复首次注入 Codex 时缺少回调导致启动中断、掩盖原始错误的问题。
 
 ## 0.0.1-fork — 2026-09-15
 
-- macOS releases provide an ad-hoc signed universal DMG without requiring Apple notarization; first launch may require allowing the app in Privacy & Security. Update archives retain independent signature verification.
+- macOS 发布提供无需 Apple 公证的临时签名通用 DMG；首次打开可能需在“隐私与安全性”中允许，更新包仍使用独立签名验证。
 
-- Immediate Jira start identifies missing repositories without a Spec, asks unresolved questions inline, and queues separate persisted execution scopes for multiple repositories.
+- Jira 立即开始无需先写 Spec，可识别缺失仓库，在详情内询问未明确的问题，并为多个仓库保存不同执行范围后入队。
 
-- Jira planning can associate multiple repositories from requirement and repository evidence, preserve existing links, and record selection reasons; only ambiguous choices require clarification. Added read-only repository candidate discovery, including unregistered device workspaces.
+- Jira 规划可根据需求和仓库证据自动关联多个仓库，保留现有关联并记录选择理由，仅在有歧义时询问。新增只读仓库候选查询，包含尚未登记的设备工作区。
 
-- Start independent Fork versioning at `0.0.1-fork` with `vX.Y.Z-fork` release tags. Existing local `0.1.0` builds require a one-time manual installation.
-
-- Added Panel to native Codex Back/Forward history and replaced destination-specific close handlers with route-driven visibility.
-- Hide **Open in new conversation** for tasks with an existing bound or Jira planning conversation.
-
-- Same-conversation planning-to-execution instructions now require the agent to record `in_progress` before implementing and `in_review` after verification, preserving the planning binding without another Panel execution click.
-
-- Fixed task details showing an execution-start action during manual execution. In-progress tasks now reflect the board's conversation activity and open their existing conversation.
-
-- Fixed Continue planning incorrectly reporting that a bound conversation did not open when native navigation leaves the window URL unchanged.
-
-- Fixed planning and manual execution stopping at an empty composer when Codex includes hidden responsive labels in its local run-location control.
-
-- Ordinary tasks now support AI planning, persistent inline Specs, and approved decomposition into backlog sub-issues with dependencies. Planning and later authorized execution reuse the same conversation; Jira-specific repository and publication rules remain conditional.
-
-- Task entry now attaches only Manage Panel and reads workflow configuration when a relevant stage begins. Research tasks verify sources and findings without invoking implementation or code-review Skills; authorized code work continues to use the configured Skills and custom prompts.
-
-- Manual execution now prepares an unsent Codex draft, defaults to the current directory, and offers a new worktree option. Existing execution contexts are reused; only confirmed submission links the issue and starts execution. Automatic claiming still submits automatically. Run-location setup precedes prefill, and dispatch failures no longer claim that an unsent execution stopped.
-
-- Workflow configuration now opens as a page inside Preferences instead of a modal, keeping sidebar navigation available and returning to Preferences after saving. Page changes use a short fade-and-slide transition that respects reduced motion.
-
-- Added complete editable workflow templates alongside Skills, with automatic Skill instructions, per-stage reset, and visible fixed Panel rules for planning, execution, review, and handoff.
-
-- Deduplicate workflow Skill choices pointing to the same file, preferring namespaced IDs and retaining existing selections.
-
-- Fixed hidden exhausted-usage banners flashing when switching conversations by hiding them before deferred page refreshes.
-
-- Fixed workflow Skill searches containing a leading `$`.
-
-- Rebuilt the App's management interface with React and Radix Themes: fixed sidebar navigation, a dedicated About page for version updates, compact runtime status rows, grouped preference forms, and consistent light/dark controls shared with the workflow editor; native service and update actions are retained.
-
-- Added global **Workflow settings** in the Codex Panel App's Preferences, with an embedded editor for ordered planning, execution, review, and handoff Skills while the service is running. Empty or unavailable selections use native Codex Plan, default execution, the official Codex CLI reviewer, and built-in handoff instead of requiring personal Skills; existing conversations are preserved.
-
-- Separated runtime overview and grouped preferences in the launcher, and added a persistent display toggle to hide the Codex-and-Work exhausted-usage banner while connected without changing account limits.
-
-- Adopted signed in-app update downloads and user-confirmed installation/restart for fork releases, with a fork-owned build-time verification key and macOS update-package generation.
-
-- Merged upstream through `c346e8e` (`1.1.23-beta.1`): improved Jira configuration/sync ordering, AI permission and process handling, comment attachment retries, document editing, realtime subscriptions, board performance, and launcher lifecycle handling while preserving Fork integrations.
-- Added **6 Astra** (`gpt-6-astra`) to the project model picker with reasoning levels from `low` through `ultra`.
-
-- Fixed explicit Jira conversation binding when no planning record exists: rebinding the same conversation now initializes the plan so its Spec and tickets can be saved, while existing plans and their conversations remain unchanged.
-- Reuse one native execution conversation, branch, and worktree for sequential tickets from the same Jira requirement and repository; retain per-ticket progress and clear stale dispatch errors after a confirmed execution takeover.
-
-- Fixed native conversation activity showing idle while the board reports running; both now use the existing session progress feed, with unknown status when session data is unavailable.
-
-- Added a visible **Project Settings** view after **Project Docs**, repaired Project Key migration for historical local Issue prefixes, and allowed read-only task lookup by either Panel Issue ID or a unique linked Jira key.
-- Added `panelctl jira repositories set` so an explicitly requested Jira repository link can be saved from a Codex conversation before its Spec and tickets are published.
-- Fixed the Panel sidebar entry so it restores the last selected project, including **All projects**, while keeping an explicit `project` query parameter authoritative.
-- Fixed Jira issue-link activity so both current and historical unlink records open the corresponding Panel issue even when its repository is not loaded in the Jira view.
-- Added globally unique Project Keys for stable `KEY-N` Issue identifiers, plus an explicit atomic migration action for changing a local project's Key and matching Issue identifiers without breaking task or conversation links. Legacy projects retain their first valid prefix when possible, and colliding projects receive deterministic suffixes.
-- Fixed brief local Panel request failures so read-only requests retry after 150 and 350 milliseconds before showing a temporary service-unavailable message; canceled and mutating requests are never replayed.
-- Fixed native Codex actions during renderer startup so they wait briefly for the host bridge heartbeat instead of immediately reporting that the launcher is not running.
-- Fixed Jira planning after a renderer reload or interrupted binding by preserving the pending intent, recovering the unique Codex conversation that contains the exact Jira key, accepting legacy and current Skill payloads, and assigning the expected conversation title after binding.
-- Split blocked execution recovery by cause: input waits resume only after a reply, execution failures expose **Run again**, and Jira-paused work cannot be restarted through comments or manual execution. Native worktree selection now ignores hidden or covered controls and waits for the actual menu to open.
-- Merged upstream through `1.1.21`, including stable Codex user identity and avatar recovery, exact trusted public Hosts, all-project backlog migration, per-issue unread persistence, Dashboard attention state, localized Plugins detection, Issue description layout, property picker fixes, and description file-picker focus retention, while retaining Jira activity and formal conversations, stable Panel clipboard references, desktop behavior, and the persistent claim queue instead of remote Scheduled Task execution.
-- Fixed opening an issue from All projects so its detail keeps the All projects scope while using the issue's own labels and repository development context.
-- Fixed explicit Jira conversation binding so it preserves an existing planning conversation, and unified conversations created by execution, automatic claim, or manual binding in issue activity without a duplicate detail shortcut.
-- Fixed explicit conversation binding so a saved local Codex task resolves its own project and worktree identity instead of depending on whichever task most recently opened Panel.
-- Added `panelctl conversation bind ISSUE_ID` so a user can explicitly associate an independently created Codex conversation with a Panel Issue or Jira requirement without changing its status or remote Jira fields.
-- Fixed Jira planning drafts that already contained valid structured Skills being reported as missing `manage-panel`, which prevented the created Codex task from being linked back to Jira.
-- Changed Jira AI planning to preselect `grill-with-docs` instead of `grill-me`, so requirement clarification also maintains its planning documents.
-- Fixed `$manage-panel` so an exact Jira task ID supplied in any conversation resolves its linked Panel Issues before workspace-based context lookup, without granting Jira planning writes.
-- Fixed Jira planning conversations so a saved repository selects its Codex project before applying the repository workspace, and kept the repository-management dialog size stable while filtering.
-- Fixed Jira planning conversation setup when Codex returns a namespaced Skill mention and its resolved symlink target instead of Panel's catalog alias and link path.
-- Fixed slow Codex Skill mentions appearing just after Panel's composer timeout and leaving a partially prepared Jira planning conversation.
-- Fixed the packaged desktop service startup after the AI Skill catalog began using `js-yaml` by including that existing production dependency in every Tauri runtime bundle.
-- Added bounded project-summary recovery: failed Codex summaries retry after 5, 15, and 60 minutes, stop after the fourth failure, retain a manual retry action, and reset the sequence after success.
-- Made the desktop launcher prefer the stable local Panel port `47823` and fall back to a private random port when it is unavailable, while keeping Codex CDP on a separate random endpoint.
-- Added WSL `panelctl` discovery of the Windows Codex Panel launcher runtime, including Windows loopback transport through `curl.exe` and an explicit `CODEX_PANEL_WSL_RUNTIME_FILE` override.
-- Fixed the one-time Cloud migration so project README image metadata and bytes reach D1 and R2, task start dates and mention-created relation origins are retained, and incomplete v2 bundles require a fresh export instead of silently losing data.
-- Fixed Linux desktop status after Codex exits normally: the manager now clears stale embedded-panel visibility and reports that it is waiting for Codex while retaining the control signal needed to reopen it.
-- Fixed Windows launcher startup so the injector keeps the runtime descriptor used by `panelctl` without attempting to create a Unix control socket; open, status, and stop continue through the launcher's owned child pipe.
-- Added Bearer token authentication for Jira Data Center and Server personal access tokens while retaining Basic authentication for account passwords and Jira Cloud email/API-token connections.
-- Added explicit Jira requirement links to one or more repository projects and their execution issues, with compact details on both sides and Jira refreshes kept separate from local execution work. The searchable, scrollable repository picker includes every local Codex repository and registers missing Panel projects only when links are saved. Repository activity shows project names instead of internal IDs, while multi-repository summaries show the first repository plus `+N`. Execution issues return to the linked requirement inside Panel, while the requirement detail retains the external Jira action. Waiting Jira requirements with saved repositories can create and start one execution issue and formal native Codex task per repository; partial failures resume without duplicates. Complex requirements can instead open a formal native Codex planning task that defaults to **Approve selected actions** (`workspace-write`), is projectless with no linked repository, opens directly for one, and asks for a target project when several are linked. Panel fills its editable prompt and selected Skills without sending, keeps user Skills installed through direct symbolic links as structured references, then stores the approved Spec on Jira, publishes confirmed repository tickets as linked backlog issues with cross-repository dependencies, pauses unstarted issues when the plan becomes stale, and replans without canceling work that has already started. Formal Jira planning and execution tasks open through the native Codex route and stay out of the bottom-right embedded chat reserved for temporary questions.
-- Fixed Jira descriptions whose numbered items begin with `#` so they render as ordered lists instead of oversized headings while keeping ordinary Panel Issue Markdown unchanged.
-- Fixed inline code in read-only Markdown task lists so it stays in the text flow instead of wrapping one character per line in the checkbox column.
-- Allowed Jira AI planning before a repository is linked by supporting Panel-managed non-Git workspaces, and show the actual Codex startup diagnostic instead of only its exit code.
-- Added Jira lifecycle controls that release only dependency-frontier work when Jira enters in progress, confirm non-destructive pauses that attempt to interrupt active Codex turns on macOS and Windows when Jira returns to waiting or ends early, keep issues paused and report any interruption failures, preserve historical issues, conversations, and plans across failed reopen actions, serialize concurrent Jira mutations while reopen work is applied, and keep closed duplicate requirements visible until their links are kept or migrated to an accessible canonical Jira after confirmation.
-- Added an opt-in Jira automatic-completion setting. Panel completes a Jira requirement only after every linked issue is unarchived and done, checks Jira's remote update timestamp and live transitions before writing, confirms the final state, retries temporary failures, and offers accept-remote or explicit retry actions without rolling back local completion.
-- Added an opt-in Jira automatic-conversation-archive setting plus a manual Jira-detail action for the same completed state, while retaining local runs, messages, and Codex thread IDs and using new conversations for reopened work.
-- Replaced Scheduled Task execution with a Panel-persisted automatic claim queue for manual, resumed, Jira-authorized, and periodically scanned work. Project automation stores enable, pause, interval, model, and reasoning settings plus a global default project concurrency of 3 and optional 1-8 project overrides, without a cross-project total cap. Formal execution now uses Codex's native local-worktree flow so project environment setup runs, then records the confirmed thread, worktree, and branch; Jira-linked work uses the Jira key for task and branch context. Panel reports waiting and running capacity, retries transient failures, resumes conservatively after user input or service restart, retains worktrees through review, cleans only completed clean merged worktrees, and leaves user-created Codex tasks and Scheduled Tasks untouched.
-- Replaced the fork-specific Jira CLI, provider, and Scheduled Task workflow with upstream's local Jira REST connection: open assigned issues sync atomically after complete pagination, missing issues are rechecked without deleting unknown state, cached issues remain visible on sync failures, account changes require confirmation, synchronization health is visible in the Jira UI, and supported issue changes write directly back to Jira.
-- Updated the horizontal list to use the issue board's status, column, and card hierarchy, show Jira external keys when available, and keep the vertical list compact.
-- Merged upstream `1.1.6`, including the Jira REST integration, GFM and Mermaid rendering, labels, thread identity, attachment kinds, issue references, project READMEs, the all-project view, cross-project issue moves, the Tauri/Rust desktop foundation and Linux packages, the DeepSeek Harness integration, the new AI Composer with Agent, Skill, and command completion, searchable issue relations, and Windows AI/server startup fixes, while retaining the `Codex Panel` product identity and excluding automatic updater installation.
-- Standardized the fork on `Panel` naming across the product, `$manage-panel` Skill, `panelctl` CLI, environment variables, integration protocol, local data, and undeployed Cloudflare resources, with migrations for existing local state and managed links.
-- Replaced the former SwiftPM manager with a Tauri/Rust `~/Applications/Codex Panel.app` menu-bar app and restored its management surface with a compact combined status/control area, separate service, Codex, and embedded-panel states, and matching window/menu-bar controls: one state-aware start/stop action, separate restart, browser, log, data, launch preferences, update and Release actions, and expandable runtime details.
-- Fixed the desktop browser action so it accepts and preserves the launcher's private instance-token route, made async buttons keep loading visible for at least 300 ms before retaining clear success or failure feedback, and kept the management window responsive while service start, stop, or restart waits for process lifecycle work.
-- Packaged light and dark branded Codex Panel app icons that follow the macOS appearance in both the management window and Dock, plus the tray icon, official signed universal Node.js runtime, Panel runtime, `panelctl`, and both Panel Skills inside the Tauri bundle.
-- Added a managed Swift-to-Tauri upgrade path that stops the verified legacy injector and exact bundle-owned Panel server before atomic replacement, while preserving `~/Library/Application Support/Codex Panel/data`.
-- Hardened the desktop runtime by validating official ChatGPT and bundled Codex identifiers and Team ID, rejecting symlinks, sanitizing child-process injection variables case-insensitively on Windows, reserving the loopback Panel listener in Rust, and requiring private instance and startup tokens. Windows releases now require Authenticode signing and verify the signed launcher's certificate plus a signed-in runtime SHA-256 manifest before executing bundled Node or Panel code.
-- Fixed manager-driven cold starts by tracking the official app's real bundle executable, preserving CDP arguments and the supervised Panel service for the actual Codex process lifetime, and reporting unreadable bundle metadata instead of guessing an executable name.
-- Fixed macOS permission attribution during manager-driven cold starts by launching the official app through LaunchServices instead of making ChatGPT a direct injector child, so ChatGPT/Codex TCC prompts are not reported as Codex Panel requests.
-- Fixed manager-driven cold starts so the injector waits for Codex's initial `app://` document to finish loading before performing the one CSP-bypass reload required by the Panel iframe, avoiding both the official fallback error page and `ERR_BLOCKED_BY_CSP`.
-- Fixed Chromium 151 loopback iframe blocking by applying the narrow subframe-navigation compatibility switch, delegating local-network permissions to the managed Panel frame, and consuming the initial automatic open only once so a failed frame cannot repeatedly pull users away from conversations.
-- Fixed resident injector refreshes so they reload Codex after enabling the CSP bypass, reuse a healthy resident on repeated launcher clicks, and fully close retired local-service connections.
-- Fixed manager status and lifecycle handling so “connected” requires a live renderer heartbeat, “embedded” additionally requires the Panel page to be visible, pending opens remain queued until the injector confirms them, Windows open/status/stop commands use the owned child control pipe, existing Codex CDP ports are discovered without stopping other ports, Panel opens never detach the managed injector, stop or quit waits for owned child processes to exit, and a manager-launched ChatGPT/Codex remains running after the manager closes.
-- Fixed launcher relaunches so Node warnings cannot corrupt CDP discovery JSON, one-shot injector commands have a bounded timeout, asynchronous control replies keep their socket open until completion, and an explicit automatic-open request survives renderer reconciliation.
-- Fixed manager startup when a stale runtime descriptor points to a reused or zombie PID: the descriptor is discarded without signaling that process, while every signal to a verified managed injector still requires a fresh ownership check.
-- Preserved bounded 2/5/15-second integration recovery and user-only token-authenticated control while moving process ownership to the Tauri/Rust launcher.
-- Added persistent once-daily automatic and uncached manual Fork release checks that prefer the locally authenticated `gh` CLI with a bounded timeout, fall back to the anonymous GitHub API, cache temporary failures for only 5 minutes and rate limits until reset, and distinguish rate limits, network failures, no releases, current versions, and available updates. Only normalized `vX.Y.Z-fork.N` releases and exact trusted release-tag URLs are accepted; updates open the Release page, and no updater download or installation dependency is included.
-- Fixed normal OpenAI-signed ChatGPT updates so they remain compatible without reinstalling Panel, while unsigned changes, signing-identity changes, tampered Codex Panel bundles, runtime symlinks, and paths outside signed apps remain blocked.
-- Documented the intentional lifecycle tradeoff that closing Panel leaves the manager-launched ChatGPT and its unauthenticated local CDP running until ChatGPT itself exits.
-- Fixed standalone launcher startup so it waits for Codex's main renderer and ignores auxiliary avatar renderers instead of failing before Panel is embedded.
-- Fixed the Panel sidebar entry so it opens from Codex conversation pages as well as Plugins and Sites.
-- Fixed native navigation so Chat, Plugins, Settings, Sites, Pull Requests, Scheduled Tasks, Activity notifications, and other Codex destinations can be selected while Panel is active without making theme changes or unrelated refreshes close Panel.
-- Added issue linking and durable handoff summaries for embedded AI conversations, including cross-project-safe loading from the conversation's original project, `/handoff`, `/交接`, the global base-first `$handoff-panel --issue ISSUE-ID` wrapper that publishes the unchanged temporary document verbatim, activity-stream entries, handoff context in new native Codex tasks, and automatic native thread association after the first message.
-- Made the embedded AI chat movable, resizable, and maximizable on desktop, with its normal geometry and maximized state restored after closing or reloading while mobile remains full-screen.
-- Fixed local PNG, JPEG, GIF, and WebP images in embedded AI messages so they render through an event-bound loopback endpoint that verifies the stored Markdown reference and actual image format instead of exposing a general local-file URL.
-- Fixed “Open in conversation” so local and SSH projects both open localized, unsent issue drafts; slow Skill selection and multiline handoffs can no longer leave a `$manage-panel` mention without the issue identifier, title, and handoff instructions, and Panel claims and binds an SSH issue only after the user sends the draft.
-- Restricted Codex project, user, thread, workspace, native navigation, task creation, sidebar, and automation privileges to the launcher-managed Panel iframe origin; custom UI origins remain display-only.
-- Replaced browser-native issue property dropdowns with light- and dark-theme menus that match the Panel UI.
-- Added an explicit `npm run codex:install` command that builds a repository-independent user runtime, copies `manage-panel` and `handoff-panel` into `~/.agents/skills`, installs `panelctl` in `~/.local/bin`, snapshots existing local data into the fixed support directory, and generates the macOS launcher without making `npm ci` write user-level integrations.
+- 从 `0.0.1-fork` 开始使用独立的 Fork 版本，发布标签为 `vX.Y.Z-fork`。已有本地 `0.1.0` 版本需手动安装一次以切换版本线。
+- 将 Panel 纳入 Codex 原生返回/前进历史，以路由状态统一控制面板显示，替代针对各个目的地的关闭处理。
+- 任务已有绑定会话或 Jira 规划会话时，隐藏“在新对话中打开”。
+- 同一会话从规划进入执行时，要求 Agent 在实现前记录 `in_progress`，验证后记录 `in_review`，保留规划会话绑定，无需再次点击 Panel 执行按钮。
+- 修复手动执行期间任务详情仍显示开始执行操作的问题。处理中的任务现在跟随看板的会话活动状态，并打开已有会话。
+- 修复原生导航未改变窗口 URL 时，“继续规划”误报绑定会话未打开的问题。
+- 修复 Codex 本地运行位置控件包含隐藏的响应式标签时，规划和手动执行停留在空输入框的问题。
+- 普通任务支持 AI 规划、持久化内联 Spec，以及经确认后拆分为带依赖的 backlog 子任务。规划和后续获授权的执行复用同一会话；Jira 专属的仓库和发布规则仅在适用时生效。
+- 任务入口只附加 Manage Panel，在进入相关阶段时读取工作流配置。调研任务核实来源和结论，不调用实现或代码审核 Skill；获授权的代码工作继续使用配置的 Skill 和自定义提示词。
+- 手动执行改为准备未发送的 Codex 草稿，默认使用当前目录，也可选择新建 worktree。复用已有执行上下文，确认发送后才关联 Issue 并开始执行；自动认领仍自动发送。运行位置设置先于预填，派发失败不再误报尚未发送的执行已停止。
+- 工作流配置改为在偏好设置内打开独立页面，保留侧栏导航，保存后返回偏好设置。页面切换使用简短的淡入位移动画，并遵循减少动态效果设置。
+- 在 Skill 配置旁增加完整可编辑的工作流模板，支持自动生成 Skill 指令、逐阶段重置，并展示规划、执行、审核和交接的固定 Panel 规则。
+- 对指向同一文件的工作流 Skill 选项去重，优先使用带命名空间的 ID，并保留已有选择。
+- 在延迟页面刷新之前隐藏已耗尽额度提示，修复切换会话时提示条闪现的问题。
+- 修复以 `$` 开头的工作流 Skill 搜索。
+- 使用 React 和 Radix Themes 重建 App 管理界面：固定侧栏导航、集中版本更新的关于页、紧凑运行状态行、分组偏好表单，以及与工作流编辑器共用的明暗主题控件；保留原生服务和更新操作。
+- 在 Codex Panel App 偏好设置中增加全局“工作流设置”，服务运行时可内嵌编辑规划、执行、审核和交接 Skill 的顺序。选择为空或不可用时，分别使用 Codex 原生 Plan、默认执行、官方 Codex CLI 审核和内置交接，不要求安装个人 Skill，并保留已有会话。
+- 启动器分离运行概览和分组偏好，增加持久化显示开关，可在连接期间隐藏 Codex 与工作额度耗尽提示，不改变账户额度。
+- Fork 更新支持在 App 内下载并验签，经用户确认后安装和重启；使用 Fork 自有的构建时验证公钥，并提供 macOS 更新包生成工具。
+- 合入上游至 `c346e8e`（`1.1.23-beta.1`）：改进 Jira 配置和同步顺序、AI 权限与进程处理、评论附件重试、文档编辑、实时订阅、看板性能及启动器生命周期，同时保留 Fork 集成。
+- 项目模型选择器增加“6 Astra”（`gpt-6-astra`），支持从 `low` 到 `ultra` 的推理级别。
+- 修复显式绑定 Jira 会话但尚无规划记录的情况：重新绑定同一会话会初始化规划，使 Spec 和 tickets 可以保存；已有规划及其会话保持不变。
+- 同一 Jira 需求、同一仓库的顺序 tickets 复用原生执行会话、分支和 worktree；保留逐 ticket 进度，确认接管执行后清除过期派发错误。
+- 修复看板显示运行中、原生会话活动却显示空闲的问题。两者统一使用已有会话进度数据源；会话数据不可用时显示未知状态。
+- 在“项目文档”之后增加可见的“项目设置”，修复历史本地 Issue 前缀的 Project Key 迁移，并支持通过 Panel Issue ID 或唯一关联 Jira key 只读查询任务。
+- 增加 `panelctl jira repositories set`，允许在发布 Spec 和 tickets 前，从 Codex 会话保存用户明确要求的 Jira 仓库关联。
+- 修复 Panel 侧栏入口，重新打开时恢复上次选择的项目，包括“所有项目”；显式 `project` 查询参数仍优先。
+- 修复 Jira Issue 关联活动：无论当前还是历史解除关联记录，都可打开对应 Panel Issue，即使 Jira 视图尚未加载其仓库。
+- 增加全局唯一 Project Key，生成稳定的 `KEY-N` Issue 标识；提供显式原子迁移操作，同步修改本地项目 Key 和匹配的 Issue 标识，不破坏任务或会话链接。旧项目尽可能保留首个有效前缀，冲突项目使用确定性后缀。
+- 修复本地 Panel 短暂请求失败：只读请求在 150 和 350 毫秒后重试，再显示服务暂时不可用；取消请求和写入请求不重放。
+- 修复 renderer 启动期间的 Codex 原生操作，短暂等待宿主桥接心跳，而非立即误报启动器未运行。
+- 修复 renderer 重载或绑定中断后的 Jira 规划：保留待处理意图，恢复包含精确 Jira key 的唯一 Codex 会话，接受旧版和当前 Skill payload，并在绑定后设置预期会话标题。
+- 按原因区分执行阻塞恢复：等待输入只在回复后恢复，执行失败提供“再次运行”，Jira 暂停的工作不能通过评论或手动执行重启。原生 worktree 选择忽略隐藏或被遮挡的控件，并等待实际菜单打开。
+- 合入上游至 `1.1.21`，包括稳定的 Codex 用户身份与头像恢复、精确受信任公共 Host、所有项目 backlog 迁移、逐 Issue 未读持久化、仪表盘待关注状态、本地化插件识别、Issue 描述布局、属性选择器修复和描述文件选择器焦点保留；保留 Jira 活动与正式会话、稳定 Panel 剪贴板引用、桌面行为，以及替代远程定时任务执行的持久化认领队列。
+- 修复从“所有项目”打开 Issue 时的范围切换：详情保留“所有项目”范围，标签和仓库开发上下文使用 Issue 自身所属项目。
+- 修复显式 Jira 会话绑定，保留已有规划会话；将执行、自动认领和手动绑定产生的会话统一展示在 Issue 活动中，不再重复提供详情快捷入口。
+- 修复显式会话绑定：已保存的本地 Codex 任务解析自身项目和 worktree 身份，不再依赖最近打开 Panel 的任务。
+- 增加 `panelctl conversation bind ISSUE_ID`，允许用户显式关联独立创建的 Codex 会话与 Panel Issue 或 Jira 需求，不修改状态或远端 Jira 字段。
+- 修复 Jira 规划草稿已包含有效结构化 Skill，却被误报缺少 `manage-panel`，导致新建 Codex 任务无法关联回 Jira 的问题。
+- Jira AI 规划预选 Skill 从 `grill-me` 改为 `grill-with-docs`，需求澄清同时维护规划文档。
+- 修复 `$manage-panel`：在任意会话提供精确 Jira 任务 ID 时，先解析其关联 Panel Issue，再按工作区查找上下文；这不授予 Jira 规划写入权限。
+- 修复 Jira 规划会话，先选择已保存仓库对应的 Codex 项目，再应用仓库工作区；筛选时保持仓库管理弹窗尺寸稳定。
+- 修复 Codex 返回带命名空间的 Skill mention 和符号链接解析目标，而非 Panel catalog 别名与链接路径时的 Jira 规划会话设置。
+- 修复较慢的 Codex Skill mention 在 Panel 输入框超时后才出现，导致 Jira 规划会话只准备了一部分的问题。
+- AI Skill catalog 开始使用 `js-yaml` 后，将这一已有生产依赖加入所有 Tauri runtime bundle，修复打包桌面服务启动失败。
+- 增加有次数限制的项目总结恢复：Codex 总结失败后分别等待 5、15、60 分钟重试，第四次失败后停止；保留手动重试，成功后重置序列。
+- 桌面启动器优先使用稳定的本地 Panel 端口 `47823`，不可用时回退私有随机端口；Codex CDP 保持独立随机地址。
+- WSL `panelctl` 支持发现 Windows Codex Panel 启动器 runtime，通过 `curl.exe` 访问 Windows 回环地址，并支持显式 `CODEX_PANEL_WSL_RUNTIME_FILE` 覆盖。
+- 修复一次性 Cloud 迁移：项目 README 图片元数据和内容完整迁移到 D1、R2，保留任务开始日期和 mention 创建的关系来源；不完整的 v2 包要求重新导出，避免静默丢失数据。
+- 修复 Codex 正常退出后的 Linux 桌面状态：管理器清除过期内嵌面板可见状态，显示等待 Codex，并保留重新打开所需的控制信号。
+- 修复 Windows 启动器启动：injector 保留 `panelctl` 使用的 runtime descriptor，不尝试创建 Unix 控制 socket；打开、状态和停止继续使用启动器自有子进程管道。
+- 为 Jira Data Center 和 Server 个人访问令牌增加 Bearer 认证；保留账户密码以及 Jira Cloud 邮箱/API token 的 Basic 认证。
+- 增加 Jira 需求与一个或多个仓库项目及执行 Issue 的显式关联，双方提供紧凑详情，Jira 刷新与本地执行分离。可搜索、滚动的仓库选择器包含所有本地 Codex 仓库，仅在保存关联时登记缺失的 Panel 项目。仓库活动显示项目名称，多仓库摘要显示首个仓库和 `+N`。执行 Issue 可在 Panel 内返回关联需求，需求详情保留外部 Jira 操作。待认领 Jira 需求保存仓库后，可为每个仓库创建并开始一个执行 Issue 和正式原生 Codex 任务；部分失败可恢复且不重复创建。复杂需求可改为打开正式原生规划任务，默认“帮我批准”（`workspace-write`）：无仓库时不关联项目，单仓库直接打开，多仓库先选择目标项目。Panel 填入可编辑提示词及所选 Skill，但不发送；通过直接符号链接安装的用户 Skill 保持结构化引用。确认后的 Spec 保存在 Jira，确认发布的仓库 tickets 成为带跨仓库依赖的关联 backlog Issue；规划过期时暂停未开始 Issue，重新规划不取消已开始工作。正式 Jira 规划和执行通过原生 Codex 路由打开，不进入仅供临时问答的右下角内嵌聊天。
+- 修复以 `#` 开始编号项的 Jira 描述，使其显示为有序列表而非超大标题；普通 Panel Issue Markdown 保持不变。
+- 修复只读 Markdown 任务列表中的行内代码，保持正常文字流，不再挤入复选框列逐字换行。
+- 允许 Jira 在关联仓库前进行 AI 规划，支持 Panel 管理的非 Git 工作区，并展示实际 Codex 启动诊断，而非仅显示退出码。
+- 增加 Jira 生命周期控制：Jira 进入处理中时只释放依赖已满足的前沿工作；回到等待或提前结束时，经确认执行非破坏性暂停，并尝试中断 macOS、Windows 上的活动 Codex turn，保留 Issue 暂停状态并报告中断失败。重新打开失败时保留历史 Issue、会话与规划，应用重新打开工作时串行处理并发 Jira 写入；已关闭重复需求保持可见，直到经确认保留关联或迁移到可访问的正式 Jira 需求。
+- 增加默认关闭的 Jira 自动完成设置。所有关联 Issue 均未归档且已完成后才完成 Jira；写入前核对远端更新时间和实时 transition，确认最终状态，重试临时失败，并提供接受远端或显式重试操作，不回滚本地完成状态。
+- 增加默认关闭的 Jira 会话自动归档设置，以及针对同一完成条件的 Jira 详情手动操作；保留本地执行记录、消息和 Codex thread ID，重新打开的工作使用新会话。
+- 用 Panel 持久化自动认领队列替代定时任务执行，覆盖手动、恢复、Jira 授权和周期扫描工作。项目自动化保存启用、暂停、间隔、模型及推理设置，全局默认项目并行数为 3，可逐项目覆盖为 1–8，不设跨项目总上限。正式执行使用 Codex 原生本地 worktree 流程以运行项目环境设置，再记录已确认的会话、worktree 和分支；Jira 关联工作使用 Jira key 作为任务和分支上下文。Panel 展示等待与运行容量，重试临时失败，在用户输入或服务重启后谨慎恢复，审核期间保留 worktree，仅清理已完成、干净且合并的 worktree，不改动用户自建 Codex 任务和定时任务。
+- 用上游本地 Jira REST 连接替代 Fork 专属 Jira CLI、provider 和定时任务工作流：完整分页后原子同步分配给自己的未关闭 Issue，重新检查缺失 Issue 而不删除未知状态，同步失败保留缓存，账户变更需要确认，Jira UI 展示同步健康状态，支持的变更直接写回 Jira。
+- 横向列表采用 Issue 看板的状态、列和卡片层级，有 Jira external key 时优先展示；纵向列表保持紧凑。
+- 合入上游 `1.1.6`，包括 Jira REST 集成、GFM 和 Mermaid 渲染、标签、会话身份、附件类型、Issue 引用、项目 README、所有项目视图、跨项目移动、Tauri/Rust 桌面基础和 Linux 安装包、DeepSeek Harness 集成、带 Agent/Skill/命令补全的新 AI Composer、可搜索 Issue 关系，以及 Windows AI/服务启动修复；保留 `Codex Panel` 产品身份，当时未纳入自动更新安装。
+- 产品、`$manage-panel` Skill、`panelctl` CLI、环境变量、集成协议、本地数据及未部署 Cloudflare 资源统一使用 `Panel` 命名，并迁移已有本地状态和受管链接。
+- 使用 Tauri/Rust 的 `~/Applications/Codex Panel.app` 菜单栏应用替代原 SwiftPM 管理器，恢复紧凑的状态与控制组合区，分别展示服务、Codex 和内嵌面板状态；窗口与菜单栏保持一致，提供按状态切换的启动/停止、独立重启、浏览器、日志、数据、启动偏好、更新与 Release 操作，以及可展开的运行详情。
+- 修复桌面浏览器操作，接受并保留启动器私有实例 token 路由；异步按钮至少展示 300 毫秒 loading，再保留明确的成功或失败反馈；服务启动、停止、重启等待进程生命周期处理时，管理窗口仍可响应。
+- Tauri bundle 包含随 macOS 外观切换的明暗 Codex Panel 品牌图标，管理窗口和 Dock 一致；同时包含托盘图标、官方签名的通用 Node.js runtime、Panel runtime、`panelctl` 和两个 Panel Skill。
+- 增加受管 Swift 到 Tauri 升级路径：原子替换前停止已验证的旧 injector 和精确匹配的 bundle 自有 Panel 服务，保留 `~/Library/Application Support/Codex Panel/data`。
+- 加固桌面 runtime：验证官方 ChatGPT 和内置 Codex 标识及 Team ID，拒绝符号链接，在 Windows 上不区分大小写地清除子进程注入变量，由 Rust 预占回环 Panel listener，并要求私有实例和启动 token。Windows 发布要求 Authenticode 签名，执行内置 Node 或 Panel 代码前验证 launcher 证书和嵌入签名程序的 runtime SHA-256 清单。
+- 修复管理器冷启动：跟踪官方 App 的真实 bundle 可执行文件，在实际 Codex 进程存活期间保留 CDP 参数和受管 Panel 服务，bundle 元数据不可读时报告错误，不猜测可执行文件名。
+- 修复管理器冷启动时的 macOS 权限归属：通过 LaunchServices 启动官方 App，不再让 ChatGPT 成为 injector 直接子进程，避免将 ChatGPT/Codex 的 TCC 权限请求显示为 Codex Panel 请求。
+- 修复管理器冷启动：等待 Codex 初始 `app://` 文档加载完成后，再执行 Panel iframe 所需的单次 CSP bypass 重载，避免官方回退错误页和 `ERR_BLOCKED_BY_CSP`。
+- 修复 Chromium 151 回环 iframe 阻止问题：使用仅针对子框架导航的兼容开关，为受管 Panel frame 委派本地网络权限，初始自动打开只消费一次，避免 frame 失败后反复将用户拉离会话。
+- 修复常驻 injector 刷新：启用 CSP bypass 后重载 Codex，重复点击启动器时复用健康常驻实例，并完整关闭退役本地服务连接。
+- 修复管理器状态和生命周期：“已连接”要求实时 renderer 心跳，“已内嵌”还要求 Panel 页面可见；待打开请求保留排队直到 injector 确认。Windows 打开/状态/停止使用自有子进程控制管道，发现已有 Codex CDP 端口时不停止其他端口，打开 Panel 不脱离受管 injector，停止或退出等待自有子进程结束，管理器启动的 ChatGPT/Codex 在管理器关闭后继续运行。
+- 修复启动器重新打开：Node 警告不再破坏 CDP 发现 JSON，单次 injector 命令有超时限制，异步控制响应完成前保持 socket 打开，显式自动打开请求在 renderer 状态协调后仍保留。
+- 修复过期 runtime descriptor 指向已复用或僵尸 PID 时的管理器启动：丢弃 descriptor，不向该进程发送信号；每次向受管 injector 发信号仍需重新验证所有权。
+- 进程所有权迁移到 Tauri/Rust 启动器时，保留 2/5/15 秒的有限集成恢复，以及仅用户可用、经 token 认证的控制。
+- 增加持久化每日一次自动和不使用缓存的手动 Fork 发布检查：优先使用有超时限制的本机已认证 `gh` CLI，回退匿名 GitHub API；临时失败只缓存 5 分钟，限流缓存至重置时间，分别展示限流、网络错误、暂无发布、当前版本和可用更新。当时仅接受规范化 `vX.Y.Z-fork.N` 发布和精确受信任的 release-tag URL；更新只打开 Release 页面，不包含更新器下载或安装依赖。
+- 修复正常 OpenAI 签名 ChatGPT 更新后的兼容性，无需重装 Panel；仍阻止未签名变更、签名身份变化、被篡改的 Codex Panel bundle、runtime 符号链接和签名 App 外部路径。
+- 记录生命周期取舍：关闭 Panel 后，管理器启动的 ChatGPT 及其未认证本地 CDP 继续运行，直到 ChatGPT 自身退出。
+- 修复独立启动器启动：等待 Codex 主 renderer，忽略辅助头像 renderer，避免在 Panel 内嵌前失败。
+- 修复 Panel 侧栏入口，可从 Codex 会话页以及 Plugins、Sites 页面打开。
+- 修复原生导航：Panel 激活时可选择对话、插件、设置、站点、Pull Requests、定时任务、活动通知等 Codex 目的地，同时主题切换和无关刷新不会关闭 Panel。
+- 为内嵌 AI 会话增加 Issue 关联和持久化交接摘要，包括从会话原项目跨项目安全加载、`/handoff`、`/交接`、全局基础优先的 `$handoff-panel --issue ISSUE-ID` 包装器原样发布临时文档、活动流条目、新原生 Codex 任务的交接上下文，以及首次发送后的原生会话自动关联。
+- 桌面内嵌 AI 聊天支持移动、调整大小和最大化，关闭或重载后恢复普通窗口位置、尺寸与最大化状态；移动端仍为全屏。
+- 修复内嵌 AI 消息中的本地 PNG、JPEG、GIF 和 WebP 图片：通过绑定消息事件的回环端点渲染，验证已保存 Markdown 引用和实际图片格式，不暴露通用本地文件 URL。
+- 修复“在对话中打开”：本地和 SSH 项目都打开本地化、未发送的 Issue 草稿；较慢 Skill 选择和多行交接不再导致只有 `$manage-panel` mention 而缺少 Issue 标识、标题与交接说明；仅在用户发送草稿后认领和绑定 SSH Issue。
+- Codex 项目、用户、会话、工作区、原生导航、任务创建、侧栏和自动化权限仅授予启动器管理的 Panel iframe origin；自定义 UI origin 仅可展示。
+- 用符合 Panel 明暗主题的菜单替代浏览器原生 Issue 属性下拉框。
+- 增加显式 `npm run codex:install` 命令：构建不依赖仓库目录的用户 runtime，将 `manage-panel`、`handoff-panel` 复制到 `~/.agents/skills`，将 `panelctl` 安装到 `~/.local/bin`，把已有本地数据快照保存到固定支持目录，并生成 macOS 启动器；`npm ci` 不写入用户级集成。

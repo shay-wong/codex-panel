@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import ReactMarkdown from "react-markdown";
-import { AlertDialog, Badge, Box, Button, Callout, Dialog, Flex, Heading, IconButton, Progress, Select, Separator, Switch, Tabs, Text, TextField, Tooltip } from "@radix-ui/themes";
+import { AlertDialog, Badge, Box, Button, Callout, Dialog, Flex, Heading, IconButton, Select, Separator, Switch, Tabs, Text, TextField, Tooltip } from "@radix-ui/themes";
 import { LinearIcon } from "../../web/src/components/LinearIcon";
 import { ModelContextSettings } from "./ModelContextSettings";
 import { PetAnimationSettings } from "./PetAnimationSettings";
+import { NativeAdapterGraph } from "./NativeAdapterGraph";
+import { GitHubLogin } from "./GitHubLogin";
 
 export type LauncherSnapshot = {
   phase: string;
@@ -32,7 +34,8 @@ export type LauncherSnapshot = {
   codexUpdateVersions?: { version: string; build: string; verified: boolean }[];
   appPath: string | null;
 };
-export type LauncherPreferences = { defaultProjectlessChat: boolean; sharedSessionBackend: boolean; autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean; petSounds: boolean };
+export type NativeSettingsMode = "system" | "dialog" | "page";
+export type LauncherPreferences = { defaultProjectlessChat: boolean; sharedSessionBackend: boolean; autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean; petSounds: boolean; nativeSettingsMode: NativeSettingsMode };
 export type LauncherState = {
   snapshot: LauncherSnapshot;
   preferences: LauncherPreferences;
@@ -262,6 +265,16 @@ export function App() {
     } catch (cause) { setError(String(cause)); }
   }
 
+  async function saveNativeSettingsMode(mode: NativeSettingsMode) {
+    setError("");
+    setSavingPreference(true);
+    try {
+      const next = await window.__TAURI__.core.invoke<LauncherPreferences>("set_native_settings_mode", { mode });
+      setState(current => current && ({ ...current, preferences: next }));
+    } catch (cause) { setError(String(cause)); }
+    finally { setSavingPreference(false); }
+  }
+
   async function saveUsageAnimationSpeeds() {
     const minimum = Number(usageMinimum);
     const maximum = Number(usageMaximum);
@@ -322,12 +335,6 @@ export function App() {
   }
 
   const threadTabsLabels: Record<string, string> = { waiting: "等待连接", loading: "加载中", prepared: "已准备，等待页面加载", ready: "已加载", failed: "加载失败" };
-  const nativeAdaptersInProgress = !["error", "restart_required", "stopped"].includes(snapshot.phase)
-    && ["reading", "adapting", "prepared", "applying"].includes(snapshot.nativeAdaptersPhase);
-  const adapterStageLabel = snapshot.nativeAdaptersPhase === "reading" ? "读取资源" : "适配中";
-  const adapterFeatureLabels: Record<string, string> = { quota: "API 发送限制", ultrafast: "Ultrafast", dot: "Dot 入口", tabs: "会话菜单", queue: "排队消息", pets: "宠物", projectlessChat: "无项目聊天", nativeUpdate: "Codex 更新", nativeServices: "原生服务" };
-  const activeAdapterModules = snapshot.nativeAdaptersFeatures?.filter(feature => feature.phase === "loading")
-    .map(feature => `${adapterFeatureLabels[feature.feature] || feature.feature} · ${feature.message}`).join("；");
 
   const componentStates = [
     { id: "panel", label: "Panel 服务", text: snapshot.phase === "error" ? "启动异常" : hasProcess ? `运行中 · PID ${snapshot.childPid}` : "未启动", tone: snapshot.phase === "error" ? "error" : hasProcess ? "running" : "stopped" },
@@ -374,7 +381,7 @@ export function App() {
       </Callout.Root>}
           <Tabs.Content value="overview" id="overviewView">
             <section className="status-panel">
-              <Flex align="center" justify="between" gap="4">
+              <Flex className="status-panel-content" align="center" justify="between" gap="4">
                 <Box className="status-panel-summary">
                   <Flex align="center" gap="3">
                     <div className={`status-symbol ${snapshot.phase}`}><LinearIcon name={snapshot.phase === "error" ? "alert" : ready ? "check" : "terminal"} /></div>
@@ -385,12 +392,13 @@ export function App() {
                   </Flex>
                   <Text as="p" id="message" size="2" color="gray" mt="2" aria-live="polite">{snapshot.message}</Text>
                 </Box>
-                {nativeAdaptersInProgress && <Box id="nativeAdaptersComponent" className="native-adapters-progress" role="status" aria-live="polite">
-                  <Text as="p" size="1" color="gray" mb="2">{snapshot.nativeAdaptersProgress == null ? adapterStageLabel : `${adapterStageLabel} · 阶段进度 ${Math.round(snapshot.nativeAdaptersProgress)}%`}</Text>
-                  <Progress value={snapshot.nativeAdaptersProgress ?? null} size="2" aria-label="Codex 当前阶段适配进度" />
-                  <Text as="p" id="nativeAdaptersMessage" size="1" color="gray" mt="2" title={snapshot.nativeAdaptersMessage}>{snapshot.nativeAdaptersMessage.replace(" · ", "\n")}</Text>
-                  {activeAdapterModules && <Text as="p" size="1" color="gray" mt="1">{activeAdapterModules}</Text>}
-                </Box>}
+                <NativeAdapterGraph
+                  enabled={!["error", "restart_required", "stopped"].includes(snapshot.phase)}
+                  phase={snapshot.nativeAdaptersPhase}
+                  message={snapshot.nativeAdaptersMessage}
+                  progress={snapshot.nativeAdaptersProgress}
+                  features={snapshot.nativeAdaptersFeatures}
+                />
               </Flex>
             </section>
             <section className="overview-section" aria-labelledby="connectionStatusTitle">
@@ -493,6 +501,14 @@ export function App() {
                     <Separator size="4" />
                     <Setting id="followSystemAppearance" title="跟随系统外观" detail="随系统在浅色与深色之间切换" checked={followSystemAppearance} onChange={enabled => { setFollowSystemAppearance(enabled); window.localStorage.setItem("codex-panel.follow-system-appearance", String(enabled)); window.dispatchEvent(new CustomEvent("codex-panel-appearance-preference", { detail: enabled })); }} />
                     <Separator size="4" />
+                    <Flex className="preference-row" align="center" justify="between" gap="4">
+                      <Box><Text as="div" size="2" weight="medium">Codex 设置界面</Text><Text as="p" size="1" color="gray" mt="1" id="nativeSettingsModeDetail">选择 Codex 设置的打开方式；重新打开设置后生效。</Text></Box>
+                      <Select.Root value={preferences?.nativeSettingsMode ?? "system"} disabled={!state || savingPreference} onValueChange={value => void saveNativeSettingsMode(value as NativeSettingsMode)}>
+                        <Select.Trigger id="nativeSettingsMode" aria-label="Codex 设置界面" aria-describedby="nativeSettingsModeDetail" />
+                        <Select.Content><Select.Item value="system">跟随 Codex</Select.Item><Select.Item value="dialog">弹窗</Select.Item><Select.Item value="page">整页</Select.Item></Select.Content>
+                      </Select.Root>
+                    </Flex>
+                    <Separator size="4" />
                   </div>
                 </Tabs.Content>
                 <Tabs.Content value="chat">
@@ -584,6 +600,7 @@ export function App() {
               {snapshot.updateReady && <Button id="installUpdate" highContrast {...actionProps("install_available_update")}>安装并重启</Button>}
               {snapshot.updateAvailable && <Button id="openRelease" variant="soft" {...actionProps("open_available_release")}>查看发布说明</Button>}
             </Flex>
+            <GitHubLogin />
           </Tabs.Content>
     </main>
     </Tabs.Root>

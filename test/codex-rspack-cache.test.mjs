@@ -14,7 +14,7 @@ const run = promisify(execFile);
 const loaderUrl = new URL('../scripts/codex-rspack.mjs', import.meta.url).href;
 const native = 'function(module){module.exports="native";}';
 const entry = 'const table={};function load(id){return table[id];}load.m=table;export{load as __webpack_require__};';
-const allFeatures = ['quota', 'ultrafast', 'dot', 'tabs', 'queue', 'pets', 'projectlessChat'];
+const allFeatures = ['quota', 'ultrafast', 'dot', 'tabs', 'queue', 'pets', 'projectlessChat', 'repositoryBranchPrefix', 'settingsPresentation'];
 const allJobs = ['nativeUpdate', 'nativeServices', ...allFeatures];
 const revisions = { catalog: 'catalog-one', compose: 'compose-one', features: Object.fromEntries(allJobs.map(feature => [feature, 'one'])) };
 

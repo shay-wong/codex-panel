@@ -9,6 +9,8 @@ mod macos_exit;
 mod update_dialog;
 mod restart_reminder;
 mod shared_cli;
+mod github_auth;
+mod github_credentials;
 #[cfg(target_os = "macos")]
 mod codex_update;
 
@@ -241,6 +243,15 @@ enum UsageAnimationMode {
     Morph,
 }
 
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum NativeSettingsMode {
+    #[default]
+    System,
+    Dialog,
+    Page,
+}
+
 #[derive(Clone, Copy, Deserialize, Serialize)]
 struct LauncherWindowSize {
     width: f64,
@@ -287,6 +298,8 @@ struct LauncherPreferences {
     #[serde(default)]
     default_projectless_chat: bool,
     #[serde(default)]
+    native_settings_mode: NativeSettingsMode,
+    #[serde(default)]
     window_size: Option<LauncherWindowSize>,
 }
 
@@ -319,6 +332,7 @@ impl Default for LauncherPreferences {
             disable_codex_auto_update: false,
             shared_session_backend: false,
             default_projectless_chat: false,
+            native_settings_mode: NativeSettingsMode::System,
             pet_sounds: true,
             window_size: None,
         }
@@ -446,9 +460,9 @@ impl ReleaseCheckFailure {
                     .map(|reset| reset.saturating_sub(now).div_ceil(60))
                     .filter(|minutes| *minutes > 0);
                 retry_minutes.map_or_else(
-                    || "GitHub 匿名 API 请求额度已用完，请稍后重试。".into(),
+                    || "GitHub API 请求额度已用完，请稍后重试。".into(),
                     |minutes| {
-                        format!("GitHub 匿名 API 请求额度已用完，请在约 {minutes} 分钟后重试。")
+                        format!("GitHub API 请求额度已用完，请在约 {minutes} 分钟后重试。")
                     },
                 )
             }
@@ -522,6 +536,8 @@ struct LauncherState {
     update_flow_in_progress: AtomicBool,
     update_installing: AtomicBool,
     prepared_update: Mutex<Option<(Update, Vec<u8>)>>,
+    github_auth: github_auth::GitHubAuth,
+    github_update_generation: Mutex<u64>,
     generation: AtomicU64,
     lifecycle: Mutex<()>,
     preferences: Mutex<LauncherPreferences>,
@@ -590,6 +606,8 @@ impl LauncherState {
             update_flow_in_progress: AtomicBool::new(false),
             update_installing: AtomicBool::new(false),
             prepared_update: Mutex::new(None),
+            github_auth: github_auth::GitHubAuth::new(data_directory.clone()),
+            github_update_generation: Mutex::new(0),
             generation: AtomicU64::new(0),
             lifecycle: Mutex::new(()),
             preferences: Mutex::new(preferences),
@@ -939,6 +957,16 @@ fn cached_release_check(
     Some(cache.result)
 }
 
+fn release_check_for_request(
+    path: &Path,
+    now: u64,
+    current_version: &str,
+    use_cache: bool,
+) -> Option<Result<ReleaseCheckResult, ReleaseCheckFailure>> {
+    cached_release_check(path, now, current_version)
+        .filter(|result| use_cache || matches!(result, Err(ReleaseCheckFailure::RateLimited { .. })))
+}
+
 fn write_release_check_cache(
     path: &Path,
     current_version: &str,
@@ -956,24 +984,35 @@ fn write_release_check_cache(
 
 async fn check_fork_release(
     current_version: &str,
+    access_token: Option<&str>,
 ) -> Result<ReleaseCheckResult, ReleaseCheckFailure> {
-    if let Ok(Some(releases)) = tauri::async_runtime::spawn_blocking(releases_from_gh).await {
-        return release_check_result(current_version, releases)
-            .map_err(ReleaseCheckFailure::Message);
+    if access_token.is_none() {
+        if let Ok(Some(releases)) = tauri::async_runtime::spawn_blocking(releases_from_gh).await {
+            return release_check_result(current_version, releases)
+                .map_err(ReleaseCheckFailure::Message);
+        }
     }
-    let response = reqwest::Client::builder()
+    let mut request = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
         .user_agent(format!("codex-panel/{current_version}"))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| ReleaseCheckFailure::Message(error.to_string()))?
         .get(RELEASES_ENDPOINT)
         .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("X-GitHub-Api-Version", "2022-11-28");
+    if let Some(token) = access_token {
+        request = request.bearer_auth(token);
+    }
+    let response = request
         .send()
         .await
         .map_err(|error| github_network_error_message(&error))?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(ReleaseCheckResult::None);
+    }
+    if access_token.is_some() && response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(ReleaseCheckFailure::Message("GitHub 登录已失效，请退出后重新登录。".into()));
     }
     if !response.status().is_success() {
         let now = SystemTime::now()
@@ -3519,6 +3558,14 @@ fn set_usage_animation_mode(
 }
 
 #[tauri::command]
+fn set_native_settings_mode(
+    state: State<'_, Arc<LauncherState>>,
+    mode: NativeSettingsMode,
+) -> Result<LauncherPreferences, String> {
+    update_preferences(&state, |preferences| preferences.native_settings_mode = mode)
+}
+
+#[tauri::command]
 async fn read_model_context_settings(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
@@ -3594,6 +3641,57 @@ async fn check_for_updates(
 ) -> Result<(), String> {
     let state = Arc::clone(state.inner());
     offer_update(&app, &state, false, false).await
+}
+
+#[tauri::command]
+async fn github_auth_status(state: State<'_, Arc<LauncherState>>) -> Result<github_auth::AuthStatus, String> {
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || state.github_auth.status())
+        .await.map_err(|_| "无法读取 GitHub 登录状态。".to_string())?
+}
+
+#[tauri::command]
+async fn github_auth_start(state: State<'_, Arc<LauncherState>>) -> Result<github_auth::DeviceLogin, String> {
+    state.github_auth.start().await
+}
+
+#[tauri::command]
+async fn github_auth_poll(state: State<'_, Arc<LauncherState>>) -> Result<github_auth::LoginResult, String> {
+    let result = state.github_auth.poll().await?;
+    if result.status == "connected" {
+        clear_release_check_cache(&state)?;
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn github_auth_cancel(state: State<'_, Arc<LauncherState>>) {
+    state.github_auth.cancel();
+}
+
+#[tauri::command]
+fn github_auth_open() -> Result<(), String> {
+    open_with_system("https://github.com/login/device")
+}
+
+#[tauri::command]
+async fn github_auth_logout(state: State<'_, Arc<LauncherState>>) -> Result<github_auth::AuthStatus, String> {
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        state.github_auth.logout()?;
+        clear_release_check_cache(&state)?;
+        Ok(github_auth::AuthStatus { login: None })
+    }).await.map_err(|_| "无法退出 GitHub 登录。".to_string())?
+}
+
+fn clear_release_check_cache(state: &LauncherState) -> Result<(), String> {
+    let mut generation = state.github_update_generation.lock().unwrap();
+    *generation = generation.wrapping_add(1);
+    match fs::remove_file(state.data_directory.join("update-check.json")) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err("GitHub 登录状态已改变，但未能清除旧更新缓存，请手动检查更新。".into()),
+    }
 }
 
 #[tauri::command]
@@ -3805,9 +3903,10 @@ async fn offer_update(
         .as_secs();
     let cache_path = state.data_directory.join("update-check.json");
     let version = state.snapshot.lock().unwrap().version.clone();
-    let cached = use_cache
-        .then(|| cached_release_check(&cache_path, now, &version))
-        .flatten();
+    let (github_generation, cached) = {
+        let generation = state.github_update_generation.lock().unwrap();
+        (*generation, release_check_for_request(&cache_path, now, &version, use_cache))
+    };
     if cached.is_none() {
         update_snapshot(app, state, |snapshot| {
             snapshot.update_message = "正在检查更新…".into();
@@ -3821,11 +3920,19 @@ async fn offer_update(
     let check_result = match cached {
         Some(result) => result,
         None => {
-            let result = check_fork_release(&version).await;
-            if let Err(error) = write_release_check_cache(&cache_path, &version, now, &result) {
-                append_log(state, &format!("Update cache write failed: {error}"));
+            let result = match state.github_auth.access_token().await {
+                Ok(token) => check_fork_release(&version, token.as_deref()).await,
+                Err(error) => Err(ReleaseCheckFailure::Message(error)),
+            };
+            let generation = state.github_update_generation.lock().unwrap();
+            if *generation != github_generation {
+                Err(ReleaseCheckFailure::Message("GitHub 登录状态已改变，请重新检查更新。".into()))
+            } else {
+                if let Err(error) = write_release_check_cache(&cache_path, &version, now, &result) {
+                    append_log(state, &format!("Update cache write failed: {error}"));
+                }
+                result
             }
-            result
         }
     };
     let result = match check_result {
@@ -3950,8 +4057,15 @@ fn main() {
             copy_shared_cli_command,
             set_usage_animation_speeds,
             set_usage_animation_mode,
+            set_native_settings_mode,
             set_autostart,
             check_for_updates,
+            github_auth_status,
+            github_auth_start,
+            github_auth_poll,
+            github_auth_cancel,
+            github_auth_open,
+            github_auth_logout,
             open_available_release,
             install_available_update,
         ])
@@ -4524,6 +4638,7 @@ mod tests {
         assert!(!preferences.disable_codex_auto_update);
         assert!(!preferences.shared_session_backend);
         assert!(!preferences.default_projectless_chat);
+        assert!(matches!(preferences.native_settings_mode, super::NativeSettingsMode::System));
         assert!(preferences.pet_sounds);
         let logical = tauri::PhysicalSize::new(1920, 1440).to_logical::<f64>(2.0);
         preferences.window_size = Some(super::LauncherWindowSize { width: logical.width, height: logical.height });
@@ -4531,6 +4646,7 @@ mod tests {
         preferences.disable_codex_auto_update = true;
         preferences.shared_session_backend = true;
         preferences.default_projectless_chat = true;
+        preferences.native_settings_mode = super::NativeSettingsMode::Dialog;
         preferences.pet_sounds = false;
         super::write_preferences(&path, preferences).unwrap();
         let restored = super::read_preferences(&path).unwrap();
@@ -4541,6 +4657,7 @@ mod tests {
         assert!(restored.disable_codex_auto_update);
         assert!(restored.shared_session_backend);
         assert!(restored.default_projectless_chat);
+        assert!(matches!(restored.native_settings_mode, super::NativeSettingsMode::Dialog));
         assert!(!restored.pet_sounds);
         assert!(!super::LauncherWindowSize { width: 0.0, height: 0.0 }.valid());
         assert!(!super::LauncherWindowSize { width: f64::NAN, height: 720.0 }.valid());
@@ -4603,12 +4720,12 @@ mod tests {
         assert_eq!(
             github_api_error_message(reqwest::StatusCode::FORBIDDEN, &headers, 1000)
                 .message(1000, false),
-            "GitHub 匿名 API 请求额度已用完，请在约 2 分钟后重试。"
+            "GitHub API 请求额度已用完，请在约 2 分钟后重试。"
         );
         assert_eq!(
             github_api_error_message(reqwest::StatusCode::FORBIDDEN, &headers, 1000)
                 .message(1200, true),
-            "上次自动检查失败，可手动重试：GitHub 匿名 API 请求额度已用完，请稍后重试。"
+            "上次自动检查失败，可手动重试：GitHub API 请求额度已用完，请稍后重试。"
         );
     }
 
@@ -4874,6 +4991,7 @@ mod tests {
         write_release_check_cache(&path, "0.4.13-fork", 1000, &Ok(ReleaseCheckResult::Current)).unwrap();
         assert!(cached_release_check(&path, 1000 + 23 * 60 * 60, "0.4.13-fork").is_some());
         assert!(cached_release_check(&path, 1000 + 23 * 60 * 60, "0.4.14-fork").is_none());
+        assert!(super::release_check_for_request(&path, 1001, "0.4.13-fork", false).is_none());
 
         write_release_check_cache(
             &path,
@@ -4896,6 +5014,9 @@ mod tests {
         .unwrap();
         assert!(cached_release_check(&path, 1119, "0.4.13-fork").is_some());
         assert!(cached_release_check(&path, 1120, "0.4.13-fork").is_none());
+        assert!(matches!(super::release_check_for_request(&path, 1119, "0.4.13-fork", false),
+            Some(Err(ReleaseCheckFailure::RateLimited { .. }))));
+        assert!(super::release_check_for_request(&path, 1120, "0.4.13-fork", false).is_none());
         let _ = fs::remove_file(path);
     }
 }

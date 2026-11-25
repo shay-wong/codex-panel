@@ -403,6 +403,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "reqwest",
+ "security-framework",
  "serde",
  "serde_json",
  "sha2",

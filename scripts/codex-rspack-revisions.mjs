@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { propertyName, sourceAst } from './codex-source-ast.mjs';
 
 const require = createRequire(import.meta.url);
-const featureNames = ['quota', 'ultrafast', 'dot', 'tabs', 'queue', 'pets', 'projectlessChat'];
+const featureNames = ['quota', 'ultrafast', 'dot', 'tabs', 'queue', 'pets', 'projectlessChat', 'repositoryBranchPrefix', 'settingsPresentation'];
 
 export async function getCodexRspackRevisions({ scriptsDirectory = fileURLToPath(new URL('.', import.meta.url)) } = {}) {
   const modules = new Map(), packages = new Map();

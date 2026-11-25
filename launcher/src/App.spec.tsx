@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { Theme } from "@radix-ui/themes";
 import { afterEach, expect, it, vi } from "vitest";
-import App, { type LauncherPreferences, type LauncherSnapshot, type LauncherState, type TauriBridge } from "./App";
+import App, { type LauncherPreferences, type LauncherSnapshot, type LauncherState, type NativeSettingsMode, type TauriBridge } from "./App";
 
 afterEach(() => {
   cleanup();
@@ -9,16 +9,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("changes launcher preferences only through their switches", async () => {
+it("changes launcher preferences through their controls", async () => {
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
-  let preferences = { autoConnectCodex: false, customProviderQuotaFix: false };
-  const invoke = vi.fn(async (command: string, args?: { key: string; enabled: boolean }) => {
+  let preferences = { autoConnectCodex: false, customProviderQuotaFix: false, nativeSettingsMode: "system" as NativeSettingsMode };
+  const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
     if (command === "launcher_ui_state") return {
       snapshot: { phase: "waiting", childPid: 1, nativeAdaptersPhase: "waiting", nativeAdaptersMessage: "", nativeAdaptersFeatures: [] }, preferences,
       dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
     };
-    if (command === "set_launcher_preference") return preferences = { ...preferences, [args!.key]: args!.enabled };
+    if (command === "set_launcher_preference") return preferences = { ...preferences, [args!.key as string]: args!.enabled };
+    if (command === "set_native_settings_mode") return preferences = { ...preferences, nativeSettingsMode: args!.mode as NativeSettingsMode };
     throw new Error(command);
   });
   vi.stubGlobal("__TAURI__", { core: { invoke }, event: { listen: async () => () => {} } });
@@ -47,6 +48,19 @@ it("changes launcher preferences only through their switches", async () => {
     expect(saves().at(-1)).toEqual(["set_launcher_preference", { key: id, enabled: true }]);
     expect(toggle.getAttribute("aria-checked")).toBe("true");
   }
+  fireEvent.mouseDown(screen.getByRole("tab", { name: /常用/ }), { button: 0, ctrlKey: false });
+  const settingsMode = screen.getByRole("combobox", { name: "Codex 设置界面" });
+  expect(settingsMode.textContent).toBe("跟随 Codex");
+  const scrollIntoView = HTMLElement.prototype.scrollIntoView;
+  HTMLElement.prototype.scrollIntoView = () => {};
+  try {
+    for (const [mode, label] of [["dialog", "弹窗"], ["page", "整页"], ["system", "跟随 Codex"]]) {
+      fireEvent.keyDown(settingsMode, { key: "Enter" });
+      await act(async () => { fireEvent.click(screen.getByRole("option", { name: label })); });
+      expect(invoke).toHaveBeenLastCalledWith("set_native_settings_mode", { mode });
+      expect(settingsMode.textContent).toBe(label);
+    }
+  } finally { HTMLElement.prototype.scrollIntoView = scrollIntoView; }
 });
 
 it("keeps launcher feedback, live status and global preferences working through the native bridge", async () => {
@@ -62,7 +76,7 @@ it("keeps launcher feedback, live status and global preferences working through 
       updateMessage: "尚未检查更新。", updateNotes: null, updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false,
       appPath: "/disposable/Codex.app",
     },
-    preferences: { defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true },
+    preferences: { defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true, nativeSettingsMode: "system" },
     autostart: true, dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
   };
   let statusListener!: (event: { payload: LauncherSnapshot }) => void;
@@ -344,7 +358,7 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(button("copySharedCliCommand")).toBeNull();
   selectTab("聊天");
   await click(screen.getByRole("switch", { name: "隐藏额度耗尽提示" }));
-  expect(current.preferences).toEqual({ defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true });
+  expect(current.preferences).toEqual({ defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true, nativeSettingsMode: "system" });
   selectTab("模型与高级");
   const quotaFix = screen.getByRole("switch", { name: "移除账号额度不足时 API 发送限制" });
   const restartCount = invoke.mock.calls.filter(([command]) => command === "reconnect_codex").length;
@@ -520,7 +534,7 @@ it("opens pets from its own navigation page and refreshes the real selection whe
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const state: LauncherState = {
     snapshot: { phase: "running", version: "test", message: "Ready", childPid: 1, embeddedVisible: true, threadTabsPhase: "ready", threadTabsMessage: "", nativeAdaptersPhase: "ready", nativeAdaptersMessage: "", nativeAdaptersFeatures: [], openRequestPending: false, updateMessage: "", updateNotes: null, updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false, appPath: "/disposable/Codex.app" },
-    preferences: { defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true },
+    preferences: { defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true, nativeSettingsMode: "system" },
     autostart: false, dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
   };
   let selected: string | null = "panel-lumi";
@@ -569,6 +583,7 @@ it("opens pets from its own navigation page and refreshes the real selection whe
 });
 
 it("shows adapter progress inside the status panel alongside the independent connection status", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const snapshot: LauncherSnapshot = {
@@ -617,11 +632,23 @@ it("shows adapter progress inside the status panel alongside the independent con
   expect(progress.textContent).toContain("正在并行适配 2 项功能");
   expect(progress.textContent).toContain("模块 42 · 2/10");
   expect(progress.textContent).toContain("模块 75 · 3/10");
-  expect(progress.textContent).not.toContain("已启用");
+  expect(within(progress).getByRole("button", { name: "宠物：已启用" }).getAttribute("data-phase")).toBe("ready");
+  expect(within(progress).getByRole("button", { name: "会话菜单：适配中" }).getAttribute("data-phase")).toBe("loading");
   expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("42");
   expect(within(progress).getByText("适配中 · 阶段进度 42%")).toBeTruthy();
   expect(document.getElementById("threadTabsComponent")?.querySelector("details")).toBeNull();
-  for (const phase of ["ready", "partial", "failed", "waiting"]) {
+  await act(async () => { statusListener({ payload: { ...snapshot,
+    nativeAdaptersPhase: "ready", nativeAdaptersMessage: "Codex 适配已结束",
+    nativeAdaptersFeatures: [{ feature: "quota", phase: "ready", message: "已启用" }],
+  } }); });
+  expect(progress.classList.contains("collecting")).toBe(true);
+  await act(async () => { vi.advanceTimersByTime(1050); });
+  expect(progress.classList.contains("success")).toBe(true);
+  await act(async () => { vi.advanceTimersByTime(750); });
+  expect(document.getElementById("nativeAdaptersComponent")).toBeNull();
+  expect(document.getElementById("overviewTitle")?.textContent).toBe("Panel 已就绪");
+  for (const phase of ["partial", "failed", "waiting"]) {
+    await act(async () => { statusListener({ payload: snapshot }); });
     await act(async () => { statusListener({ payload: { ...snapshot,
       nativeAdaptersPhase: phase, nativeAdaptersMessage: "Codex 适配已结束",
       nativeAdaptersFeatures: [{ feature: "quota", phase: "ready", message: "已启用" }],

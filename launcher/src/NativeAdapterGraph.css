@@ -1,0 +1,40 @@
+.native-adapter-graph {
+  --adapter-blue: var(--cyan-10);
+  --adapter-background: var(--gray-1);
+  width: 100%; min-width: 0; border-top: 1px solid var(--gray-4); padding-top: 14px;
+  color: var(--gray-12); font-size: 12px;
+}
+.native-adapter-graph-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-weight: 500; }
+.native-adapter-graph-heading > :last-child { color: var(--cyan-11); font-size: 11px; font-weight: 400; }
+.native-adapter-space { position: relative; height: 260px; touch-action: none; cursor: grab; }
+.native-adapter-space:active { cursor: grabbing; }
+.native-adapter-space canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.native-adapter-node { position: absolute; width: 24px; height: 24px; margin: -12px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--gray-12); cursor: pointer; }
+.native-adapter-node:focus-visible { outline: 1px solid var(--cyan-9); outline-offset: 3px; }
+.native-adapter-node-name { position: absolute; top: 25px; left: 50%; transform: translateX(-50%); white-space: nowrap; padding: 0 4px; border-radius: 4px; background: var(--adapter-background); font-size: 11px; pointer-events: none; }
+.native-adapter-node[data-phase="ready"] { color: var(--green-11); }
+.native-adapter-node[data-phase="failed"] { color: var(--red-11); }
+.native-adapter-node[data-phase="prepared"] { color: var(--cyan-11); }
+.native-adapter-core-label { position: absolute; left: 50%; top: calc(50% + 27px); transform: translateX(-50%); color: var(--cyan-11); font-size: 11px; letter-spacing: 1px; white-space: nowrap; pointer-events: none; }
+.native-adapter-graph.success .native-adapter-core-label, .native-adapter-graph.success .native-adapter-graph-heading > :last-child { color: var(--green-11); }
+.native-adapter-graph.success { overflow: hidden; animation: native-adapter-collapse 750ms ease forwards; }
+@keyframes native-adapter-collapse { 0%, 55% { max-height: 500px; opacity: 1; } 100% { max-height: 0; opacity: 0; padding-top: 0; border-top-width: 0; } }
+.native-adapter-graph-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 14px; color: var(--gray-11); font-size: 11px; }
+.native-adapter-graph-footer > :first-child { color: var(--gray-12); font-variant-numeric: tabular-nums; }
+.native-adapter-selection { min-height: 17px; margin-top: 8px; color: var(--gray-11); font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.native-adapter-progress-copy { margin: 12px 0 8px; color: var(--gray-11); font-size: 11px; }
+.native-adapter-graph #nativeAdaptersMessage { margin: 8px 0 0; color: var(--gray-11); font-size: 11px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.native-adapter-palette { display: none; }
+.native-adapter-palette span:nth-child(1) { color: var(--adapter-blue); }
+.native-adapter-palette span:nth-child(2) { color: var(--green-10); }
+.native-adapter-palette span:nth-child(3) { color: var(--gray-8); }
+.native-adapter-palette span:nth-child(4) { color: var(--gray-11); }
+.native-adapter-palette span:nth-child(5) { color: var(--gray-12); }
+.native-adapter-palette span:nth-child(6) { color: var(--red-10); }
+.native-adapter-graph.no-canvas .native-adapter-space { height: auto; min-height: 100px; cursor: default; }
+.native-adapter-graph.no-canvas .native-adapter-node-list { display: flex; flex-wrap: wrap; gap: 8px 14px; padding: 16px 0; }
+.native-adapter-graph.no-canvas .native-adapter-node { position: static; width: auto; height: auto; margin: 0; border-radius: 4px; }
+.native-adapter-graph.no-canvas .native-adapter-node-name { position: static; transform: none; }
+.native-adapter-graph.no-canvas .native-adapter-core-label { display: none; }
+@media (pointer: coarse) { .native-adapter-node { width: 40px; height: 40px; margin: -20px; } }
+@media (prefers-reduced-motion: reduce) { .native-adapter-graph.success { animation: none; } }
