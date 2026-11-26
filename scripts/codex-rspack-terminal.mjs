@@ -1,4 +1,4 @@
-import { sourceAst, property, propertyValue, propertyName, unwrap, isFunction, unique, applyEdits } from './codex-source-ast.mjs';
+import { sourceAst, property, propertyValue, propertyName, unwrap, isFunction, returnValue, unique, applyEdits } from './codex-source-ast.mjs';
 import { bodyStart, reactNamespace } from './codex-rspack-quota.mjs';
 export { createBottomTerminalRuntime } from './codex-terminal-runtime.mjs';
 
@@ -29,6 +29,18 @@ function legacy(context) {
   const key = context.moduleSource;
   if (!legacyContexts.has(key)) legacyContexts.set(key, context.modulesExporting('terminalBottomPanelOpen$').length > 0);
   return legacyContexts.get(key);
+}
+
+function legacyTerminalPatch(ast) {
+  const launch = ast.exports().get('terminalLaunchPanel$');
+  if (!launch) return null;
+  const signal = unwrap(ast.value(launch));
+  const callback = unique(signal?.arguments?.filter(isFunction) ?? [], 'Native terminal layout reader is unavailable');
+  const result = returnValue(callback);
+  if (!result) throw new Error('Native terminal layout setting is unavailable');
+  // Keep native capability gates; override only the default location preference.
+  const target = result.type === 'ConditionalExpression' && literal(result.consequent, 'right') ? result.alternate : result;
+  return applyEdits(ast.source, [{ start: target.start, end: target.end, text: `(${runtime}.layout==="system"?${ast.text(target)}:${runtime}.layout)` }]);
 }
 
 function controllerPatch(ast) {
@@ -93,7 +105,8 @@ function controllerPatch(ast) {
 function terminalPatch(ast) {
   const exports = ast.exports();
   if (!exports.has('toggleTerminalPanel') || !exports.has('terminalTabType')) return null;
-  const edits = [];
+  const start = bodyStart(ast.factory);
+  const edits = [{ start, end: start, text: `if(!${runtime}.enabled)return (${ast.source}).apply(this,arguments);` }];
   const replace = (node, text) => edits.push({ start: node.start, end: node.end, text });
   const toggle = ast.value(exports.get('toggleTerminalPanel'));
   if (!isFunction(toggle)) throw new Error('Native terminal action is unavailable');
@@ -215,7 +228,12 @@ function shellPatch(ast, context) {
 
 export function rewriteRspackTerminal(source, context) {
   if (source.includes(marker)) return null;
-  if (legacy(context)) return source.includes('terminalBottomPanelOpen$') && source.includes('toggleTerminalPanel') ? `${source}${marker}` : null;
+  if (legacy(context)) {
+    if (!source.includes('terminalLaunchPanel$') || !source.includes('toggleTerminalPanel')) return null;
+    const ast = context.ast(source);
+    const rewritten = legacyTerminalPatch(ast);
+    return rewritten == null ? null : `${rewritten}${marker}`;
+  }
   if (!/toggleTerminalPanel|panelId|MainContentLayout|data-app-shell-tab-panel-controller/.test(source)) return null;
   const ast = context?.ast(source) ?? sourceAst(source, { factory: true });
   const rewritten = terminalPatch(ast) ?? controllerPatch(ast) ?? shellPatch(ast, context) ?? rendererPatch(ast);

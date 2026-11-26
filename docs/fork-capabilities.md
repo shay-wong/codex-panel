@@ -28,9 +28,9 @@ The macOS and Windows launcher offers **Preferences → Models & advanced → Ap
 
 ## Bottom terminal layout
 
-While Panel is connected, Codex builds that only provide a right-side terminal regain an independent terminal below the conversation. Use the native terminal action or **⌘J** on macOS (**Ctrl+J** on Windows/Linux) to open or hide it. Existing custom terminal shortcuts still use the native action; Panel does not rewrite your keybindings file. Builds that already provide a native bottom terminal keep that implementation.
+Open the **Preferences → General → 终端布局** (Terminal layout) dropdown and choose **跟随 Codex** (Follow Codex), **底部** (Bottom, default), or **右侧** (Right). Bottom restores an independent terminal below the conversation on Codex builds that only provide a right-side terminal; Follow Codex uses the native layout. Save the choice and reopen Codex to apply it. Use the native terminal action or your existing terminal shortcut to open or hide the panel; Panel preserves native and user-defined keybindings. Builds that already provide a native bottom terminal keep that implementation.
 
-The bottom terminal can remain open while you view files in the right sidebar. It uses native terminal sessions and tab controls: open and close terminal tabs as usual, and drag the upper edge to adjust the panel height. Hiding the panel keeps its sessions; closing a tab follows Codex's native close behavior. The added shortcut only handles an active supported workspace and does not toggle the terminal while a modal dialog is open.
+The bottom terminal can remain open while you view files in the right sidebar. It uses native terminal sessions and tab controls: open and close terminal tabs as usual, and drag the upper edge to adjust the panel height. Hiding the panel keeps its sessions; closing a tab follows Codex's native close behavior.
 
 The **底部终端** (Bottom terminal) adaptation node has its own cache, so adding or updating this adapter reuses other unchanged modules. Restoring terminal placement and sessions after restarting Codex has not been verified.
 

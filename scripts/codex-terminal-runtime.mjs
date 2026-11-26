@@ -1,12 +1,14 @@
 // This function is serialized into Codex; keep all dependencies inside it.
-export function createBottomTerminalRuntime() {
+export function createBottomTerminalRuntime(layout = 'bottom') {
+  const enabled = layout === 'bottom';
   let controllerConfig, view, launch, canLaunch;
   const hosts = new Set();
   const api = {
+    layout, enabled,
     controller: null, open$: null, height$: null,
     Header: ({ children }) => children,
     configureController(config) {
-      if (api.controller) return;
+      if (!enabled || api.controller) return;
       controllerConfig = config;
       api.open$ = config.signal(config.routeScope, false);
       api.height$ = config.signal(config.routeScope, 260);
@@ -46,7 +48,7 @@ export function createBottomTerminalRuntime() {
       return host ? api.toggle(host.scope) : false;
     },
     wrap(scope, children) {
-      return view && api.controller ? view.React.createElement(Workspace, { scope }, children) : children;
+      return enabled && view && api.controller ? view.React.createElement(Workspace, { scope }, children) : children;
     },
   };
   function Workspace({ scope, children }) {

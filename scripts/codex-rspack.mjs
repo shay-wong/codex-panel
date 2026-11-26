@@ -564,7 +564,7 @@ export async function prepareCodexRspack(cdp, appPath, preferencesFile, report =
     const settingsPresentation=globalThis.__codexPanelSettingsPresentationV1__??=(${createSettingsPresentationRuntime})(${JSON.stringify(preferences.nativeSettingsMode ?? 'system')});
     settingsPresentation.setMode(${JSON.stringify(preferences.nativeSettingsMode ?? 'system')});
     ${plan.prepared.repositoryBranchPrefix ? `globalThis.__codexPanelRepositoryBranchPrefixV1__??=(${createRepositoryBranchPrefixRuntime})();` : ''}
-    ${plan.prepared.terminal ? `globalThis.__codexPanelBottomTerminalV1__??=(${createBottomTerminalRuntime})();` : ''}
+    ${plan.prepared.terminal ? `globalThis.__codexPanelBottomTerminalV1__??=(${createBottomTerminalRuntime})(${JSON.stringify(preferences.terminalLayout ?? 'bottom')});` : ''}
     ${petSource}
     const plan=${JSON.stringify(plan)};
     if(globalThis.__codexPanelRspack__){globalThis.__codexPanelRspack__.mergeDescriptors?.(plan);return;}

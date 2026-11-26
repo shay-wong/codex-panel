@@ -252,6 +252,15 @@ enum NativeSettingsMode {
     Page,
 }
 
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum TerminalLayout {
+    System,
+    #[default]
+    Bottom,
+    Right,
+}
+
 #[derive(Clone, Copy, Deserialize, Serialize)]
 struct LauncherWindowSize {
     width: f64,
@@ -300,6 +309,8 @@ struct LauncherPreferences {
     #[serde(default)]
     native_settings_mode: NativeSettingsMode,
     #[serde(default)]
+    terminal_layout: TerminalLayout,
+    #[serde(default)]
     window_size: Option<LauncherWindowSize>,
 }
 
@@ -333,6 +344,7 @@ impl Default for LauncherPreferences {
             shared_session_backend: false,
             default_projectless_chat: false,
             native_settings_mode: NativeSettingsMode::System,
+            terminal_layout: TerminalLayout::Bottom,
             pet_sounds: true,
             window_size: None,
         }
@@ -3566,6 +3578,17 @@ fn set_native_settings_mode(
 }
 
 #[tauri::command]
+fn set_terminal_layout(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+    layout: TerminalLayout,
+) -> Result<LauncherPreferences, String> {
+    let preferences = update_preferences(&state, |preferences| preferences.terminal_layout = layout)?;
+    mark_codex_restart_required(&app, &state, "终端布局")?;
+    Ok(preferences)
+}
+
+#[tauri::command]
 async fn read_model_context_settings(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
@@ -4058,6 +4081,7 @@ fn main() {
             set_usage_animation_speeds,
             set_usage_animation_mode,
             set_native_settings_mode,
+            set_terminal_layout,
             set_autostart,
             check_for_updates,
             github_auth_status,

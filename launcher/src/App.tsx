@@ -35,7 +35,8 @@ export type LauncherSnapshot = {
   appPath: string | null;
 };
 export type NativeSettingsMode = "system" | "dialog" | "page";
-export type LauncherPreferences = { defaultProjectlessChat: boolean; sharedSessionBackend: boolean; autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean; petSounds: boolean; nativeSettingsMode: NativeSettingsMode };
+export type TerminalLayout = "system" | "bottom" | "right";
+export type LauncherPreferences = { defaultProjectlessChat: boolean; sharedSessionBackend: boolean; autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean; petSounds: boolean; nativeSettingsMode: NativeSettingsMode; terminalLayout: TerminalLayout };
 export type LauncherState = {
   snapshot: LauncherSnapshot;
   preferences: LauncherPreferences;
@@ -275,6 +276,18 @@ export function App() {
     finally { setSavingPreference(false); }
   }
 
+  async function saveTerminalLayout(layout: TerminalLayout) {
+    setError("");
+    setSavingPreference(true);
+    try {
+      const next = await window.__TAURI__.core.invoke<LauncherPreferences>("set_terminal_layout", { layout });
+      setState(current => current && ({ ...current, preferences: next }));
+      acceptState(await window.__TAURI__.core.invoke<LauncherState>("launcher_ui_state"));
+      setRestartReminderDismissed(false);
+    } catch (cause) { setError(String(cause)); }
+    finally { setSavingPreference(false); }
+  }
+
   async function saveUsageAnimationSpeeds() {
     const minimum = Number(usageMinimum);
     const maximum = Number(usageMaximum);
@@ -506,6 +519,14 @@ export function App() {
                       <Select.Root value={preferences?.nativeSettingsMode ?? "system"} disabled={!state || savingPreference} onValueChange={value => void saveNativeSettingsMode(value as NativeSettingsMode)}>
                         <Select.Trigger id="nativeSettingsMode" aria-label="Codex 设置界面" aria-describedby="nativeSettingsModeDetail" />
                         <Select.Content><Select.Item value="system">跟随 Codex</Select.Item><Select.Item value="dialog">弹窗</Select.Item><Select.Item value="page">整页</Select.Item></Select.Content>
+                      </Select.Root>
+                    </Flex>
+                    <Separator size="4" />
+                    <Flex className="preference-row" align="center" justify="between" gap="4">
+                      <Box><Text as="div" size="2" weight="medium">终端布局</Text><Text as="p" size="1" color="gray" mt="1" id="terminalLayoutDetail">选择终端的显示位置；重新打开 Codex 后生效。</Text></Box>
+                      <Select.Root value={preferences?.terminalLayout ?? "bottom"} disabled={!state || savingPreference} onValueChange={value => void saveTerminalLayout(value as TerminalLayout)}>
+                        <Select.Trigger id="terminalLayout" aria-label="终端布局" aria-describedby="terminalLayoutDetail" />
+                        <Select.Content><Select.Item value="system">跟随 Codex</Select.Item><Select.Item value="bottom">底部</Select.Item><Select.Item value="right">右侧</Select.Item></Select.Content>
                       </Select.Root>
                     </Flex>
                     <Separator size="4" />
