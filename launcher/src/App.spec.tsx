@@ -615,6 +615,15 @@ it("shows adapter progress inside the status panel alongside the independent con
   expect(document.getElementById("nativeAdaptersMessage")?.parentElement).toBe(progress);
   expect(document.getElementById("message")?.closest("#nativeAdaptersComponent")).toBeNull();
   expect(screen.getByRole("progressbar").hasAttribute("aria-valuenow")).toBe(false);
+  const visibleModuleNames = () => progress.querySelectorAll(".native-adapter-node-name:not([hidden])");
+  expect(visibleModuleNames()).toHaveLength(10);
+  const extraModule = within(progress).getByRole("button", { name: "设置界面：等待适配" });
+  expect(extraModule.querySelector(".native-adapter-node-name")?.hasAttribute("hidden")).toBe(true);
+  fireEvent.mouseEnter(extraModule);
+  expect(visibleModuleNames()).toHaveLength(10);
+  expect(extraModule.querySelector(".native-adapter-node-name")?.hasAttribute("hidden")).toBe(false);
+  fireEvent.mouseLeave(extraModule);
+  expect(within(progress).getByLabelText("适配状态图例").textContent).toBe("等待适配适配中待应用已启用适配失败");
   await act(async () => { statusListener({ payload: { ...snapshot,
     nativeAdaptersPhase: "adapting", nativeAdaptersMessage: "正在并行适配 2 项功能",
     nativeAdaptersProgress: 42,

@@ -47,8 +47,14 @@ export function NativeAdapterGraph({ enabled, phase, message, progress, features
       phase: statuses.get(feature)?.phase ?? "waiting", message: statuses.get(feature)?.message ?? "",
     }));
   }, [features]);
-  const latest = useRef({ modules, presentation, selected: hovered ?? selected });
-  latest.current = { modules, presentation, selected: hovered ?? selected };
+  const highlighted = hovered ?? selected;
+  const visibleLabels = useMemo(() => {
+    const priorities: Record<string, number> = { failed: 1, loading: 2, prepared: 3, waiting: 4, ready: 5 };
+    const priority = (module: AdapterFeature) => module.feature === highlighted ? 0 : priorities[module.phase] ?? 4;
+    return new Set([...modules].sort((left, right) => priority(left) - priority(right)).slice(0, 10).map(module => module.feature));
+  }, [modules, highlighted]);
+  const latest = useRef({ modules, presentation, visibleLabels });
+  latest.current = { modules, presentation, visibleLabels };
   const visible = enabled && presentation !== "hidden" && (activePhases.has(phase) || phase === "ready");
 
   useEffect(() => {
@@ -98,10 +104,12 @@ export function NativeAdapterGraph({ enabled, phase, message, progress, features
     const height = 260;
     let frame: number | undefined;
     let colors: string[] = [];
+    let labelFont = "";
     let disposed = false;
 
     function palette() {
       colors = Array.from(root.querySelectorAll<HTMLElement>(".native-adapter-palette span"), element => getComputedStyle(element).color);
+      labelFont = `11px ${getComputedStyle(root).fontFamily}`;
     }
     function resize() {
       width = space.clientWidth;
@@ -124,7 +132,7 @@ export function NativeAdapterGraph({ enabled, phase, message, progress, features
     function draw(time: number) {
       frame = undefined;
       if (disposed || document.hidden || !width) return;
-      const { modules: current, presentation: mode, selected: highlighted } = latest.current;
+      const { modules: current, presentation: mode, visibleLabels: names } = latest.current;
       const age = Math.max(0, time - animation.current.started);
       const collecting = mode === "collecting";
       const success = mode === "success";
@@ -148,6 +156,24 @@ export function NativeAdapterGraph({ enabled, phase, message, progress, features
         return { module, index, x: width / 2 + xx * Math.min(width * .31, 218) * scale * expansion, y: height / 2 + yy * 79 * scale * expansion, depth, scale };
       }).sort((a, b) => a.depth - b.depth);
       ctx.clearRect(0, 0, width, height);
+      ctx.font = labelFont;
+      const labelPositions = new Map<string, { left: number; top: number; width: number }>();
+      const occupied = [{ left: width / 2 - 37, top: height / 2 + 24, width: 74, height: 20 }];
+      for (const feature of names) {
+        const point = projected.find(point => point.module.feature === feature)!;
+        const labelWidth = ctx.measureText(point.module.label).width + 8;
+        const left = Math.max(0, Math.min(width - labelWidth, point.x - labelWidth / 2));
+        const preferredTop = point.y + (point.y < height / 2 ? -35 : 13);
+        let top = preferredTop;
+        for (let attempt = 0; attempt <= Math.ceil(height / 20) * 2; attempt++) {
+          const offset = Math.ceil(attempt / 2) * 20 * (attempt % 2 ? -1 : 1);
+          top = Math.max(0, Math.min(height - 17, preferredTop + offset));
+          if (!occupied.some(other => left < other.left + other.width + 5 && left + labelWidth + 5 > other.left
+            && top < other.top + other.height + 3 && top + 20 > other.top)) break;
+        }
+        labelPositions.set(feature, { left, top, width: labelWidth });
+        occupied.push({ left, top, width: labelWidth, height: 17 });
+      }
       if (!success) {
         ctx.save(); ctx.strokeStyle = colors[2]; ctx.globalAlpha = .17 * expansion; ctx.lineWidth = .65;
         for (const tilt of [-.32, .46]) { ctx.beginPath(); ctx.ellipse(width / 2, height / 2, Math.min(width * .35, 235), 77, tilt, 0, Math.PI * 2); ctx.stroke(); }
@@ -156,7 +182,7 @@ export function NativeAdapterGraph({ enabled, phase, message, progress, features
       for (const point of projected) {
         const { module, index, x, y, depth, scale } = point;
         const loading = module.phase === "loading";
-        const color = module.phase === "ready" ? colors[1] : module.phase === "failed" ? colors[5] : loading || module.phase === "prepared" ? colors[0] : colors[2];
+        const color = module.phase === "ready" ? colors[1] : module.phase === "failed" ? colors[5] : module.phase === "prepared" ? colors[3] : loading ? colors[0] : colors[2];
         const bend = (index % 2 === 0 ? 1 : -1) * .19;
         const controlX = (width / 2 + x) / 2 - (y - height / 2) * bend;
         const controlY = (height / 2 + y) / 2 + (x - width / 2) * bend;
@@ -182,8 +208,12 @@ export function NativeAdapterGraph({ enabled, phase, message, progress, features
           button.style.opacity = success ? "0" : String(expansion);
           button.style.pointerEvents = expansion > .75 && !collecting && !success ? "auto" : "none";
           const label = button.querySelector<HTMLElement>(".native-adapter-node-name")!;
-          label.hidden = expansion < .85 || collecting || success || !(highlighted === module.feature || (width > 480 && current.length <= 10) || (width > 480 && loading && depth > 0));
-          label.style.top = y < height / 2 ? "-23px" : "25px";
+          label.hidden = expansion < .85 || collecting || success || !names.has(module.feature);
+          const position = labelPositions.get(module.feature);
+          if (position) {
+            label.style.left = `calc(50% + ${position.left + position.width / 2 - x}px)`;
+            label.style.top = `calc(50% + ${position.top - y}px)`;
+          }
         }
       }
       const coreColor = success ? colors[1] : colors[0];
@@ -245,11 +275,12 @@ export function NativeAdapterGraph({ enabled, phase, message, progress, features
     <div ref={spaceRef} className="native-adapter-space" aria-label="拖动旋转模块图谱，选择节点查看适配详情" onPointerDown={startDrag} onPointerMove={drag} onPointerUp={() => { rotation.current.pointer = null; }} onPointerCancel={() => { rotation.current.pointer = null; }} onLostPointerCapture={() => { rotation.current.pointer = null; }} onKeyDown={event => { if (event.key === "Escape") { setSelected(null); setHovered(null); } }}>
       <canvas ref={canvasRef} aria-hidden="true" />
       <div className="native-adapter-node-list" role="group" aria-label="原生功能适配状态">{modules.map(module => <button type="button" key={module.feature} disabled={presentation !== "active"} ref={element => { if (element) buttonRefs.current.set(module.feature, element); else buttonRefs.current.delete(module.feature); }} className="native-adapter-node" data-phase={module.phase} aria-label={`${module.label}：${phaseLabels[module.phase] ?? module.phase}`} aria-describedby="nativeAdapterSelection" aria-pressed={selected === module.feature} title={module.message || phaseLabels[module.phase]} onClick={() => setSelected(module.feature)} onFocus={() => setSelected(module.feature)} onMouseEnter={() => setHovered(module.feature)} onMouseLeave={() => setHovered(null)}>
-        <span className="native-adapter-node-name">{module.label}</span>
+        <span className="native-adapter-node-name" hidden={!visibleLabels.has(module.feature)}>{module.label}</span>
       </button>)}</div>
       <span className="native-adapter-core-label">{presentation === "success" ? "适配成功" : "适配核心"}</span>
     </div>
     <div className="native-adapter-graph-footer"><span>已启用 {completed} / {modules.length}</span><span>拖动旋转 · 选择节点查看详情</span></div>
+    <div className="native-adapter-legend" aria-label="适配状态图例">{Object.entries(phaseLabels).map(([phase, label]) => <span key={phase} data-phase={phase}><i aria-hidden="true" />{label}</span>)}</div>
     <div id="nativeAdapterSelection" className="native-adapter-selection" title={detail}>{detail || "各模块独立适配，完成后统一应用"}</div>
     <div className="native-adapter-progress-copy">{progress == null ? stage : `${stage} · 阶段进度 ${Math.round(progress)}%`}</div>
     <Progress value={progress ?? null} size="2" aria-label="Codex 当前阶段适配进度" />
