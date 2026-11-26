@@ -38,8 +38,8 @@ test("Panel is the canonical Skill, CLI, runtime, and integration identity", asy
   assert.match(skillSource, /^# Manage Panel$/m);
   assert.match(agentMetadata, /display_name: "Manage Panel"/);
   assert.match(agentMetadata, /\$manage-panel/);
-  assert.equal(packageJson.bin.panelctl, "./cli/panelctl.mjs");
-  assert.equal(packageJson.scripts.panelctl, "node cli/panelctl.mjs");
+  assert.equal(packageJson.bin.panelctl, "./scripts/panelctl.mjs");
+  assert.equal(packageJson.scripts.panelctl, "node scripts/panelctl.mjs");
   assert.equal(packageJson.scripts["codex:install"], "node scripts/install-macos-launcher.mjs");
   assert.equal(Object.hasOwn(packageJson.scripts, "postinstall"), false);
   assert.match(mainSource, /migrateLegacyPanelStorage\(window\.localStorage\)/);
@@ -94,7 +94,7 @@ test("the macOS product installer always uses the fixed Panel data directory", (
   assert.equal(layout.dataDirectory, path.join(productRoot, "data"));
 });
 
-test("the Windows release preserves the hashed Node sidecar", async () => {
+test("the Windows release preserves the hashed native sidecar", async () => {
   const source = await readFile(
     path.join(projectRoot, "scripts", "build-windows-app.mjs"),
     "utf8",

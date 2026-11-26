@@ -121,11 +121,11 @@ test('URLSession rejects invalid range responses and redirects outside allowed h
   await assert.rejects(downloadCodexFile({ url: `${baseURL}/redirect`, destination, expectedLength: payload.length }, { helperPath: helper }), /outside the official HTTPS/);
 });
 
-test('production universal helper rejects loopback URLs', { skip: !macOS }, async () => {
-  const { binaryPath } = await ensureCodexTransport({ projectRoot, cacheDirectory: path.join(root, 'production') });
+test('production native helper rejects loopback URLs', { skip: !macOS }, async () => {
+  const architecture = process.arch === 'arm64' ? 'arm64' : 'x86_64';
+  const target = process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin';
+  const { binaryPath } = await ensureCodexTransport({ projectRoot, cacheDirectory: path.join(root, 'production'), target, signingIdentity: null });
   const { stdout } = await execute('/usr/bin/lipo', ['-archs', binaryPath]);
-  assert.match(stdout, /x86_64/);
-  assert.match(stdout, /arm64/);
-  await execute('/usr/bin/codesign', ['--verify', '--strict', '--all-architectures', binaryPath]);
+  assert.equal(stdout.trim(), architecture);
   await assert.rejects(downloadCodexFile({ url: `${baseURL}/full`, destination: path.join(root, 'must-not-exist'), expectedLength: payload.length }, { helperPath: binaryPath }), /OFFICIAL_HTTPS_URL/);
 });

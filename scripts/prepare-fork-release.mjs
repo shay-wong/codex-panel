@@ -26,11 +26,15 @@ export function prepareForkRelease(root, tag, notesPath) {
   const pkg = json("package.json");
   const lock = json("package-lock.json");
   const tauri = json("src-tauri/tauri.conf.json");
-  const cargo = parse(read("src-tauri/Cargo.toml"));
-  const cargoLock = parse(read("src-tauri/Cargo.lock"));
-  const launcher = cargoLock.package.find((entry) => entry.name === cargo.package.name);
-  assert.ok(launcher, "Launcher package missing from Cargo.lock");
-  pkg.version = lock.version = lock.packages[""].version = tauri.version = cargo.package.version = launcher.version = version;
+  // 启动器和原生运行时是两个 crate，同一发布标签必须同时更新各自的锁文件。
+  const crates = ["src-tauri", "runtime"].map(directory => {
+    const cargo = parse(read(`${directory}/Cargo.toml`));
+    const cargoLock = parse(read(`${directory}/Cargo.lock`));
+    assert.ok(cargoLock.package.some(entry => entry.name === cargo.package.name),
+      `Application package missing from ${directory}/Cargo.lock`);
+    return { directory, name: cargo.package.name };
+  });
+  pkg.version = lock.version = lock.packages[""].version = tauri.version = version;
 
   const git = (...args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
   const previous = git("tag", "--merged", "HEAD", "--sort=-version:refname")
@@ -46,12 +50,12 @@ export function prepareForkRelease(root, tag, notesPath) {
     writeFileSync(path.join(root, file), `${JSON.stringify(value, null, 2)}\n`);
   }
   // 保留 Cargo 文件注释与排版，仅替换已解析确认的应用版本。
-  for (const file of ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock"]) {
+  for (const { directory, name } of crates) for (const file of [`${directory}/Cargo.toml`, `${directory}/Cargo.lock`]) {
     let updated = 0;
     const content = read(file).split(/(?=^\[)/m).map(block => {
       if (!/^\[\[?package\]\]?\s*$/m.test(block.split("\n")[0])) return block;
       const entry = parse(block).package;
-      if ((Array.isArray(entry) ? entry[0] : entry)?.name !== cargo.package.name) return block;
+      if ((Array.isArray(entry) ? entry[0] : entry)?.name !== name) return block;
       updated++;
       return block.replace(/^(version\s*=\s*)"[^"]+"/m, `$1"${version}"`);
     }).join("");

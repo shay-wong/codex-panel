@@ -122,7 +122,7 @@ Jira 设置还可以开启默认关闭的“自动归档对话”。开启后，
 
 ## 环境要求
 
-- Node.js 22.x 系列的 22.22.3 或更高版本，或 24.8 及以上版本
+- 从源码构建需要 Rust 1.88 及以上版本，以及 Node.js 22.x 系列的 22.22.3 或更高版本，或 24.8 及以上版本。安装包使用原生 Rust 运行时，运行时不需要 Node.js。
 
 ## 本地运行
 
@@ -192,7 +192,7 @@ npm run codex:install
 
 集成命令会构建独立 runtime 并复制到 `~/Library/Application Support/Codex Panel/runtime`，把 `manage-panel` 和 `handoff-panel` 复制到标准用户 Skill 目录 `~/.agents/skills`，把 `panelctl` 安装到 `~/.local/bin`，然后生成 macOS 启动器；启动器还会在自己的 App bundle 中保存一份受签名保护的 runtime 副本。安装结果都是带所有权标记的真实副本，不是指回 Git 仓库的符号链接。单独运行 `npm ci` 只安装项目依赖，不会写入这些用户级集成。安装完成后启动一个新的 Codex 任务即可使用 `$manage-panel` 和 `$handoff-panel`。
 
-首次安装时，如果固定数据目录尚不存在，安装器会在线快照仓库现有的 `.data/panel.sqlite`，并复制附件和本地配置，不删除原数据。它还会清理原来由本仓库管理的 `~/.codex/skills` 和 Node 可执行目录软链接。重复运行时只会原子更新带 Codex Panel 所有权标记的文件；用户自己维护的文件和目录不会被覆盖。移动或删除仓库不会破坏已经安装的 runtime。拉取代码更新或替换 Node.js 后，再运行该命令安装新版本。
+首次安装时，如果固定数据目录尚不存在，安装器会在线快照仓库现有的 `.data/panel.sqlite`，并复制附件和本地配置，不删除原数据。它还会清理原来由本仓库管理的 `~/.codex/skills` 和 Node 可执行目录软链接。重复运行时只会原子更新带 Codex Panel 所有权标记的文件；用户自己维护的文件和目录不会被覆盖。移动或删除仓库不会破坏已经安装的 runtime。拉取代码更新后，再运行该命令安装新版本。
 
 浏览器中的 `taskboard.*` 设置和草稿会迁移为 `panel.*`。旧 `CODEX_TASKBOARD_*` 环境变量仍可作为回退别名，但新配置应统一使用 `CODEX_PANEL_*`。
 
@@ -229,7 +229,7 @@ open "$HOME/Applications/Codex Panel.app"
 
 Panel 会在运行概览的会话菜单卡片中显示加载状态，失败时可手动重试而无需重启 Codex。
 
-发布成功后，流水线自动把 5 个版本文件和单份中文[更新日志](CHANGELOG.md)提交回 main：已发布条目按标签快照归档到对应版本，标签之后新增的条目仍保留在“未发布”。拉取 main 的版本同步提交后，源码编译和本地重装即可使用对应版本。
+发布成功后，流水线自动把 7 个版本文件和单份中文[更新日志](CHANGELOG.md)提交回 main：已发布条目按标签快照归档到对应版本，标签之后新增的条目仍保留在“未发布”。拉取 main 的版本同步提交后，源码编译和本地重装即可使用对应版本。
 
 Fork 从 `0.0.1-fork`（标签 `v0.0.1-fork`）开始独立版本，不再随上游版本变化。已有本地 `0.1.0` 开发版需手动安装一次以切换到新版本线。
 
@@ -239,13 +239,13 @@ Panel 每次启动时检查 Fork 的 GitHub Releases；有效的成功结果缓�
 
 发现新版本后，**关于 → 版本更新** 会显示该版本的说明，支持 Markdown 标题、列表、行内格式和长内容滚动。没有说明时显示“该版本暂无版本说明。”；“查看发布说明”仍可打开 GitHub 发行版。下载并通过签名验证后，安装确认框只显示目标版本、确认提示和“稍后 / 安装并重启”按钮，不再重复展示版本日志。
 
-App bundle 内包含 Panel runtime、`panelctl`、两个 Panel Skills，以及用于运行它们的官方签名 Node.js runtime。macOS 安装器优先使用 `CODEX_PANEL_CODESIGN_IDENTITY`，其次使用可复用的本机 Apple Development 身份；两者都不可用时回退到 ad-hoc 签名。Windows 的 Authenticode 签名可选：配置证书与 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` 时签名，全部留空时生成未签名的 NSIS 安装包；两种模式都保留 Tauri 更新包签名。macOS 与 Windows 并行打包，等待两边结束后统一发布成功平台的产物。
+App bundle 内包含原生 Rust Panel runtime、`panelctl`、两个 Panel Skills 和构建后的网页界面，不再打包 Node.js 或主机侧 JavaScript 依赖。网页界面与 Codex 渲染器中的注入逻辑继续使用 JavaScript。macOS 安装器优先使用 `CODEX_PANEL_CODESIGN_IDENTITY`，其次使用可复用的本机 Apple Development 身份；两者都不可用时要求指定签名身份，不静默使用临时签名。Windows 的 Authenticode 签名可选：配置证书与 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` 时签名，全部留空时生成未签名的 NSIS 安装包；两种模式都保留 Tauri 更新包签名。macOS 与 Windows 并行打包，等待两边结束后统一发布成功平台的产物。
 
-连接前，应用会先校验自身 App 签名和打包 runtime，再按 OpenAI 的 Identifier 和 Team ID 校验官方 `ChatGPT.app` 及其内置 Codex 可执行文件，拒绝符号链接，并从子进程环境中移除 Node、shell 和动态加载器注入变量。Windows 始终在执行前校验编译进 launcher、覆盖 Node 和全部 Panel runtime 文件的 SHA-256 清单；配置了 Authenticode 证书的构建还会校验 launcher 的签名者。Panel 服务通过启动器持有的监听器和私有实例 token 仅绑定回环地址。如果正在运行的 Codex 已暴露有效 CDP，包括旧 Swift 启动器留下的端口，新 injector 会接管真实端口；否则通过 macOS LaunchServices 使用随机私有 CDP 端口启动官方应用。已经在无 CDP 模式下运行的 Codex 仍需完全退出后才能重新以 CDP 启动。运行状态、打开和停止请求在 macOS 使用受启动 token 保护且仅当前用户可访问的 Unix socket，在 Windows 使用启动器持有的子进程控制管道；Windows 上的 Panel 生命周期操作通过受启动 token 认证的 named pipe 中断 native Codex turn。停止或退出 Tauri 只会等待自己负责的 injector 和 Panel 服务退出，官方 ChatGPT/Codex 应用继续运行。应用不会修改 `ChatGPT.app` 或 `app.asar`。
+连接前，应用会先校验自身 App 签名和打包 runtime，再按 OpenAI 的 Identifier 和 Team ID 校验官方 `ChatGPT.app` 及其内置 Codex 可执行文件，拒绝符号链接，并从子进程环境中移除 Node、shell 和动态加载器注入变量。Windows 始终在执行前校验编译进 launcher、覆盖原生运行时和全部 Panel 资源文件的 SHA-256 清单；配置了 Authenticode 证书的构建还会校验 launcher 的签名者。Panel 服务通过启动器持有的监听器和私有实例 token 仅绑定回环地址。如果正在运行的 Codex 已暴露有效 CDP，包括旧 Swift 启动器留下的端口，新 injector 会接管真实端口；否则通过 macOS LaunchServices 使用随机私有 CDP 端口启动官方应用。已经在无 CDP 模式下运行的 Codex 仍需完全退出后才能重新以 CDP 启动。运行状态、打开和停止请求在 macOS 使用受启动 token 保护且仅当前用户可访问的 Unix socket，在 Windows 使用启动器持有的子进程控制管道；Windows 上的 Panel 生命周期操作通过受启动 token 认证的 named pipe 中断 native Codex turn。停止或退出 Tauri 只会等待自己负责的 injector 和 Panel 服务退出，官方 ChatGPT/Codex 应用继续运行。应用不会修改 `ChatGPT.app` 或 `app.asar`。
 
 启动器持有的 Panel 监听器优先使用 `127.0.0.1:47823`，端口不可用时回退到私有随机端口。Codex CDP 继续使用独立的随机端口。
 
-更新仓库代码或替换 Node.js 后，请重新运行 `npm run codex:install`。OpenAI 正常签名的 `ChatGPT.app` 更新无需重新安装 Panel。`npm run launcher:install` 仍作为兼容别名保留。最近一次管理器日志位于 `~/Library/Logs/Codex Panel.log`。
+更新仓库代码后，请重新运行 `npm run codex:install`。OpenAI 正常签名的 `ChatGPT.app` 更新无需重新安装 Panel。`npm run launcher:install` 仍作为兼容别名保留。最近一次管理器日志位于 `~/Library/Logs/Codex Panel.log`。
 
 ### 备选：在终端运行启动器
 
@@ -307,6 +307,8 @@ npm run app:build:linux:x64
 
 第一版不支持 ARM64、Fedora、RPM 软件包或其他 Linux 发行版。
 
+macOS 本地构建前需将 `APPLE_SIGNING_IDENTITY` 设为已有开发者身份；构建后用同一身份执行 `npm run app:sign -- /App的绝对路径`。单独构建命令不会完成最终 App 签名，公开发行继续使用独立的发布签名流程。
+
 ### Windows App：托盘启动器与内置 Panel
 
 先从 Microsoft Store 安装官方 Codex App。在 Windows x64 上运行以下命令构建当前用户级 NSIS 安装包：
@@ -316,7 +318,7 @@ npm ci
 npm run app:build:windows
 ```
 
-安装包位于 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`。它包含托盘启动器、内置 Node、本地服务、构建后的 Web UI、`manage-panel` Skill、`panelctl.cmd` 和注入脚本。Panel 数据存储在 `%LOCALAPPDATA%\Codex Panel\data`，日志存储在 `%LOCALAPPDATA%\Codex Panel\Logs`，Skill 会复制到 `%USERPROFILE%\.agents\skills\manage-panel`。
+安装包位于 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`。它包含托盘启动器、原生 Rust 运行时、本地服务、构建后的 Web UI、`manage-panel` Skill、`panelctl.cmd` 和注入脚本。Panel 数据存储在 `%LOCALAPPDATA%\Codex Panel\data`，日志存储在 `%LOCALAPPDATA%\Codex Panel\Logs`，Skill 会复制到 `%USERPROFILE%\.agents\skills\manage-panel`。
 
 在 WSL 中运行 `panelctl` 时，它会自动查找 `%LOCALAPPDATA%\Codex Panel\data` 下的 Windows launcher descriptor，并通过 Windows `curl.exe` 请求正在运行的 Windows 桌面端。只有需要显式覆盖 descriptor 时，才设置指向 WSL 路径的 `CODEX_PANEL_WSL_RUNTIME_FILE`。
 

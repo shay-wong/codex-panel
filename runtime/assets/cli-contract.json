@@ -1,0 +1,224 @@
+{
+  "options": {
+    "handoff publish": [
+      "issue",
+      "handoff-file",
+      "json"
+    ],
+    "workflow get": [
+      "project",
+      "json"
+    ],
+    "project list": [
+      "json"
+    ],
+    "project create": [
+      "id",
+      "name",
+      "issue-key",
+      "workspace-path",
+      "json"
+    ],
+    "project map": [
+      "workspace-path",
+      "json"
+    ],
+    "project readme": [
+      "content",
+      "file",
+      "if-version",
+      "json"
+    ],
+    "conversation bind": [
+      "thread-id",
+      "replace-thread-id",
+      "json"
+    ],
+    "cloud login": [
+      "url",
+      "actor-name",
+      "json"
+    ],
+    "cloud status": [
+      "json"
+    ],
+    "cloud logout": [
+      "json"
+    ],
+    "issue list": [
+      "project",
+      "status",
+      "archived",
+      "json"
+    ],
+    "issue get": [
+      "json"
+    ],
+    "issue planning": [
+      "spec-file",
+      "if-version",
+      "json"
+    ],
+    "issue create": [
+      "project",
+      "title",
+      "description",
+      "description-file",
+      "status",
+      "priority",
+      "labels",
+      "thread-id",
+      "agent-platform",
+      "session-id",
+      "git-branch",
+      "worktree-path",
+      "worktree-branch",
+      "start-date",
+      "due-date",
+      "recurrence-interval",
+      "recurrence-unit",
+      "json"
+    ],
+    "issue update": [
+      "project",
+      "title",
+      "description",
+      "description-file",
+      "status",
+      "priority",
+      "labels",
+      "thread-id",
+      "agent-platform",
+      "session-id",
+      "git-branch",
+      "worktree-path",
+      "worktree-branch",
+      "start-date",
+      "due-date",
+      "recurrence-interval",
+      "recurrence-unit",
+      "if-version",
+      "json"
+    ],
+    "issue move": [
+      "status",
+      "thread-id",
+      "agent-platform",
+      "session-id",
+      "binding-thread-id",
+      "binding-codex-project-id",
+      "binding-codex-project-kind",
+      "binding-codex-host-id",
+      "binding-workspace-path",
+      "clear-binding-thread",
+      "if-version",
+      "json"
+    ],
+    "issue archive": [
+      "thread-id",
+      "agent-platform",
+      "session-id",
+      "if-version",
+      "json"
+    ],
+    "issue restore": [
+      "thread-id",
+      "agent-platform",
+      "session-id",
+      "if-version",
+      "json"
+    ],
+    "issue tree": [
+      "direction",
+      "depth",
+      "json"
+    ],
+    "issue relation": [
+      "type",
+      "issue",
+      "thread-id",
+      "agent-platform",
+      "session-id",
+      "if-version",
+      "json"
+    ],
+    "jira repositories": [
+      "projects",
+      "if-version",
+      "json"
+    ],
+    "jira planning": [
+      "spec-file",
+      "tickets-file",
+      "if-version",
+      "json"
+    ],
+    "comment list": [
+      "after",
+      "json"
+    ],
+    "comment add": [
+      "body",
+      "body-file",
+      "thread-id",
+      "agent-platform",
+      "session-id",
+      "binding-thread-id",
+      "binding-codex-project-id",
+      "binding-codex-project-kind",
+      "binding-codex-host-id",
+      "binding-workspace-path",
+      "clear-binding-thread",
+      "json"
+    ],
+    "comment update": [
+      "body",
+      "thread-id",
+      "agent-platform",
+      "session-id",
+      "if-version",
+      "json"
+    ],
+    "comment delete": [
+      "thread-id",
+      "agent-platform",
+      "session-id",
+      "if-version",
+      "json"
+    ],
+    "attachment list": [
+      "task",
+      "comment",
+      "after",
+      "json"
+    ],
+    "attachment download": [
+      "output",
+      "json"
+    ],
+    "attachment upload": [
+      "file",
+      "task",
+      "comment",
+      "content-type",
+      "kind",
+      "json"
+    ],
+    "context current": [
+      "cwd",
+      "json"
+    ]
+  },
+  "help": {
+    "handoff publish": "Usage: panelctl handoff publish --issue ISSUE-ID --handoff-file FILE [--json]\n\nValidate the existing, non-archived issue and publish the handoff document verbatim as an attributed comment. The document is preserved if publication fails.",
+    "": "Usage: panelctl RESOURCE ACTION [options]\n\nCommands:\n  workflow get planning|execution|review|handoff [--project PROJECT_ID] [--json]\n  handoff publish --issue ISSUE-ID --handoff-file FILE [--json]\n  context current [--cwd PATH] [--json]\n  project list\n  project create --name NAME [--id ID] [--issue-key KEY] [--workspace-path PATH]\n  project map PROJECT_ID --workspace-path PATH\n  project readme get [PROJECT_ID]\n  project readme set [PROJECT_ID] (--content TEXT | --file FILE) [--if-version N]\n  conversation bind ISSUE_ID [--thread-id ID] [--replace-thread-id OLD_ID]\n  cloud login --url URL --actor-name NAME\n  cloud status|logout\n  issue list|get|create|update|move|archive|restore|tree|relation\n  issue planning get|save ISSUE_ID [--spec-file FILE --if-version N] [--json]\n  jira repositories list\n  jira repositories set JIRA_ID --projects PROJECT_ID,... --if-version N\n  jira planning ISSUE_ID [--spec-file FILE] [--tickets-file FILE] [--if-version N]\n  comment list ISSUE_ID [--after CURSOR]\n  comment add ISSUE_ID (--body TEXT | --body-file FILE) [--thread-id ID]\n  comment update COMMENT_ID --body TEXT --if-version N [--thread-id ID]\n  comment delete COMMENT_ID --if-version N [--thread-id ID]\n  attachment list (--task ISSUE_ID | --comment COMMENT_ID) [--after CURSOR]\n  attachment download ATTACHMENT_ID --output PATH\n  attachment upload --file PATH (--task ISSUE_ID | --comment COMMENT_ID)\n\nGlobal options:\n  --runtime-file FILE  Use an explicit launcher runtime descriptor\n  --json               Make the JSON output contract explicit\n  --help               Show help for a supported command level\n\nExamples:\n  panelctl issue get LOCAL-275 --json\n  panelctl comment list LOCAL-275 --json\n\nConversation attribution for issue/comment writes:\n  --agent-platform claude|pi|agy|grok --session-id ID\n  Or keep Codex --thread-id ID / CODEX_THREAD_ID.\n  External options must be supplied together and ignore CODEX_THREAD_ID.\n  --binding-* options remain separate native Codex bindings.\n\nRun panelctl issue --help for all issue arguments.",
+    "issue": "Usage: panelctl issue ACTION [arguments] [options]\n\nActions:\n  list [--project PROJECT_ID] [--status STATUS] [--archived true|false|all] [--json]\n  get ISSUE_ID [--json]\n  create --project PROJECT_ID --title TITLE\n    [--description TEXT | --description-file FILE]\n    [--status STATUS] [--priority PRIORITY] [--labels a,b]\n    [--thread-id ID]\n    [--git-branch BRANCH | --worktree-path PATH [--worktree-branch BRANCH]]\n    [--start-date YYYY-MM-DD] [--due-date YYYY-MM-DD]\n    [--recurrence-interval N --recurrence-unit day|week|month|year] [--json]\n  update ISSUE_ID\n    [--project PROJECT_ID] [--title TITLE]\n    [--description TEXT | --description-file FILE]\n    [--status STATUS] [--priority PRIORITY] [--labels a,b]\n    [--thread-id ID]\n    [--git-branch BRANCH | --worktree-path PATH [--worktree-branch BRANCH]]\n    [--start-date YYYY-MM-DD] [--due-date YYYY-MM-DD]\n    [--recurrence-interval N --recurrence-unit day|week|month|year]\n    [--if-version N] [--json]\n  move ISSUE_ID --status STATUS [--thread-id ID]\n    [--binding-thread-id ID\n      [--binding-codex-project-id ID --binding-codex-project-kind local|remote\n       --binding-codex-host-id ID --binding-workspace-path PATH]\n     | --clear-binding-thread]\n    [--if-version N] [--json]\n  archive ISSUE_ID [--thread-id ID] [--if-version N] [--json]\n  restore ISSUE_ID [--thread-id ID] [--if-version N] [--json]\n  planning get|save ISSUE_ID [--spec-file FILE --if-version N] [--json]\n  tree ISSUE_ID --direction descendants|ancestors --depth N [--json]\n  relation add|remove ISSUE_ID --type parent|blocks|blocked_by|related\n    --issue RELATED_ISSUE_ID [--thread-id ID] [--if-version N] [--json]\n\nAll issue writes accept --agent-platform claude|pi|agy|grok --session-id ID\ninstead of Codex --thread-id / CODEX_THREAD_ID. Both external options are required.\nExternal metadata does not replace --binding-* native Codex identity.\nUpdate also accepts only external session metadata plus --if-version.\n\nStatuses: backlog, todo, in_progress, in_review, blocked, done, canceled\nPriorities: none, urgent, high, medium, low\n\nExample:\n  panelctl issue get LOCAL-275 --json",
+    "issue planning": "Usage: panelctl issue planning get|save ISSUE_ID [--spec-file FILE --if-version N] [--json]\n\nRead or save the task Spec without changing task status or description.\nRead first and pass the returned plan.version to save. An unsaved ordinary task starts at version 1.\nJira tasks use their existing Jira plan; start Jira planning before saving.\n\nOptions:\n  --spec-file FILE  UTF-8 Markdown Spec to save\n  --if-version N   Current plan.version from issue planning get\n  --json           Make the JSON output contract explicit\n  --help           Show this help",
+    "conversation bind": "Usage: panelctl conversation bind ISSUE_ID [--thread-id ID] [--replace-thread-id OLD_ID] [--json]\n\nBind the current Codex conversation to one Panel Issue or Jira requirement without changing its status or fields.\n\nOptions:\n  --thread-id ID  Override CODEX_THREAD_ID\n  --replace-thread-id OLD_ID  Explicitly take over the freshly read conversation binding\n  --json          Make the JSON output contract explicit\n  --help          Show this help",
+    "jira repositories": "Usage: panelctl jira repositories list [--json]\n       panelctl jira repositories set JIRA_ID --projects PROJECT_ID,... --if-version N [--json]\n\nList available repository candidates, or replace a Jira requirement’s linked repositories.\nList merges saved Panel projects with current device workspaces without creating projects.\n\nOptions:\n  --projects IDS  Comma-separated Panel project IDs\n  --if-version N  Current context.jira.version from jira planning get\n  --json          Make the JSON output contract explicit\n  --help          Show this help",
+    "comment add": "Usage: panelctl comment add ISSUE_ID (--body TEXT | --body-file FILE)\n  [--thread-id ID | --agent-platform claude|pi|agy|grok --session-id ID]\n  [--binding-thread-id ID\n    [--binding-codex-project-id ID --binding-codex-project-kind local|remote\n     --binding-codex-host-id ID --binding-workspace-path PATH]\n   | --clear-binding-thread] [--json]\n\nExternal attribution requires both options; Pi accepts a full session path or ID.\nCODEX_THREAD_ID is used only when no external attribution is supplied.\nBinding options remain independent, native Codex identity.",
+    "comment update": "Usage: panelctl comment update COMMENT_ID --body TEXT --if-version N\n  [--thread-id ID | --agent-platform claude|pi|agy|grok --session-id ID] [--json]\n\nExternal attribution requires both options; otherwise Codex uses CODEX_THREAD_ID.",
+    "comment delete": "Usage: panelctl comment delete COMMENT_ID --if-version N\n  [--thread-id ID | --agent-platform claude|pi|agy|grok --session-id ID] [--json]\n\nDeleting a comment removes its saved session metadata with it.",
+    "comment list": "Usage: panelctl comment list ISSUE_ID [--after CURSOR] [--json]\n\nOptions:\n  --after CURSOR  Return comments created or modified after a prior nextCursor\n  --json          Make the JSON output contract explicit\n  --help          Show this help\n\nThe response always includes nextCursor. Omit --after for the full list.\n\nExample:\n  panelctl comment list LOCAL-275 --after CURSOR --json"
+  }
+}

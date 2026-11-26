@@ -3,7 +3,7 @@
   "bundle": {
     "targets": ["deb", "appimage"],
     "createUpdaterArtifacts": false,
-    "externalBin": ["binaries/codex-panel-node"],
+    "externalBin": ["binaries/codex-panel-runtime"],
     "icon": ["../web/public/codex-app-icon.png"]
   }
 }

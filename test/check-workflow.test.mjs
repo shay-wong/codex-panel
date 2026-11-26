@@ -37,16 +37,30 @@ test('main pushes run types and tests without builds while PR and manual runs re
   assert.equal(web.native, false);
   assert.deepEqual(web.args.slice(-2), ['HEAD^1', 'HEAD']);
   assert.equal(scope('pull_request', ['src-tauri/src/main.rs']).native, true);
+  assert.equal(scope('pull_request', ['runtime/src/server.rs']).native, true);
   assert.equal(scope('pull_request', ['README.md'], true).native, true);
   assert.equal(scope('workflow_dispatch', ['README.md']).native, true);
 });
 
 test('PR platform jobs retain path scope and compile without packaging', () => {
+  const targets = {
+    'macos-launcher': ['aarch64-apple-darwin', 'x86_64-apple-darwin'],
+    'windows-launcher': ['x86_64-pc-windows-msvc'],
+    'linux-launcher': ['x86_64-unknown-linux-gnu'],
+  };
   for (const name of ['macos-launcher', 'windows-launcher', 'linux-launcher']) {
     const job = workflow.jobs[name];
     assert.ok(job.if.includes("needs['main-check-scope'].outputs.run_native != 'false'"));
     assert.ok(job.steps.some(step => step.run?.startsWith('cargo check ')));
     assert.ok(job.steps.filter(step => step.run?.startsWith('cargo check ')).every(step => step.run.includes('--all-targets') && step.run.includes('--locked')));
+    for (const target of targets[name]) {
+      for (const crate of ['src-tauri', 'runtime']) {
+        assert.ok(job.steps.some(step => step.run === `cargo check --manifest-path ${crate}/Cargo.toml --locked --all-targets --target ${target}`), `${name}: ${crate} ${target}`);
+      }
+    }
+    const cache = job.steps.find(step => step.uses?.startsWith('Swatinem/rust-cache@'));
+    assert.match(cache.with.workspaces, /^src-tauri -> target$/m);
+    assert.match(cache.with.workspaces, /^runtime -> target$/m);
     const config = JSON.parse(job.env.TAURI_CONFIG);
     assert.equal(config.bundle.active, false);
     assert.deepEqual(config.bundle.externalBin, []);
@@ -55,4 +69,14 @@ test('PR platform jobs retain path scope and compile without packaging', () => {
     assert.doesNotMatch(commands, /app:prepare|tauri.*build|app:build|app:preflight|verify.*package|codesign/);
     assert.ok(!job.steps.some(step => step.uses?.startsWith('actions/upload-artifact@')));
   }
+});
+
+test('Linux runtime tests have Node and dependencies for the isolated JS parity fixture', () => {
+  const steps = workflow.jobs['linux-launcher'].steps;
+  const node = steps.findIndex(step => step.uses?.startsWith('actions/setup-node@'));
+  const install = steps.findIndex(step => step.run === 'npm ci');
+  const runtimeTests = steps.findIndex(step => step.run?.startsWith('cargo test --manifest-path runtime/Cargo.toml'));
+  assert.ok(node >= 0 && install > node && runtimeTests > install);
+  assert.equal(steps[node].with['node-version'], 22);
+  assert.match(steps[runtimeTests].run, /--locked --all-targets --target x86_64-unknown-linux-gnu -- --test-threads=1$/);
 });

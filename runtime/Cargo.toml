@@ -1,0 +1,63 @@
+[package]
+name = "codex-panel-runtime"
+version = "0.6.6-fork"
+edition = "2021"
+rust-version = "1.88"
+publish = false
+
+[lib]
+name = "codex_panel_runtime"
+path = "src/lib.rs"
+
+[[bin]]
+name = "codex-panel-runtime"
+path = "src/main.rs"
+
+[[bin]]
+name = "panelctl"
+path = "src/bin/panelctl.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws", "multipart"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+ed25519-dalek = "2"
+futures-util = "0.3"
+hex = "0.4"
+hmac = "0.12"
+libc = "0.2"
+oxc_allocator = "0.75"
+oxc_ast = { version = "0.75", features = ["serialize"] }
+oxc_parser = "0.75"
+oxc_span = "0.75"
+regex = "1"
+pulldown-cmark = "0.13"
+roxmltree = "0.20"
+rpassword = "7"
+reqwest = { version = "0.13", features = ["json", "stream", "multipart"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["unbounded_depth"] }
+serde_yaml = "0.9"
+sha2 = "0.10"
+subtle = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "process", "io-util", "io-std", "fs"] }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+toml = "0.9"
+toml_edit = "0.23"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+url = "2"
+unicode-normalization = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
+
+[profile.release]
+strip = true
+lto = "thin"

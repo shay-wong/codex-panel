@@ -23,10 +23,8 @@ import {
   stopManagedInjector,
 } from "./codex-injector-control.mjs";
 import { managedInjectorCommandMatches } from "./codex-injector-runtime.mjs";
-import { ensureCodexDeltaTool } from "./prepare-codex-delta.mjs";
-import { ensureCodexTransport } from "./prepare-codex-transport.mjs";
 import { createLocalBuildEnvironment, runTauri } from "./run-tauri.mjs";
-import { copyRuntimePackages } from "./runtime-packages.mjs";
+import { verifyRuntimeIntegrity } from "./runtime-integrity.mjs";
 import {
   installManagedDirectory,
   installManagedFile,
@@ -49,47 +47,6 @@ const launchServicesRegister = [
   "/System/Library/Frameworks/CoreServices.framework",
   "Frameworks/LaunchServices.framework/Support/lsregister",
 ].join("/");
-const runtimePayloadPaths = [
-  "cli",
-  "inject",
-  "server",
-  "shared",
-  path.join("dist", "web"),
-  path.join("skills", "manage-panel"),
-  path.join("skills", "handoff-panel"),
-];
-const runtimeScriptNames = [
-  "codex-cdp-pipe.mjs",
-  "codex-dot-entry.mjs",
-  "codex-thread-tabs.mjs",
-  "codex-injector-control.mjs",
-  "codex-injector-runtime.mjs",
-  "codex-shared-session.mjs",
-  "codex-shared-session-native.mjs",
-  "codex-injector.mjs",
-  "codex-rate-limits.mjs",
-  "codex-thread-usage.mjs",
-  "codex-update.mjs",
-  "codex-update-download.mjs",
-  "codex-update-delta.mjs",
-  "codex-update-transport.mjs",
-  "codex-rspack.mjs",
-  "codex-rspack-revisions.mjs",
-  "codex-rspack-source.mjs",
-  "codex-rspack-worker.mjs",
-  "codex-source-ast.mjs",
-  "codex-rspack-quota.mjs",
-  "codex-rspack-tabs.mjs",
-  "codex-rspack-capabilities.mjs",
-  "codex-rspack-pets.mjs",
-  "codex-repository-branch-prefix.mjs",
-  "codex-settings-presentation.mjs",
-  "pet-animations.mjs",
-  "codex-provider-quota.mjs",
-  "codex-provider-ultrafast.mjs",
-  "codex-provider-ultrafast-catalog.mjs",
-  "panel-supervisor.mjs",
-];
 
 function run(command, args, { allowFailure = false, cwd, stdio, env } = {}) {
   const result = spawnSync(command, args, {
@@ -182,55 +139,32 @@ export function panelctlLauncher(
   runtimeDirectory,
   dataDirectory = resolvePanelDataDirectory(),
 ) {
-  const cliPath = path.join(runtimeDirectory, "cli", "panelctl.mjs");
+  const cliPath = path.join(runtimeDirectory, "codex-panel-runtime");
   return `#!/bin/sh
 # codex-panel-managed:panelctl:1
 export CODEX_PANEL_DATA_DIR=${shellQuote(dataDirectory)}
 export CODEX_PANEL_RUNTIME_FILE=${shellQuote(path.join(dataDirectory, "launcher-runtime.json"))}
-exec /usr/bin/env node ${shellQuote(cliPath)} "$@"
+exec ${shellQuote(cliPath)} ctl "$@"
 `;
 }
 
-async function stageRuntimePayload(sourceRoot, stagedRuntime) {
-  for (const relativePath of runtimePayloadPaths) {
-    const sourcePath = path.join(sourceRoot, relativePath);
-    if (!(await pathExists(sourcePath))) {
-      throw new Error(`Required runtime path is missing: ${sourcePath}`);
-    }
-    await cp(sourcePath, path.join(stagedRuntime, relativePath), {
-      preserveTimestamps: true,
-      recursive: true,
-    });
-  }
-  const scriptsDirectory = path.join(stagedRuntime, "scripts");
-  await mkdir(scriptsDirectory, { recursive: true });
-  for (const filename of runtimeScriptNames) {
-    await copyFile(path.join(sourceRoot, "scripts", filename), path.join(scriptsDirectory, filename));
-  }
-  const manifest = JSON.parse(await readFile(path.join(sourceRoot, "package.json"), "utf8"));
-  await copyRuntimePackages(stagedRuntime, {
-    sourceRoot,
-    dependencies: manifest.dependencies ?? {},
+async function stageRuntimePayload(sourceApp, stagedRuntime) {
+  // CLI 和 Skill 复用同一次构建的原生资源，避免另外安装一份旧 Node 服务。
+  await cp(path.join(sourceApp, "Contents/Resources/app"), stagedRuntime, {
+    preserveTimestamps: true, recursive: true,
   });
-  if (process.platform === "darwin") {
-    const tool = await ensureCodexDeltaTool({ projectRoot: sourceRoot });
-    const toolsDirectory = path.join(stagedRuntime, "tools");
-    await mkdir(toolsDirectory, { recursive: true });
-    await copyFile(tool.binaryPath, path.join(toolsDirectory, "BinaryDelta"));
-    await chmod(path.join(toolsDirectory, "BinaryDelta"), 0o755);
-    await copyFile(tool.licensePath, path.join(toolsDirectory, "Sparkle-LICENSE"));
-    const transport = await ensureCodexTransport({ projectRoot: sourceRoot });
-    await copyFile(transport.binaryPath, path.join(toolsDirectory, "CodexTransport"));
-    await chmod(path.join(toolsDirectory, "CodexTransport"), 0o755);
-  }
+  await copyFile(path.join(sourceApp, "Contents/MacOS/codex-panel-runtime"),
+    path.join(stagedRuntime, "codex-panel-runtime"));
+  await chmod(path.join(stagedRuntime, "codex-panel-runtime"), 0o755);
 }
 
-export async function installRuntime(runtimeDirectory, { sourceRoot = projectRoot } = {}) {
+export async function installRuntime(runtimeDirectory, { sourceApp } = {}) {
+  if (!sourceApp) throw new Error("Rust runtime installation requires the built App");
   const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "codex-panel-runtime-"));
   const stagedRuntime = path.join(temporaryDirectory, "runtime");
   try {
     await mkdir(stagedRuntime);
-    await stageRuntimePayload(sourceRoot, stagedRuntime);
+    await stageRuntimePayload(sourceApp, stagedRuntime);
     return await installManagedDirectory(
       stagedRuntime,
       runtimeDirectory,
@@ -355,8 +289,10 @@ function currentSigningIdentity(appPath) {
 }
 
 function resolveSigningIdentity(existingAppPath) {
-  const explicit = process.env.CODEX_PANEL_CODESIGN_IDENTITY?.trim();
-  if (explicit) return explicit;
+  const explicit = process.env.CODEX_PANEL_CODESIGN_IDENTITY?.trim()
+    || process.env.APPLE_SIGNING_IDENTITY?.trim();
+  if (explicit && explicit !== "-") return explicit;
+  if (explicit === "-") throw new Error("本地安装不自动使用临时签名，请设置开发者签名身份");
   const identitiesResult = run(
     "/usr/bin/security",
     ["find-identity", "-p", "codesigning", "-v"],
@@ -374,7 +310,8 @@ function resolveSigningIdentity(existingAppPath) {
   const matching = identities.filter(({ name }) => (
     name.startsWith("Apple Development:") && email && name.toLowerCase().includes(email)
   ));
-  return matching.length === 1 ? matching[0].hash : "-";
+  if (matching.length === 1) return matching[0].hash;
+  throw new Error("未找到唯一的开发者签名身份，请设置 CODEX_PANEL_CODESIGN_IDENTITY");
 }
 
 function hostTarget() {
@@ -383,10 +320,11 @@ function hostTarget() {
   throw new Error(`Unsupported macOS architecture: ${process.arch}`);
 }
 
-export async function buildTauriApp() {
+export async function buildTauriApp({ signingIdentity } = {}) {
   const target = hostTarget();
   const npmPath = path.join(path.dirname(process.execPath), "npm");
   const env = await createLocalBuildEnvironment(true, projectRoot);
+  if (signingIdentity) env.APPLE_SIGNING_IDENTITY = signingIdentity;
   run(npmPath, ["run", "app:prepare", "--", "--target", target], { cwd: projectRoot, env, stdio: "inherit" });
   const status = runTauri([
     "build",
@@ -494,8 +432,8 @@ async function stopLegacyInjector(appPath, dataDirectory, marker) {
 async function stopTauriInjector(appPath, dataDirectory, marker) {
   if (marker?.launcher !== "tauri") return;
   const result = await stopOwnedInjector(dataDirectory, {
-    nodePath: path.join(appPath, "Contents", "MacOS", "node"),
-    injectorPath: path.join(
+    nodePath: path.join(appPath, "Contents", "MacOS", marker.runtime === "rust" ? "codex-panel-runtime" : "node"),
+    injectorPath: marker.runtime === "rust" ? "inject" : path.join(
       appPath,
       "Contents",
       "Resources",
@@ -519,14 +457,14 @@ async function removeLegacyLauncher(applicationsDirectory) {
   await rm(legacyPath, { recursive: true });
 }
 
-export async function installLauncher(layout, { sourceApp } = {}) {
+export async function installLauncher(layout, { sourceApp, signingIdentity: selectedIdentity } = {}) {
   const launcherPath = path.join(layout.applicationsDirectory, launcherName);
   const launcherExists = await pathExists(launcherPath);
   const installedMarker = launcherExists ? await managedMarker(launcherPath) : null;
   if (launcherExists) await assertManagedLauncher(launcherPath);
-  const builtApp = sourceApp ?? await buildTauriApp();
+  const signingIdentity = selectedIdentity ?? resolveSigningIdentity(launcherExists ? launcherPath : null);
+  const builtApp = sourceApp ?? await buildTauriApp({ signingIdentity });
   await assertManagedLauncher(builtApp);
-  const signingIdentity = resolveSigningIdentity(launcherExists ? launcherPath : null);
   await mkdir(layout.applicationsDirectory, { recursive: true });
   const temporaryDirectory = await mkdtemp(
     path.join(layout.applicationsDirectory, ".codex-panel-tauri-"),
@@ -537,6 +475,9 @@ export async function installLauncher(layout, { sourceApp } = {}) {
     await cp(builtApp, stagedApp, { preserveTimestamps: true, recursive: true });
     const executableName = bundleExecutable(stagedApp);
     if (!executableName) throw new Error("Tauri app has no valid CFBundleExecutable");
+    const runtime = path.join(stagedApp, "Contents/MacOS/codex-panel-runtime");
+    const resources = path.join(stagedApp, "Contents/Resources");
+    await verifyRuntimeIntegrity(resources, runtime);
     for (const target of [
       path.join(stagedApp, "Contents", "MacOS", executableName),
       stagedApp,
@@ -549,6 +490,7 @@ export async function installLauncher(layout, { sourceApp } = {}) {
         target,
       ]);
     }
+    await verifyRuntimeIntegrity(resources, runtime);
     run("/usr/bin/codesign", ["--verify", "--deep", "--strict", stagedApp]);
     if (launcherExists) {
       await stopTauriInjector(launcherPath, layout.dataDirectory, installedMarker);
@@ -584,15 +526,17 @@ export async function installCodexIntegration(options = {}) {
     path.join(launcherPath, "Contents", "Resources", "app", ".data"),
     path.join(projectRoot, ".data"),
   ];
-  const sourceApp = options.sourceApp ?? await buildTauriApp();
+  const signingIdentity = options.signingIdentity
+    ?? resolveSigningIdentity(await pathExists(launcherPath) ? launcherPath : null);
+  const sourceApp = options.sourceApp ?? await buildTauriApp({ signingIdentity });
   const dataSource = legacyDataSources.find((candidate) => spawnSync(
     "/usr/bin/test",
     ["-d", candidate],
   ).status === 0) ?? path.join(projectRoot, ".data");
   await initializeDataDirectory(dataSource, layout.dataDirectory);
-  await installRuntime(layout.runtimeDirectory);
+  await installRuntime(layout.runtimeDirectory, { sourceApp });
   await installPanelTools(layout);
-  await installLauncher(layout, { sourceApp });
+  await installLauncher(layout, { sourceApp, signingIdentity });
   return layout;
 }
 

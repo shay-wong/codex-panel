@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 
 const children = [
-  spawn(process.execPath, ["--watch", "server/index.mjs", "--dev"], {
+  // 开发入口和安装包复用同一套 Rust 服务；前端仍由 Vite 热更新。
+  spawn("cargo", ["run", "--locked", "--manifest-path", "runtime/Cargo.toml", "--bin", "codex-panel-runtime", "--", "serve", "--dev"], {
     stdio: "inherit",
   }),
   spawn(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "dev:web"], {

@@ -121,7 +121,7 @@ A failed or empty usage read keeps the current turn’s statistics and live upda
 
 ## Requirements
 
-- Node.js 22.22.3 or newer in the 22.x line, or 24.8 or newer
+- For source builds: Rust 1.88 or newer and Node.js 22.22.3 or newer in the 22.x line, or 24.8 or newer. Packaged apps run on the native Rust runtime and do not require Node.js.
 
 ## Run locally
 
@@ -191,7 +191,7 @@ Each local package build receives an increasing build number. `codex:install` pr
 
 The integration command builds and copies a standalone runtime to `~/Library/Application Support/Codex Panel/runtime`, copies `manage-panel` and `handoff-panel` into the standard user Skill directory at `~/.agents/skills`, installs `panelctl` in `~/.local/bin`, and generates the macOS launcher. The launcher receives its own signed copy of that runtime inside the app bundle. The installed files are real managed copies, not symbolic links back to the Git repository. Plain `npm ci` only installs project dependencies and does not write these user-level integrations. Start a new Codex task after installation to use `$manage-panel` and `$handoff-panel`.
 
-On the first install, if the fixed data directory does not exist, the installer snapshots the existing repository `.data/panel.sqlite` and copies its attachments and local configuration without deleting the source. It also removes old repository-managed `~/.codex/skills` and Node-bin links. Re-running the command atomically refreshes only files carrying the Codex Panel ownership marker; user-managed files and directories are never overwritten. Moving or deleting the repository does not break the already installed runtime. Run the command again after pulling code updates or replacing Node.js to install a new version.
+On the first install, if the fixed data directory does not exist, the installer snapshots the existing repository `.data/panel.sqlite` and copies its attachments and local configuration without deleting the source. It also removes old repository-managed `~/.codex/skills` and Node-bin links. Re-running the command atomically refreshes only files carrying the Codex Panel ownership marker; user-managed files and directories are never overwritten. Moving or deleting the repository does not break the already installed runtime. Run the command again after pulling code updates to install a new version.
 
 Existing browser settings and drafts are migrated from `taskboard.*` keys to `panel.*`. Legacy `CODEX_TASKBOARD_*` environment variables remain fallback aliases, but new configuration should use `CODEX_PANEL_*`.
 
@@ -226,7 +226,7 @@ The management window uses React and Radix Themes in Tauri's WebView. Runtime ov
 
 The conversation-menu card in Runtime overview shows loading status and offers a manual retry after failure without restarting Codex.
 
-After a release is published, the workflow automatically commits the five version files and the Chinese [changelog](CHANGELOG.md) to main. Released entries move under their version headings using the tag snapshot; later changes stay in `未发布` (Unreleased). Pull main before building or reinstalling locally to use that version.
+After a release is published, the workflow automatically commits the seven version files and the Chinese [changelog](CHANGELOG.md) to main. Released entries move under their version headings using the tag snapshot; later changes stay in `未发布` (Unreleased). Pull main before building or reinstalling locally to use that version.
 
 Fork versions are independent of upstream, starting at `0.0.1-fork` with tag `v0.0.1-fork`. Upstream merges do not change the Fork version. Existing local `0.1.0` development builds require a one-time manual installation to switch to this version line.
 
@@ -236,13 +236,13 @@ In **About → Version updates → GitHub 账号**, choose **登录 GitHub**, co
 
 When an update is available, **About → Version updates** displays its release notes with Markdown headings, lists, inline formatting, and scrolling for long content. A release without notes shows “该版本暂无版本说明。” (No release notes provided). **View release notes** still opens the GitHub release. After download and signature verification, the installation confirmation shows only the target version, confirmation message, and **Later / Install and restart** buttons; it does not repeat the release notes.
 
-The app bundle contains the Panel runtime, `panelctl`, both Panel Skills, and the official signed Node.js runtime used to run them. The macOS installer prefers `CODEX_PANEL_CODESIGN_IDENTITY`, then a reusable local Apple Development identity, and falls back to ad-hoc signing when neither is available. Windows releases are built by GitHub Actions. Authenticode signing is optional: configure `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` and the certificate secrets to sign the installer, or leave them unset to build an unsigned installer. Tauri updater packages remain signed in both modes. macOS and Windows build in parallel; publication waits for both outcomes and includes only successful platforms.
+The app bundle contains the native Rust Panel runtime, `panelctl`, both Panel Skills, and the built web UI. Node.js and host-side JavaScript dependencies are not bundled; JavaScript continues to run in the web UI and the injected Codex renderer. The macOS installer prefers `CODEX_PANEL_CODESIGN_IDENTITY`, then a reusable local Apple Development identity; if neither is available, it asks for a signing identity instead of silently using ad-hoc signing. Windows releases are built by GitHub Actions. Authenticode signing is optional: configure `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` and the certificate secrets to sign the installer, or leave them unset to build an unsigned installer. Tauri updater packages remain signed in both modes. macOS and Windows build in parallel; publication waits for both outcomes and includes only successful platforms.
 
-Before connecting, the app verifies its own signed bundle and packaged runtime, verifies the official `ChatGPT.app` and bundled Codex executable against OpenAI's identifiers and Team ID, rejects symlinks, and removes Node, shell, and dynamic-loader injection variables from the child environment. Windows verifies the embedded SHA-256 manifest covering Node and every packaged Panel runtime file before execution. Builds configured with an Authenticode certificate additionally verify the launcher's signer. It binds the Panel service to loopback with a launcher-owned listener and private instance token. If the running Codex already exposes a valid CDP endpoint, including one left by the former Swift launcher, the new injector attaches to that real port; otherwise it starts the official app through macOS LaunchServices with a private random CDP port. A Codex process started without CDP still has to be quit before it can be relaunched with CDP. Runtime status, open, and shutdown requests use a startup-token-protected user-only Unix socket on macOS and the owned child control pipe on Windows. On Windows, Panel lifecycle actions interrupt native Codex turns through a startup-token-authenticated named pipe. Stopping or quitting waits for the injector and Panel service owned by Tauri, while the official ChatGPT/Codex app continues running. The app never modifies `ChatGPT.app` or `app.asar`.
+Before connecting, the app verifies its own signed bundle and packaged runtime, verifies the official `ChatGPT.app` and bundled Codex executable against OpenAI's identifiers and Team ID, rejects symlinks, and removes Node, shell, and dynamic-loader injection variables from the child environment. Windows verifies the embedded SHA-256 manifest covering the native runtime and every packaged Panel resource before execution. Builds configured with an Authenticode certificate additionally verify the launcher's signer. It binds the Panel service to loopback with a launcher-owned listener and private instance token. If the running Codex already exposes a valid CDP endpoint, including one left by the former Swift launcher, the new injector attaches to that real port; otherwise it starts the official app through macOS LaunchServices with a private random CDP port. A Codex process started without CDP still has to be quit before it can be relaunched with CDP. Runtime status, open, and shutdown requests use a startup-token-protected user-only Unix socket on macOS and the owned child control pipe on Windows. On Windows, Panel lifecycle actions interrupt native Codex turns through a startup-token-authenticated named pipe. Stopping or quitting waits for the injector and Panel service owned by Tauri, while the official ChatGPT/Codex app continues running. The app never modifies `ChatGPT.app` or `app.asar`.
 
 The launcher-owned Panel listener prefers `127.0.0.1:47823` and falls back to a private random port when that port is unavailable. The Codex CDP endpoint remains separate and random.
 
-Re-run `npm run codex:install` after updating the repository or replacing Node.js. A normal OpenAI-signed `ChatGPT.app` update does not require reinstalling Panel. `npm run launcher:install` remains available as a compatibility alias. The latest manager log is written to `~/Library/Logs/Codex Panel.log`.
+Re-run `npm run codex:install` after updating the repository. A normal OpenAI-signed `ChatGPT.app` update does not require reinstalling Panel. `npm run launcher:install` remains available as a compatibility alias. The latest manager log is written to `~/Library/Logs/Codex Panel.log`.
 
 ### Alternative: run the launcher in a terminal
 
@@ -308,7 +308,7 @@ This first release does not support ARM64, Fedora, RPM packages, or other Linux 
 
 Windows NSIS installers can be built and used without an Authenticode certificate. Windows may show an unknown-publisher warning or block unsigned applications under its security policies. Configure the certificate and `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` to enable signing; incomplete or invalid signing configuration fails rather than silently switching modes. `npm run app:build:windows:unsigned` explicitly builds without Authenticode. Tauri updater signatures and packaged-runtime integrity checks remain required. See the [Privacy policy](PRIVACY.md) and [Windows uninstall instructions](docs/windows-uninstall.md).
 
-The local build uses ad-hoc code signing for direct verification. A public macOS download still needs Developer ID signing and Apple notarization.
+For a local macOS build, set `APPLE_SIGNING_IDENTITY` to an existing developer identity before building, then run `npm run app:sign -- /absolute/path/to/Codex\ Panel.app` with the same identity. The build command alone leaves the final App unsigned. Public distribution requires the separate release signing and notarization policy.
 
 ### Windows App: tray launcher and bundled Panel
 
@@ -319,7 +319,7 @@ npm ci
 npm run app:build:windows
 ```
 
-The installer is written to `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`. It installs a tray launcher, bundled Node runtime, local service, built web UI, `manage-panel` Skill, `panelctl.cmd`, and injection script. Panel data is stored in `%LOCALAPPDATA%\Codex Panel\data`; logs are stored in `%LOCALAPPDATA%\Codex Panel\Logs`; the Skill is copied to `%USERPROFILE%\.agents\skills\manage-panel`.
+The installer is written to `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`. It installs a tray launcher, native Rust runtime, local service, built web UI, `manage-panel` Skill, `panelctl.cmd`, and injection script. Panel data is stored in `%LOCALAPPDATA%\Codex Panel\data`; logs are stored in `%LOCALAPPDATA%\Codex Panel\Logs`; the Skill is copied to `%USERPROFILE%\.agents\skills\manage-panel`.
 
 When `panelctl` runs inside WSL, it automatically finds the Windows launcher descriptor under `%LOCALAPPDATA%\Codex Panel\data` and sends requests through Windows `curl.exe`, so it can use the running Windows desktop app. Set `CODEX_PANEL_WSL_RUNTIME_FILE` to a WSL path only when the descriptor must be overridden explicitly.
 

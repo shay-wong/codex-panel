@@ -11,11 +11,18 @@ import { archivePublishedChangelogs, prepareForkRelease } from "../scripts/prepa
 test("a new tag prepares versions and Chinese notes after migrating the changelog path", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "panel-tag-release-"));
   try {
-    const files = ["package.json", "package-lock.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json"];
+    const files = ["package.json", "package-lock.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json", "runtime/Cargo.toml", "runtime/Cargo.lock"];
     for (const file of files) cpSync(new URL(`../${file}`, import.meta.url), path.join(root, file), { recursive: true });
     const git = (...args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
     const read = (file) => readFileSync(path.join(root, file), "utf8");
     const json = (file) => JSON.parse(read(file));
+    // 模拟运行时曾遗漏版本同步；本次标签仍必须一次修齐两个 crate。
+    for (const file of ["runtime/Cargo.toml", "runtime/Cargo.lock"]) {
+      writeFileSync(path.join(root, file), read(file).replace(
+        /name = "codex-panel-runtime"\nversion = "[^"]+"/,
+        'name = "codex-panel-runtime"\nversion = "0.0.0-fork"',
+      ));
+    }
     writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- Already released\n");
     writeFileSync(path.join(root, "CHANGELOG.zh-CN.md"), "# 更新日志\n\n## 未发布\n\n- 已发布条目\n");
     git("init", "-q");
@@ -35,14 +42,20 @@ test("a new tag prepares versions and Chinese notes after migrating the changelo
     const metadata = prepareForkRelease(root, "v8.0.1-fork", notesPath);
     const cargo = parse(read("src-tauri/Cargo.toml"));
     const lock = parse(read("src-tauri/Cargo.lock"));
+    const runtime = parse(read("runtime/Cargo.toml"));
+    const runtimeLock = parse(read("runtime/Cargo.lock"));
     for (const version of [json("package.json").version, json("package-lock.json").version, json("package-lock.json").packages[""].version,
-      json("src-tauri/tauri.conf.json").version, cargo.package.version, lock.package.find((entry) => entry.name === cargo.package.name).version]) {
+      json("src-tauri/tauri.conf.json").version, cargo.package.version, lock.package.find((entry) => entry.name === cargo.package.name).version,
+      runtime.package.version, runtimeLock.package.find(entry => entry.name === runtime.package.name).version]) {
       assert.equal(version, "8.0.1-fork");
     }
     assert.deepEqual(cargo.dependencies, parse(before[2]).dependencies);
     assert.deepEqual(lock.package.filter((entry) => entry.name !== cargo.package.name), parse(before[3]).package.filter((entry) => entry.name !== cargo.package.name));
-    for (const [file, original] of [[files[2], before[2]], [files[3], before[3]]]) {
-      assert.equal(read(file).replace('version = "8.0.1-fork"', `version = "${parse(before[2]).package.version}"`), original, "preserve Cargo comments and formatting");
+    assert.deepEqual(runtime.dependencies, parse(before[5]).dependencies);
+    assert.deepEqual(runtimeLock.package.filter(entry => entry.name !== runtime.package.name), parse(before[6]).package.filter(entry => entry.name !== runtime.package.name));
+    for (const [file, original] of [[files[2], before[2]], [files[3], before[3]], [files[5], before[5]], [files[6], before[6]]]) {
+      const originalVersion = parse(file.startsWith("runtime/") ? before[5] : before[2]).package.version;
+      assert.equal(read(file).replace('version = "8.0.1-fork"', `version = "${originalVersion}"`), original, "preserve Cargo comments and formatting");
     }
     assert.equal(metadata.archive, "Codex.Panel_8.0.1-fork_universal.app.tar.gz");
     const notes = read("notes.md");
@@ -63,7 +76,7 @@ test("release workflow archives the Chinese changelog, preserves newer entries, 
     const remote = path.join(root, "remote.git");
     const git = (...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" }).trim();
     execFileSync("git", ["init", "--bare", "--quiet", remote]);
-    for (const file of ["package.json", "package-lock.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json", "scripts/prepare-fork-release.mjs", "scripts/release-metadata.mjs", "CHANGELOG.md"]) {
+    for (const file of ["package.json", "package-lock.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json", "runtime/Cargo.toml", "runtime/Cargo.lock", "scripts/prepare-fork-release.mjs", "scripts/release-metadata.mjs", "CHANGELOG.md"]) {
       cpSync(new URL(`../${file}`, import.meta.url), path.join(repo, file), { recursive: true });
     }
     // 只复制脚本实际使用的解析器，不读取用户配置或启动真实服务。
@@ -103,9 +116,12 @@ test("release workflow archives the Chinese changelog, preserves newer entries, 
     assert.equal(readFileSync(githubEnv, "utf8"), "RELEASE_DMG=Codex.Panel_8.0.1-fork_universal.dmg\nRELEASE_ARCHIVE=Codex.Panel_8.0.1-fork_universal.app.tar.gz\n");
     const head = git("rev-parse", "HEAD");
     assert.equal(git("rev-parse", "origin/main"), head);
-    assert.deepEqual(git("diff-tree", "--no-commit-id", "--name-only", "-r", head).split("\n").sort(), ["CHANGELOG.md", "package-lock.json", "package.json", "src-tauri/Cargo.lock", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json"]);
+    assert.deepEqual(git("diff-tree", "--no-commit-id", "--name-only", "-r", head).split("\n").sort(), ["CHANGELOG.md", "package-lock.json", "package.json", "runtime/Cargo.lock", "runtime/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json"]);
     assert.match(git("log", "-1", "--format=%s"), /\[skip ci\]/);
     assert.equal(JSON.parse(readFileSync(path.join(repo, "package.json"))).version, "8.0.1-fork");
+    const runtime = parse(read("runtime/Cargo.toml"));
+    assert.equal(runtime.package.version, "8.0.1-fork");
+    assert.equal(parse(read("runtime/Cargo.lock")).package.find(entry => entry.name === runtime.package.name).version, "8.0.1-fork");
     assert.equal(read("CHANGELOG.md"), "# 更新日志\n\n## 未发布\n\n- 未来版本\n\n## 8.0.1-fork\n\n- 当前版本\n  补充说明\n\n## 8.0.0-fork\n\n- 历史版本\n\n");
     run("v8.0.1-fork");
     run("v8.0.0-fork");
