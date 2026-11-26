@@ -375,7 +375,7 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(dot.getAttribute("aria-checked")).toBe("true");
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(screen.queryByText(/Ultrafast 设置已保存/)).toBeNull();
-  const ultrafast = screen.getByRole("switch", { name: "显示自定义 API 的 Ultrafast 选项" });
+  const ultrafast = screen.getByRole("switch", { name: "显示 Fast / Ultrafast 选项" });
   expect(ultrafast.getAttribute("aria-checked")).toBe("false");
   await click(ultrafast);
   expect(invoke).toHaveBeenCalledWith("read_model_discovery");

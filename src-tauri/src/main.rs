@@ -232,6 +232,7 @@ enum LauncherEvent {
 #[serde(rename_all = "camelCase")]
 struct LauncherPidRecord {
     pid: u32,
+    // 沿用旧记录字段名，升级后仍能识别并清理上一次由启动器拥有的进程。
     node_path: PathBuf,
     injector_path: PathBuf,
 }
@@ -1204,7 +1205,8 @@ fn verify_runtime_integrity(
             return Err(format!("打包 runtime 完整性校验失败：{}", entry.path));
         }
     }
-    if !paths.contains(node_name) || !paths.contains("app/scripts/codex-injector.mjs") {
+    let entry = "app/inject/codex-panel.user.js";
+    if !paths.contains(node_name) || !paths.contains(entry) {
         return Err("打包 runtime 清单缺少启动入口".into());
     }
     let mut actual_protected_paths = HashSet::new();
@@ -2264,8 +2266,13 @@ fn process_matches_record(record: &LauncherPidRecord) -> bool {
         return false;
     };
     let command = String::from_utf8_lossy(&output.stdout);
+    let entry = if record.injector_path == Path::new("inject") {
+        " inject "
+    } else {
+        r"scripts\codex-injector.mjs"
+    };
     command.contains(&*record.node_path.to_string_lossy())
-        && command.contains(r"scripts\codex-injector.mjs")
+        && command.contains(entry)
 }
 
 fn stop_recorded_child(state: &LauncherState) {
@@ -2490,20 +2497,18 @@ fn start_launcher_locked(
         .path()
         .resource_dir()
         .map_err(|error| error.to_string())?;
-    // Node 22 的入口解析不兼容可简化的 Windows verbatim 路径；不重新解析符号链接。
+    // 保留与安装器相同的 Windows 路径形式，不重新解析符号链接。
     let resource_directory = dunce::simplified(&resource_directory);
     let app_root = resource_directory.join("app");
-    let injector_path = app_root.join("scripts/codex-injector.mjs");
+    let injector_path = PathBuf::from("inject");
     let node_path = std::env::current_exe()
         .map_err(|error| error.to_string())?
         .parent()
         .ok_or_else(|| "无法定位 App 可执行文件目录".to_string())?
         .join(if cfg!(target_os = "windows") {
-            "node.exe"
-        } else if cfg!(target_os = "linux") {
-            "codex-panel-node"
+            "codex-panel-runtime.exe"
         } else {
-            "node"
+            "codex-panel-runtime"
         });
     verify_launcher_runtime(&resource_directory, &node_path)?;
     stop_recorded_child(state);
@@ -2595,6 +2600,7 @@ fn start_launcher_locked(
         .arg(&codex_app)
         .env_clear()
         .envs(sanitized_process_environment())
+        .env("CODEX_PANEL_APP_ROOT", &app_root)
         .env("CODEX_PANEL_DATA_DIR", &state.data_directory)
         .env("CODEX_PANEL_PREFERENCES_FILE", &state.preferences_path)
         .env(
@@ -3311,17 +3317,16 @@ async fn run_model_configuration(
         let codex_app = find_codex_app(&home).ok_or_else(missing_codex_app_message)?;
         verify_codex_app(&codex_app)?;
         let resources = app.path().resource_dir().map_err(|error| error.to_string())?;
-        // 模型配置入口与服务启动共用相同的 Node 路径约束。
+        // 模型配置入口与服务启动共用相同的原生可执行文件和路径约束。
         let resources = dunce::simplified(&resources);
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
         let node = executable.parent().ok_or("无法定位 App 可执行文件目录")?
-            .join(if cfg!(target_os = "windows") { "node.exe" }
-                else if cfg!(target_os = "linux") { "codex-panel-node" } else { "node" });
+            .join(if cfg!(target_os = "windows") { "codex-panel-runtime.exe" } else { "codex-panel-runtime" });
         verify_launcher_runtime(&resources, &node)?;
         let mut command = StdCommand::new(node);
         #[cfg(target_os = "windows")]
         command.creation_flags(CREATE_NO_WINDOW.0);
-        command.arg(resources.join("app/scripts/codex-provider-ultrafast-catalog.mjs"))
+        command.arg("models").env("CODEX_PANEL_APP_ROOT", resources.join("app"))
             .arg(operation)
             .arg(codex_app)
             .env("CODEX_PANEL_PREFERENCES_FILE", &app.state::<Arc<LauncherState>>().preferences_path)
@@ -3391,13 +3396,12 @@ async fn run_pet_animation_command<T: serde::de::DeserializeOwned + Send + 'stat
         let resources = dunce::simplified(&resources);
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
         let node = executable.parent().ok_or("无法定位 App 可执行文件目录")?
-            .join(if cfg!(target_os = "windows") { "node.exe" }
-                else if cfg!(target_os = "linux") { "codex-panel-node" } else { "node" });
+            .join(if cfg!(target_os = "windows") { "codex-panel-runtime.exe" } else { "codex-panel-runtime" });
         verify_launcher_runtime(resources, &node)?;
         let mut command = StdCommand::new(node);
         #[cfg(target_os = "windows")]
         command.creation_flags(CREATE_NO_WINDOW.0);
-        command.arg(resources.join("app/scripts/pet-animations.mjs"))
+        command.arg("pet-animations").env("CODEX_PANEL_APP_ROOT", resources.join("app"))
             .arg(operation).arg(data_directory)
             .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         if let Some(argument) = argument {
@@ -4966,7 +4970,8 @@ mod tests {
     #[test]
     fn runtime_integrity_rejects_modified_and_unlisted_runtime_files() {
         let root = env::temp_dir().join(format!("codex-panel-integrity-{}", Uuid::new_v4()));
-        let injector = root.join("app/scripts/codex-injector.mjs");
+        let entry = "app/inject/codex-panel.user.js";
+        let injector = root.join(entry);
         let node = root.join("node");
         fs::create_dir_all(injector.parent().unwrap()).unwrap();
         fs::write(&injector, "export {};\n").unwrap();
@@ -4974,7 +4979,7 @@ mod tests {
         let manifest = serde_json::json!({
             "version": 1,
             "files": [
-                { "path": "app/scripts/codex-injector.mjs", "sha256": sha256_file(&injector).unwrap() },
+                { "path": entry, "sha256": sha256_file(&injector).unwrap() },
                 { "path": "node", "sha256": sha256_file(&node).unwrap() },
             ],
         })

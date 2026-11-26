@@ -561,12 +561,13 @@ export function App() {
                     </div>
                   </section>
                   <section className="preference-section" aria-labelledby="compatibilityTitle">
-                    <Heading as="h3" size="2" id="compatibilityTitle" mb="2">自定义 API 与兼容</Heading>
+                    <Heading as="h3" size="2" id="compatibilityTitle" mb="2">模型能力与兼容</Heading>
                     <div className="preference-rows">
-                      <Setting id="customProviderUltrafast" title="显示自定义 API 的 Ultrafast 选项" detail={<>
-                        <span style={{ display: "block" }}>适用于本地自定义 API 的 GPT-6 Astra、GPT-6.1 Sol、GPT-6.2 Astra / Sol。</span>
+                      <Setting id="customProviderUltrafast" title="显示 Fast / Ultrafast 选项" detail={<>
+                        <span style={{ display: "block" }}>适用于本地 OpenAI 和自定义 API 的 GPT-6 Astra、GPT-6.1 Sol、GPT-6.2 Astra / Sol。</span>
                         <span style={{ display: "block" }}>需启用 <code>features.api_key_model_discovery = true</code>。</span>
                         <span style={{ display: "block" }}>保存后重启 Codex，使用时保持 Panel 运行。</span>
+                        <span style={{ display: "block" }}>实际支持、速度和计费以服务端为准。</span>
                       </>} checked={preferences?.customProviderUltrafast ?? false} disabled={!state || savingPreference} onChange={enabled => void changeUltrafast(enabled)} />
                       <Separator size="4" />
                       <Setting id="customProviderQuotaFix" title="移除账号额度不足时 API 发送限制" detail="仅限自定义 API；首次安装适配时重载一次，之后开关即时生效" checked={preferences?.customProviderQuotaFix ?? false} disabled={!state || savingPreference} onChange={enabled => void savePreference("customProviderQuotaFix", enabled)} />

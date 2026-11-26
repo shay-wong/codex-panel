@@ -1,11 +1,12 @@
-// Adapt native speed controls only for a known local custom provider.
+// 为本地提供商的受支持模型扩展原生速度选项。
 import { sourceAst, property, propertyName, propertyValue, unwrap, isFunction, applyEdits } from "./codex-source-ast.mjs";
 import { absoluteModuleImports, esmFunction, esmOwnNodes, esmSameBinding, esmProviderReader, readCodexEsmModules } from "./codex-provider-quota.mjs";
 
 export function customProviderUltrafastAccess(hostId, provider, access, model) {
-  // 已支持的模型同时开放快速和超快；其他模型保留原生快速权限。
+  // 未配置提供商时沿用 Codex 的 OpenAI 默认值；空白和非法值仍不扩展权限。
+  provider ??= "openai";
   const supported = /^(?:gpt-6[- ]astra|gpt-6\.1[- ]sol|gpt-6\.2[- ](?:astra|sol))$/i.test(model);
-  return hostId === "local" && typeof provider === "string" && provider !== "" && provider !== "openai"
+  return hostId === "local" && typeof provider === "string" && provider.trim() !== ""
     ? { ...access, fast: supported || access?.fast === true, ultrafast: supported }
     : access;
 }
@@ -54,17 +55,16 @@ function settingsSignature(ast) {
 function menuSignature(ast) {
   const results=[];
   for(const fn of ast.all(isFunction)){
-    if(!esmOwnNodes(ast,fn,node=>node.value === "composer.openModelPicker" || node.type === "TemplateLiteral" && node.quasis[0]?.value.cooked === "composer.openModelPicker").length)continue;
-    const settings=esmOwnNodes(ast,fn,node=>node.type === "VariableDeclarator" && property(node.id,"serviceTierSettings") && property(node.id,"setServiceTier"));
+    const settings=esmOwnNodes(ast,fn,node=>node.type === "VariableDeclarator" && property(node.id,"serviceTierSettings") && property(node.id,"setServiceTier") && !property(node.id,"serviceTierAccess"));
     const access=esmOwnNodes(ast,fn,node=>node.type === "VariableDeclarator" && property(node.id,"serviceTierAccess"));
     if(settings.length !== 1 || access.length !== 1)continue;
     const setting=propertyValue(settings[0].id,"serviceTierSettings");
     const selected=esmOwnNodes(ast,fn,node=>node.type === "VariableDeclarator" && node.init?.type === "MemberExpression"
       && propertyName(node.init) === "selectedServiceTier" && esmSameBinding(ast,node.init.object,setting));
-    if(selected.length !== 1)continue;
-    const icons=esmOwnNodes(ast,fn,node=>node.type === "CallExpression" && node.arguments.length === 2 && esmSameBinding(ast,node.arguments[1],selected[0].id)
-      && ast.parent(node)?.type === "LogicalExpression" && ast.parent(node).operator === "&&");
-    if(icons.length === 1)results.push({settings:settings[0],access:access[0],selected:selected[0].id,setting,icon:icons[0]});
+    const icons=selected.length === 1 ? esmOwnNodes(ast,fn,node=>node.type === "CallExpression" && node.arguments.length === 2 && esmSameBinding(ast,node.arguments[1],selected[0].id)
+      && ast.parent(node)?.type === "LogicalExpression" && ast.parent(node).operator === "&&") : [];
+    // 权限透传不依赖图标结构；编译器可能多次缓存 selectedServiceTier，或菜单根本没有图标。
+    results.push({settings:settings[0],access:access[0],selected:selected[0]?.id,setting,icon:icons.length === 1 ? icons[0] : null});
   }
   return results.length === 1 ? results[0] : null;
 }
@@ -92,7 +92,7 @@ function rewriteMenu(source) {
   return applyEdits(source,[
     {start:settings.id.start+1,end:settings.id.start+1,text:"serviceTierAccess:panelServiceTierAccess,"},
     {start:access.init.start,end:access.init.end,text:`({...${ast.text(access.init)},serviceTierAccess:panelServiceTierAccess})`},
-    {start:icon.start,end:icon.end,text:`(${ast.text(selected)}==="ultrafast"&&${ast.text(setting)}.availableOptions.some(option=>option.value==="ultrafast")||${ast.text(icon)})`},
+    ...(icon ? [{start:icon.start,end:icon.end,text:`(${ast.text(selected)}==="ultrafast"&&${ast.text(setting)}.availableOptions.some(option=>option.value==="ultrafast")||${ast.text(icon)})`}] : []),
   ]);
 }
 

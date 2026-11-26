@@ -124,6 +124,22 @@ Free 侧边栏兼容（等待上游吸收）：没有插件、宠物及 destinat
 
 ## 维护约定
 
+### 本地 OpenAI Fast / Ultrafast
+
+- 生命周期：等待上游吸收；目的：用户明确要求现有 UF 开关也适用于 `openai`，缺省 provider 沿用官方默认。保留仅本地、既有支持模型、默认关闭及关闭恢复的边界；额度放行开关仍只限自定义服务商。
+- 菜单与请求使用同一适配权限，OpenAI 使用受管本地模型目录保留原认证和目录设置，不改官方账号权益；实际支持、速度和计费由服务端决定。历史 UF 条目中的 local/custom 限定由本条更新，其他不变量继续保留。
+- 代码与验证：`runtime/src/injector/`、`runtime/src/models.rs`、`runtime/src/models_adapter.rs`，对应旧 JS 适配及定向测试；覆盖 OpenAI 显式/缺省 provider、菜单选择和请求档位、关闭恢复、远程与非支持模型。界面入口 `launcher/src/App.tsx` 同步“显示 Fast / Ultrafast 选项”，用户说明见中英文 README、`docs/fork-capabilities.md#custom-provider-ultrafast` 和中文更新日志。未把静态参数测试当作真实 OpenAI 请求成功。
+- 合并时保持菜单、核心模型目录和配置恢复一致；上游等价支持后重新评估。来源分支 `codex/rust-runtime-migration`。
+
+### 原生 Rust 运行时迁移
+
+- 生命周期：长期保留；分类：运行时与构建内部架构。目的为移除安装包的 Node.js 运行时及主机依赖，保留现有用户界面、数据格式与公开 HTTP/CLI 契约。
+- 默认路径为 Tauri → `codex-panel-runtime inject`，服务、SQLite、CDP 注入、模型配置、宠物、更新、共享会话与自动化均由 Rust 执行。前端及 Codex 渲染器脚本保留 JavaScript；构建工具和旧实现差分测试仍可使用 Node。交接 Skill 的发布器改为 `panelctl handoff publish`，原临时文档逐字入评论、失败保留文档、禁止向归档议题发布的不变量不变。
+- 代码：`runtime/`、`src-tauri/src/main.rs`、默认 Tauri 配置、`scripts/prepare-rust-app.mjs`、安装/预检/包内 CLI 验收脚本和 `skills/handoff-panel/`。数据目录与数据库沿用原规则，测试只访问临时目录及模拟服务，不执行生产数据迁移。
+- 验证：`cargo test --manifest-path runtime/Cargo.toml -- --test-threads=1`；数据库旧/新实现差分；模拟 Codex app-server/CDP；`node scripts/verify-packaged-taskctl.mjs <App.app>`。构建、签名、跨平台与真实 Codex 交互是不同验收项目，未执行的项目不得以静态测试代替。开发说明见 `runtime/README.md`；用户运行时说明同步中英文 README 和 `docs/fork-capabilities.md`。
+- 私有嵌入页加载：每次安装 CDP 桥接先恢复 `Page.setBypassCSP`，再注入页面，避免继承 Codex CSP 后阻止 JS/CSS、页面握手超时；原生导航暂未挂载时在同一连接内限时重试。偏好文件首次尚未创建时，共享会话使用启动器默认开关。zzy 的真实失败现场已确认仅启用 CSP 放行并重载 Panel 后恢复 `frameReady`，JS/CSS 与任务、项目接口均成功；不据此认定其他原生适配均已验收。针对性验证为 `runtime/tests/injector_smoke.rs` 和 `shared_session` 测试。
+- 来源：`codex/rust-runtime-migration`。合并时保持资源清单、原生 CLI 包装器、启动入口和全部平台打包入口一致；若上游提供等价原生运行时，再评估移除本差异。
+
 - 新增、修改或移除 Fork 行为时，必须在同一提交中同步对应条目。
 - 对外可见的能力在满足仓库的用户确认和测试授权规则后，必须在同一提交中同步功能代码、已授权的针对性测试、中英文 README 入口、英文详细用户文档及索引、`FORK.md` 和中文 `CHANGELOG.md`。测试未获授权或无法执行时，应如实记录，不得擅自补充。
 - 仅面向维护者、构建、合并或内部兼容性的差异只记录在本文档中，除非仓库规则要求其他内部文档。
@@ -144,7 +160,7 @@ Sol 默认上下文修正（本次修复，等待上游吸收）：`withCurrentM
 
 重启提醒持久化（本次修复，长期保留）：模型配置/Ultrafast 保存成功 → 原生后端 `restart_reminder::mark` → Panel 数据目录 `restart-required.json`，记录标签、保存时间及真实 Codex 主进程身份。`current_ui_state` 返回 `codexRestartReminder`；显式 Codex/CodexUpdate 重启确认后捕获当前提醒，`start_launcher_locked` 返回 child_pid 后持锁以 `clear_if_unchanged` 清除同一记录，取消、退出/启动失败、仅重连 Service 均不清；重启期间新保存的提醒保留。外部重启仍以进程身份不同且启动时间晚于保存判定，无进程、检测失败或仅重装 Panel 均保留。macOS 使用 proc_pidinfo 微秒启动时间，Windows GetProcessTimes，Linux /proc starttime+boot_id；不使用 injector PID 判定。文件操作串行、临时文件原子替换；前端稍后只隐藏当前挂载，重开恢复，连接回到running时读一次状态核实。针对性原生模块自检、Launcher重开/稍后/确认重启清除/取消及失败保留/外部重启清除，以及隔离实际页面验证；不为验证重启真实用户App。此前已丢失的内存提醒无法自动找回；来源 `git log -S'codex_restart_reminder' -- src-tauri/src/main.rs`。
 
-Ultrafast 设置说明：`launcher/src/App.tsx` 将适用模型、必需的 `features.api_key_model_discovery = true`、重启及保持 Panel 运行的要求分三行展示，省去开关操作流程的重复描述。隔离 Launcher 暗色页面确认三行独立排列。
+Ultrafast 设置说明：`launcher/src/App.tsx` 分行展示适用服务商与模型、必需的 `features.api_key_model_discovery = true`、重启及保持 Panel 运行的要求，以及实际支持/速度/计费由服务端决定；开关改名为“显示 Fast / Ultrafast 选项”。
 
 重启提醒按钮样式（本次修复）：`launcher/src/App.tsx` 的保存后提醒操作区使用等高 size=2 按钮，主操作 soft、稍后 outline；Flex 居中并保留固定 8px 间隔，移除 ghost 负边距导致的挤压和上下错位，窄窗可换行。隔离真实 Launcher 暗色页面量测按钮同Y、正文/按钮同X、间隔8px；不改变重启与稍后行为。
 
@@ -392,8 +408,8 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 - 发布校验只核对资产集合、上传状态及签名，不限制显示或上传顺序；DMG 使用正常文件名，不添加排序前缀。
 - 首次生成并安全备份 Tauri 更新密钥（`npm run tauri -- signer generate --help`）；后续版本沿用同一密钥，私钥不得入库。
 - GitHub Actions 仓库 Variable `CODEX_PANEL_UPDATER_PUBLIC_KEY` 填公钥文件内容；Secret `TAURI_SIGNING_PRIVATE_KEY` 填私钥文件内容；可选 Secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 填私钥密码。如需 Windows Authenticode 签名，配置 Secret `WINDOWS_CERTIFICATE_PFX_BASE64`、`WINDOWS_CERTIFICATE_PASSWORD` 和 Variable `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT`；全部未配置时生成未签名安装包，配置不完整则报错。公钥编译进 App，私钥仅用于更新包签名；缺少密钥时发布构建失败。
-- 日常改动仅维护中文 `CHANGELOG.md` 的“未发布”。发布标签仍为版本来源，`scripts/prepare-fork-release.mjs` 自动同步构建目录的 5 个版本文件，保留 Cargo 注释与格式；发布说明按最近其他可达 Fork 标签去重提取该日志的中文条目。
-- 发布成功后，`release-macos.yml` 的 `sync-version` job 从最新 main 检出，用同一脚本更新 package.json、package-lock.json、Cargo.toml、Cargo.lock、tauri.conf.json，同时按发布标签快照将中文 `CHANGELOG.md` 的已发布条目归档到版本标题下；历史积压按最早包含该条目的可达 Fork 标签归档，标签创建后 main 新增条目继续保留在未发布段。仅提交 5 个版本文件和单份 `CHANGELOG.md`，并以 GitHub Actions bot 自动提交回 main，提交包含 `[skip ci]`，不重复打包。各版本回写串行，旧发布重跑不降级，已一致不重复提交；并发 main 推进导致普通 push 拒绝时报告失败，不强推。使用工作流自带 GITHUB_TOKEN，不额外配置密钥；分支保护必须允许该回写，否则需维护者处理权限。
+- 日常改动仅维护中文 `CHANGELOG.md` 的“未发布”。发布标签仍为版本来源，`scripts/prepare-fork-release.mjs` 自动同步构建目录的 7 个版本文件，保留 Cargo 注释与格式；发布说明按最近其他可达 Fork 标签去重提取该日志的中文条目。
+- 发布成功后，`release-macos.yml` 的 `sync-version` job 从最新 main 检出，用同一脚本更新 package.json、package-lock.json、src-tauri/Cargo.toml、src-tauri/Cargo.lock、tauri.conf.json、runtime/Cargo.toml、runtime/Cargo.lock，同时按发布标签快照将中文 `CHANGELOG.md` 的已发布条目归档到版本标题下；历史积压按最早包含该条目的可达 Fork 标签归档，标签创建后 main 新增条目继续保留在未发布段。仅提交 7 个版本文件和单份 `CHANGELOG.md`，并以 GitHub Actions bot 自动提交回 main，提交包含 `[skip ci]`，不重复打包。各版本回写串行，旧发布重跑不降级，已一致不重复提交；并发 main 推进导致普通 push 拒绝时报告失败，不强推。使用工作流自带 GITHUB_TOKEN，不额外配置密钥；分支保护必须允许该回写，否则需维护者处理权限。
 - 版本回写测试的子进程必须将 `GITHUB_ENV` 指向隔离临时文件，不能继承真实 Actions 环境输出路径；否则模拟版本会覆盖后续打包使用的产物名称。`test/prepare-fork-release.test.mjs` 核验模拟环境输出，并在带外层发布环境文件的隔离验证中确认外层内容不变。
 - 该版本同步约定长期保留，不再要求手动版本提交；拉取包含自动回写提交的 main 后，本地编译和重装获得发布版本。发布标签和其源代码快照不改写；回写失败不撤销已发布资产。验证：版本准备测试、隔离 Git 仓库执行实际回写脚本、工作流语法检查。来源定位 `git log -S'sync-version:' -- .github/workflows/release-macos.yml`。
 - 按 Git 授权规则推送产品提交和 `vX.Y.Z-fork` 标签，触发 Release macOS and Windows；保留 main 祖先检查、Tauri 签名验证与资产完整性检查。两个平台并行打包；统一发布任务通过 `always()` 等待两边结束，再收集成功平台的产物，某一平台失败不得跳过发布阶段。两边均失败时明确报错，不发布空 Release；更新清单与通知只包含实际发布的平台。

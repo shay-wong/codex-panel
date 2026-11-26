@@ -142,12 +142,21 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
   const provider = config.model_provider ?? "openai";
   const preferences = preferencesFile ? await readJson(preferencesFile, {}) : {};
   const customProviderUltrafast = preferences.customProviderUltrafast === true
-    && provider !== "openai" && Boolean(config.model_providers?.[provider]);
+    && (provider === "openai" || Boolean(config.model_providers?.[provider]));
   const providerUrl = config.model_providers?.[provider]?.model_catalog_url;
-  const ultrafast = (await readJson(path.join(dataDirectory, "ultrafast-catalog.json"), null))?.providers?.[provider];
+  const adapter = await readJson(path.join(dataDirectory, "ultrafast-catalog.json"), null);
+  const ultrafast = adapter?.providers?.[provider];
+  const official = adapter?.official;
+  const ownsOfficial = provider === "openai" && official?.path && config.model_catalog_json === official.path;
   const sourceUrl = ultrafast && ultrafast.url === providerUrl ? ultrafast.originalUrl : providerUrl;
   let state = await readJson(statePath, null);
   if (!state || config.model_catalog_json !== catalogPath) {
+    if (ownsOfficial) {
+      // 上下文目录必须来自加速前的原始数据，关闭开关时才能完整恢复。
+      state = { catalog: official.sourceCatalog, contextWindows: {},
+        originalCatalog: official.restoreValue,
+        catalogSource: official.catalogSource ?? (official.restoreValue ? "external" : "native") };
+    } else {
     const args = ["debug", "models"];
     if (!config.model_catalog_json && ultrafast && ultrafast.url === config.model_providers?.[provider]?.model_catalog_url) {
       // Keep the source catalog independent of the Ultrafast preference.
@@ -164,6 +173,7 @@ async function modelContextState({ executable, dataDirectory, processEnv, cwd, r
       originalCatalog: userLayer.config?.model_catalog_json ?? null,
       catalogSource: config.model_catalog_json || sourceUrl ? "external" : "native",
     };
+    }
   }
   if (!Array.isArray(state.catalog?.models)) throw new Error("Codex 模型目录格式无效");
   let catalogChanged = false;
@@ -467,12 +477,12 @@ async function readJson(file, fallback) {
   catch (error) { if (error.code === "ENOENT") return fallback; throw error; }
 }
 
-// Provider-specific catalog URLs keep the global model_catalog_json and official
-// OpenAI configuration untouched. The core reads this URL when its process starts.
+// 自定义 provider 沿用目录代理；官方 provider 使用原生目录的受管副本，不修改认证配置。
 export function createUltrafastCatalogAdapter({
   executable, dataDirectory, preferencesFile, processEnv = process.env,
+  cwd = processEnv.HOME || processEnv.USERPROFILE || process.cwd(),
   report = console.error,
-  createClient = () => new CodexAppServer({ executable, processEnv }),
+  createClient = () => new CodexAppServer({ executable, processEnv, cwd }),
 }) {
   const stateFile = path.join(dataDirectory, "ultrafast-catalog.json");
   let server, state, catalog, queue = Promise.resolve();
@@ -525,13 +535,13 @@ export function createUltrafastCatalogAdapter({
     for (const [name, entry] of Object.entries(state.providers)) sessionProviders.set(name, entry);
     const enabled = preferences.customProviderUltrafast === true;
     const contexts = await readJson(path.join(dataDirectory, "model-context.json"), null);
-    if (!enabled && Object.keys(state.providers).length === 0 && !contexts) return;
+    if (!enabled && Object.keys(state.providers).length === 0 && !state.official && !contexts) return;
     const client = createClient();
     try {
       const { config, layers, origins } = await client.request("config/read", { includeLayers: true });
       const userLayer = layers?.find(layer => layer.name?.type === "user" && !layer.name.profile);
       const provider = config.model_provider ?? "openai";
-      let active = enabled && provider !== "openai" && config.model_providers?.[provider];
+      let active = enabled && (provider === "openai" || config.model_providers?.[provider]);
       if (contexts && config.model_catalog_json === path.join(realpathSync(dataDirectory), "model-context-catalog.json")) {
         catalog ??= await readBundledModelCatalog(executable);
         const combined = withModelContextSettings(contexts.catalog, {
@@ -543,7 +553,11 @@ export function createUltrafastCatalogAdapter({
         }
         active = false;
       }
-      if (active && config.model_catalog_json) {
+      const officialActive = active && provider === "openai";
+      active = active && !officialActive;
+      const official = state.official;
+      const ownsOfficial = official?.path && config.model_catalog_json === official.path;
+      if (active && config.model_catalog_json && !(ownsOfficial && official.restoreValue == null)) {
         throw new Error("Ultrafast requires service_tiers in your existing model_catalog_json");
       }
       if (active) {
@@ -555,7 +569,47 @@ export function createUltrafastCatalogAdapter({
         catalog ??= await readBundledModelCatalog(executable);
         await startServer();
       }
+      let officialSource;
+      if (officialActive) {
+        const origin = origins?.model_catalog_json?.name;
+        if (origin && !(origin.type === "system"
+          || origin.type === "user" && !origin.profile && origin.file === userLayer?.name.file)) {
+          throw new Error("Ultrafast model catalog is controlled by a higher-priority config layer");
+        }
+        if (ownsOfficial) officialSource = official.sourceCatalog;
+        else {
+          // Codex 自行选择订阅或 API Key 目录，Panel 不读取、转移或切换登录凭据。
+          const command = executableCommand(executable, ["debug", "models"]);
+          const { stdout } = await promisify(execFile)(command.executable, command.args, {
+            cwd, env: withoutPanelLauncherEnvironment(processEnv),
+            timeout: 30_000, maxBuffer: 32 * 1024 * 1024, windowsHide: true,
+          });
+          officialSource = JSON.parse(stdout);
+        }
+        withUltrafastCatalog(officialSource);
+      }
       const edits = [];
+      if (officialActive) {
+        await mkdir(dataDirectory, { recursive: true });
+        const entry = ownsOfficial ? official : {
+          path: path.join(await realpath(dataDirectory), "ultrafast-openai-catalog.json"),
+          restoreValue: userLayer?.config?.model_catalog_json ?? null,
+          sourceCatalog: officialSource,
+          catalogSource: config.model_catalog_json ? "external" : "native",
+        };
+        state.official = entry;
+        await save();
+        await writeFile(entry.path + ".tmp", JSON.stringify(withUltrafastCatalog(entry.sourceCatalog)), { mode: 0o600 });
+        await rename(entry.path + ".tmp", entry.path);
+        if (config.model_catalog_json !== entry.path) edits.push({ keyPath: "model_catalog_json", value: entry.path, mergeStrategy: "replace" });
+      } else if (official?.path) {
+        // 已运行的 Codex 仍可读取旧路径，关闭后该副本也恢复原始 tiers。
+        await writeFile(official.path + ".tmp", JSON.stringify(official.sourceCatalog), { mode: 0o600 });
+        await rename(official.path + ".tmp", official.path);
+        if (userLayer?.config?.model_catalog_json === official.path) {
+          edits.push({ keyPath: "model_catalog_json", value: official.restoreValue, mergeStrategy: "replace" });
+        }
+      }
       for (const [name, entry] of Object.entries(state.providers)) {
         if (active && name === provider) continue;
         const current = userLayer?.config?.model_providers?.[name]?.model_catalog_url;
@@ -590,6 +644,7 @@ export function createUltrafastCatalogAdapter({
       for (const name of Object.keys(state.providers)) {
         if (!active || name !== provider) delete state.providers[name];
       }
+      if (!officialActive) delete state.official;
       await save();
     } finally { await client.close(); }
   };

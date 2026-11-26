@@ -139,7 +139,9 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          workspaces: src-tauri -> target
+          workspaces: |
+            src-tauri -> target
+            runtime -> target
           shared-key: macos-check
           cache-bin: false
       - name: Prepare compile-only fixtures
@@ -152,6 +154,10 @@ jobs:
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets --target aarch64-apple-darwin
       - name: Check Rust targets (x86_64-apple-darwin)
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets --target x86_64-apple-darwin
+      - name: Check runtime targets (aarch64-apple-darwin)
+        run: cargo check --manifest-path runtime/Cargo.toml --locked --all-targets --target aarch64-apple-darwin
+      - name: Check runtime targets (x86_64-apple-darwin)
+        run: cargo check --manifest-path runtime/Cargo.toml --locked --all-targets --target x86_64-apple-darwin
 
   windows-launcher:
     name: Windows x64 Rust check
@@ -175,7 +181,9 @@ jobs:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          workspaces: src-tauri -> target
+          workspaces: |
+            src-tauri -> target
+            runtime -> target
           shared-key: windows-check
           cache-bin: false
       - run: npm ci
@@ -189,6 +197,8 @@ jobs:
           printf '%s' '<!doctype html><title>Compile check</title>' > dist/launcher/index.html
       - name: Check Rust targets (x86_64-pc-windows-msvc)
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets --target x86_64-pc-windows-msvc
+      - name: Check runtime targets (x86_64-pc-windows-msvc)
+        run: cargo check --manifest-path runtime/Cargo.toml --locked --all-targets --target x86_64-pc-windows-msvc
 
   linux-launcher:
     name: Ubuntu x64 Rust check
@@ -203,14 +213,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
       - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
         with:
           targets: x86_64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          workspaces: src-tauri -> target
+          workspaces: |
+            src-tauri -> target
+            runtime -> target
           shared-key: linux-check
           cache-bin: false
+      # 数据层差分测试会调用旧 JS 实现，仍需构建工具链的 Node 与依赖。
+      - run: npm ci
       - name: Install Rust check system libraries
         run: |
           sudo apt-get update
@@ -223,3 +241,7 @@ jobs:
           printf '%s' '<!doctype html><title>Compile check</title>' > dist/launcher/index.html
       - name: Check Rust targets (x86_64-unknown-linux-gnu)
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets --target x86_64-unknown-linux-gnu
+      - name: Check runtime targets (x86_64-unknown-linux-gnu)
+        run: cargo check --manifest-path runtime/Cargo.toml --locked --all-targets --target x86_64-unknown-linux-gnu
+      - name: Run Rust runtime tests
+        run: cargo test --manifest-path runtime/Cargo.toml --locked --all-targets --target x86_64-unknown-linux-gnu -- --test-threads=1

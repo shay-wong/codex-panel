@@ -6,7 +6,6 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { verifyRuntimePackages } from "./runtime-packages.mjs";
 
 const appPath = process.argv[2] ? path.resolve(process.argv[2]) : null;
 if (!appPath) throw new Error("Usage: verify-packaged-taskctl.mjs <App.app>");
@@ -61,12 +60,11 @@ const dataDirectory = path.join(
 );
 await mkdir(dataDirectory, { recursive: true });
 const runtimeFile = path.join(dataDirectory, "launcher-runtime.json");
-const nodePath = path.join(appPath, "Contents", "MacOS", "node");
+const runtimePath = path.join(appPath, "Contents", "MacOS", "codex-panel-runtime");
 const appRoot = path.join(appPath, "Contents", "Resources", "app");
 const wrapperPath = path.join(appPath, "Contents", "Resources", "bin", "panelctl");
-await verifyRuntimePackages(appRoot, (await import("../package.json", {
-  with: { type: "json" },
-})).default.dependencies ?? {});
+const workspace = path.join(temporaryHome, "workspace");
+await mkdir(workspace);
 const reservation = createServer();
 await new Promise((resolve, reject) => {
   reservation.once("error", reject);
@@ -80,10 +78,19 @@ if (!address || typeof address === "string" || !Number.isInteger(inheritedFd)) {
 
 const instanceToken = randomUUID();
 const instanceSecret = randomBytes(32).toString("hex");
-const server = spawn(nodePath, [path.join(appRoot, "server", "index.mjs")], {
-  cwd: appRoot,
+// 清除父进程的服务配置，验证只触达临时数据库与临时 Codex 目录。
+const environment = Object.fromEntries(Object.entries(process.env)
+  .filter(([name]) => !name.startsWith("CODEX_") && !name.startsWith("TASKBOARD_")));
+const server = spawn(runtimePath, ["serve"], {
+  cwd: workspace,
   env: {
-    ...process.env,
+    ...environment,
+    HOME: temporaryHome,
+    USERPROFILE: temporaryHome,
+    PATH: "/usr/bin:/bin",
+    CODEX_BIN: "/usr/bin/false",
+    CODEX_HOME: path.join(temporaryHome, "codex"),
+    CODEX_PANEL_APP_ROOT: appRoot,
     CODEX_PANEL_DATA_DIR: dataDirectory,
     CODEX_PANEL_HOST: "127.0.0.1",
     CODEX_PANEL_PORT: String(address.port),
@@ -137,10 +144,10 @@ try {
   if (cloudStatus.mode !== "local") throw new Error("Packaged cloud status used the wrong endpoint");
   const mapping = runTaskctl(wrapperPath, temporaryHome, [
     "project", "map", projectId,
-    "--workspace-path", appRoot,
+    "--workspace-path", workspace,
     "--json",
   ]);
-  if (mapping.projectId !== projectId || mapping.workspacePath !== appRoot) {
+  if (mapping.projectId !== projectId || mapping.workspacePath !== workspace) {
     throw new Error("Packaged project map used the wrong endpoint");
   }
   const created = runTaskctl(wrapperPath, temporaryHome, [

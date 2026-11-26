@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 dist/
 .data/
 .wrangler/
@@ -12,6 +12,7 @@ src-tauri/binaries/
 src-tauri/gen/
 src-tauri/resources/
 src-tauri/target/
+runtime/target/
 *.log
 .DS_Store
 /*-proof.png

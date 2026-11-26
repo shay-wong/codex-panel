@@ -818,6 +818,84 @@ test("provider catalog preserves an existing endpoint and restores only its own 
   assert.deepEqual((await (await fetch(url)).json()).models[0].service_tiers.map(t => t.id), ["priority", "ultrafast"]);
 });
 
+test("official Ultrafast preserves native auth catalogs and restores owned global paths", async t => {
+  for (const [mode, explicit, external] of [["chatgpt", false, false], ["apiKey", true, false], ["chatgpt", true, true]]) {
+    await t.test(`${mode} ${external ? "external catalog" : explicit ? "explicit openai" : "default provider"}`, async t => {
+      const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-official-ultrafast-")));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      const source = { models: [
+        { slug: "gpt-6-astra", base_instructions: "original instructions", extra: { capability: true },
+          service_tiers: [{ id: "priority", name: "Existing Fast", description: "keep this" }] },
+        { slug: "gpt-other", service_tiers: [] },
+      ] };
+      const executable = await fixtureCodex(root, source.models);
+      const preferencesFile = path.join(root, "preferences.json"), configFile = path.join(root, "config.toml");
+      await writeFile(preferencesFile, JSON.stringify({ customProviderUltrafast: true }));
+      await writeFile(configFile, "");
+      const original = path.join(root, "original-catalog.json");
+      if (external) await writeFile(original, JSON.stringify(source));
+      const userConfig = { auth_mode: mode, cli_auth_credentials_store: "keyring", unrelated: "keep",
+        ...(explicit ? { model_provider: "openai" } : {}), ...(external ? { model_catalog_json: original } : {}) };
+      const before = structuredClone(userConfig);
+      const options = { executable, dataDirectory: root, preferencesFile, report() {},
+        processEnv: { PATH: process.env.PATH, HOME: root, CODEX_HOME: root, TMPDIR: root },
+        createClient: () => ({ close() {}, async request(method, params) {
+          if (method === "config/read") return { config: userConfig, layers: [{ name: { type: "user", file: configFile }, version: "v1", config: userConfig }] };
+          assert.equal(method, "config/batchWrite", "official catalog must not read or change login credentials");
+          for (const edit of params.edits) {
+            assert.equal(edit.keyPath, "model_catalog_json");
+            if (edit.value === null) delete userConfig.model_catalog_json;
+            else userConfig.model_catalog_json = edit.value;
+          }
+          return { status: "ok" };
+        } }),
+      };
+      t.mock.method(globalThis, "fetch", () => { throw new Error("unexpected network request"); });
+      let adapter = createUltrafastCatalogAdapter(options);t.after(() => adapter.close());
+      await adapter.sync();const generated = userConfig.model_catalog_json;
+      assert.notEqual(generated, original);assert.equal(userConfig.model_providers, undefined);
+      assert.equal(userConfig.model_provider, before.model_provider);assert.equal(userConfig.auth_mode, mode);
+      assert.deepEqual(JSON.parse(await readFile(generated)), withUltrafastCatalog(source));
+      if (external) assert.deepEqual(JSON.parse(await readFile(original)), source);
+      await adapter.close();adapter = createUltrafastCatalogAdapter(options);await adapter.sync();
+      await writeFile(preferencesFile, JSON.stringify({ customProviderUltrafast: false }));await adapter.sync();
+      assert.deepEqual(userConfig, before);assert.deepEqual(JSON.parse(await readFile(generated)), source);
+      await writeFile(preferencesFile, JSON.stringify({ customProviderUltrafast: true }));await adapter.sync();
+      assert.deepEqual(JSON.parse(await readFile(generated)), withUltrafastCatalog(source));
+      userConfig.model_catalog_json = original;
+      await writeFile(preferencesFile, JSON.stringify({ customProviderUltrafast: false }));await adapter.sync();
+      assert.equal(userConfig.model_catalog_json, original, "closing must preserve a user replacement");
+    });
+  }
+});
+
+test("official managed context catalog keeps its original source while Ultrafast toggles", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-official-context-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = { models: [{ slug: "gpt-6-astra", context_window: 128000, base_instructions: "source", service_tiers: [] }] };
+  const executable = await fixtureCodex(root, source.models), preferencesFile = path.join(root, "preferences.json");
+  const configFile = path.join(root, "config.toml"), catalogPath = path.join(root, "model-context-catalog.json");
+  await writeFile(configFile, "");await writeFile(preferencesFile, JSON.stringify({ customProviderUltrafast: true }));
+  await writeFile(catalogPath, JSON.stringify(source));
+  await writeFile(path.join(root, "model-context.json"), JSON.stringify({ catalog: source, originalCatalog: null,
+    catalogSource: "native", contextWindows: { "gpt-6-astra": 96000 } }));
+  const config = { model_catalog_json: catalogPath };
+  const request = async method => {
+    assert.equal(method, "config/read", "existing Panel context path must not change");
+    return { config, layers: [{ name: { type: "user", file: configFile }, version: "v1", config }] };
+  };
+  t.mock.method(CodexAppServer.prototype, "request", request);
+  const options = { executable, dataDirectory: root, preferencesFile, cwd: root,
+    processEnv: { PATH: process.env.PATH, HOME: root, CODEX_HOME: root }, createClient: () => ({ request, close() {} }) };
+  const adapter = createUltrafastCatalogAdapter(options);t.after(() => adapter.close());
+  await adapter.sync();await modelContextSettings(options, { "gpt-6-astra": 96000 }, {}, {});
+  let generated = JSON.parse(await readFile(catalogPath));
+  assert.equal(generated.models[0].context_window, 96000);assert.ok(generated.models[0].service_tiers.some(t => t.id === "ultrafast"));
+  assert.deepEqual(JSON.parse(await readFile(path.join(root, "model-context.json"))).catalog, source);
+  await writeFile(preferencesFile, JSON.stringify({ customProviderUltrafast: false }));await adapter.sync();
+  generated = JSON.parse(await readFile(catalogPath));assert.equal(generated.models[0].context_window, 96000);assert.deepEqual(generated.models[0].service_tiers, []);
+});
+
 test("restoring a catalog preserves inherited values and rejects higher-priority overrides", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "panel-catalog-layers-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -1029,6 +1107,44 @@ stream_max_retries = 0
   assert.equal(removed.features?.api_key_model_discovery, undefined);
   assert.equal(removed.model_provider, "probe");
   assert.equal(removed.model_providers.probe.name, "Local test only");
+});
+
+test("real OpenAI default and explicit providers load and restore managed Ultrafast catalogs", {
+  skip: !process.env.CODEX_PANEL_TEST_CODEX_EXECUTABLE,
+  timeout: 60_000,
+}, async t => {
+  const executable = process.env.CODEX_PANEL_TEST_CODEX_EXECUTABLE;
+  for (const explicit of [false, true]) await t.test(explicit ? "explicit openai" : "default openai", async t => {
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "panel-official-core-")));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const workspace=path.join(root,"workspace"), home=path.join(root,"home"), codexHome=path.join(root,"codex"), dataDirectory=path.join(root,"data");
+    await Promise.all([workspace,home,codexHome,dataDirectory].map(directory=>mkdir(directory)));
+    const api=createServer((request,response)=>{response.writeHead(502).end("external requests are disabled");});
+    api.on("connect",(_request,socket)=>socket.destroy());
+    api.listen(0,"127.0.0.1");await once(api,"listening");
+    t.after(()=>{api.closeAllConnections();api.close();});
+    const origin=`http://127.0.0.1:${api.address().port}`;
+    const processEnv={PATH:process.env.PATH,HOME:home,USERPROFILE:home,CODEX_HOME:codexHome,TMPDIR:root,OTEL_SDK_DISABLED:"true",
+      OPENAI_API_KEY:"fixture-local-only",HTTP_PROXY:origin,HTTPS_PROXY:origin,ALL_PROXY:origin,NO_PROXY:"127.0.0.1,localhost,::1"};
+    const configFile=path.join(codexHome,"config.toml"), preferencesFile=path.join(root,"preferences.json");
+    // 不发起推理；本机拒绝代理同时阻断 CLI 的后台外网检查。
+    const original=`model = "gpt-6-astra"\n${explicit?'model_provider = "openai"\n':''}cli_auth_credentials_store = "file"\ncheck_for_update_on_startup = false\n[analytics]\nenabled = false\n[features]\napi_key_model_discovery = false\n`;
+    await writeFile(configFile,original);
+    await writeFile(path.join(codexHome,"auth.json"),JSON.stringify({auth_mode:"apikey",OPENAI_API_KEY:"fixture-local-only"}));
+    const authBefore=await readFile(path.join(codexHome,"auth.json"),"utf8");
+    await writeFile(preferencesFile,JSON.stringify({customProviderUltrafast:true}));
+    const createClient=()=>new CodexAppServer({executable,processEnv,cwd:workspace});
+    const adapter=createUltrafastCatalogAdapter({executable,processEnv,cwd:workspace,dataDirectory,preferencesFile,createClient,report(){}});
+    t.after(()=>adapter.close());await adapter.sync();
+    const client=createClient();t.after(()=>client.close());
+    const listing=await client.request("model/list",{includeHidden:true});
+    assert.ok(listing.data.find(model=>model.model==="gpt-6-astra").serviceTiers.some(tier=>tier.id==="ultrafast"));await client.close();
+    const active=parse(await readFile(configFile,"utf8"));assert.equal(active.model_provider,explicit?"openai":undefined);assert.equal(active.model_providers,undefined);
+    await writeFile(preferencesFile,JSON.stringify({customProviderUltrafast:false}));await adapter.sync();
+    assert.equal(parse(await readFile(configFile,"utf8")).model_catalog_json,undefined);
+    assert.equal(await readFile(path.join(codexHome,"auth.json"),"utf8"),authBefore);
+    assert.deepEqual(parse(await readFile(configFile,"utf8")),parse(original));
+  });
 });
 
 test("supported catalog models receive both speed tiers without duplicating existing metadata", () => {

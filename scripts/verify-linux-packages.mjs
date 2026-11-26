@@ -4,11 +4,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { verifyRuntimePackages } from "./runtime-packages.mjs";
-
-const projectManifest = (await import("../package.json", {
-  with: { type: "json" },
-})).default;
+import { verifyRuntimeIntegrity } from "./runtime-integrity.mjs";
 
 const debPath = process.argv[2] ? path.resolve(process.argv[2]) : null;
 const appImagePath = process.argv[3] ? path.resolve(process.argv[3]) : null;
@@ -61,44 +57,32 @@ async function assertElfX64(filePath) {
 
 async function verifyPackageRoot(root, label) {
   const launcherPath = path.join(root, "usr", "bin", "codex-panel-launcher");
-  const nodePath = path.join(root, "usr", "bin", "codex-panel-node");
+  const runtimePath = path.join(root, "usr", "bin", "codex-panel-runtime");
   const resourceRoot = path.join(root, "usr", "lib", "Codex Panel");
   const panelctlPath = path.join(resourceRoot, "bin", "panelctl");
   const requiredResources = [
-    "app/cli/panelctl.mjs",
     "app/dist/web/index.html",
     "app/inject/codex-panel.user.js",
-    "app/scripts/codex-injector.mjs",
-    "app/server/app.mjs",
-    "app/server/index.mjs",
-    "app/shared/codex-executable.mjs",
     "app/skills/manage-panel/SKILL.md",
+    "app/skills/handoff-panel/SKILL.md",
   ];
 
   await assertExecutable(launcherPath);
   await assertElfX64(launcherPath);
-  await assertExecutable(nodePath);
-  await assertElfX64(nodePath);
+  await assertExecutable(runtimePath);
+  await assertElfX64(runtimePath);
   await assertExecutable(panelctlPath);
+  await verifyRuntimeIntegrity(resourceRoot, runtimePath);
   for (const resource of requiredResources) {
     const details = await stat(path.join(resourceRoot, resource));
     if (!details.isFile()) throw new Error(`${label} is missing ${resource}`);
   }
-  await verifyRuntimePackages(
-    path.join(resourceRoot, "app"),
-    projectManifest.dependencies ?? {},
-  );
-
   const wrapper = await readFile(panelctlPath, "utf8");
-  if (
-    !wrapper.includes("codex-panel-node")
-    || !wrapper.includes("app/cli/panelctl.mjs")
-  ) {
-    throw new Error(`${label} panelctl does not use the packaged Node and CLI`);
+  if (!wrapper.includes("codex-panel-runtime\" ctl")) {
+    throw new Error(`${label} panelctl does not use the packaged Rust CLI`);
   }
-  const nodeVersion = run(nodePath, ["--version"]);
-  if (nodeVersion !== "v22.23.2") {
-    throw new Error(`${label} contains unexpected Node.js ${nodeVersion}`);
+  if (!run(runtimePath, ["--help"]).includes("codex-panel-runtime")) {
+    throw new Error(`${label} Rust runtime did not answer --help`);
   }
 }
 

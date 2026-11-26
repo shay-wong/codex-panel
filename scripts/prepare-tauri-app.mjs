@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// 旧 Node 运行时的差分验证参考；默认应用打包入口为 prepare-rust-app.mjs。
 
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
