@@ -19,6 +19,8 @@ const hookSource = `function(module,exports,load){
     let set=value=>value!=="ultrafast"||chosen.ultrafast;return {...rest,setServiceTier:set};
   }
 }`;
+// 原生编译后的菜单会多次缓存选中档位，并且没有独立速度图标。
+const modernMenuSource = `function(module,exports,load){var memo=load("memo"),native=load("access"),settings=load("settings"),view=load("view"),policy=load("policy");function rowList(){let one,two,output,cache=memo.c(15),{serviceTierAccess:access}=native.read(),{serviceTierSettings:tiers,setServiceTier:save}=settings.read();if(cache[2]!==access||cache[3]!==tiers.availableOptions||cache[4]!==tiers.isLoading||cache[5]!==tiers.selectedServiceTier||cache[6]!==save){let render;cache[8]!==access||cache[9]!==tiers.isLoading||cache[10]!==tiers.selectedServiceTier||cache[11]!==save?(render=option=>option.value==null?null:view.jsx("row",{enabled:policy.allowed(option.value,access)&&!tiers.isLoading,isSelected:option.value===tiers.selectedServiceTier,option,serviceTier:option.value,setServiceTier:save},option.value),cache[8]=access,cache[9]=tiers.isLoading,cache[10]=tiers.selectedServiceTier,cache[11]=save,cache[12]=render):render=cache[12],two=tiers.availableOptions.map(render),cache[2]=access,cache[3]=tiers.availableOptions,cache[4]=tiers.isLoading,cache[5]=tiers.selectedServiceTier,cache[6]=save,cache[7]=two}else two=cache[7];return output=view.jsx("fragment",{children:two}),output}load.d(exports,{menu:()=>rowList})}`;
 const projectedHookSource = hookSource
   .replace('let result=function(e,selection,load){', 'function readSettings(e,selection,load){')
   .replace('}(thread,options,options.serviceTier);', '}let{serviceTierAccess:chosen,serviceTierSettings:tier,hasManagedNewThreadSettings:managed}=readSettings(thread,options,options.serviceTier);')
@@ -93,11 +95,16 @@ test(`Rspack Ultrafast ${shape} results keep model/provider boundaries and the s
   assert.equal(settings('thread', options).serviceTierAccess.ultrafast, false);
   options.model = 'gpt-6-astra';
   options.threadProvider = 'openai';
-  assert.equal(settings('thread', options).setServiceTier('ultrafast'), false);
+  assert.equal(settings('thread', options).setServiceTier('ultrafast'), true);
   options.threadProvider = undefined;
   assert.equal(settings('thread', options).setServiceTier('ultrafast'), true);
   options.configProvider = undefined;
-  assert.equal(settings('thread', options).setServiceTier('ultrafast'), false);
+  assert.equal(settings('thread', options).setServiceTier('ultrafast'), true);
+  assert.equal(settings('thread', options).serviceTierSettings.serviceTierForRequest, 'ultrafast');
+  for (const invalid of ['', ' ', '\t', false, 7, {}, []]) {
+    options.threadProvider = invalid;
+    assert.equal(settings('thread', options).setServiceTier('ultrafast'), false);
+  }
   options.threadProvider = 'custom'; options.hostId = 'remote';
   assert.equal(settings('thread', options).setServiceTier('ultrafast'), false);
   options.hostId = 'local'; enabled = false;
@@ -117,6 +124,45 @@ test('Rspack model menu gets adapted access in standalone and comma declarations
     assert.equal(menu().allowed.ultrafast, true);
     assert.equal(menu().icon, true);
   }
+});
+
+test('compiled native menu selects OpenAI Ultrafast and produces the request service tier', () => {
+  let enabled = true;
+  const options = {model: 'gpt-6.1-sol', hostId: 'local', threadProvider: undefined, configProvider: undefined, serviceTier: null,
+    models: [{model: 'gpt-6.1-sol', serviceTiers: [{id: 'standard'}]}, {model: 'unsupported', serviceTiers: [{id: 'standard'}]}]};
+  const source = hookSource.replace('serviceTierForRequest:available.some(t=>t.value==="ultrafast")?"ultrafast":null', 'serviceTierForRequest:selection.serviceTier!=="ultrafast"||allowed.ultrafast?selection.serviceTier:null')
+    .replace('setServiceTier:t=>t!=="ultrafast"||allowed.ultrafast', 'setServiceTier:t=>{if(t==="ultrafast"&&!allowed.ultrafast)return false;selection.serviceTier=t;return true}')
+    .replace('let set=value=>value!=="ultrafast"||chosen.ultrafast;', 'let set=value=>(value!=="ultrafast"||chosen.ultrafast)&&rest.setServiceTier(value);');
+  const dependencies = {
+    react: {use() {}, useSyncExternalStore: (_, read) => read()},
+    signal: {read(atom) {return atom === 'target' ? {hostId: options.hostId, cwd: '/disposable'} : atom === 'provider' ? options.threadProvider : atom === 'config' ? {data: {model_provider: options.configProvider}} : null;}},
+    scope: {target: () => ({hostId: options.hostId})}, access: {read: () => ({serviceTierAccess: {ultrafast: false, standard: true}})},
+    model: {select: (models, selected) => models.find(model => model.model === selected)}, extra: {atom: 'extra'},
+    'target-module': {atom: 'target'}, 'config-module': {atom: 'config'}, 'provider-module': {atom: 'provider'},
+  };
+  const settings = execute(rewriteRspackUltrafast(source, context({provider: providerSource})), dependencies,
+    {__codexPanelProviderUltrafastV1__: {subscribe() {}, getSnapshot: () => enabled}}).settings;
+  const menu = execute(rewriteRspackUltrafast(modernMenuSource, context({})), {
+    memo: {c: () => []}, access: dependencies.access, settings: {read: () => settings('thread', options)},
+    view: {jsx: (type, props) => ({type, props})}, policy: {allowed: (tier, access) => tier !== 'ultrafast' || access?.ultrafast === true},
+  }).menu;
+  for (const provider of ['openai', undefined, 'custom']) {
+    options.threadProvider = provider;
+    const row = menu().props.children.find(row => row?.props.serviceTier === 'ultrafast');
+    assert.equal(row.props.enabled, true);
+    assert.equal(row.props.setServiceTier('ultrafast'), true);
+    const request = JSON.parse(JSON.stringify({serviceTier: settings('thread', options).serviceTierSettings.serviceTierForRequest}));
+    assert.equal(request.serviceTier, 'ultrafast');
+  }
+  for (const provider of ['', ' ', 1]) {options.threadProvider = provider;assert.equal(menu().props.children.some(row => row?.props.serviceTier === 'ultrafast'), false);}
+  options.threadProvider = 'openai';options.hostId = 'remote';
+  assert.equal(menu().props.children.some(row => row?.props.serviceTier === 'ultrafast'), false);
+  options.hostId = 'local';enabled = false;
+  assert.equal(menu().props.children.some(row => row?.props.serviceTier === 'ultrafast'), false);
+  assert.equal(settings('thread', options).serviceTierSettings.serviceTierForRequest, null);
+  enabled = true;options.model = 'unsupported';
+  assert.equal(menu().props.children.some(row => row?.props.serviceTier === 'ultrafast'), false);
+  assert.equal(settings('thread', options).serviceTierSettings.serviceTierForRequest, null);
 });
 
 test('Rspack Dot changes only existing orbit capabilities and tracks the preference', () => {

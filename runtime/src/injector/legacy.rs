@@ -684,18 +684,12 @@ fn speed_menu(source: &str) -> Result<Option<String>, ApiError> {
     let ast = Ast::parse(source, false)?;
     let mut candidates = Vec::new();
     for function in ast.all(ast.root, |id| ast.is_function(id)) {
-        if own(&ast, function, |id| {
-            literal(&ast, id, "composer.openModelPicker")
-        })
-        .is_empty()
-        {
-            continue;
-        }
         let settings = one(own(&ast, function, |id| {
             ast.kind(id) == "VariableDeclarator"
                 && ast.child(id, "id").is_some_and(|id| {
                     ast.property(id, "serviceTierSettings").is_some()
                         && ast.property(id, "setServiceTier").is_some()
+                        && ast.property(id, "serviceTierAccess").is_none()
                 })
         }));
         let access = one(own(&ast, function, |id| {
@@ -717,28 +711,45 @@ fn speed_menu(source: &str) -> Result<Option<String>, ApiError> {
                             .child(id, "object")
                             .is_some_and(|id| same(&ast, id, setting))
                 })
-        }));
-        let Some(selected) = selected.and_then(|id| ast.child(id, "id")) else {
-            continue;
-        };
-        let icons = own(&ast, function, |id| {
-            ast.kind(id) == "CallExpression"
-                && ast.array(id, "arguments").len() == 2
-                && same(&ast, ast.array(id, "arguments")[1], selected)
-                && ast.parent(id).is_some_and(|id| {
-                    ast.kind(id) == "LogicalExpression" && ast.field(id, "operator") == "&&"
-                })
+        }))
+        .and_then(|id| ast.child(id, "id"));
+        let icon = selected.and_then(|selected| {
+            one(own(&ast, function, |id| {
+                ast.kind(id) == "CallExpression"
+                    && ast.array(id, "arguments").len() == 2
+                    && same(&ast, ast.array(id, "arguments")[1], selected)
+                    && ast.parent(id).is_some_and(|id| {
+                        ast.kind(id) == "LogicalExpression" && ast.field(id, "operator") == "&&"
+                    })
+            }))
         });
-        if let Some(icon) = one(icons) {
-            candidates.push((pattern, access, selected, setting, icon));
-        }
+        candidates.push((pattern, access, selected, setting, icon));
     }
     if candidates.len() != 1 {
         return Ok(None);
     }
     let (pattern, access, selected, setting, icon) = candidates[0];
     let init = ast.child(access, "init").unwrap();
-    Ok(Some(edits(source,vec![Edit{start:ast.start(pattern)+1,end:ast.start(pattern)+1,text:"serviceTierAccess:panelServiceTierAccess,".into()},Edit{start:ast.start(init),end:ast.end(init),text:format!("({{...{},serviceTierAccess:panelServiceTierAccess}})",ast.text(init))},Edit{start:ast.start(icon),end:ast.end(icon),text:format!("({}===\"ultrafast\"&&{}.availableOptions.some(option=>option.value===\"ultrafast\")||{})",ast.text(selected),ast.text(setting),ast.text(icon))}])?))
+    // 沿用原生菜单布局，只将独立权限读取替换为设置 hook 已计算的权限。
+    let mut changes = vec![
+        Edit {
+            start: ast.start(pattern) + 1,
+            end: ast.start(pattern) + 1,
+            text: "serviceTierAccess:panelServiceTierAccess,".into(),
+        },
+        Edit {
+            start: ast.start(init),
+            end: ast.end(init),
+            text: format!(
+                "({{...{},serviceTierAccess:panelServiceTierAccess}})",
+                ast.text(init)
+            ),
+        },
+    ];
+    if let (Some(icon), Some(selected)) = (icon, selected) {
+        changes.push(Edit{start:ast.start(icon),end:ast.end(icon),text:format!("({}===\"ultrafast\"&&{}.availableOptions.some(option=>option.value===\"ultrafast\")||{})",ast.text(selected),ast.text(setting),ast.text(icon))});
+    }
+    Ok(Some(edits(source, changes)?))
 }
 
 fn ultrafast(source: &str) -> Result<(Option<String>, bool, bool), ApiError> {
@@ -1443,7 +1454,7 @@ mod tests {
         let patched_primary = speed_menu(&primary).unwrap().unwrap();
         let harness = function(file, "fixture");
         run(&format!(
-            r#"const assert=require('node:assert/strict'),vm=require('node:vm');const initial={},primary={};const createCodexProviderQuotaRuntime={};const rewriteCodexProviderUltrafast=source=>source===initial?{}:{};{};(async()=>{{const f=fixture(false);assert.equal(f.menu().options.some(o=>o.value==='ultrafast'),false);f.runtime.setEnabled(true);assert.equal(f.menu().options.some(o=>o.value==='ultrafast'),true);assert.equal(await f.menu().select('ultrafast'),true);assert.equal(f.settings().serviceTierSettings.serviceTierForRequest,'ultrafast');f.thread('openai');assert.equal(await f.menu().select('ultrafast'),false);f.thread('custom');f.host('remote');assert.equal(await f.menu().select('ultrafast'),false);}})().catch(e=>{{console.error(e);process.exitCode=1}});"#,
+            r#"const assert=require('node:assert/strict'),vm=require('node:vm');const initial={},primary={};const createCodexProviderQuotaRuntime={};const rewriteCodexProviderUltrafast=source=>source===initial?{}:{};{};(async()=>{{const f=fixture(false);assert.equal(f.menu().options.some(o=>o.value==='ultrafast'),false);f.runtime.setEnabled(true);assert.equal(f.menu().options.some(o=>o.value==='ultrafast'),true);assert.equal(await f.menu().select('ultrafast'),true);assert.equal(f.settings().serviceTierSettings.serviceTierForRequest,'ultrafast');f.thread('openai');assert.equal(await f.menu().select('ultrafast'),true);f.thread(undefined);f.provider(undefined);assert.equal(await f.menu().select('ultrafast'),true);assert.equal(f.settings().serviceTierSettings.serviceTierForRequest,'ultrafast');for(const invalid of['',' ',false,7,{{}},[]]){{f.thread(invalid);assert.equal(await f.menu().select('ultrafast'),false);}}f.thread('custom');f.host('remote');assert.equal(await f.menu().select('ultrafast'),false);}})().catch(e=>{{console.error(e);process.exitCode=1}});"#,
             json!(initial),
             json!(primary),
             include_str!("assets/preference_runtime.js"),

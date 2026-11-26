@@ -94,7 +94,7 @@ function settingsResultEdits(ast) {
 
 function rewriteModelMenu(ast) {
   const candidates = ast.all(node => node.type === 'VariableDeclarator' && node.id.type === 'ObjectPattern'
-    && property(node.id, 'serviceTierSettings') && property(node.id, 'setServiceTier'));
+    && property(node.id, 'serviceTierSettings') && property(node.id, 'setServiceTier') && !property(node.id, 'serviceTierAccess'));
   const edits = [];
   for (const settings of candidates) {
     const fn = enclosingFunction(ast, settings);
@@ -103,13 +103,7 @@ function rewriteModelMenu(ast) {
       .filter(node => node !== settings && direct(ast, node, fn));
     if (access.length !== 1) continue;
     const allowed = property(access[0].id, 'serviceTierAccess').value;
-    const selected = ast.all(node => member(node, 'selectedServiceTier') && sameBinding(ast, unwrap(node).object, tier), fn);
-    if (selected.length !== 1) continue;
-    const selectedDeclaration = declarationOf(ast, selected[0]);
-    const selectedValue = selectedDeclaration?.id ?? selected[0];
-    const icons = ast.all(node => node.type === 'CallExpression' && node.arguments.some(argument => sameBinding(ast, argument, selectedValue)), fn)
-      .filter(node => ast.enclosing(node, value => value.type === 'LogicalExpression' && value.operator === '&&'));
-    if (icons.length !== 1) continue;
+    // 权限透传必须覆盖没有图标或多次缓存 selectedServiceTier 的菜单。
     edits.push({ start: settings.id.start + 1, end: settings.id.start + 1, text: 'serviceTierAccess:panelServiceTierAccess,' });
     for (const ref of ast.references(ast.binding(allowed))) {
       if (ref === allowed) continue;
@@ -118,6 +112,13 @@ function rewriteModelMenu(ast) {
         ? { start: parent.start, end: parent.end, text: `${ast.text(ref)}:panelServiceTierAccess` }
         : { start: ref.start, end: ref.end, text: 'panelServiceTierAccess' });
     }
+    const selected = ast.all(node => member(node, 'selectedServiceTier') && sameBinding(ast, unwrap(node).object, tier), fn);
+    if (selected.length !== 1) continue;
+    const selectedDeclaration = declarationOf(ast, selected[0]);
+    const selectedValue = selectedDeclaration?.id ?? selected[0];
+    const icons = ast.all(node => node.type === 'CallExpression' && node.arguments.some(argument => sameBinding(ast, argument, selectedValue)), fn)
+      .filter(node => ast.enclosing(node, value => value.type === 'LogicalExpression' && value.operator === '&&'));
+    if (icons.length !== 1) continue;
     const icon = icons[0];
     edits.push({ start: icon.start, end: icon.end, text: `(${ast.text(selectedValue)}==="ultrafast"&&${ast.text(tier)}.availableOptions.some(option=>option.value==="ultrafast")||${ast.text(icon)})` });
   }
@@ -140,7 +141,7 @@ export function rewriteRspackUltrafast(source, context) {
   const atoms = ['target', 'config', 'provider'].map(key => importedExpression(context, provider.ast, provider[key], 'panelSpeedRequire'));
   const runtime = 'globalThis.__codexPanelProviderUltrafastV1__';
   const hook = ast.text(unwrap(native.hook)), thread = ast.text(native.thread), model = ast.text(native.model.arguments[1]);
-  const read = `const panelSpeedScope=${ast.text(native.scopeCall)};const panelSpeedEnabled=(0,${reactNamespace(ast,native.fn)}.useSyncExternalStore)(${runtime}.subscribe,${runtime}.getSnapshot);const panelSpeedTarget=(0,${hook})(${atoms[0]},${thread});const panelSpeedConfig=(0,${hook})(${atoms[1]},panelSpeedTarget);const panelSpeedThreadProvider=(0,${hook})(${atoms[2]},${thread});const panelSpeedProvider=panelSpeedThreadProvider??panelSpeedConfig.data?.model_provider;const panelCustomSpeed=panelSpeedEnabled&&panelSpeedScope.hostId==="local"&&typeof panelSpeedProvider==="string"&&panelSpeedProvider!==""&&panelSpeedProvider!=="openai";const panelUltrafastModel=/^(?:gpt-6[- ]astra|gpt-6\\.1[- ]sol|gpt-6\\.2[- ](?:astra|sol))$/i.test(${model});`;
+  const read = `const panelSpeedScope=${ast.text(native.scopeCall)};const panelSpeedEnabled=(0,${reactNamespace(ast,native.fn)}.useSyncExternalStore)(${runtime}.subscribe,${runtime}.getSnapshot);const panelSpeedTarget=(0,${hook})(${atoms[0]},${thread});const panelSpeedConfig=(0,${hook})(${atoms[1]},panelSpeedTarget);const panelSpeedThreadProvider=(0,${hook})(${atoms[2]},${thread});const panelSpeedProvider=panelSpeedThreadProvider??panelSpeedConfig.data?.model_provider??"openai";const panelCustomSpeed=panelSpeedEnabled&&panelSpeedScope.hostId==="local"&&typeof panelSpeedProvider==="string"&&panelSpeedProvider.trim()!=="";const panelUltrafastModel=/^(?:gpt-6[- ]astra|gpt-6\\.1[- ]sol|gpt-6\\.2[- ](?:astra|sol))$/i.test(${model});`;
   const accessCall = unwrap(native.access.init);
   const adaptedAccess = `((native)=>({...native,serviceTierAccess:panelCustomSpeed?{...native.serviceTierAccess,fast:panelUltrafastModel||native.serviceTierAccess?.fast===true,ultrafast:panelUltrafastModel}:native.serviceTierAccess}))(${ast.text(accessCall)})`;
   const adaptedModel = `(panelCustomSpeed&&panelUltrafastModel?(model=>{if(!model)return model;const missing=[{id:"priority",name:"Fast",description:""},{id:"ultrafast",name:"Ultrafast",description:""}].filter(tier=>!model.serviceTiers?.some(existing=>existing.id===tier.id));return missing.length?{...model,serviceTiers:[...(model.serviceTiers??[]),...missing]}:model})(${ast.text(native.model)}):${ast.text(native.model)})`;

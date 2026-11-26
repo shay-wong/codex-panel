@@ -124,6 +124,13 @@ Free 侧边栏兼容（等待上游吸收）：没有插件、宠物及 destinat
 
 ## 维护约定
 
+### 本地 OpenAI Fast / Ultrafast
+
+- 生命周期：等待上游吸收；目的：用户明确要求现有 UF 开关也适用于 `openai`，缺省 provider 沿用官方默认。保留仅本地、既有支持模型、默认关闭及关闭恢复的边界；额度放行开关仍只限自定义服务商。
+- 菜单与请求使用同一适配权限，OpenAI 使用受管本地模型目录保留原认证和目录设置，不改官方账号权益；实际支持、速度和计费由服务端决定。历史 UF 条目中的 local/custom 限定由本条更新，其他不变量继续保留。
+- 代码与验证：`runtime/src/injector/`、`runtime/src/models.rs`、`runtime/src/models_adapter.rs`，对应旧 JS 适配及定向测试；覆盖 OpenAI 显式/缺省 provider、菜单选择和请求档位、关闭恢复、远程与非支持模型。界面入口 `launcher/src/App.tsx` 同步“显示 Fast / Ultrafast 选项”，用户说明见中英文 README、`docs/fork-capabilities.md#custom-provider-ultrafast` 和中文更新日志。未把静态参数测试当作真实 OpenAI 请求成功。
+- 合并时保持菜单、核心模型目录和配置恢复一致；上游等价支持后重新评估。来源分支 `codex/rust-runtime-migration`。
+
 ### 原生 Rust 运行时迁移
 
 - 生命周期：长期保留；分类：运行时与构建内部架构。目的为移除安装包的 Node.js 运行时及主机依赖，保留现有用户界面、数据格式与公开 HTTP/CLI 契约。
@@ -153,7 +160,7 @@ Sol 默认上下文修正（本次修复，等待上游吸收）：`withCurrentM
 
 重启提醒持久化（本次修复，长期保留）：模型配置/Ultrafast 保存成功 → 原生后端 `restart_reminder::mark` → Panel 数据目录 `restart-required.json`，记录标签、保存时间及真实 Codex 主进程身份。`current_ui_state` 返回 `codexRestartReminder`；显式 Codex/CodexUpdate 重启确认后捕获当前提醒，`start_launcher_locked` 返回 child_pid 后持锁以 `clear_if_unchanged` 清除同一记录，取消、退出/启动失败、仅重连 Service 均不清；重启期间新保存的提醒保留。外部重启仍以进程身份不同且启动时间晚于保存判定，无进程、检测失败或仅重装 Panel 均保留。macOS 使用 proc_pidinfo 微秒启动时间，Windows GetProcessTimes，Linux /proc starttime+boot_id；不使用 injector PID 判定。文件操作串行、临时文件原子替换；前端稍后只隐藏当前挂载，重开恢复，连接回到running时读一次状态核实。针对性原生模块自检、Launcher重开/稍后/确认重启清除/取消及失败保留/外部重启清除，以及隔离实际页面验证；不为验证重启真实用户App。此前已丢失的内存提醒无法自动找回；来源 `git log -S'codex_restart_reminder' -- src-tauri/src/main.rs`。
 
-Ultrafast 设置说明：`launcher/src/App.tsx` 将适用模型、必需的 `features.api_key_model_discovery = true`、重启及保持 Panel 运行的要求分三行展示，省去开关操作流程的重复描述。隔离 Launcher 暗色页面确认三行独立排列。
+Ultrafast 设置说明：`launcher/src/App.tsx` 分行展示适用服务商与模型、必需的 `features.api_key_model_discovery = true`、重启及保持 Panel 运行的要求，以及实际支持/速度/计费由服务端决定；开关改名为“显示 Fast / Ultrafast 选项”。
 
 重启提醒按钮样式（本次修复）：`launcher/src/App.tsx` 的保存后提醒操作区使用等高 size=2 按钮，主操作 soft、稍后 outline；Flex 居中并保留固定 8px 间隔，移除 ghost 负边距导致的挤压和上下错位，窄窗可换行。隔离真实 Launcher 暗色页面量测按钮同Y、正文/按钮同X、间隔8px；不改变重启与稍后行为。
 

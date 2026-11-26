@@ -1314,12 +1314,10 @@ pub async fn run(args: &[String]) -> Result<(), ApiError> {
         .and_then(|path| std::fs::metadata(path).ok())
         .and_then(|metadata| metadata.modified().ok());
     if let Some(catalog) = &catalog {
-        let catalog = catalog.clone();
-        tokio::spawn(async move {
-            if let Err(error) = catalog.sync().await {
-                eprintln!("Panel Ultrafast catalog: {error}");
-            }
-        });
+        // Codex 在启动时读取模型目录；完成同步后再启动，避免首个进程加载旧能力。
+        if let Err(error) = catalog.sync().await {
+            eprintln!("Panel Ultrafast catalog not ready: {error}; Codex will use the current configuration");
+        }
     }
     let mut server = if bridge::health(&client, &environment).await.is_ok() {
         None

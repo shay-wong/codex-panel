@@ -545,6 +545,16 @@ async fn exec(executable: &Path, args: &[String], cwd: &Path) -> Result<Vec<u8>,
     Ok(output.stdout)
 }
 
+pub(crate) async fn native_catalog(executable: &Path, cwd: &Path) -> Result<Value, ApiError> {
+    // 由所选 Codex 自行选择订阅或 API Key 的目录，Panel 不读取或切换其认证。
+    let catalog: Value =
+        serde_json::from_slice(&exec(executable, &["debug".into(), "models".into()], cwd).await?)?;
+    if !catalog["models"].is_array() {
+        return Err(invalid("Codex 模型目录格式无效"));
+    }
+    Ok(catalog)
+}
+
 async fn provider_catalog(
     executable: &Path,
     cwd: &Path,
@@ -732,11 +742,14 @@ async fn context_settings_inner(
         json!({})
     };
     let ultrafast = prefs["customProviderUltrafast"] == true
-        && provider != "openai"
-        && config["model_providers"][provider].is_object();
+        && (provider == "openai" || config["model_providers"][provider].is_object());
     let provider_url = config["model_providers"][provider]["model_catalog_url"].as_str();
     let adapter = read_json(&data.join("ultrafast-catalog.json"), Value::Null).await?;
     let saved = &adapter["providers"][provider];
+    let official_state = &adapter["official"];
+    let owns_official = provider == "openai"
+        && official_state["path"].is_string()
+        && config["model_catalog_json"] == official_state["path"];
     let source_url = if !saved.is_null() && saved["url"].as_str() == provider_url {
         saved["originalUrl"].as_str()
     } else {
@@ -744,25 +757,33 @@ async fn context_settings_inner(
     };
     let mut state = read_json(&state_path, Value::Null).await?;
     if state.is_null() || config["model_catalog_json"] != catalog_string {
-        let mut args = vec!["debug".into(), "models".into()];
-        if config["model_catalog_json"].is_null()
-            && !saved.is_null()
-            && saved["url"].as_str() == provider_url
-        {
-            if let Some(original) = saved["originalUrl"].as_str() {
-                args.extend([
-                    "-c".into(),
-                    format!(
-                        "model_providers.{}.model_catalog_url={}",
-                        json!(provider),
-                        json!(original)
-                    ),
-                ]);
-            } else {
-                args.push("--bundled".into());
+        if owns_official {
+            // 上下文配置继续使用加速前的源目录，避免把临时 tiers 当成用户原始设置。
+            state = json!({"catalog":official_state["sourceCatalog"],"contextWindows":{},
+                "originalCatalog":official_state["restoreValue"],
+                "catalogSource":official_state.get("catalogSource").cloned().unwrap_or_else(||
+                    json!(if official_state["restoreValue"].is_null(){"native"}else{"external"}))});
+        } else {
+            let mut args = vec!["debug".into(), "models".into()];
+            if config["model_catalog_json"].is_null()
+                && !saved.is_null()
+                && saved["url"].as_str() == provider_url
+            {
+                if let Some(original) = saved["originalUrl"].as_str() {
+                    args.extend([
+                        "-c".into(),
+                        format!(
+                            "model_providers.{}.model_catalog_url={}",
+                            json!(provider),
+                            json!(original)
+                        ),
+                    ]);
+                } else {
+                    args.push("--bundled".into());
+                }
             }
+            state = json!({"catalog":serde_json::from_slice::<Value>(&exec(executable,&args,cwd).await?)?,"contextWindows":{},"originalCatalog":layer["config"]["model_catalog_json"],"catalogSource":if !config["model_catalog_json"].is_null()||source_url.is_some(){"external"}else{"native"}});
         }
-        state = json!({"catalog":serde_json::from_slice::<Value>(&exec(executable,&args,cwd).await?)?,"contextWindows":{},"originalCatalog":layer["config"]["model_catalog_json"],"catalogSource":if !config["model_catalog_json"].is_null()||source_url.is_some(){"external"}else{"native"}});
     }
     if !state["catalog"]["models"].is_array() {
         return Err(invalid("Codex 模型目录格式无效"));

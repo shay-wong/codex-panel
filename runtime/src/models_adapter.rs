@@ -85,12 +85,14 @@ impl CatalogAdapter {
         }
         let enabled = preferences["customProviderUltrafast"] == true;
         let contexts = read(&self.data.join("model-context.json"), Value::Null).await?;
-        if !enabled
-            && self.inner.lock().await.state["providers"]
+        let no_saved_catalog = {
+            let inner = self.inner.lock().await;
+            inner.state["providers"]
                 .as_object()
                 .is_none_or(|v| v.is_empty())
-            && contexts.is_null()
-        {
+                && inner.state["official"].is_null()
+        };
+        if !enabled && no_saved_catalog && contexts.is_null() {
             return Ok(());
         }
         let cwd = std::env::var_os("HOME")
@@ -98,7 +100,9 @@ impl CatalogAdapter {
             .map(PathBuf::from)
             .unwrap_or(std::env::current_dir()?);
         let client = codex::Connection::start(&self.executable, &cwd).await?;
-        let result = self.sync_config(&client, enabled, &contexts, &path).await;
+        let result = self
+            .sync_config(&client, enabled, &contexts, &path, &cwd)
+            .await;
         client.close().await;
         result
     }
@@ -108,6 +112,7 @@ impl CatalogAdapter {
         enabled: bool,
         contexts: &Value,
         path: &std::path::Path,
+        cwd: &std::path::Path,
     ) -> Result<(), ApiError> {
         let response = client
             .request("config/read", json!({"includeLayers":true}))
@@ -122,7 +127,8 @@ impl CatalogAdapter {
             .ok_or_else(|| ApiError::new(409, "MODEL_CONFIGURATION", "无法定位 Codex 用户配置"))?;
         let provider = config["model_provider"].as_str().unwrap_or("openai");
         let mut active =
-            enabled && provider != "openai" && config["model_providers"][provider].is_object();
+            enabled && (provider == "openai" || config["model_providers"][provider].is_object());
+        tokio::fs::create_dir_all(&self.data).await?;
         let data = tokio::fs::canonicalize(&self.data).await?;
         let catalog_path = data.join("model-context-catalog.json");
         if !contexts.is_null() && config["model_catalog_json"].as_str() == catalog_path.to_str() {
@@ -134,7 +140,15 @@ impl CatalogAdapter {
             }
             active = false;
         }
-        if active && !config["model_catalog_json"].is_null() {
+        let official_active = active && provider == "openai";
+        active = active && !official_active;
+        let official = self.inner.lock().await.state["official"].clone();
+        let owns_official =
+            official["path"].is_string() && config["model_catalog_json"] == official["path"];
+        if active
+            && !config["model_catalog_json"].is_null()
+            && !(owns_official && official["restoreValue"].is_null())
+        {
             return Err(ApiError::new(
                 409,
                 "MODEL_CONFIGURATION",
@@ -159,8 +173,61 @@ impl CatalogAdapter {
             self.catalog().await?;
             self.start_server().await?;
         }
+        let official_source = if official_active {
+            let origin = &response["origins"]["model_catalog_json"]["name"];
+            if !origin.is_null()
+                && !(origin["type"] == "system"
+                    || (origin["type"] == "user"
+                        && origin["profile"].is_null()
+                        && origin["file"] == layer["name"]["file"]))
+            {
+                return Err(ApiError::new(
+                    409,
+                    "MODEL_CONFIGURATION",
+                    "Ultrafast model catalog is controlled by a higher-priority config layer",
+                ));
+            }
+            Some(if owns_official {
+                official["sourceCatalog"].clone()
+            } else {
+                // 官方 provider 无需创建自定义 provider；保留 Codex 当前认证对应的完整目录。
+                models::native_catalog(&self.executable, cwd).await?
+            })
+        } else {
+            None
+        };
         let mut edits = Vec::new();
         let mut inner = self.inner.lock().await;
+        if let Some(source) = official_source {
+            let entry = if owns_official {
+                official.clone()
+            } else {
+                json!({"path":data.join("ultrafast-openai-catalog.json"),
+                    "restoreValue":layer["config"]["model_catalog_json"],"sourceCatalog":source,
+                    "catalogSource":if config["model_catalog_json"].is_null(){"native"}else{"external"}})
+            };
+            inner.state["official"] = entry.clone();
+            // 恢复信息先落盘，再切换唯一的目录字段；不写 model_provider 或认证配置。
+            save(path, &inner.state).await?;
+            save(
+                std::path::Path::new(entry["path"].as_str().unwrap()),
+                &models::ultrafast_catalog(&entry["sourceCatalog"])?,
+            )
+            .await?;
+            if config["model_catalog_json"] != entry["path"] {
+                edits.push(json!({"keyPath":"model_catalog_json","value":entry["path"],"mergeStrategy":"replace"}));
+            }
+        } else if official["path"].is_string() {
+            // 已运行的 Codex 可能仍持有旧路径，关闭开关也要让该文件恢复原始 tiers。
+            save(
+                std::path::Path::new(official["path"].as_str().unwrap()),
+                &official["sourceCatalog"],
+            )
+            .await?;
+            if layer["config"]["model_catalog_json"] == official["path"] {
+                edits.push(json!({"keyPath":"model_catalog_json","value":official["restoreValue"],"mergeStrategy":"replace"}));
+            }
+        }
         for (name, entry) in inner.state["providers"]
             .as_object()
             .cloned()
@@ -217,6 +284,9 @@ impl CatalogAdapter {
                 )
             })?
             .retain(|name, _| active && name == provider);
+        if !official_active {
+            inner.state.as_object_mut().unwrap().remove("official");
+        }
         tokio::fs::create_dir_all(&self.data).await?;
         save(path, &inner.state).await?;
         Ok(())
@@ -325,15 +395,34 @@ mod tests {
                         serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
                     assert_eq!(message["params"]["expectedVersion"], "v1");
                     let edits = message["params"]["edits"].as_array().unwrap();
-                    assert_eq!(edits.len(), 1);
-                    assert_eq!(
-                        edits[0]["keyPath"],
-                        "model_providers.\"custom\".model_catalog_url"
-                    );
-                    current["config"]["model_providers"]["custom"]["model_catalog_url"] =
-                        edits[0]["value"].clone();
-                    current["layers"][0]["config"]["model_providers"]["custom"]
-                        ["model_catalog_url"] = edits[0]["value"].clone();
+                    for edit in edits {
+                        match edit["keyPath"].as_str().unwrap() {
+                            "model_catalog_json" => {
+                                for key in ["config", "user"] {
+                                    let target = if key == "config" {
+                                        &mut current["config"]
+                                    } else {
+                                        &mut current["layers"][0]["config"]
+                                    };
+                                    if edit["value"].is_null() {
+                                        target
+                                            .as_object_mut()
+                                            .unwrap()
+                                            .remove("model_catalog_json");
+                                    } else {
+                                        target["model_catalog_json"] = edit["value"].clone();
+                                    }
+                                }
+                            }
+                            "model_providers.\"custom\".model_catalog_url" => {
+                                current["config"]["model_providers"]["custom"]
+                                    ["model_catalog_url"] = edit["value"].clone();
+                                current["layers"][0]["config"]["model_providers"]["custom"]
+                                    ["model_catalog_url"] = edit["value"].clone();
+                            }
+                            key => panic!("Unexpected config mutation {key}"),
+                        }
+                    }
                     std::fs::write(&config, serde_json::to_vec(&current).unwrap()).unwrap();
                     json!({"status":"ok"})
                 }
@@ -437,5 +526,134 @@ mod tests {
         );
         adapter.close().await;
         upstream.abort();
+    }
+
+    #[tokio::test]
+    async fn official_catalog_preserves_auth_metadata_and_restores_owned_global_setting() {
+        for (auth, explicit_provider, external) in [
+            ("chatgpt", false, false),
+            ("apiKey", true, false),
+            ("chatgpt", true, true),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path();
+            let data = root.join("data");
+            tokio::fs::create_dir(&data).await.unwrap();
+            let data = tokio::fs::canonicalize(data).await.unwrap();
+            let preferences = root.join("preferences.json");
+            save(&preferences, &json!({"customProviderUltrafast":true}))
+                .await
+                .unwrap();
+            let source = json!({"source":"native-selected-auth","models":[
+                {"slug":"gpt-6-astra","base_instructions":"exact source instructions","service_tiers":[{"id":"priority","name":"Existing fast","description":"keep me"}],"extra":{"capability":true}},
+                {"slug":"gpt-other","base_instructions":"unchanged","service_tiers":[]}
+            ]});
+            save(&root.join("native-catalog.json"), &source)
+                .await
+                .unwrap();
+            let original = root.join("original.json");
+            if external {
+                save(&original, &source).await.unwrap();
+            }
+            let mut config =
+                json!({"auth_mode":auth,"cli_auth_credentials_store":"keyring","unrelated":"keep"});
+            if explicit_provider {
+                config["model_provider"] = json!("openai");
+            }
+            if external {
+                config["model_catalog_json"] = json!(original);
+            }
+            let response = json!({"config":config,"layers":[{"name":{"type":"user","file":root.join("config.toml")},"version":"v1","config":config}]});
+            save(&root.join("config.json"), &response).await.unwrap();
+            let quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+            let binary = root.join("codex-mock");
+            let script=format!("#!/bin/sh\nif [ \"$1\" = debug ]; then /bin/cat {}; exit 0; fi\nPANEL_ADAPTER_FIXTURE={}\nexport PANEL_ADAPTER_FIXTURE\nexec {} --exact models_adapter::tests::mock_app_server --nocapture --format terse\n# {}\n",quote(&root.join("native-catalog.json").to_string_lossy()),quote(&root.to_string_lossy()),quote(&std::env::current_exe().unwrap().to_string_lossy()),source);
+            tokio::fs::write(&binary, script).await.unwrap();
+            tokio::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700))
+                .await
+                .unwrap();
+            let adapter = CatalogAdapter::new(binary.clone(), data.clone(), preferences.clone());
+            adapter.sync().await.unwrap();
+            let active = read(&root.join("config.json"), Value::Null).await.unwrap();
+            let generated = PathBuf::from(active["config"]["model_catalog_json"].as_str().unwrap());
+            assert!(generated.starts_with(&data));
+            assert_ne!(generated, original);
+            assert_eq!(active["config"]["auth_mode"], auth);
+            assert_eq!(active["config"]["model_provider"], config["model_provider"]);
+            assert!(active["config"].get("model_providers").is_none());
+            let output = read(&generated, Value::Null).await.unwrap();
+            assert_eq!(output["source"], source["source"]);
+            assert_eq!(
+                output["models"][0]["base_instructions"],
+                source["models"][0]["base_instructions"]
+            );
+            assert_eq!(output["models"][0]["extra"], source["models"][0]["extra"]);
+            assert_eq!(
+                output["models"][0]["service_tiers"][0],
+                source["models"][0]["service_tiers"][0]
+            );
+            assert!(output["models"][0]["service_tiers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tier| tier["id"] == "ultrafast"));
+            assert_eq!(output["models"][1], source["models"][1]);
+            if external {
+                assert_eq!(read(&original, Value::Null).await.unwrap(), source);
+            }
+            let contexts =
+                models::context_settings(&binary, &data, root, false, None, Some(&preferences))
+                    .await
+                    .unwrap();
+            assert_eq!(
+                contexts["models"].as_array().unwrap().len(),
+                2,
+                "managed source must remain a valid full catalog"
+            );
+            assert_eq!(
+                read(&root.join("config.json"), Value::Null).await.unwrap(),
+                active
+            );
+            adapter.close().await;
+            // 重启适配器后仍识别自己的文件，关闭时恢复启用前的路径或缺省值。
+            let adapter = CatalogAdapter::new(binary, data.clone(), preferences.clone());
+            adapter.sync().await.unwrap();
+            save(&preferences, &json!({"customProviderUltrafast":false}))
+                .await
+                .unwrap();
+            adapter.sync().await.unwrap();
+            assert_eq!(
+                read(&root.join("config.json"), Value::Null).await.unwrap()["config"],
+                config
+            );
+            assert_eq!(read(&generated, Value::Null).await.unwrap(), source);
+            save(&preferences, &json!({"customProviderUltrafast":true}))
+                .await
+                .unwrap();
+            adapter.sync().await.unwrap();
+            assert!(
+                read(&generated, Value::Null).await.unwrap()["models"][0]["service_tiers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|tier| tier["id"] == "ultrafast")
+            );
+            let mut user_changed = read(&root.join("config.json"), Value::Null).await.unwrap();
+            user_changed["config"]["model_catalog_json"] = json!(original);
+            user_changed["layers"][0]["config"]["model_catalog_json"] = json!(original);
+            save(&root.join("config.json"), &user_changed)
+                .await
+                .unwrap();
+            save(&preferences, &json!({"customProviderUltrafast":false}))
+                .await
+                .unwrap();
+            adapter.sync().await.unwrap();
+            assert_eq!(
+                read(&root.join("config.json"), Value::Null).await.unwrap()["config"]
+                    ["model_catalog_json"],
+                json!(original)
+            );
+            adapter.close().await;
+        }
     }
 }

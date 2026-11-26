@@ -61,18 +61,47 @@ test("switch exposes Ultrafast, native setter saves it, and requests retain it; 
   assert.equal(await f.menu().select("ultrafast"), false);
   f.runtime.setEnabled(true);
   f.thread("openai");
-  assert.equal(await f.menu().select("ultrafast"), false, "thread provider overrides custom config");
+  assert.equal(await f.menu().select("ultrafast"), true, "official OpenAI supports the same local opt-in");
   f.thread("custom"); f.host("remote");
   assert.equal(await f.menu().select("ultrafast"), false);
 });
 
-test("official and unknown providers keep original access and existing catalog tiers are retained", () => {
+test("official and default providers opt in while invalid providers preserve native access", () => {
   const access = {fast: false, ultrafast: false};
-  for (const provider of [undefined, null, "", "openai"]) assert.equal(customProviderUltrafastAccess("local", provider, access), access);
+  for (const provider of [undefined, null, "openai", "custom"]) assert.deepEqual(customProviderUltrafastAccess("local", provider, access, "gpt-6.1-sol"), {fast: true, ultrafast: true});
+  for (const provider of ["", " ", "\t", false, 1, {}, []]) assert.equal(customProviderUltrafastAccess("local", provider, access, "gpt-6.1-sol"), access);
+  assert.equal(customProviderUltrafastAccess("remote", "openai", access, "gpt-6.1-sol"), access);
   const model = {serviceTiers: [{id: "priority", name: "Custom Fast"}, {id: "ultrafast", name: "Ultrafast", description: "Provider description"}]};
   assert.equal(withUltrafastTier(model), model);
   assert.equal(withUltrafastTier(null), null);
   assert.deepEqual(customProviderUltrafastAccess("local", "custom", access, "gpt-6-astra"), {fast: true, ultrafast: true});
+});
+
+test("OpenAI menu selection produces Ultrafast request settings for explicit and default providers", async () => {
+  for (const provider of ["openai", undefined, null]) {
+    const f = fixture(true, "gpt-6.1-sol");
+    f.provider(provider);
+    assert.equal(f.menu().options.some(option => option.value === "ultrafast"), true);
+    assert.equal(await f.menu().select("ultrafast"), true);
+    const request = JSON.parse(JSON.stringify({serviceTier: f.settings().serviceTierSettings.serviceTierForRequest}));
+    assert.equal(request.serviceTier, "ultrafast");
+    f.runtime.setEnabled(false);
+    assert.equal(f.settings().serviceTierSettings.serviceTierForRequest, null);
+    assert.equal(await f.menu().select("ultrafast"), false);
+    f.runtime.setEnabled(true);
+    f.host("remote");
+    assert.equal(await f.menu().select("ultrafast"), false);
+  }
+});
+
+test("legacy menu access remains adapted when the native menu has no speed icon", async () => {
+  const menu=primary.replace('Qt=true&&supported(model,Kt)', 'Qt=false')
+    .replace('let Kt=rt.selectedServiceTier,', 'let Kt=rt.selectedServiceTier,copy=rt.selectedServiceTier,');
+  const f=fixture(true,"gpt-6.1-sol",{initial,primary:menu});
+  f.provider("openai");
+  assert.equal(f.menu().access.ultrafast,true);
+  assert.equal(await f.menu().select("ultrafast"),true);
+  assert.equal(f.settings().serviceTierSettings.serviceTierForRequest,"ultrafast");
 });
 
 test("discovers both native modules from an existing import map and rejects unsupported structures", async () => {

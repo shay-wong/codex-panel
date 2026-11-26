@@ -1161,6 +1161,7 @@ fn model_menu(ast: &Ast) -> Result<Vec<Edit>, ApiError> {
                 ast.kind(pattern) == "ObjectPattern"
                     && ast.property(pattern, "serviceTierSettings").is_some()
                     && ast.property(pattern, "setServiceTier").is_some()
+                    && ast.property(pattern, "serviceTierAccess").is_none()
             })
     });
     let mut changes = Vec::new();
@@ -1186,6 +1187,31 @@ fn model_menu(ast: &Ast) -> Result<Vec<Edit>, ApiError> {
             .child(access[0], "id")
             .and_then(|pattern| ast.property_value(pattern, "serviceTierAccess"))
             .unwrap();
+        // 菜单权限跟随设置返回值，不依赖 selectedServiceTier 的缓存次数或图标结构。
+        changes.push(Edit {
+            start: ast.start(pattern) + 1,
+            end: ast.start(pattern) + 1,
+            text: "serviceTierAccess:panelServiceTierAccess,".into(),
+        });
+        if let Some(binding) = ast.binding(allowed) {
+            for reference in ast.references(binding) {
+                let shorthand = ast.parent(*reference).filter(|parent| {
+                    ast.kind(*parent) == "Property" && ast.boolean(*parent, "shorthand")
+                });
+                changes.push(match shorthand {
+                    Some(parent) => Edit {
+                        start: ast.start(parent),
+                        end: ast.end(parent),
+                        text: format!("{}:panelServiceTierAccess", ast.text(*reference)),
+                    },
+                    None => Edit {
+                        start: ast.start(*reference),
+                        end: ast.end(*reference),
+                        text: "panelServiceTierAccess".into(),
+                    },
+                });
+            }
+        }
         let selected = ast.all(owner, |node| {
             ast.kind(node) == "MemberExpression"
                 && ast.name(node).as_deref() == Some("selectedServiceTier")
@@ -1213,30 +1239,6 @@ fn model_menu(ast: &Ast) -> Result<Vec<Edit>, ApiError> {
         });
         if icons.len() != 1 {
             continue;
-        }
-        changes.push(Edit {
-            start: ast.start(pattern) + 1,
-            end: ast.start(pattern) + 1,
-            text: "serviceTierAccess:panelServiceTierAccess,".into(),
-        });
-        if let Some(binding) = ast.binding(allowed) {
-            for reference in ast.references(binding) {
-                let shorthand = ast.parent(*reference).filter(|parent| {
-                    ast.kind(*parent) == "Property" && ast.boolean(*parent, "shorthand")
-                });
-                changes.push(match shorthand {
-                    Some(parent) => Edit {
-                        start: ast.start(parent),
-                        end: ast.end(parent),
-                        text: format!("{}:panelServiceTierAccess", ast.text(*reference)),
-                    },
-                    None => Edit {
-                        start: ast.start(*reference),
-                        end: ast.end(*reference),
-                        text: "panelServiceTierAccess".into(),
-                    },
-                });
-            }
         }
         let icon = icons[0];
         changes.push(Edit{start:ast.start(icon),end:ast.end(icon),text:format!("({}===\"ultrafast\"&&{}.availableOptions.some(option=>option.value===\"ultrafast\")||{})",ast.text(value),ast.text(tier),ast.text(icon))});
@@ -1365,7 +1367,7 @@ pub fn ultrafast(
     let runtime = "globalThis.__codexPanelProviderUltrafastV1__";
     let hook = ast.text(ast.unwrap(hook));
     let args = ast.array(model, "arguments");
-    let read=format!("const panelSpeedScope={};const panelSpeedEnabled=(0,{}.useSyncExternalStore)({runtime}.subscribe,{runtime}.getSnapshot);const panelSpeedTarget=(0,{hook})({},{});const panelSpeedConfig=(0,{hook})({},panelSpeedTarget);const panelSpeedThreadProvider=(0,{hook})({},{});const panelSpeedProvider=panelSpeedThreadProvider??panelSpeedConfig.data?.model_provider;const panelCustomSpeed=panelSpeedEnabled&&panelSpeedScope.hostId===\"local\"&&typeof panelSpeedProvider===\"string\"&&panelSpeedProvider!==\"\"&&panelSpeedProvider!==\"openai\";const panelUltrafastModel=/^(?:gpt-6[- ]astra|gpt-6\\.1[- ]sol|gpt-6\\.2[- ](?:astra|sol))$/i.test({});",ast.text(scope),react(&ast,owner)?,atoms[0],ast.text(thread),atoms[1],atoms[2],ast.text(thread),ast.text(args[1]));
+    let read=format!("const panelSpeedScope={};const panelSpeedEnabled=(0,{}.useSyncExternalStore)({runtime}.subscribe,{runtime}.getSnapshot);const panelSpeedTarget=(0,{hook})({},{});const panelSpeedConfig=(0,{hook})({},panelSpeedTarget);const panelSpeedThreadProvider=(0,{hook})({},{});const panelSpeedProvider=panelSpeedThreadProvider??panelSpeedConfig.data?.model_provider??\"openai\";const panelCustomSpeed=panelSpeedEnabled&&panelSpeedScope.hostId===\"local\"&&typeof panelSpeedProvider===\"string\"&&panelSpeedProvider.trim()!==\"\";const panelUltrafastModel=/^(?:gpt-6[- ]astra|gpt-6\\.1[- ]sol|gpt-6\\.2[- ](?:astra|sol))$/i.test({});",ast.text(scope),react(&ast,owner)?,atoms[0],ast.text(thread),atoms[1],atoms[2],ast.text(thread),ast.text(args[1]));
     let access_call = ast
         .child(access, "init")
         .map(|node| ast.unwrap(node))
@@ -1528,9 +1530,42 @@ mod tests {
         let rewritten = ultrafast(&source, "subject", &context).unwrap().unwrap();
         Ast::parse(&rewritten, true).unwrap();
         run_js(format!(
-            r#"const assert=require('node:assert/strict'),vm=require('node:vm');let enabled=true;const options={{model:'gpt-6-astra',hostId:'local',threadProvider:'custom',configProvider:'custom',models:[{{model:'gpt-6-astra',serviceTiers:[{{id:'standard'}}]}}]}};const dependencies={{react:{{use(){{}},useSyncExternalStore:(_,read)=>read()}},signal:{{read(atom){{if(atom==='target')return{{hostId:options.hostId,cwd:'/tmp'}};if(atom==='config')return{{data:{{model_provider:options.configProvider}}}};if(atom==='provider')return options.threadProvider;}}}},scope:{{target:()=>({{hostId:options.hostId}})}},access:{{read:()=>({{serviceTierAccess:{{ultrafast:false,standard:true}}}})}},model:{{select:(models,name)=>models.find(model=>model.model===name)}},extra:{{atom:'extra'}},'target-module':{{atom:'target'}},'config-module':{{atom:'config'}},'provider-module':{{atom:'provider'}}}},exports={{}},load=id=>dependencies[id];load.d=(exports,getters)=>{{for(const[name,get]of Object.entries(getters))Object.defineProperty(exports,name,{{get}})}};vm.runInNewContext('('+{}+')',{{__codexPanelProviderUltrafastV1__:{{subscribe(){{}},getSnapshot:()=>enabled}}}})({{}},exports,load);const settings=()=>exports.settings('thread',options);assert.equal(settings().serviceTierAccess.fast,true);assert.equal(settings().setServiceTier('ultrafast'),true);options.threadProvider='openai';assert.equal(settings().setServiceTier('ultrafast'),false);options.threadProvider='custom';options.hostId='remote';assert.equal(settings().setServiceTier('ultrafast'),false);options.hostId='local';enabled=false;assert.equal(settings().setServiceTier('ultrafast'),false);"#,
+            r#"const assert=require('node:assert/strict'),vm=require('node:vm');let enabled=true;const options={{model:'gpt-6-astra',hostId:'local',threadProvider:'custom',configProvider:'custom',models:[{{model:'gpt-6-astra',serviceTiers:[{{id:'standard'}}]}}]}};const dependencies={{react:{{use(){{}},useSyncExternalStore:(_,read)=>read()}},signal:{{read(atom){{if(atom==='target')return{{hostId:options.hostId,cwd:'/tmp'}};if(atom==='config')return{{data:{{model_provider:options.configProvider}}}};if(atom==='provider')return options.threadProvider;}}}},scope:{{target:()=>({{hostId:options.hostId}})}},access:{{read:()=>({{serviceTierAccess:{{ultrafast:false,standard:true}}}})}},model:{{select:(models,name)=>models.find(model=>model.model===name)}},extra:{{atom:'extra'}},'target-module':{{atom:'target'}},'config-module':{{atom:'config'}},'provider-module':{{atom:'provider'}}}},exports={{}},load=id=>dependencies[id];load.d=(exports,getters)=>{{for(const[name,get]of Object.entries(getters))Object.defineProperty(exports,name,{{get}})}};vm.runInNewContext('('+{}+')',{{__codexPanelProviderUltrafastV1__:{{subscribe(){{}},getSnapshot:()=>enabled}}}})({{}},exports,load);const settings=()=>exports.settings('thread',options);assert.equal(settings().serviceTierAccess.fast,true);assert.equal(settings().setServiceTier('ultrafast'),true);options.threadProvider='openai';assert.equal(settings().setServiceTier('ultrafast'),true);options.threadProvider=undefined;options.configProvider=undefined;assert.equal(settings().setServiceTier('ultrafast'),true);for(const invalid of['',' ',false,7,{{}},[]]){{options.threadProvider=invalid;assert.equal(settings().setServiceTier('ultrafast'),false);}}options.threadProvider='custom';options.hostId='remote';assert.equal(settings().setServiceTier('ultrafast'),false);options.hostId='local';enabled=false;assert.equal(settings().setServiceTier('ultrafast'),false);"#,
             json!(rewritten)
         ));
+    }
+    #[test]
+    fn openai_ultrafast_reaches_compiled_menu_and_request() {
+        let file = include_str!("../../../test/codex-rspack-capabilities.test.mjs");
+        let get = |name: &str| {
+            let marker = format!("const {name} = `");
+            let start = file.find(&marker).unwrap() + marker.len();
+            file[start..start + file[start..].find('`').unwrap()].to_owned()
+        };
+        let source = get("hookSource")
+            .replace("serviceTierForRequest:available.some(t=>t.value===\"ultrafast\")?\"ultrafast\":null", "serviceTierForRequest:selection.serviceTier!==\"ultrafast\"||allowed.ultrafast?selection.serviceTier:null")
+            .replace("setServiceTier:t=>t!==\"ultrafast\"||allowed.ultrafast", "setServiceTier:t=>{if(t===\"ultrafast\"&&!allowed.ultrafast)return false;selection.serviceTier=t;return true}")
+            .replace("let set=value=>value!==\"ultrafast\"||chosen.ultrafast;", "let set=value=>(value!==\"ultrafast\"||chosen.ultrafast)&&rest.setServiceTier(value);");
+        let menu = get("modernMenuSource");
+        let catalog = catalog(vec![
+            ("settings", source.clone()),
+            ("menu", menu.clone()),
+            ("reader", get("providerSource")),
+            ("target-module", "function(){}".into()),
+            ("config-module", "function(){}".into()),
+            ("provider-module", "function(){}".into()),
+        ]);
+        let context = Context::new(&catalog);
+        let patched_source = ultrafast(&source, "settings", &context).unwrap().unwrap();
+        let patched_menu = ultrafast(&menu, "menu", &context).unwrap().unwrap();
+        let fixtures = json!({source:patched_source,menu:patched_menu});
+        // 使用同一套端到端夹具执行 Rust 生成的浏览器函数，检查菜单选中后序列化的 serviceTier。
+        let body = file
+            .lines()
+            .filter(|line| !line.starts_with("import "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        run_js(format!("const assert=require('node:assert/strict'),vm=require('node:vm');const fixtures={fixtures};const rspackSourceContext=()=>({{}});const rewriteRspackUltrafast=source=>{{assert.ok(source in fixtures);return fixtures[source]}};let ran=0;const test=(name,callback)=>{{if(name==='compiled native menu selects OpenAI Ultrafast and produces the request service tier'){{callback();ran++}}}};{body};assert.equal(ran,1);"));
     }
     #[test]
     fn quota_preserves_non_quota_blockers_and_provider_boundary() {
