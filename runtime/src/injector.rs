@@ -304,9 +304,7 @@ async fn attach(
     .await?;
     let should_open = open || previous["pageVisible"] == true;
     if should_open {
-        connection
-            .evaluate("window.__codexPanelInjection__?.open()", None)
-            .await?;
+        request_panel_open(&connection, Duration::from_secs(15)).await?;
     }
     let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline {
@@ -559,12 +557,11 @@ async fn sync_shared_session(
     cli: Option<&Path>,
     primary: &Arc<tokio::sync::Mutex<Option<cdp::Connection>>>,
 ) -> Result<(), ApiError> {
-    let enabled = if let Some(path) = &environment.preferences_file {
-        let preferences: Value = serde_json::from_slice(&tokio::fs::read(path).await?)?;
-        preferences["sharedSessionBackend"] == true
-    } else {
-        config::setting("SHARED_SESSION_BACKEND").as_deref() == Some("1")
-    };
+    let enabled = crate::shared_session::read_enabled(
+        environment.preferences_file.as_deref(),
+        config::setting("SHARED_SESSION_BACKEND").as_deref() == Some("1"),
+    )
+    .await?;
     if !enabled {
         if let Some(shared) = current.take() {
             shared.gateway.close().await?;
@@ -714,7 +711,7 @@ async fn native_adapters(
             }
             connection.evaluate(&source,None).await?;
             connection.evaluate(&format!("window.__CODEX_PANEL_SCRIPT_IDENTIFIER__={}",registration["identifier"]),None).await?;
-            if previous["pageVisible"]==true{connection.evaluate("window.__codexPanelInjection__?.open()",None).await?;}
+            if previous["pageVisible"]==true{request_panel_open(&connection,Duration::from_secs(15)).await?;}
             emit("nativeAdaptersStatus",prepared.status);
             // 侧栏模块会延迟加载，必须等待其真正执行，不能把已准备误报成已生效。
             let deadline=Instant::now()+Duration::from_secs(15);
@@ -765,10 +762,7 @@ async fn open_panel(
         if !bridge::ready(&status, hash, startup) {
             continue;
         }
-        target
-            .connection
-            .evaluate("window.__codexPanelInjection__?.open()", None)
-            .await?;
+        request_panel_open(&target.connection, Duration::from_secs(2)).await?;
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
             let status = bridge::status(&target.connection).await?;
@@ -784,6 +778,30 @@ async fn open_panel(
         "PANEL_NOT_READY",
         "Managed Panel renderer is not ready to open",
     ))
+}
+
+async fn request_panel_open(
+    connection: &cdp::Connection,
+    timeout: Duration,
+) -> Result<(), ApiError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match connection
+            .evaluate("window.__codexPanelInjection__?.open()", None)
+            .await
+        {
+            Ok(_) => return Ok(()),
+            // DOM 加载完成不代表 React 路由已挂载；保留同一个连接，等原生导航就绪再打开。
+            Err(error)
+                if error.code == "CODEX_EVALUATION_FAILED"
+                    && error.message.contains("无法连接 Codex 原生导航")
+                    && Instant::now() < deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 struct UpdateCheck {
@@ -1558,4 +1576,43 @@ pub async fn run(args: &[String]) -> Result<(), ApiError> {
     // Codex 属于用户应用，关闭 Panel 只释放控制连接，不终止应用本身。
     drop(codex);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    #[tokio::test]
+    async fn opening_does_not_retry_unrelated_renderer_errors() {
+        let (client, server) = tokio::io::duplex(4096);
+        let (reader, writer) = tokio::io::split(client);
+        let connection = cdp::Connection::pipe(reader, writer);
+        let peer = tokio::spawn(async move {
+            let (reader, mut writer) = tokio::io::split(server);
+            let mut reader = BufReader::new(reader);
+            let mut command = Vec::new();
+            reader.read_until(0, &mut command).await.unwrap();
+            command.pop();
+            let request: Value = serde_json::from_slice(&command).unwrap();
+            let mut response = json!({"id":request["id"],"result":{"exceptionDetails":{"exception":{"description":"TypeError: unexpected renderer failure"}}}}).to_string().into_bytes();
+            response.push(0);
+            writer.write_all(&response).await.unwrap();
+            let mut next = Vec::new();
+            let repeated =
+                tokio::time::timeout(Duration::from_millis(200), reader.read_until(0, &mut next))
+                    .await;
+            assert!(
+                !matches!(repeated, Ok(Ok(length)) if length > 0),
+                "unrelated errors must not be retried"
+            );
+        });
+        let result = request_panel_open(&connection, Duration::from_secs(5))
+            .await
+            .unwrap_err();
+        assert_eq!(result.code, "CODEX_EVALUATION_FAILED");
+        assert!(result.message.contains("unexpected renderer failure"));
+        connection.close();
+        peer.await.unwrap();
+    }
 }

@@ -35,6 +35,25 @@ pub struct Callbacks {
     pub retain: Arc<dyn Fn(String, bool) -> BoxFuture + Send + Sync>,
 }
 
+pub async fn read_enabled(
+    preferences_file: Option<&Path>,
+    default_enabled: bool,
+) -> Result<bool, ApiError> {
+    let Some(path) = preferences_file else {
+        return Ok(default_enabled);
+    };
+    let bytes = match tokio::fs::read(path).await {
+        Ok(bytes) => bytes,
+        // 首次运行尚未写入偏好文件，沿用启动器传入的开关，不将缺省状态记为错误。
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(default_enabled);
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let preferences: Value = serde_json::from_slice(&bytes)?;
+    Ok(preferences["sharedSessionBackend"] == true)
+}
+
 struct Client {
     initialized: bool,
     threads: HashSet<String>,
@@ -525,6 +544,20 @@ pub fn retention_expression(loader: &str, thread: &str, retain: bool) -> String 
 mod tests {
     use super::*;
     use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
+
+    #[tokio::test]
+    async fn missing_preferences_use_the_launcher_default_only() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("preferences.json");
+        assert!(!read_enabled(Some(&path), false).await.unwrap());
+        assert!(read_enabled(Some(&path), true).await.unwrap());
+        tokio::fs::write(&path, br#"{"sharedSessionBackend":false}"#)
+            .await
+            .unwrap();
+        assert!(!read_enabled(Some(&path), true).await.unwrap());
+        tokio::fs::write(&path, b"invalid json").await.unwrap();
+        assert!(read_enabled(Some(&path), false).await.is_err());
+    }
 
     async fn connect(
         gateway: &Gateway,

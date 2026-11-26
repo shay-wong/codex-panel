@@ -138,6 +138,9 @@ pub fn ready(value: &Value, hash: &str, token: Option<&str>) -> bool {
 pub async fn install(cdp: &Connection, environment: &Environment) -> Result<i64, ApiError> {
     cdp.send("Runtime.enable", json!({})).await?;
     cdp.send("Page.enable", json!({})).await?;
+    // 私有 iframe 继承 Codex 的 CSP；须在写入 Panel 文档前恢复原注入器的绕过设置，模块脚本才能加载。
+    cdp.send("Page.setBypassCSP", json!({"enabled":true}))
+        .await?;
     let tree = cdp.send("Page.getFrameTree", json!({})).await?;
     let world = cdp
         .send(
