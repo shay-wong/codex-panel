@@ -1151,7 +1151,6 @@ pub async fn prepare(
     environment: &super::config::Environment,
 ) -> Result<super::adapters::Prepared, ApiError> {
     use base64::Engine;
-    use sha2::{Digest, Sha256};
     let path = super::adapters::archive_path(app);
     let entries = tokio::task::spawn_blocking(move || super::adapters::read_esm_sources(&path))
         .await
@@ -1173,9 +1172,10 @@ pub async fn prepare(
     let (mut sources, prepared, errors) = tokio::task::spawn_blocking(move || build(&entries))
         .await
         .map_err(|error| ApiError::new(500, "NATIVE_ESM", error.to_string()))??;
-    let revision = hex::encode(Sha256::digest(
-        json!([sources, prepared]).to_string().as_bytes(),
-    ));
+    let revision = super::adapters::application_revision(
+        &json!([sources, prepared]),
+        &[include_str!("assets/preference_runtime.js")],
+    );
     let preferences = match &environment.preferences_file {
         Some(path) => tokio::fs::read(path)
             .await
@@ -1254,7 +1254,7 @@ pub async fn prepare(
         handler.abort();
         return Err(error);
     }
-    let features=prepared.as_object().into_iter().flatten().map(|(name,value)|json!({"id":name,"phase":if value==true{"prepared"}else{"failed"},"message":errors[name]})).collect::<Vec<_>>();
+    let features=prepared.as_object().into_iter().flatten().map(|(name,value)|json!({"id":name,"feature":name,"phase":if value==true{"prepared"}else{"failed"},"message":if value==true{"已适配，等待统一应用"}else{errors[name].as_str().unwrap_or("未找到兼容的原生模块")}})).collect::<Vec<_>>();
     let status = json!({"phase":if errors.as_object().is_some_and(|errors|errors.is_empty()){"prepared"}else{"partial"},"message":"旧版 ESM 模块已由 Rust 原生分析","features":features,"progress":null});
     Ok(super::adapters::Prepared {
         source,

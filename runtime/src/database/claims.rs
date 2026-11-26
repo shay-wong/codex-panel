@@ -9,6 +9,14 @@ fn rank(source: &Value) -> Option<u8> {
         _ => None,
     }
 }
+fn blocks_automatic_claim(labels: &Value) -> bool {
+    array(labels).iter().any(|label| {
+        matches!(
+            text(label).trim().to_ascii_lowercase().as_str(),
+            "ssh-import" | "no-auto-claim"
+        )
+    })
+}
 fn attempt(row: &Value) -> Value {
     if row.is_null() {
         Value::Null
@@ -148,7 +156,13 @@ impl Database {
         let mut values = Vec::new();
         for row in self.all(sql::LIST_READY_CLAIMS[0], &[at.clone()])? {
             let task = self.get_task(&row["task_id"])?;
-            values.push(json!({"policy":self.project_automation_policy(&task["projectId"])?,"task":task,"claim":self.claim_item(&row["task_id"])?}));
+            let claim = self.claim_item(&row["task_id"])?;
+            if matches!(text(&claim["source"]), "scan" | "jira")
+                && blocks_automatic_claim(&task["labels"])
+            {
+                continue;
+            }
+            values.push(json!({"policy":self.project_automation_policy(&task["projectId"])?,"task":task,"claim":claim}));
         }
         Ok(json!(values))
     }
@@ -163,6 +177,10 @@ impl Database {
         }
         let mut queued = Vec::new();
         for row in self.all(sql::ENQUEUE_AUTHORIZED_JIRA_CLAIMS[1], &[])? {
+            let task = self.get_task(&row["task_id"])?;
+            if blocks_automatic_claim(&task["labels"]) {
+                continue;
+            }
             queued.push(self.enqueue_claim(&row["task_id"], &json!("jira"), &now())?);
         }
         Ok(json!(queued))
@@ -366,10 +384,14 @@ impl Database {
                     let at = fallback(&a, now());
                     let mut queued = Vec::new();
                     for policy in self.all(sql::ENQUEUE_DUE_PROJECT_SCANS[0], &[at.clone()])? {
-                        for task in self.all(
+                        for row in self.all(
                             sql::ENQUEUE_DUE_PROJECT_SCANS[1],
                             &[policy["project_id"].clone()],
                         )? {
+                            let task = self.get_task(&row["id"])?;
+                            if blocks_automatic_claim(&task["labels"]) {
+                                continue;
+                            }
                             queued.push(self.enqueue_claim(&task["id"], &json!("scan"), &at)?);
                         }
                         let time = chrono::DateTime::parse_from_rfc3339(text(&at))

@@ -18,10 +18,14 @@ mod pets;
 mod processes;
 #[path = "injector/repository.rs"]
 mod repository;
+#[path = "injector/revisions.rs"]
+mod revisions;
 #[path = "injector/source_ast.rs"]
 mod source_ast;
 #[path = "injector/tabs.rs"]
 mod tabs;
+#[path = "injector/terminal.rs"]
+mod terminal;
 #[path = "injector/update_bindings.rs"]
 mod update_bindings;
 
@@ -34,7 +38,10 @@ use futures_util::{
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::{
     collections::BTreeMap,
     path::Path,
@@ -81,6 +88,14 @@ struct Target {
     _events: AbortTask,
     patches: Option<JoinHandle<()>>,
     retry: Arc<tokio::sync::Notify>,
+    applying: Arc<AtomicBool>,
+    adapting: Arc<AtomicBool>,
+}
+
+impl Target {
+    fn obsolete(&self, present: bool) -> bool {
+        self.connection.is_closed() || !present && !self.applying.load(Ordering::SeqCst)
+    }
 }
 
 impl Drop for Target {
@@ -103,6 +118,7 @@ async fn source(environment: &Environment) -> Result<(String, String), ApiError>
     digest.update(include_bytes!("injector/adapters.rs"));
     digest.update(include_bytes!("injector/features.rs"));
     digest.update(include_bytes!("injector/tabs.rs"));
+    digest.update(include_bytes!("injector/terminal.rs"));
     digest.update(include_bytes!("injector/pets.rs"));
     digest.update(include_bytes!("injector/repository.rs"));
     digest.update(include_bytes!("injector/legacy.rs"));
@@ -125,6 +141,7 @@ async fn source(environment: &Environment) -> Result<(String, String), ApiError>
         include_str!("injector/assets/repository_runtime.js"),
         include_str!("injector/assets/settings_runtime.js"),
         include_str!("injector/assets/preference_runtime.js"),
+        include_str!("injector/assets/terminal_runtime.js"),
     ] {
         digest.update(asset.as_bytes());
     }
@@ -322,18 +339,24 @@ async fn attach(
                 tokio::fs::write(path, data).await?;
             }
             let retry = Arc::new(tokio::sync::Notify::new());
+            let applying = Arc::new(AtomicBool::new(false));
+            let adapting = Arc::new(AtomicBool::new(true));
             let patches = Some(tokio::spawn(native_adapters(
                 connection.clone(),
                 source.to_owned(),
                 environment.clone(),
                 options.clone(),
                 retry.clone(),
+                applying.clone(),
+                adapting.clone(),
             )));
             return Ok(Target {
                 connection,
                 _events: events,
                 patches,
                 retry,
+                applying,
+                adapting,
             });
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -683,53 +706,234 @@ async fn reload_renderer(connection: &cdp::Connection) -> Result<(), ApiError> {
     wait_renderer(connection).await
 }
 
+fn adapter_label(feature: &str) -> &str {
+    match feature {
+        "quota" => "账号额度限制",
+        "ultrafast" => "Ultrafast",
+        "dot" => "Dot 入口",
+        "tabs" => "会话菜单",
+        "queue" => "排队消息",
+        "pets" => "宠物动画",
+        "projectlessChat" => "无项目聊天",
+        "repositoryBranchPrefix" => "仓库分支前缀",
+        "settingsPresentation" => "设置界面",
+        "terminal" => "底部终端",
+        "nativeUpdate" => "Codex 更新",
+        "nativeServices" => "原生服务",
+        _ => feature,
+    }
+}
+
+fn publish_adapter_progress(
+    phase: &str,
+    message: &str,
+    features: &BTreeMap<String, Value>,
+    progress: Option<f64>,
+) {
+    emit(
+        "nativeAdaptersStatus",
+        json!({"phase":phase,"message":message,"features":features.values().collect::<Vec<_>>(),"progress":progress}),
+    );
+}
+
+async fn apply_native_descriptors(
+    connection: &cdp::Connection,
+    plan: &Value,
+) -> Result<Vec<String>, ApiError> {
+    if !["nativeUpdate", "nativeServices"].iter().any(|key| {
+        plan[*key]
+            .as_object()
+            .is_some_and(|values| values.values().any(Value::is_object))
+    }) {
+        return Ok(Vec::new());
+    }
+    let descriptors = json!({"chunks":plan["chunks"],"nativeUpdate":plan["nativeUpdate"],"nativeServices":plan["nativeServices"]});
+    let expression = format!(
+        r#"(async()=>{{
+        const load=await ({})();if(!load)return [];
+        const descriptors={descriptors};let runtime=globalThis.__codexPanelRspack__;
+        if(!runtime?.mergeDescriptors)runtime=globalThis.__codexPanelRspack__=({})({{patches:{{}},prepared:{{}},chunks:{{}},nativeUpdate:{{...runtime?.nativeUpdate}},nativeServices:{{...runtime?.nativeServices}}}});
+        runtime.mergeDescriptors(descriptors,load);
+        return ["nativeUpdate","nativeServices"].filter(key=>Object.values(descriptors[key]??{{}}).some(Boolean));
+    }})()"#,
+        include_str!("injector/assets/find_require.js"),
+        include_str!("injector/assets/rspack_runtime.js")
+    );
+    Ok(connection
+        .evaluate(&expression, None)
+        .await?
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect())
+}
+
+async fn consume_adapter_progress(
+    connection: &cdp::Connection,
+    event: Value,
+    features: &mut BTreeMap<String, Value>,
+) {
+    let phase = event["phase"].as_str().unwrap_or("");
+    let feature = event["feature"].as_str().unwrap_or("");
+    if phase == "feature" {
+        let prepared = if matches!(feature, "nativeUpdate" | "nativeServices") {
+            event["plan"][feature]
+                .as_object()
+                .is_some_and(|values| values.values().any(Value::is_object))
+        } else {
+            event["plan"]["prepared"][feature] == true
+        };
+        features.insert(feature.into(), json!({"feature":feature,"phase":if prepared{"prepared"}else{"failed"},"message":if prepared{"已适配，等待统一应用"}else{event["plan"]["errors"][feature].as_str().unwrap_or("未找到兼容的原生模块")}}));
+        if prepared && matches!(feature, "nativeUpdate" | "nativeServices") {
+            match apply_native_descriptors(connection, &event["plan"]).await {
+                Ok(applied) => {
+                    for name in applied {
+                        features.insert(
+                            name.clone(),
+                            json!({"feature":name,"phase":"ready","message":"已启用"}),
+                        );
+                    }
+                }
+                Err(error) => eprintln!("Panel live native services: {}", error.message),
+            }
+        }
+        publish_adapter_progress(
+            "adapting",
+            "已完成的模块已准备，其余模块继续适配。",
+            features,
+            event["percent"].as_f64(),
+        );
+        return;
+    }
+    let completed = event["completed"].as_u64();
+    let total = event["total"].as_u64();
+    let count = match (completed, total) {
+        (Some(done), Some(total)) => format!("（{done}/{total}）"),
+        _ => String::new(),
+    };
+    let module = event["moduleId"]
+        .as_str()
+        .map(|module| format!(" · 模块 {module}"))
+        .unwrap_or_default();
+    if !feature.is_empty() && phase == "adapt" {
+        let message = format!("正在识别{}{count}{module}", adapter_label(feature));
+        features.insert(
+            feature.into(),
+            json!({"feature":feature,"phase":"loading","message":message}),
+        );
+    }
+    let message = match phase {
+        "cache" => "正在检查此版本的适配缓存…".into(),
+        "read" => format!(
+            "正在读取 Codex 资源{count}{}",
+            event["asset"]
+                .as_str()
+                .map(|name| format!(" · {name}"))
+                .unwrap_or_default()
+        ),
+        "adapt" => "正在并发适配原生模块；Panel 已连接。".into(),
+        "compose" => format!("正在合并已完成的模块{count}{module}"),
+        "write" => "正在保存此版本的适配缓存…".into(),
+        "prepared" => "适配已准备，正在应用…".into(),
+        _ => "正在适配原生模块…".into(),
+    };
+    let progress = event["percent"]
+        .as_f64()
+        .or_else(|| match (completed, total) {
+            (Some(done), Some(total)) if total > 0 => Some(done as f64 / total as f64 * 100.),
+            _ => None,
+        });
+    publish_adapter_progress(
+        if matches!(phase, "cache" | "read") {
+            "reading"
+        } else {
+            "adapting"
+        },
+        &message,
+        features,
+        progress,
+    );
+}
+
 async fn native_adapters(
     connection: cdp::Connection,
     base: String,
     environment: Environment,
     options: Options,
     retry: Arc<tokio::sync::Notify>,
+    applying: Arc<AtomicBool>,
+    adapting: Arc<AtomicBool>,
 ) {
     let mut handler: Option<AbortTask> = None;
+    retry.notified().await;
     loop {
-        emit(
-            "nativeAdaptersStatus",
-            json!({"phase":"reading","message":"正在读取并分析原生模块","features":[],"progress":null}),
+        adapting.store(true, Ordering::SeqCst);
+        let mut features = BTreeMap::new();
+        publish_adapter_progress(
+            "reading",
+            "Panel 已连接，正在后台准备原生模块…",
+            &features,
+            None,
         );
-        let result=async{
-            let previous=bridge::status(&connection).await?;
-            let prepared=match adapters::prepare(&connection,&options.app_path,&environment).await?{
-                Some(prepared)=>prepared,None=>legacy::prepare(&connection,&options.app_path,&environment).await?,
+        let result = async {
+            let previous = bridge::status(&connection).await?;
+            let (send, mut receive) = mpsc::unbounded_channel();
+            let progress: adapters::ProgressCallback = Arc::new(move |event| { let _ = send.send(event); });
+            let preparation = adapters::prepare_with_progress(&connection, &options.app_path, &environment, progress);
+            tokio::pin!(preparation);
+            let prepared = loop {
+                tokio::select! {
+                    result = &mut preparation => {
+                        while let Ok(event) = receive.try_recv() { consume_adapter_progress(&connection, event, &mut features).await; }
+                        break result?;
+                    }
+                    Some(event) = receive.recv() => consume_adapter_progress(&connection, event, &mut features).await,
+                }
             };
-            handler=Some(AbortTask(prepared.handler));
-            let source=format!("{}\n{base}",prepared.source);
-            let registration=connection.send("Page.addScriptToEvaluateOnNewDocument",json!({"source":format!("{source}\n//# sourceURL=codex-panel.user.js")})).await?;
-            if let Some(identifier)=previous["scriptIdentifier"].as_str(){let _=connection.send("Page.removeScriptToEvaluateOnNewDocument",json!({"identifier":identifier})).await;}
-            if previous["nativeAdaptersRevision"]!=prepared.revision{
-                emit("nativeAdaptersStatus",json!({"phase":"applying","message":"正在应用原生模块适配","features":prepared.status["features"],"progress":null}));
+            let prepared = match prepared { Some(prepared) => prepared, None => legacy::prepare(&connection, &options.app_path, &environment).await? };
+            for feature in prepared.status["features"].as_array().into_iter().flatten() {
+                let name = feature["feature"].as_str().or_else(|| feature["id"].as_str()).unwrap_or("");
+                if features.get(name).is_none_or(|status| status["phase"] != "ready") { features.insert(name.into(), feature.clone()); }
+            }
+            handler = Some(AbortTask(prepared.handler));
+            let source = format!("{}\n{base}", prepared.source);
+            let registration = connection.send("Page.addScriptToEvaluateOnNewDocument", json!({"source":format!("{source}\n//# sourceURL=codex-panel.user.js")})).await?;
+            if let Some(identifier) = previous["scriptIdentifier"].as_str() {
+                let _ = connection.send("Page.removeScriptToEvaluateOnNewDocument", json!({"identifier":identifier})).await;
+            }
+            if previous["nativeAdaptersRevision"] != prepared.revision {
+                applying.store(true, Ordering::SeqCst);
+                publish_adapter_progress("applying", "正在统一应用适配，刷新 Codex 界面一次…", &features, None);
                 reload_renderer(&connection).await?;
             }
-            connection.evaluate(&source,None).await?;
-            connection.evaluate(&format!("window.__CODEX_PANEL_SCRIPT_IDENTIFIER__={}",registration["identifier"]),None).await?;
-            if previous["pageVisible"]==true{request_panel_open(&connection,Duration::from_secs(15)).await?;}
-            emit("nativeAdaptersStatus",prepared.status);
-            // 侧栏模块会延迟加载，必须等待其真正执行，不能把已准备误报成已生效。
-            let deadline=Instant::now()+Duration::from_secs(15);
-            let tabs=loop{
-                if bridge::status(&connection).await?["threadTabsReady"]==true{break true;}
-                if Instant::now()>=deadline||connection.is_closed(){break false;}
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            };
-            emit("threadTabsStatus",json!({"phase":if tabs{"ready"}else{"failed"},"message":if tabs{""}else{"原生会话菜单或侧栏尚未完成执行"}}));
-            Ok::<_,ApiError>(())
+            connection.evaluate(&source, None).await?;
+            connection.evaluate(&format!("window.__CODEX_PANEL_SCRIPT_IDENTIFIER__={}", registration["identifier"]), None).await?;
+            if previous["pageVisible"] == true { request_panel_open(&connection, Duration::from_secs(15)).await?; }
+            for feature in features.values_mut() {
+                if feature["phase"] == "prepared" { feature["phase"] = json!("ready"); feature["message"] = json!("已启用"); }
+            }
+            let partial = features.values().any(|feature| feature["phase"] == "failed");
+            publish_adapter_progress(if partial { "partial" } else { "ready" }, if partial { "已启用适配成功的模块；部分模块适配失败。" } else { "原生模块已全部启用，适配缓存已就绪。" }, &features, None);
+            let tabs_prepared = features.get("tabs").is_some_and(|feature| feature["phase"] == "ready");
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let tabs = if tabs_prepared {
+                loop {
+                    if bridge::status(&connection).await?["threadTabsReady"] == true { break true; }
+                    if Instant::now() >= deadline || connection.is_closed() { break false; }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            } else { false };
+            emit("threadTabsStatus", json!({"phase":if tabs {"ready"} else if tabs_prepared {"prepared"} else {"failed"},"message":if tabs {"标签页和分栏菜单已加载"} else if tabs_prepared {"菜单已准备，等待页面加载"} else {"原生会话菜单尚未准备成功"}}));
+            Ok::<_, ApiError>(())
         }.await;
+        applying.store(false, Ordering::SeqCst);
+        adapting.store(false, Ordering::SeqCst);
         if let Err(error) = result {
-            emit(
-                "nativeAdaptersStatus",
-                json!({"phase":"failed","message":error.message,"features":[],"progress":null}),
-            );
+            publish_adapter_progress("failed", &error.message, &features, None);
         }
-        tokio::select! {_=retry.notified()=>{},_=async{while !connection.is_closed(){tokio::time::sleep(Duration::from_secs(1)).await;}}=>break}
+        tokio::select! { _ = retry.notified() => {}, _ = async { while !connection.is_closed() { tokio::time::sleep(Duration::from_secs(1)).await; } } => break }
     }
     drop(handler);
 }
@@ -739,17 +943,18 @@ async fn managed_status(
     hash: &str,
     startup: Option<&str>,
 ) -> Result<Value, ApiError> {
+    let applying = targets.values().any(|target| !target.connection.is_closed() && target.applying.load(Ordering::SeqCst));
     for (id, target) in targets {
         if target.connection.is_closed() {
             continue;
         }
         if let Ok(status) = bridge::status(&target.connection).await {
             if bridge::ready(&status, hash, startup) {
-                return Ok(json!({"ready":true,"status":status,"targetId":id}));
+                return Ok(json!({"ready":true,"status":status,"targetId":id,"applyingNativeAdapters":applying}));
             }
         }
     }
-    Ok(json!({"ready":false}))
+    Ok(json!({"ready":false,"applyingNativeAdapters":applying}))
 }
 
 async fn open_panel(
@@ -1245,6 +1450,8 @@ pub async fn run(args: &[String]) -> Result<(), ApiError> {
                     _events: AbortTask(tokio::spawn(async {})),
                     patches: None,
                     retry: Arc::new(tokio::sync::Notify::new()),
+                    applying: Arc::new(AtomicBool::new(false)),
+                    adapting: Arc::new(AtomicBool::new(false)),
                 },
             );
         }
@@ -1453,7 +1660,7 @@ pub async fn run(args: &[String]) -> Result<(), ApiError> {
                 match available {
                     Ok(available)=>{
                         let ids=available.iter().filter_map(|target|target.get("id").or_else(||target.get("targetId")).and_then(Value::as_str)).collect::<Vec<_>>();
-                        let obsolete=targets.iter().filter(|(id,target)|!ids.contains(&id.as_str())||target.connection.is_closed()).map(|(id,_)|id.clone()).collect::<Vec<_>>();
+                        let obsolete=targets.iter().filter(|(id,target)|target.obsolete(ids.contains(&id.as_str()))).map(|(id,_)|id.clone()).collect::<Vec<_>>();
                         for id in obsolete{if let Some(target)=targets.remove(&id){if browser.is_some(){target.connection.detach().await;}else{target.connection.close();}}}
                         for target in available {
                             let id=target.get("id").or_else(||target.get("targetId")).and_then(Value::as_str).unwrap_or("").to_owned();
@@ -1467,10 +1674,12 @@ pub async fn run(args: &[String]) -> Result<(), ApiError> {
                                 Ok(target)=>{
                                     let policy_manager=policies.clone();let rpc=bridge::native_automation_rpc(&target.connection);
                                     tokio::spawn(async move{if let Err(error)=policy_manager.restore(rpc).await{eprintln!("Panel automation policy restore: {}",error.message);}});
+                                    let start_adapters=target.retry.clone();
                                     targets.insert(id,target);last_error.clear();
                                     #[cfg(windows)]if open_pending{if let Some(pid)=codex.as_ref().and_then(processes::ManagedProcess::id){if let Err(error)=crate::windows_codex::activate_windows_window(pid).await{eprintln!("Panel foreground: {error}");}}}
                                     open_pending=false;
                                     emit("injected",json!({"panelManagedReady":true}));
+                                    start_adapters.notify_one();
                                 },
                                 Err(error)=>if last_error!=error.message{emit("waitingForCodex",json!({"message":error.message}));last_error=error.message;},
                             }
@@ -1483,8 +1692,10 @@ pub async fn run(args: &[String]) -> Result<(), ApiError> {
                         if let Err(error)=sync_shared_session(&mut shared,&environment,cli.as_deref(),&primary).await{
                             if shared_error!=error.message{eprintln!("Panel shared session: {}",error.message);shared_error=error.message;}
                         }else{shared_error.clear();}
-                        match sync_avatars(&mut avatars,browser.as_ref(),&client,&environment,&options,&hash).await{
-                            Ok(true)=>pets_revision=None,Ok(false)=>{},Err(error)=>eprintln!("Panel avatar: {}",error.message),
+                        if !targets.values().any(|target|target.adapting.load(Ordering::SeqCst)) {
+                            match sync_avatars(&mut avatars,browser.as_ref(),&client,&environment,&options,&hash).await{
+                                Ok(true)=>pets_revision=None,Ok(false)=>{},Err(error)=>eprintln!("Panel avatar: {}",error.message),
+                            }
                         }
                         let index=environment.data_dir.join("pet-animations/index.json");
                         let revision=(std::fs::metadata(index).ok().and_then(|metadata|metadata.modified().ok()),preferences_revision);
@@ -1580,6 +1791,29 @@ pub async fn run(args: &[String]) -> Result<(), ApiError> {
 mod tests {
     use super::*;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    #[tokio::test]
+    async fn applying_reload_retains_a_temporarily_missing_target() {
+        let (client, _peer) = tokio::io::duplex(4096);
+        let (reader, writer) = tokio::io::split(client);
+        let connection = cdp::Connection::pipe(reader, writer);
+        let applying = Arc::new(AtomicBool::new(true));
+        let target = Target {
+            connection,
+            _events: AbortTask(tokio::spawn(async {})),
+            patches: None,
+            retry: Arc::new(tokio::sync::Notify::new()),
+            applying: applying.clone(),
+            adapting: Arc::new(AtomicBool::new(false)),
+        };
+        assert!(!target.obsolete(false));
+        applying.store(false, Ordering::SeqCst);
+        assert!(target.obsolete(false));
+        assert!(!target.obsolete(true));
+        applying.store(true, Ordering::SeqCst);
+        target.connection.close();
+        assert!(target.obsolete(false));
+    }
 
     #[tokio::test]
     async fn opening_does_not_retry_unrelated_renderer_errors() {

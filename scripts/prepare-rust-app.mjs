@@ -41,10 +41,10 @@ const inputs = triples.map(triple => path.join(targetDirectory, triple, "release
 if (inputs.length === 2) run("/usr/bin/lipo", ["-create", ...inputs, "-output", output]);
 else await copyFile(inputs[0], output);
 await chmod(output, 0o755);
-const signingIdentity = process.env.APPLE_SIGNING_IDENTITY?.trim()
-  || (process.env.GITHUB_ACTIONS === "true" ? "-" : null);
-// 先签 sidecar 再计算清单；本地没有明确身份时不擅自使用临时签名。
-if (process.platform === "darwin" && signingIdentity) {
+const signingIdentity = process.env.CODEX_PANEL_CODESIGN_IDENTITY?.trim()
+  || process.env.APPLE_SIGNING_IDENTITY?.trim() || "-";
+// 先签 sidecar 再计算清单，避免最终签名改变清单中的哈希。
+if (process.platform === "darwin") {
   run("/usr/bin/codesign", ["--force", "--options", "runtime", "--sign", signingIdentity, output]);
 }
 

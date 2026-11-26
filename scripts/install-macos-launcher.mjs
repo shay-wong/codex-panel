@@ -291,8 +291,7 @@ function currentSigningIdentity(appPath) {
 function resolveSigningIdentity(existingAppPath) {
   const explicit = process.env.CODEX_PANEL_CODESIGN_IDENTITY?.trim()
     || process.env.APPLE_SIGNING_IDENTITY?.trim();
-  if (explicit && explicit !== "-") return explicit;
-  if (explicit === "-") throw new Error("本地安装不自动使用临时签名，请设置开发者签名身份");
+  if (explicit) return explicit;
   const identitiesResult = run(
     "/usr/bin/security",
     ["find-identity", "-p", "codesigning", "-v"],
@@ -310,8 +309,7 @@ function resolveSigningIdentity(existingAppPath) {
   const matching = identities.filter(({ name }) => (
     name.startsWith("Apple Development:") && email && name.toLowerCase().includes(email)
   ));
-  if (matching.length === 1) return matching[0].hash;
-  throw new Error("未找到唯一的开发者签名身份，请设置 CODEX_PANEL_CODESIGN_IDENTITY");
+  return matching.length === 1 ? matching[0].hash : "-";
 }
 
 function hostTarget() {

@@ -30,6 +30,8 @@ oxc_allocator = "0.75"
 oxc_ast = { version = "0.75", features = ["serialize"] }
 oxc_parser = "0.75"
 oxc_span = "0.75"
+proc-macro2 = "1"
+quote = "1"
 regex = "1"
 pulldown-cmark = "0.13"
 roxmltree = "0.20"
@@ -41,6 +43,7 @@ serde_json = { version = "1", features = ["unbounded_depth"] }
 serde_yaml = "0.9"
 sha2 = "0.10"
 subtle = "2"
+syn = { version = "2.0.119", features = ["full", "visit", "fold"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "process", "io-util", "io-std", "fs"] }
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 tokio-util = { version = "0.7", features = ["rt"] }

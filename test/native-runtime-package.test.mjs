@@ -9,6 +9,24 @@ import { createHash } from "node:crypto";
 import { installRuntime, panelctlLauncher } from "../scripts/install-macos-launcher.mjs";
 import { verifyRuntimeIntegrity } from "../scripts/runtime-integrity.mjs";
 
+test("local signing keeps explicit and default ad-hoc identities", async () => {
+  const source = await readFile(new URL("../scripts/install-macos-launcher.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("function resolveSigningIdentity(");
+  const end = source.indexOf("function hostTarget(", start);
+  const env = { CODEX_PANEL_CODESIGN_IDENTITY: "-" };
+  let calls = 0;
+  const resolve = vm.runInNewContext(`${source.slice(start, end)}; resolveSigningIdentity`, {
+    process: { env }, currentSigningIdentity: () => null,
+    run: () => { calls++; return { stdout: "" }; },
+  });
+  assert.equal(resolve(null), "-");
+  assert.equal(calls, 0);
+  delete env.CODEX_PANEL_CODESIGN_IDENTITY;
+  assert.equal(resolve(null), "-");
+  env.APPLE_SIGNING_IDENTITY = "selected developer identity";
+  assert.equal(resolve(null), env.APPLE_SIGNING_IDENTITY);
+});
+
 test("installer stages the built native payload and its CLI preserves paths with spaces", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "panel-native-package-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -55,8 +73,12 @@ test("native preparation packages only assets and hashes the built sidecar", { s
   await writeFile(path.join(root, "package.json"), '{"version":"0.0.0-test"}');
   await writeFile(path.join(root, "dist/web/index.html"), "fixture");
   await writeFile(path.join(root, "inject/codex-panel.user.js"), "fixture");
+  const codesign = path.join(root, "fixture-bin/codesign");
+  await writeFile(codesign, '#!/bin/sh\nprintf "%s\\n" "$@" > "$PWD/signing-arguments"\n');
+  await chmod(codesign, 0o755);
   await writeFile(path.join(root, "scripts/prepare-rust-app.mjs"),
-    await readFile(new URL("../scripts/prepare-rust-app.mjs", import.meta.url)));
+    (await readFile(new URL("../scripts/prepare-rust-app.mjs", import.meta.url), "utf8"))
+      .replace('"/usr/bin/codesign"', JSON.stringify(codesign)));
   await writeFile(path.join(root, "fixture-tool"), "fixture tool");
   await writeFile(path.join(root, "fixture-license"), "fixture license");
   await writeFile(path.join(root, "scripts/prepare-codex-delta.mjs"),
@@ -71,10 +93,13 @@ fs.mkdirSync(directory,{recursive:true});fs.writeFileSync(path.join(directory,'c
 `);
   await chmod(cargo, 0o755);
   const result = spawnSync(process.execPath, ["scripts/prepare-rust-app.mjs"], {
-    cwd: root, encoding: "utf8", env: { ...process.env, APPLE_SIGNING_IDENTITY: "", GITHUB_ACTIONS: "",
+    cwd: root, encoding: "utf8", env: { ...process.env, CODEX_PANEL_CODESIGN_IDENTITY: "-", APPLE_SIGNING_IDENTITY: "", GITHUB_ACTIONS: "",
       CARGO_TARGET_DIR: "", PATH: `${path.dirname(cargo)}${path.delimiter}${process.env.PATH}` },
   });
   assert.equal(result.status, 0, result.stderr);
+  if (process.platform === "darwin") {
+    assert.match(await readFile(path.join(root, "signing-arguments"), "utf8"), /--sign\n-\n/);
+  }
   const resources = path.join(root, "src-tauri/resources");
   assert.deepEqual((await readdir(path.join(resources, "app"))).sort(),
     process.platform === "darwin" ? ["dist", "inject", "skills", "tools"] : ["dist", "inject", "skills"]);

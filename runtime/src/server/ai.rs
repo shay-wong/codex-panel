@@ -308,9 +308,12 @@ pub async fn catalog(state: &AppState, context: &Context) -> Result<Value, ApiEr
             if cursor.is_null(){break;}
             if !cursors.insert(cursor.to_string()){return Err(ApiError::new(502,"INVALID_MODEL_CATALOG","Codex model catalog repeated a pagination cursor"));}
         }
-        let response=request(state,context,connection.as_ref(),"skills/list",json!({"cwds":[context.workspace],"forceReload":false})).await?;
-        let mut skills=sanitize_skills(&response["data"]);
-        if context.target.is_none(){include_linked_skills(&mut skills).await?;}
+        let skills=async{
+            let response=request(state,context,connection.as_ref(),"skills/list",json!({"cwds":[context.workspace],"forceReload":false})).await?;
+            let mut skills=sanitize_skills(&response["data"]);
+            if context.target.is_none(){include_linked_skills(&mut skills).await?;}
+            Ok::<_,ApiError>(skills)
+        }.await.unwrap_or_default();
         let command_catalog:Value=serde_json::from_str(include_str!("../../../server/codex-slash-commands-0.139.0.json"))?;
         let platform=if cfg!(windows){"win32"}else if cfg!(target_os="macos"){"darwin"}else{"linux"};
         let commands=command_catalog["commands"].as_array().into_iter().flatten().filter_map(|command|{

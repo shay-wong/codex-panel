@@ -6,10 +6,7 @@ import { verifyRuntimeIntegrity } from "./runtime-integrity.mjs";
 
 const app = process.argv[2] ? path.resolve(process.argv[2]) : null;
 if (!app || process.platform !== "darwin") throw new Error("Usage: app:sign -- <Codex Panel.app> (macOS only)");
-const identity = process.env.CODEX_PANEL_CODESIGN_IDENTITY?.trim() || process.env.APPLE_SIGNING_IDENTITY?.trim();
-if (!identity || (identity === "-" && process.env.GITHUB_ACTIONS !== "true")) {
-  throw new Error("Set APPLE_SIGNING_IDENTITY or CODEX_PANEL_CODESIGN_IDENTITY to the existing developer identity");
-}
+const identity = process.env.CODEX_PANEL_CODESIGN_IDENTITY?.trim() || process.env.APPLE_SIGNING_IDENTITY?.trim() || "-";
 function run(command, args) {
   const result = spawnSync(command, args, { encoding: "utf8" });
   if (result.status !== 0) throw new Error(result.stderr?.trim() || result.error?.message || `${command} failed`);

@@ -6,6 +6,8 @@ function createCodexRspackRuntime(plan) {
     nativeServices: plan.nativeServices,
     get require() { return nativeRequire; },
     mergeDescriptors(next, require) {
+      Object.assign(plan.patches, next.patches);
+      Object.assign(plan.prepared, next.prepared);
       Object.assign(plan.chunks, next.chunks);
       Object.assign(plan.nativeUpdate, next.nativeUpdate);
       Object.assign(plan.nativeServices, next.nativeServices);

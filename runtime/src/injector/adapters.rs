@@ -9,7 +9,50 @@ use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
 };
+
+#[path = "adapters/cache.rs"]
+mod cache;
+
+pub type ProgressCallback = Arc<dyn Fn(Value) + Send + Sync>;
+
+struct ModuleProgress<'a> {
+    callback: &'a ProgressCallback,
+    phase: &'a str,
+    feature: Option<&'a str>,
+    total: usize,
+    last: Instant,
+}
+impl<'a> ModuleProgress<'a> {
+    fn new(
+        callback: &'a ProgressCallback,
+        phase: &'a str,
+        feature: Option<&'a str>,
+        total: usize,
+    ) -> Self {
+        callback(json!({"phase":phase,"feature":feature,"completed":0,"total":total}));
+        Self {
+            callback,
+            phase,
+            feature,
+            total,
+            last: Instant::now(),
+        }
+    }
+    fn advance(&mut self, completed: usize, module: &str) {
+        if completed == self.total || self.last.elapsed() >= Duration::from_millis(100) {
+            (self.callback)(
+                json!({"phase":self.phase,"feature":self.feature,"moduleId":module,"completed":completed,"total":self.total}),
+            );
+            self.last = Instant::now();
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Variant {
@@ -53,31 +96,10 @@ fn identity(path: &Path) -> Result<String, ApiError> {
     Ok(hex::encode(digest.finalize()))
 }
 
-fn planner_revision() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        include_str!("adapters.rs"),
-        include_str!("source_ast.rs"),
-        include_str!("features.rs"),
-        include_str!("tabs.rs"),
-        include_str!("pets.rs"),
-        include_str!("repository.rs"),
-        include_str!("update_bindings.rs"),
-    ] {
-        hash.update(source.as_bytes());
-    }
-    hash.update(b"rust-rspack-cache-v1");
-    hex::encode(hash.finalize())
-}
-
 fn cache_valid(plan: &Value, pets_only: bool) -> bool {
-    (if pets_only {
-        &["pets"][..]
-    } else {
-        &IMPLEMENTED_FEATURES[..]
-    })
-    .iter()
-    .all(|name| plan["prepared"][*name] == true)
+    selected_features(pets_only)
+        .iter()
+        .all(|name| plan["prepared"][*name] == true)
         && plan["errors"]
             .as_object()
             .is_some_and(|errors| errors.is_empty())
@@ -97,90 +119,282 @@ fn cache_valid(plan: &Value, pets_only: bool) -> bool {
         && plan["nativeUpdate"].is_object()
 }
 
+#[cfg(test)]
 fn cached_plan(
     path: &Path,
     directory: &Path,
     pets_only: bool,
 ) -> Result<Option<(Catalog, Value)>, ApiError> {
+    let progress: ProgressCallback = Arc::new(|_| {});
+    cached_plan_progress(path, directory, pets_only, &progress)
+}
+
+fn selected_features(pets_only: bool) -> Vec<&'static str> {
+    if pets_only {
+        vec!["pets", "nativeServices"]
+    } else {
+        IMPLEMENTED_FEATURES
+            .into_iter()
+            .chain(["nativeServices", "nativeUpdate"])
+            .collect()
+    }
+}
+
+fn cached_plan_progress(
+    path: &Path,
+    directory: &Path,
+    pets_only: bool,
+    progress: &ProgressCallback,
+) -> Result<Option<(Catalog, Value)>, ApiError> {
+    cached_plan_revisions(
+        path,
+        directory,
+        pets_only,
+        progress,
+        &super::revisions::revisions(),
+    )
+}
+
+fn cached_plan_revisions(
+    path: &Path,
+    directory: &Path,
+    pets_only: bool,
+    progress: &ProgressCallback,
+    revisions: &super::revisions::Revisions,
+) -> Result<Option<(Catalog, Value)>, ApiError> {
+    progress(json!({"phase":"cache","completed":0,"total":1}));
     let digest = identity(path)?;
-    let revision = planner_revision();
-    let key = hex::encode(Sha256::digest(
-        format!("{digest}:{revision}:{pets_only}").as_bytes(),
+    let cache = cache::Cache::new(directory, &digest, &revisions.catalog);
+    let selected = selected_features(pets_only);
+    let selected_revisions = selected
+        .iter()
+        .map(|feature| (*feature, &revisions.features[*feature]))
+        .collect::<BTreeMap<_, _>>();
+    let combined_revision = hex::encode(Sha256::digest(
+        json!([revisions.compose, selected_revisions])
+            .to_string()
+            .as_bytes(),
     ));
-    let cached = directory.join(format!("rust-{key}.json"));
-    if let Ok(metadata) = std::fs::metadata(&cached) {
-        if metadata.is_file() && metadata.len() <= 256 * 1024 * 1024 {
-            if let Ok(value) = std::fs::read(&cached)
-                .map_err(ApiError::from)
-                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).map_err(ApiError::from))
-            {
-                let expected = hex::encode(Sha256::digest(
-                    json!([value["main"], value["plan"]]).to_string().as_bytes(),
-                ));
-                if value["format"] == 1
-                    && value["key"] == key
-                    && value["checksum"] == expected
-                    && cache_valid(&value["plan"], pets_only)
+    let mut plans = BTreeMap::new();
+    let mut missing = Vec::new();
+    for &feature in &selected {
+        match cache
+            .feature(feature, &revisions.features[feature])
+            .filter(|plan| feature_plan_valid(plan, feature))
+        {
+            Some(plan) => {
+                progress(json!({"phase":"feature","feature":feature,"plan":plan,"cached":true}));
+                plans.insert(feature.to_owned(), plan);
+            }
+            None => missing.push(feature),
+        }
+    }
+    progress(
+        json!({"phase":"cache","completed":selected.len()-missing.len(),"total":selected.len(),"percent":(selected.len()-missing.len())*100/selected.len()}),
+    );
+    let main = cache
+        .main()
+        .filter(|main| main["urlPath"].is_string() && main["source"].is_string());
+    if missing.is_empty() {
+        if let (Some(main), Some(plan)) = (
+            &main,
+            cache
+                .combined(&combined_revision)
+                .filter(|plan| cache_valid(plan, pets_only)),
+        ) {
+            progress(
+                json!({"phase":"prepared","completed":selected.len(),"total":selected.len(),"percent":100,"cached":true}),
+            );
+            return Ok(Some((catalog_from_main(main, digest), plan)));
+        }
+    }
+    let needs_catalog = !missing.is_empty() || main.is_none() || overlapping_plans(&plans);
+    let catalog = if needs_catalog {
+        let Some(catalog) = read_catalog_progress(path, progress)? else {
+            return Ok(None);
+        };
+        if catalog.digest != digest {
+            return Err(ApiError::new(
+                409,
+                "ASAR_CHANGED",
+                "Codex app.asar 在准备适配期间发生变化",
+            ));
+        }
+        progress(json!({"phase":"write","moduleId":"main","completed":0,"total":1}));
+        if let Err(error) = cache.save_main(&json!({"urlPath":catalog.main_url_path,"source":catalog.main_source,"unreadable":catalog.unreadable})) {
+            eprintln!("Panel Rspack cache unavailable: {}", error.message);
+        }
+        progress(json!({"phase":"write","moduleId":"main","completed":1,"total":1}));
+        catalog
+    } else {
+        catalog_from_main(main.as_ref().unwrap(), digest)
+    };
+    if !missing.is_empty() {
+        let adaptation = feature_progress(progress, &selected, &plans);
+        let built = build_missing_features(&catalog, &missing, &adaptation, |feature, plan| {
+            if feature_plan_valid(plan, feature) {
+                progress(json!({"phase":"write","feature":feature,"completed":0,"total":1}));
+                if let Err(error) = cache.save_feature(feature, &revisions.features[feature], plan)
                 {
-                    if let (Some(main), Some(source)) = (
-                        value["main"]["urlPath"].as_str(),
-                        value["main"]["source"].as_str(),
-                    ) {
-                        return Ok(Some((
-                            Catalog {
-                                main_url_path: main.into(),
-                                main_source: source.into(),
-                                digest,
-                                modules: BTreeMap::new(),
-                                unreadable: Vec::new(),
-                            },
-                            value["plan"].clone(),
-                        )));
-                    }
+                    eprintln!("Panel Rspack cache unavailable: {}", error.message);
+                }
+                progress(json!({"phase":"write","feature":feature,"completed":1,"total":1}));
+            }
+            Ok(())
+        })?;
+        plans.extend(built);
+    }
+    let plan = compose_plans(&catalog, &selected, &plans, progress)?;
+    if cache_valid(&plan, pets_only) {
+        progress(json!({"phase":"write","moduleId":"combined","completed":0,"total":1}));
+        if let Err(error) = cache.save_combined(&combined_revision, &plan) {
+            eprintln!("Panel Rspack cache unavailable: {}", error.message);
+        }
+        progress(json!({"phase":"write","moduleId":"combined","completed":1,"total":1}));
+    }
+    progress(
+        json!({"phase":"prepared","completed":selected.len(),"total":selected.len(),"percent":100}),
+    );
+    Ok(Some((catalog, plan)))
+}
+
+fn feature_progress(
+    callback: &ProgressCallback,
+    selected: &[&str],
+    cached: &BTreeMap<String, Value>,
+) -> ProgressCallback {
+    let completed = Arc::new(Mutex::new(
+        selected
+            .iter()
+            .map(|feature| {
+                (
+                    (*feature).to_owned(),
+                    if cached.contains_key(*feature) {
+                        1.0
+                    } else {
+                        0.0
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, f64>>(),
+    ));
+    let callback = callback.clone();
+    Arc::new(move |mut event| {
+        if let Some(feature) = event["feature"].as_str() {
+            let fraction = if event["phase"] == "feature" {
+                Some(1.0)
+            } else if event["phase"] == "adapt" {
+                event["completed"]
+                    .as_f64()
+                    .zip(event["total"].as_f64())
+                    .map(|(done, total)| if total == 0.0 { 1.0 } else { done / total })
+            } else {
+                None
+            };
+            if let Some(fraction) = fraction {
+                let mut values = completed.lock().unwrap();
+                values.insert(feature.into(), fraction);
+                event["percent"] =
+                    json!(values.values().sum::<f64>() * 100.0 / values.len() as f64);
+                callback(event);
+                return;
+            }
+        }
+        callback(event);
+    })
+}
+
+fn catalog_from_main(main: &Value, digest: String) -> Catalog {
+    Catalog {
+        main_url_path: main["urlPath"].as_str().unwrap().into(),
+        main_source: main["source"].as_str().unwrap().into(),
+        digest,
+        modules: BTreeMap::new(),
+        unreadable: main["unreadable"].as_array().cloned().unwrap_or_default(),
+    }
+}
+
+fn build_missing_features(
+    catalog: &Catalog,
+    selected: &[&str],
+    progress: &ProgressCallback,
+    persist: impl Fn(&str, &Value) -> Result<(), ApiError> + Sync,
+) -> Result<BTreeMap<String, Value>, ApiError> {
+    let next = AtomicUsize::new(0);
+    let results = Mutex::new(Vec::new());
+    let workers = std::thread::available_parallelism()
+        .map_or(1, usize::from)
+        .min(4)
+        .min(selected.len());
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let next = &next;
+            let results = &results;
+            let persist = &persist;
+            scope.spawn(move || loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(&feature) = selected.get(index) else {
+                    break;
+                };
+                let plan = build_feature(catalog, feature, progress)
+                    .unwrap_or_else(|error| failed_plan(feature, &error.message));
+                let result = persist(feature, &plan).map(|()| {
+                    progress(
+                        json!({"phase":"feature","feature":feature,"plan":plan,"cached":false}),
+                    );
+                    (feature.to_owned(), plan)
+                });
+                results.lock().unwrap().push(result);
+            });
+        }
+    });
+    results.into_inner().unwrap().into_iter().collect()
+}
+
+fn empty_plan() -> Value {
+    json!({"patches":{},"prepared":{},"errors":{},"chunks":{},"nativeServices":{},"nativeUpdate":{}})
+}
+
+fn failed_plan(feature: &str, message: &str) -> Value {
+    let mut plan = empty_plan();
+    plan["prepared"][feature] = json!(false);
+    plan["errors"][feature] = json!(message);
+    plan
+}
+
+fn feature_plan_valid(plan: &Value, feature: &str) -> bool {
+    plan["prepared"][feature] == true
+        && plan["errors"]
+            .as_object()
+            .is_some_and(|errors| errors.is_empty())
+        && plan["patches"].as_object().is_some_and(|patches| {
+            patches.values().all(|variants| {
+                variants.as_array().is_some_and(|variants| {
+                    variants.iter().all(|variant| {
+                        variant["before"].is_string()
+                            && variant["after"].is_string()
+                            && variant["features"].is_array()
+                    })
+                })
+            })
+        })
+        && plan["chunks"].is_object()
+        && plan["nativeServices"].is_object()
+        && plan["nativeUpdate"].is_object()
+}
+
+fn overlapping_plans(plans: &BTreeMap<String, Value>) -> bool {
+    let mut seen = std::collections::BTreeSet::new();
+    for plan in plans.values() {
+        for (id, variants) in plan["patches"].as_object().into_iter().flatten() {
+            for variant in variants.as_array().into_iter().flatten() {
+                if !seen.insert((id.as_str(), variant["before"].as_str().unwrap_or_default())) {
+                    return true;
                 }
             }
         }
     }
-    let Some(catalog) = read_catalog(path)? else {
-        return Ok(None);
-    };
-    let plan = if pets_only {
-        build_plan_selected(&catalog, &["pets"], true)?
-    } else {
-        build_plan(&catalog)?
-    };
-    if catalog.digest != digest {
-        return Err(ApiError::new(
-            409,
-            "ASAR_CHANGED",
-            "Codex app.asar 在准备适配期间发生变化",
-        ));
-    }
-    if cache_valid(&plan, pets_only) {
-        let main = json!({"urlPath":catalog.main_url_path,"source":catalog.main_source});
-        let checksum = hex::encode(Sha256::digest(json!([main, plan]).to_string().as_bytes()));
-        let value = json!({"format":1,"key":key,"main":main,"plan":plan,"checksum":checksum});
-        std::fs::create_dir_all(directory)?;
-        let temporary = directory.join(format!(".rust-{}.tmp", uuid::Uuid::new_v4()));
-        let mut options = std::fs::OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let result = (|| -> Result<(), ApiError> {
-            use std::io::Write;
-            let mut file = options.open(&temporary)?;
-            file.write_all(&serde_json::to_vec(&value)?)?;
-            file.sync_all()?;
-            std::fs::rename(&temporary, &cached)?;
-            Ok(())
-        })();
-        let _ = std::fs::remove_file(&temporary);
-        result?;
-    }
-    Ok(Some((catalog, plan)))
+    false
 }
 
 struct Archive {
@@ -276,7 +490,16 @@ pub fn archive_path(app: &Path) -> PathBuf {
     }
 }
 
+#[cfg(test)]
 pub fn read_catalog(path: &Path) -> Result<Option<Catalog>, ApiError> {
+    let progress: ProgressCallback = Arc::new(|_| {});
+    read_catalog_progress(path, &progress)
+}
+
+fn read_catalog_progress(
+    path: &Path,
+    progress: &ProgressCallback,
+) -> Result<Option<Catalog>, ApiError> {
     let mut archive = Archive::open(path)?;
     let before = archive.file.metadata()?;
     archive.file.seek(SeekFrom::Start(0))?;
@@ -315,9 +538,11 @@ pub fn read_catalog(path: &Path) -> Result<Option<Catalog>, ApiError> {
         .collect::<Vec<_>>();
     let mut modules = BTreeMap::<String, Module>::new();
     let mut unreadable = Vec::new();
-    for name in assets {
+    let mut reading = ModuleProgress::new(progress, "read", None, assets.len());
+    for (index, name) in assets.iter().enumerate() {
         let source = archive.source(&name)?;
         if !source.contains("__webpack_modules__") {
+            reading.advance(index + 1, name);
             continue;
         }
         let parsed = parse_factories(&source);
@@ -360,6 +585,7 @@ pub fn read_catalog(path: &Path) -> Result<Option<Catalog>, ApiError> {
             }
             Err(error) => unreadable.push(json!({"name":name,"message":error.message})),
         }
+        reading.advance(index + 1, name);
     }
     let after = archive.file.metadata()?;
     if before.len() != after.len() || before.modified()? != after.modified()? {
@@ -548,7 +774,7 @@ fn normalize_factory(source: &str) -> String {
         .into_owned()
 }
 
-const IMPLEMENTED_FEATURES: [&str; 9] = [
+const IMPLEMENTED_FEATURES: [&str; 10] = [
     "quota",
     "ultrafast",
     "dot",
@@ -558,6 +784,7 @@ const IMPLEMENTED_FEATURES: [&str; 9] = [
     "projectlessChat",
     "repositoryBranchPrefix",
     "settingsPresentation",
+    "terminal",
 ];
 fn candidate(feature: &str, source: &str) -> bool {
     match feature {
@@ -586,6 +813,14 @@ fn candidate(feature: &str, source: &str) -> bool {
         .iter()
         .any(|term| source.contains(term)),
         "settingsPresentation" => source.contains("3561799561"),
+        "terminal" => [
+            "toggleTerminal",
+            "panelId",
+            "MainContentLayout",
+            "data-app-shell-tab-panel-controller",
+        ]
+        .iter()
+        .any(|term| source.contains(term)),
         _ => false,
     }
 }
@@ -605,6 +840,7 @@ fn transform(
         "projectlessChat" => source_ast::projectless_chat(source),
         "repositoryBranchPrefix" => super::repository::rewrite(source, module, context),
         "settingsPresentation" => source_ast::settings_presentation(source),
+        "terminal" => super::terminal::rewrite(source, module, context),
         _ => Err(ApiError::new(
             500,
             "NATIVE_FEATURE",
@@ -613,157 +849,131 @@ fn transform(
     }
 }
 
+#[cfg(test)]
 pub fn build_plan(catalog: &Catalog) -> Result<Value, ApiError> {
     build_plan_selected(catalog, &IMPLEMENTED_FEATURES, false)
 }
 
+#[cfg(test)]
 fn build_plan_selected(
     catalog: &Catalog,
     selected: &[&str],
     pets_only: bool,
 ) -> Result<Value, ApiError> {
+    let mut selected = selected.to_vec();
+    selected.push("nativeServices");
+    if !pets_only {
+        selected.push("nativeUpdate");
+    }
+    let progress: ProgressCallback = Arc::new(|_| {});
+    let plans = build_missing_features(catalog, &selected, &progress, |_, _| Ok(()))?;
+    compose_plans(catalog, &selected, &plans, &progress)
+}
+
+fn build_feature(
+    catalog: &Catalog,
+    feature: &str,
+    progress: &ProgressCallback,
+) -> Result<Value, ApiError> {
     let context = super::features::Context::new(catalog);
-    let mut plan = json!({"patches":{},"prepared":{},"errors":{},"chunks":{},"nativeServices":{},"nativeUpdate":{}});
-    for &feature in selected {
-        plan["prepared"][feature] = json!(false);
-        plan["errors"][feature] = json!("Rust adapter migration is incomplete");
-    }
-    let mut desktop = Vec::new();
-    let mut counts = BTreeMap::<&str, usize>::new();
-    let mut failures = BTreeMap::<&str, String>::new();
-    for (id, module) in &catalog.modules {
-        if module.exports.iter().any(|name| name == "appServices") {
-            let ast = Ast::parse(&module.source, true)?;
-            let exports = ast.exports();
-            if let (Some(value), Some(setter)) =
-                (exports.get("appServices"), exports.get("setAppServices"))
-            {
-                let setter = ast.value(*setter);
-                let parameters = ast.array(setter, "params");
-                if ast.is_function(setter)
-                    && parameters.len() == 1
-                    && !ast
-                        .all(setter, |node| {
-                            ast.kind(node) == "AssignmentExpression"
-                                && ast.field(node, "operator") == "="
-                                && ast
-                                    .child(node, "left")
-                                    .is_some_and(|left| ast.same_binding(left, *value))
-                                && ast
-                                    .child(node, "right")
-                                    .is_some_and(|right| ast.same_binding(right, parameters[0]))
-                        })
-                        .is_empty()
-                {
-                    desktop.push(json!({"id":id,"exportName":"appServices"}));
-                }
-            }
+    let mut plan = match feature {
+        "nativeServices" => {
+            progress(json!({"phase":"adapt","feature":feature,"completed":0,"total":1}));
+            let plan = build_services(catalog, &context)?;
+            progress(json!({"phase":"adapt","feature":feature,"completed":1,"total":1}));
+            plan
         }
-        for variant in &module.variants {
-            if !selected
-                .iter()
-                .any(|feature| candidate(feature, &variant.source))
-            {
-                continue;
-            }
-            context.set_source(id, &variant.source)?;
-            for &feature in selected {
-                match transform(feature, &variant.source, id, &context) {
-                    Ok(Some(changed)) => {
-                        Ast::parse(&changed, true)?;
-                        *counts.entry(feature).or_default() += 1;
+        "nativeUpdate" => {
+            progress(json!({"phase":"adapt","feature":feature,"completed":0,"total":1}));
+            let plan = build_update(catalog, &context)?;
+            progress(json!({"phase":"adapt","feature":feature,"completed":1,"total":1}));
+            plan
+        }
+        _ => {
+            let mut plan = empty_plan();
+            let mut count = 0;
+            let mut modules =
+                ModuleProgress::new(progress, "adapt", Some(feature), catalog.modules.len());
+            for (index, (id, module)) in catalog.modules.iter().enumerate() {
+                for variant in &module.variants {
+                    if !candidate(feature, &variant.source) {
+                        continue;
                     }
-                    Ok(None) => {}
-                    Err(error) => {
-                        failures.insert(feature, error.message);
+                    context.set_source(id, &variant.source)?;
+                    if let Some(after) = transform(feature, &variant.source, id, &context)? {
+                        Ast::parse(&after, true)?;
+                        if !plan["patches"][id].is_array() {
+                            plan["patches"][id] = json!([]);
+                        }
+                        plan["patches"][id].as_array_mut().unwrap().push(
+                            json!({"before":variant.source,"after":after,"features":[feature]}),
+                        );
+                        plan["chunks"][id] = json!(variant.chunks);
+                        count += 1;
                     }
                 }
+                context.set_source(id, &module.source)?;
+                modules.advance(index + 1, id);
             }
+            if count == 0 {
+                return Ok(failed_plan(feature, "未找到兼容的原生模块"));
+            }
+            plan
         }
-        context.set_source(id, &module.source)?;
-    }
-    for &feature in selected {
-        let enabled =
-            counts.get(feature).copied().unwrap_or(0) > 0 && !failures.contains_key(feature);
-        plan["prepared"][feature] = json!(enabled);
-        if enabled {
-            plan["errors"].as_object_mut().unwrap().remove(feature);
-        } else {
-            plan["errors"][feature] = json!(failures
-                .get(feature)
-                .cloned()
-                .unwrap_or_else(|| "未找到兼容的原生模块".into()));
-        }
-    }
-    // 任一模块的能力识别失败就整项停用，不能让局部改写破坏未覆盖的调用者。
-    for (id, module) in &catalog.modules {
-        for variant in &module.variants {
-            if !selected.iter().any(|feature| {
-                plan["prepared"][*feature] == true && candidate(feature, &variant.source)
-            }) {
-                continue;
-            }
-            let mut after = variant.source.clone();
-            let mut features = Vec::new();
-            context.set_source(id, &after)?;
-            for &feature in selected {
-                if plan["prepared"][feature] != true {
-                    continue;
-                }
-                if let Some(changed) = transform(feature, &after, id, &context)? {
-                    Ast::parse(&changed, true)?;
-                    after = changed;
-                    context.set_source(id, &after)?;
-                    features.push(feature);
-                }
-            }
-            if !features.is_empty() {
-                if !plan["patches"][id].is_array() {
-                    plan["patches"][id] = json!([]);
-                }
-                plan["patches"][id]
-                    .as_array_mut()
-                    .unwrap()
-                    .push(json!({"before":variant.source,"after":after,"features":features}));
-                plan["chunks"][id] = json!(variant.chunks);
-            }
-        }
-        context.set_source(id, &module.source)?;
-    }
+    };
     for id in context.selected.borrow().iter() {
         plan["chunks"][id] = json!(catalog.modules[id].variants[0].chunks);
     }
-    if pets_only {
-    } else if desktop.len() == 1 {
+    plan["prepared"][feature] = json!(plan["errors"][feature].is_null());
+    Ok(plan)
+}
+
+fn build_services(
+    catalog: &Catalog,
+    context: &super::features::Context,
+) -> Result<Value, ApiError> {
+    let mut plan = empty_plan();
+    let mut desktop = Vec::new();
+    for (id, module) in &catalog.modules {
+        if !module.exports.iter().any(|name| name == "appServices") {
+            continue;
+        }
+        let ast = context.ast(id)?;
+        let exports = ast.exports();
+        if let (Some(value), Some(setter)) =
+            (exports.get("appServices"), exports.get("setAppServices"))
+        {
+            let setter = ast.value(*setter);
+            let parameters = ast.array(setter, "params");
+            if ast.is_function(setter)
+                && parameters.len() == 1
+                && !ast
+                    .all(setter, |node| {
+                        ast.kind(node) == "AssignmentExpression"
+                            && ast.field(node, "operator") == "="
+                            && ast
+                                .child(node, "left")
+                                .is_some_and(|left| ast.same_binding(left, *value))
+                            && ast
+                                .child(node, "right")
+                                .is_some_and(|right| ast.same_binding(right, parameters[0]))
+                    })
+                    .is_empty()
+            {
+                desktop.push(json!({"id":id,"exportName":"appServices"}));
+            }
+        }
+    }
+    if desktop.len() == 1 {
         let id = desktop[0]["id"].as_str().unwrap();
         plan["nativeServices"]["desktopServices"] = desktop[0].clone();
         plan["chunks"][id] = json!(catalog.modules[id].variants[0].chunks);
-    } else {
-        plan["errors"]["nativeServices"] = json!(if desktop.is_empty() {
-            "Native desktop service export is unavailable"
-        } else {
-            "Native desktop service export is ambiguous"
-        });
-    }
-    let native = if pets_only {
-        json!({})
-    } else {
-        super::update_bindings::build(catalog, &super::features::Context::new(catalog))?
-    };
-    if native["subscription"].is_object() && native["channel"].is_object() {
-        plan["nativeUpdate"] = native;
-        plan["errors"]
-            .as_object_mut()
-            .unwrap()
-            .remove("nativeUpdate");
-        for kind in ["subscription", "channel"] {
-            if let Some(id) = plan["nativeUpdate"][kind]["id"].as_str().map(str::to_owned) {
-                plan["chunks"][&id] = json!(catalog.modules[&id].variants[0].chunks);
-            }
-        }
-    } else if !pets_only {
-        plan["nativeUpdate"] = native;
-        plan["errors"]["nativeUpdate"] = json!("原生更新订阅或频道未完成识别");
+    } else if desktop.len() > 1 {
+        return Err(ApiError::new(
+            422,
+            "NATIVE_CONTRACT",
+            "Native desktop service export is ambiguous",
+        ));
     }
     let mut pet_catalogs = Vec::new();
     for id in context.modules_containing("The original Codex companion.") {
@@ -778,6 +988,106 @@ fn build_plan_selected(
         let id = pet_catalogs[0]["id"].as_str().unwrap().to_owned();
         plan["nativeServices"]["petCatalog"] = pet_catalogs.remove(0);
         plan["chunks"][&id] = json!(catalog.modules[&id].variants[0].chunks);
+    } else if pet_catalogs.len() > 1 {
+        return Err(ApiError::new(
+            422,
+            "NATIVE_CONTRACT",
+            "Native pet catalog export is ambiguous",
+        ));
+    }
+    if plan["nativeServices"].as_object().unwrap().is_empty() {
+        plan["errors"]["nativeServices"] = json!("未找到兼容的原生服务模块");
+    }
+    Ok(plan)
+}
+
+fn build_update(catalog: &Catalog, context: &super::features::Context) -> Result<Value, ApiError> {
+    let mut plan = empty_plan();
+    let native = super::update_bindings::build(catalog, context)?;
+    for kind in ["subscription", "channel"] {
+        if let Some(id) = native[kind]["id"].as_str() {
+            plan["chunks"][id] = json!(catalog.modules[id].variants[0].chunks);
+        }
+    }
+    if !native["subscription"].is_object() && !native["channel"].is_object() {
+        plan["errors"]["nativeUpdate"] = json!("未找到兼容的原生更新模块");
+    }
+    plan["nativeUpdate"] = native;
+    Ok(plan)
+}
+
+fn compose_plans(
+    catalog: &Catalog,
+    selected: &[&str],
+    plans: &BTreeMap<String, Value>,
+    progress: &ProgressCallback,
+) -> Result<Value, ApiError> {
+    let mut plan = empty_plan();
+    let mut factories = BTreeMap::<String, BTreeMap<String, Vec<Value>>>::new();
+    for &feature in selected {
+        let item = &plans[feature];
+        for key in [
+            "prepared",
+            "errors",
+            "chunks",
+            "nativeServices",
+            "nativeUpdate",
+        ] {
+            plan[key].as_object_mut().unwrap().extend(
+                item[key]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(key, value)| (key.clone(), value.clone())),
+            );
+        }
+        if item["prepared"][feature] != true {
+            continue;
+        }
+        for (id, variants) in item["patches"].as_object().into_iter().flatten() {
+            for variant in variants.as_array().into_iter().flatten() {
+                factories
+                    .entry(id.clone())
+                    .or_default()
+                    .entry(variant["before"].as_str().unwrap().into())
+                    .or_default()
+                    .push(variant.clone());
+            }
+        }
+    }
+    let context = super::features::Context::new(catalog);
+    let mut modules = ModuleProgress::new(progress, "compose", None, factories.len());
+    for (index, (id, variants)) in factories.into_iter().enumerate() {
+        let mut combined = Vec::new();
+        for (before, patches) in variants {
+            if patches.len() == 1 {
+                combined.push(patches.into_iter().next().unwrap());
+                continue;
+            }
+            let mut after = before.clone();
+            let mut features = Vec::new();
+            context.set_source(&id, &after)?;
+            for &feature in selected {
+                if plan["prepared"][feature] != true || !IMPLEMENTED_FEATURES.contains(&feature) {
+                    continue;
+                }
+                if let Some(changed) = transform(feature, &after, &id, &context)? {
+                    Ast::parse(&changed, true)?;
+                    after = changed;
+                    context.set_source(&id, &after)?;
+                    features.push(feature);
+                }
+            }
+            combined.push(json!({"before":before,"after":after,"features":features}));
+        }
+        plan["patches"][&id] = json!(combined);
+        if let Some(module) = catalog.modules.get(&id) {
+            context.set_source(&id, &module.source)?;
+        }
+        modules.advance(index + 1, &id);
+    }
+    for id in context.selected.borrow().iter() {
+        plan["chunks"][id] = json!(catalog.modules[id].variants[0].chunks);
     }
     Ok(plan)
 }
@@ -828,18 +1138,45 @@ pub fn browser_source(
             include_str!("assets/repository_runtime.js")
         ));
     }
+    if plan["prepared"]["terminal"] == true {
+        source.push_str(&format!(
+            "globalThis.__codexPanelBottomTerminalV1__??=({})({});",
+            include_str!("assets/terminal_runtime.js"),
+            preferences
+                .get("terminalLayout")
+                .cloned()
+                .unwrap_or(json!("bottom"))
+        ));
+    }
     if plan["prepared"]["tabs"] == true {
         source.push_str(&format!(
             "globalThis.__codexPanelRspackTabsV1__??=({})();",
             include_str!("assets/tabs_runtime.js")
         ));
     }
-    source.push_str(&format!("const plan={plan};if(globalThis.__codexPanelRspack__){{globalThis.__codexPanelRspack__.mergeDescriptors?.(plan);return;}}globalThis.__codexPanelRspack__=({})(plan);}})();",include_str!("assets/rspack_runtime.js")));
+    source.push_str(&format!("const plan={plan};if(globalThis.__codexPanelRspack__){{globalThis.__codexPanelRspack__.mergeDescriptors?.(plan);}}else{{globalThis.__codexPanelRspack__=({})(plan);}}}})();",include_str!("assets/rspack_runtime.js")));
     source
 }
 
 fn plan_revision(plan: &Value) -> String {
-    hex::encode(Sha256::digest(plan.to_string().as_bytes()))
+    let mut sources = vec![
+        include_str!("assets/rspack_runtime.js"),
+        include_str!("assets/preference_runtime.js"),
+        include_str!("assets/settings_runtime.js"),
+    ];
+    for (feature, source) in [
+        ("tabs", include_str!("assets/tabs_runtime.js")),
+        ("pets", include_str!("assets/pet_runtime.js")),
+        ("repositoryBranchPrefix", include_str!("assets/repository_runtime.js")),
+        ("terminal", include_str!("assets/terminal_runtime.js")),
+    ] {
+        if plan["prepared"][feature] == true { sources.push(source); }
+    }
+    application_revision(plan, &sources)
+}
+
+pub(super) fn application_revision(plan: &Value, sources: &[&str]) -> String {
+    hex::encode(Sha256::digest(json!([plan, sources]).to_string().as_bytes()))
 }
 
 pub struct Prepared {
@@ -849,19 +1186,20 @@ pub struct Prepared {
     pub revision: String,
 }
 
-pub async fn prepare(
+pub async fn prepare_with_progress(
     cdp: &Connection,
     app: &Path,
     environment: &Environment,
+    progress: ProgressCallback,
 ) -> Result<Option<Prepared>, ApiError> {
-    prepare_mode(cdp, app, environment, false).await
+    prepare_mode(cdp, app, environment, false, progress).await
 }
 pub async fn prepare_pets(
     cdp: &Connection,
     app: &Path,
     environment: &Environment,
 ) -> Result<Option<Prepared>, ApiError> {
-    prepare_mode(cdp, app, environment, true).await
+    prepare_mode(cdp, app, environment, true, Arc::new(|_| {})).await
 }
 
 async fn prepare_mode(
@@ -869,12 +1207,15 @@ async fn prepare_mode(
     app: &Path,
     environment: &Environment,
     pets_only: bool,
+    progress: ProgressCallback,
 ) -> Result<Option<Prepared>, ApiError> {
     let path = archive_path(app);
     let directory = environment.data_dir.join("codex-adapters");
-    let prepared = tokio::task::spawn_blocking(move || cached_plan(&path, &directory, pets_only))
-        .await
-        .map_err(|error| ApiError::new(500, "NATIVE_ADAPTER", error.to_string()))??;
+    let prepared = tokio::task::spawn_blocking(move || {
+        cached_plan_progress(&path, &directory, pets_only, &progress)
+    })
+    .await
+    .map_err(|error| ApiError::new(500, "NATIVE_ADAPTER", error.to_string()))??;
     let Some((catalog, plan)) = prepared else {
         return Ok(None);
     };
@@ -955,8 +1296,8 @@ async fn prepare_mode(
         }
     });
     if let Err(error)=cdp.send("Fetch.enable",json!({"patterns":[{"urlPattern":url.as_str(),"resourceType":"Script","requestStage":"Response"}]})).await{handler.abort();return Err(error);}
-    let features=plan["prepared"].as_object().into_iter().flatten().map(|(name,prepared)|json!({"id":name,"phase":if prepared==true{"prepared"}else{"failed"},"message":plan["errors"][name]})).collect::<Vec<_>>();
-    let status = json!({"phase":if plan["errors"].as_object().is_some_and(|errors|errors.is_empty()){"prepared"}else{"partial"},"message":"已完成 Rust 原生模块分析；未迁移能力保持明确失败状态","features":features,"progress":null,"archiveDigest":catalog.digest,"unreadableChunks":catalog.unreadable});
+    let features=plan["prepared"].as_object().into_iter().flatten().map(|(name,prepared)|json!({"id":name,"feature":name,"phase":if prepared==true{"prepared"}else{"failed"},"message":if prepared==true{"已适配，等待统一应用"}else{plan["errors"][name].as_str().unwrap_or("未找到兼容的原生模块")}})).collect::<Vec<_>>();
+    let status = json!({"phase":if plan["errors"].as_object().is_some_and(|errors|errors.is_empty()){"prepared"}else{"partial"},"message":"原生模块适配已完成","features":features,"progress":100,"archiveDigest":catalog.digest,"unreadableChunks":catalog.unreadable});
     Ok(Some(Prepared {
         source,
         handler,
@@ -968,6 +1309,292 @@ async fn prepare_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_runtime_changes_require_application_without_invalidating_plans() {
+        let plan = empty_plan();
+        assert_ne!(application_revision(&plan, &["before"]), application_revision(&plan, &["after"]));
+        let source = browser_source(&plan, &json!({}), &json!([]), &Value::Null);
+        assert!(source.contains(&format!("globalThis.__codexPanelNativeAdaptersRevision__={};", json!(plan_revision(&plan)))));
+    }
+
+    fn fixture_archive(directory: &Path) -> PathBuf {
+        let path = directory.join("app.asar");
+        let html = "<script type=\"module\" src=\"/assets/main.js\"></script>";
+        let main = "function load(id){return table[id]}const table={};load.m=table;export{load as __webpack_require__}";
+        let chunk = "export const __rspack_esm_ids=[42],__webpack_modules__={12:function(m,e,r){let appServices=null;function setAppServices(value){appServices=value}r.d(e,{appServices:()=>appServices,setAppServices:()=>setAppServices})},13:function(a,b,c){function Settings(){React.useState(0);return gate('3561799561')}}};";
+        let mut files = json!({});
+        let mut bytes = Vec::new();
+        for (name, source) in [
+            ("index.html", html),
+            ("assets/main.js", main),
+            ("assets/chunk.js", chunk),
+        ] {
+            let entry = json!({"offset":bytes.len().to_string(),"size":source.len()});
+            bytes.extend_from_slice(source.as_bytes());
+            if let Some((directory, file)) = name.split_once('/') {
+                files[directory]["files"][file] = entry;
+            } else {
+                files[name] = entry;
+            }
+        }
+        let header = serde_json::to_vec(&json!({"files":{"webview":{"files":files}}})).unwrap();
+        let mut archive = vec![0u8; 16];
+        archive[4..8].copy_from_slice(&((header.len() + 8) as u32).to_le_bytes());
+        archive[12..16].copy_from_slice(&(header.len() as u32).to_le_bytes());
+        archive.extend(header);
+        archive.extend(bytes);
+        std::fs::write(&path, archive).unwrap();
+        path
+    }
+
+    fn recorded_progress() -> (ProgressCallback, Arc<Mutex<Vec<Value>>>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let progress: ProgressCallback =
+            Arc::new(move |event| captured.lock().unwrap().push(event));
+        (progress, events)
+    }
+
+    #[test]
+    fn successful_feature_cache_survives_failed_peers_and_retries_only_failures() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = fixture_archive(directory.path());
+        let caches = directory.path().join("cache");
+        let (progress, events) = recorded_progress();
+        let (_, first) = cached_plan_progress(&path, &caches, false, &progress)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first["prepared"]["settingsPresentation"], true);
+        assert_eq!(first["prepared"]["nativeServices"], true);
+        assert_eq!(first["prepared"]["terminal"], false);
+        events.lock().unwrap().clear();
+        let (_, second) = cached_plan_progress(&path, &caches, false, &progress)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first, second);
+        let events = events.lock().unwrap();
+        for feature in ["settingsPresentation", "nativeServices"] {
+            assert!(events.iter().any(|event| event["phase"] == "feature"
+                && event["feature"] == feature
+                && event["cached"] == true));
+            assert!(!events
+                .iter()
+                .any(|event| event["phase"] == "adapt" && event["feature"] == feature));
+        }
+        assert!(events.iter().any(|event| event["phase"] == "feature"
+            && event["feature"] == "terminal"
+            && event["cached"] == false));
+    }
+
+    #[test]
+    fn combined_cache_skips_catalog_and_one_revision_rebuilds_only_its_feature() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = fixture_archive(directory.path());
+        let caches = directory.path().join("cache");
+        let mut revisions = super::super::revisions::revisions();
+        let cache = cache::Cache::new(&caches, &identity(&path).unwrap(), &revisions.catalog);
+        for feature in selected_features(false)
+            .into_iter()
+            .filter(|feature| *feature != "settingsPresentation")
+        {
+            let mut plan = empty_plan();
+            plan["prepared"][feature] = json!(true);
+            cache
+                .save_feature(feature, &revisions.features[feature], &plan)
+                .unwrap();
+        }
+        let (progress, events) = recorded_progress();
+        let (_, first) = cached_plan_revisions(&path, &caches, false, &progress, &revisions)
+            .unwrap()
+            .unwrap();
+        assert!(cache_valid(&first, false));
+        events.lock().unwrap().clear();
+        let (hot, second) = cached_plan_revisions(&path, &caches, false, &progress, &revisions)
+            .unwrap()
+            .unwrap();
+        assert!(hot.modules.is_empty());
+        assert_eq!(first, second);
+        assert!(!events.lock().unwrap().iter().any(|event| matches!(
+            event["phase"].as_str(),
+            Some("read" | "adapt" | "compose" | "write")
+        )));
+        events.lock().unwrap().clear();
+        revisions
+            .features
+            .get_mut("settingsPresentation")
+            .unwrap()
+            .push_str("-changed");
+        let (_, third) = cached_plan_revisions(&path, &caches, false, &progress, &revisions)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first, third);
+        let events = events.lock().unwrap();
+        let rebuilt = events
+            .iter()
+            .filter(|event| event["phase"] == "feature" && event["cached"] == false)
+            .map(|event| event["feature"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(rebuilt, vec!["settingsPresentation"]);
+    }
+
+    #[test]
+    fn pets_and_main_share_persistent_feature_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = fixture_archive(directory.path());
+        let caches = directory.path().join("cache");
+        let (progress, events) = recorded_progress();
+        cached_plan_progress(&path, &caches, false, &progress)
+            .unwrap()
+            .unwrap();
+        events.lock().unwrap().clear();
+        cached_plan_progress(&path, &caches, true, &progress)
+            .unwrap()
+            .unwrap();
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["phase"] == "feature"
+                && event["feature"] == "nativeServices"
+                && event["cached"] == true));
+    }
+
+    #[test]
+    fn independent_feature_jobs_publish_completion_from_bounded_workers() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = fixture_archive(directory.path());
+        let catalog = read_catalog(&path).unwrap().unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let progress: ProgressCallback = Arc::new(move |event| {
+            captured
+                .lock()
+                .unwrap()
+                .push((std::thread::current().id(), event));
+        });
+        let plans = build_missing_features(
+            &catalog,
+            &["settingsPresentation", "nativeServices", "terminal"],
+            &progress,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(plans.len(), 3);
+        let events = events.lock().unwrap();
+        let completions = events
+            .iter()
+            .filter(|(_, event)| event["phase"] == "feature")
+            .collect::<Vec<_>>();
+        assert_eq!(completions.len(), 3);
+        assert!(completions
+            .iter()
+            .all(|(id, _)| *id != std::thread::current().id()));
+        assert!(
+            completions
+                .iter()
+                .map(|(id, _)| id)
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                <= 4
+        );
+    }
+
+    #[test]
+    fn native_services_accept_pet_catalog_without_desktop_and_reject_ambiguity() {
+        let source = "function(m,e,r){const pets=[{assetRef:'codex',description:'The original Codex companion.'}];r.d(e,{pets:()=>pets})}";
+        let mut catalog = Catalog {
+            main_url_path: "/main.js".into(),
+            main_source: String::new(),
+            digest: "fixture".into(),
+            unreadable: vec![],
+            modules: [(
+                "pet".into(),
+                Module {
+                    source: source.into(),
+                    exports: vec![],
+                    variants: vec![Variant {
+                        source: source.into(),
+                        chunks: vec![json!(7)],
+                        asset_size: source.len(),
+                    }],
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let progress: ProgressCallback = Arc::new(|_| {});
+        let plan = build_feature(&catalog, "nativeServices", &progress).unwrap();
+        assert_eq!(plan["prepared"]["nativeServices"], true);
+        assert_eq!(
+            plan["nativeServices"]["petCatalog"],
+            json!({"id":"pet","exportName":"pets"})
+        );
+        assert!(plan["nativeServices"]["desktopServices"].is_null());
+        catalog.modules.insert(
+            "other".into(),
+            Module {
+                source: source.into(),
+                exports: vec![],
+                variants: vec![Variant {
+                    source: source.into(),
+                    chunks: vec![json!(8)],
+                    asset_size: source.len(),
+                }],
+            },
+        );
+        assert!(build_feature(&catalog, "nativeServices", &progress)
+            .unwrap_err()
+            .message
+            .contains("ambiguous"));
+    }
+
+    #[test]
+    fn unwritable_cache_keeps_successful_features_and_completion_notifications() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = fixture_archive(directory.path());
+        let blocked_cache = directory.path().join("cache-file");
+        std::fs::write(&blocked_cache, "file blocks cache directory").unwrap();
+        let (progress, events) = recorded_progress();
+        let (_, plan) = cached_plan_progress(&path, &blocked_cache, false, &progress)
+            .unwrap()
+            .unwrap();
+        assert_eq!(plan["prepared"]["settingsPresentation"], true);
+        assert_eq!(plan["prepared"]["nativeServices"], true);
+        let events = events.lock().unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["phase"] == "feature")
+                .count(),
+            12
+        );
+        assert_eq!(events.last().unwrap()["phase"], "prepared");
+    }
+
+    #[test]
+    fn terminal_browser_bootstrap_preserves_layout_preferences() {
+        let mut plan = json!({"patches":{},"prepared":{"terminal":true},"errors":{},"chunks":{},"nativeServices":{},"nativeUpdate":{}});
+        for (preferences, expected) in [
+            (json!({}), "bottom"),
+            (json!({"terminalLayout":"system"}), "system"),
+            (json!({"terminalLayout":"right"}), "right"),
+        ] {
+            let source = browser_source(&plan, &preferences, &json!([]), &Value::Null);
+            assert!(source.contains(&format!(
+                "globalThis.__codexPanelBottomTerminalV1__??=({})({});",
+                include_str!("assets/terminal_runtime.js"),
+                json!(expected)
+            )));
+            Ast::parse(&source, false).unwrap();
+        }
+        plan["prepared"]["terminal"] = json!(false);
+        assert!(!browser_source(&plan, &json!({}), &json!([]), &Value::Null)
+            .contains("__codexPanelBottomTerminalV1__"));
+        assert!(IMPLEMENTED_FEATURES.contains(&"terminal"));
+        assert!(candidate("terminal", "toggleTerminal"));
+        assert!(!candidate("terminal", "unrelated native feature"));
+    }
     #[test]
     #[ignore = "需要独立 app.asar 副本，测量首次准备及持久缓存命中"]
     fn actual_archive_cached_preparation() {

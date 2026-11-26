@@ -231,6 +231,96 @@ fn comments_attachments_and_incremental_revisions_are_atomic() {
 }
 
 #[test]
+fn automatic_claims_skip_excluded_labels_without_changing_manual_or_resume_claims() {
+    let (_directory, mut db) = database();
+    let at = json!("2099-01-01T00:00:00.000Z");
+    call(
+        &mut db,
+        "saveProjectAutomationPolicy",
+        vec![json!("local"), json!({"enabledByUser":true,"paused":false,"intervalMinutes":5,"model":"fixture-model","reasoningEffort":"high"})],
+    );
+    for (id, labels) in [
+        ("normal", json!([])),
+        ("imported", json!([" SSH-IMPORT "])),
+        ("excluded", json!(["No-Auto-Claim"])),
+    ] {
+        let mut task = input(id, "local");
+        task["labels"] = labels;
+        call(&mut db, "createTask", vec![task]);
+    }
+    let set_labels = |db: &mut Database, id: &str, labels: Value| {
+        let task = call(db, "getTask", vec![json!(id)]);
+        call(
+            db,
+            "updateTask",
+            vec![
+                json!(id),
+                task["version"].clone(),
+                json!({"labels":labels}),
+                undefined(),
+                undefined(),
+                actor(),
+            ],
+        );
+    };
+    let queued = call(&mut db, "enqueueDueProjectScans", vec![at.clone()]);
+    assert_eq!(queued.as_array().unwrap().len(), 1);
+    assert_eq!(queued[0]["taskId"], "normal");
+    for id in ["imported", "excluded"] {
+        assert!(call(&mut db, "getClaimQueueItem", vec![json!(id)]).is_null());
+    }
+
+    set_labels(&mut db, "normal", json!(["no-auto-claim"]));
+    assert!(call(&mut db, "nextClaim", vec![at.clone()]).is_null());
+    assert_eq!(
+        call(&mut db, "getClaimQueueItem", vec![json!("normal")])["state"],
+        "queued"
+    );
+    set_labels(&mut db, "normal", json!([]));
+    assert_eq!(
+        call(&mut db, "nextClaim", vec![at.clone()])["task"]["id"],
+        "normal"
+    );
+    call(&mut db, "markClaimRunning", vec![json!("normal")]);
+    call(
+        &mut db,
+        "scheduleClaimRetry",
+        vec![json!("normal"), json!("temporary"), at.clone()],
+    );
+    set_labels(&mut db, "normal", json!(["ssh-import"]));
+    assert_eq!(
+        call(&mut db, "nextClaim", vec![at.clone()])["claim"]["source"],
+        "resume"
+    );
+    call(&mut db, "markClaimRunning", vec![json!("normal")]);
+    call(
+        &mut db,
+        "finishClaim",
+        vec![json!("normal"), json!("completed")],
+    );
+
+    call(
+        &mut db,
+        "enqueueClaim",
+        vec![json!("imported"), json!("jira")],
+    );
+    assert!(call(&mut db, "nextClaim", vec![at.clone()]).is_null());
+    call(
+        &mut db,
+        "enqueueClaim",
+        vec![json!("imported"), json!("manual")],
+    );
+    call(
+        &mut db,
+        "enqueueClaim",
+        vec![json!("excluded"), json!("resume")],
+    );
+    let ready = call(&mut db, "listReadyClaims", vec![at]);
+    assert_eq!(ready[0]["task"]["id"], "imported");
+    assert_eq!(ready[1]["task"]["id"], "excluded");
+}
+
+#[test]
 fn claims_preserve_priority_and_native_binding() {
     let (_directory, mut db) = database();
     for name in ["a", "b"] {

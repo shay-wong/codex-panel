@@ -42,6 +42,9 @@ if len(sys.argv)>1 and sys.argv[1]=='app-server':
         method=call.get('method')
         log({'method':method})
         result={}
+        if method in ['model/list','skills/list'] and os.path.exists(os.path.join(root,'fail-'+method.split('/')[0])):
+            print(json.dumps({'id':call['id'],'error':{'code':-32000,'message':'fixture '+method+' failed'}}),flush=True)
+            continue
         if method=='model/list': result={'data':[{'model':'fixture-model','displayName':'Fixture model','defaultReasoningEffort':'medium','supportedReasoningEfforts':[{'reasoningEffort':'medium'}]}],'nextCursor':None}
         elif method=='skills/list': result={'data':[]}
         elif method=='thread/start' and os.path.exists(os.path.join(root,'fail-thread-start')):
@@ -167,6 +170,28 @@ else:
         }
         panic!("run did not finish")
     }
+}
+
+#[tokio::test]
+async fn catalog_keeps_models_when_optional_skills_fail_but_model_errors_remain_strict() {
+    let fixture = Fixture::start().await;
+    fixture.thread().await;
+    std::fs::write(fixture._root.path().join("fail-skills"), "").unwrap();
+    let (status, catalog) = fixture
+        .request("GET", "/api/local/ai/catalog?projectId=fixture", None)
+        .await;
+    assert_eq!(status, 200, "{catalog}");
+    assert_eq!(catalog["models"][0]["slug"], "fixture-model");
+    assert_eq!(catalog["models"][0]["defaultReasoningEffort"], "medium");
+    assert_eq!(catalog["skills"], json!([]));
+    assert!(!catalog["commands"].as_array().unwrap().is_empty());
+
+    std::fs::write(fixture._root.path().join("fail-model"), "").unwrap();
+    let (status, failure) = fixture
+        .request("GET", "/api/local/ai/catalog?projectId=fixture", None)
+        .await;
+    assert_eq!(status, 502, "{failure}");
+    assert!(failure.to_string().contains("fixture model/list failed"));
 }
 
 #[tokio::test]
