@@ -32,6 +32,8 @@ Open the **Preferences → General → 终端布局** (Terminal layout) dropdown
 
 The bottom terminal can remain open while you view files in the right sidebar. It uses native terminal sessions and tab controls: open and close terminal tabs as usual, and drag the upper edge to adjust the panel height. Hiding the panel keeps its sessions; closing a tab follows Codex's native close behavior.
 
+Fixed an interruption during adaptation reloads that could leave the terminal on the right despite choosing Bottom.
+
 The **底部终端** (Bottom terminal) adaptation node has its own cache, so adding or updating this adapter reuses other unchanged modules. Restoring terminal placement and sessions after restarting Codex has not been verified.
 
 ## Rspack-based Codex builds

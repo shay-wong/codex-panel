@@ -3022,7 +3022,7 @@ async function injectAll(
 
   const activeIds = new Set(targets.map((target) => target.id));
   for (const [id, connection] of injectedTargets) {
-    if (!activeIds.has(id) || connection.closed) {
+    if (connection.closed || !activeIds.has(id) && connection.nativeAdaptersApplying !== true) {
       onCodexAppServerUnavailable(connection);
       unregisterQuotaPolicyCdp(connection);
       connection.close();
@@ -3031,6 +3031,8 @@ async function injectAll(
   }
 
   if (targets.length === 0) {
+    // Keep response interception alive while our reload briefly hides the target.
+    if ([...injectedTargets.values()].some(connection => !connection.closed && connection.nativeAdaptersApplying === true)) return [];
     throw new Error("已连接 Codex 调试端口，但未找到可挂载面板的主窗口。请打开包含项目侧边栏的 Codex 主窗口；分离聊天窗口不支持面板。");
   }
 

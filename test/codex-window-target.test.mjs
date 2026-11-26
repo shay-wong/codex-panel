@@ -258,6 +258,52 @@ test("an unavailable secondary window cannot hide a connected main window", asyn
   }
 });
 
+test("applying adapters retains response interception while the reloading target disappears", async () => {
+  const { createCodexRspackRuntime, installRspackResponse, rewriteRspackEntry } = await import("../scripts/codex-rspack.mjs");
+  const native = 'function(module){module.exports="right";}', bottom = native.replace('"right"', '"bottom"');
+  const plan = { patches: { terminal: [{ before: native, after: bottom, features: ["terminal"] }] },
+    prepared: { terminal: true }, chunks: {}, nativeServices: {}, nativeUpdate: {} };
+  const entry = `let table={terminal:(${native})};function load(id){const module={exports:{}};table[id](module,module.exports,load);return module.exports;}load.m=table;globalThis.placement=load("terminal");`;
+  const page = vm.createContext({ plan });
+  vm.runInContext(`globalThis.__codexPanelRspack__=(${createCodexRspackRuntime})(plan);`, page);
+  const handlers = new Map(), url = "app://-/assets/main.js";
+  let intercepted = false, unavailable = 0;
+  const connection = { closed: false, nativeAdaptersApplying: true,
+    on: (event, callback) => handlers.set(event, callback),
+    close() { this.closed = true; handlers.clear(); },
+    async send(method, params) {
+      assert.equal(this.closed, false, "the reload must retain the interception connection");
+      if (method === "Fetch.fulfillRequest") {
+        intercepted = true;
+        vm.runInContext(Buffer.from(params.body, "base64").toString(), page);
+      }
+      return {};
+    },
+  };
+  await installRspackResponse(connection, url, rewriteRspackEntry(entry, url));
+  const start = source.indexOf("async function injectAll(");
+  const end = source.indexOf("async function currentInjectionSource(", start);
+  const inject = vm.runInNewContext(`${source.slice(start, end)}; injectAll`, { unregisterQuotaPolicyCdp() {} });
+  const connections = new Map([["main", connection]]);
+  const run = () => inject({ targets: async () => [] }, "", "current", false, null, connections, true,
+    {}, true, "token", () => {}, () => {}, () => { unavailable++; });
+  assert.equal((await run()).length, 0);
+  assert.equal(connections.get("main"), connection);
+  assert.equal(unavailable, 0);
+  await handlers.get("Fetch.requestPaused")({ request: { url }, requestId: "main-entry", responseStatusCode: 200 });
+  assert.equal(intercepted, true);
+  assert.equal(page.placement, "bottom");
+  connection.nativeAdaptersApplying = false;
+  await assert.rejects(run(), /未找到可挂载面板的主窗口/);
+  assert.equal(connection.closed, true);
+  assert.equal(connections.size, 0);
+  assert.equal(unavailable, 1);
+  connection.nativeAdaptersApplying = true;
+  connections.set("main", connection);
+  await assert.rejects(run(), /未找到可挂载面板的主窗口/);
+  assert.equal(connections.size, 0, "an actually closed connection is still removed during adaptation");
+});
+
 async function adapterHarness(prepare, initial = {}) {
   const { reconcileInjectionRuntime } = await import("../scripts/codex-injector-runtime.mjs");
   const start = source.indexOf("async function prepareNativeAdapters(");
