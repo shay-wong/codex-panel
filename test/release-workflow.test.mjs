@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { chmod, cp, mkdtemp, mkdir, readFile, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -32,12 +33,15 @@ function releaseRuns(macos, windows, canceled = false) {
 }
 
 function run(script, directory, extras = {}) {
+  // Windows Git 不接受 Node 的 \\.\nul 设备路径，使用本次测试的真实空配置文件。
+  const gitConfig = path.join(directory, "empty.gitconfig");
+  writeFileSync(gitConfig, "");
   return spawnSync("bash", ["-c", script], {
     cwd: directory,
     encoding: "utf8",
     env: {
       ...process.env,
-      GIT_CONFIG_GLOBAL: os.devNull,
+      GIT_CONFIG_GLOBAL: gitConfig,
       GIT_CONFIG_NOSYSTEM: "1",
       RUNNER_TEMP: directory,
       GITHUB_ENV: path.join(directory, "github-env"),
@@ -134,8 +138,10 @@ test("the tar checkpoint preserves App executables, symlinks and notes across pa
 test("publication rejects a tag outside main", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "panel-release-base-"));
   try {
+    const gitConfig = path.join(directory, "empty.gitconfig");
+    await writeFile(gitConfig, "");
     const git = (...args) => execFileSync("git", ["-C", directory, ...args], {
-      encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: "1" },
+      encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: gitConfig, GIT_CONFIG_NOSYSTEM: "1" },
     }).trim();
     git("init", "-q");
     git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "main");
@@ -168,7 +174,8 @@ test("publication downloads both platform artifacts directly and selects exactly
       await writeFile(notesPath, "Fixture notes\n");
       const result = run(`${publishPrefix}\nprintf '%s\\n' "\${assets[@]}" > "$ASSET_LIST_FILE"`, directory, { WINDOWS_SIGNED: String(signed) });
       assert.equal(result.status, 0, result.stderr);
-      const selected = (await readFile(path.join(directory, "asset-list"), "utf8")).trim().split("\n");
+      // Git Bash 与 Node 可使用不同分隔符；比较实际路径，不比较其显示形式。
+      const selected = (await readFile(path.join(directory, "asset-list"), "utf8")).trim().split("\n").map(file => path.normalize(file));
       assert.deepEqual(selected, expected.map(file => path.join(directory, "release-assets", file)));
       const notes = await readFile(notesPath, "utf8");
       assert.match(notes, /^Fixture notes\n/);
