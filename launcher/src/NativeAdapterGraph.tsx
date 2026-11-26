@@ -18,6 +18,7 @@ const featureLabels: Record<string, string> = {
   queue: "排队消息", pets: "宠物", projectlessChat: "无项目聊天",
   repositoryBranchPrefix: "仓库分支前缀", nativeUpdate: "Codex 更新", nativeServices: "原生服务",
   settingsPresentation: "设置界面",
+  terminal: "底部终端",
 };
 const phaseLabels: Record<string, string> = {
   waiting: "等待适配", loading: "适配中", prepared: "待应用", ready: "已启用", failed: "适配失败",

@@ -680,6 +680,14 @@ Jira 概览卡片点击入口（本次变更，等待上游吸收）：`web/src/
 - 验证方式：独立临时数据、工作区和浏览器中保存两个仓库的自定义与空前缀、重开及刷新持久化、恢复全局、名称建议与新建会话参数检查；静态核对真实原生工厂改写及语法，沿用 `test/codex-rspack-cache.test.mjs`、`test/codex-rspack-revisions.test.mjs`、`test/codex-rspack.test.mjs`，新能力未新增回归测试。安装后的真实会话与模型创建分支须单独验收。
 - 用户说明：中英文 README、`docs/fork-capabilities.md#repository-branch-prefixes`；发布记录：`CHANGELOG.md` 的“未发布”更新日志。来源：本次变更，提交后用 `git log -S'createRepositoryBranchPrefixRuntime' -- scripts/codex-repository-branch-prefix.mjs` 定位。合并时保持全局回退、显式空前缀和目标仓库隔离；上游提供等价的仓库级前缀配置和指令路径后评估移除。
 
+## 底部终端布局（本次恢复，等待上游吸收）
+
+- 目的与入口：新版 Codex 移除底部承载区后，原生终端操作恢复在会话下方打开终端；补充 `⌘J` / `Ctrl+J` 开关，不改用户的 keybindings 文件，已有自定义终端快捷键继续走同一原生操作。保留已有原生底部实现的旧版本。
+- 不变量：独立底部 controller 与右侧文件标签并存；复用原生终端会话、标签渲染和上边缘缩放，不重建 PTY。收起保留会话，关闭单标签仍走原生关闭与撤销路径；底部操作不得修改右侧活动文件或全宽状态。额外快捷键仅处理已挂载的支持工作区，模态弹窗打开时不处理。
+- 代码：`scripts/codex-rspack-terminal.mjs`、`scripts/codex-terminal-runtime.mjs`、`scripts/codex-rspack.mjs`、`scripts/codex-rspack-revisions.mjs`、`scripts/codex-injector.mjs`、`inject/codex-panel.user.js`、`launcher/src/NativeAdapterGraph.tsx` 与两个 runtime 打包清单。独立 `terminal` 适配与缓存，不使其他未变模块重算；定位遵循原生语法绑定、导出与调用关系，不按模块 ID 或代码位置匹配。
+- 验证方式：隔离的真实原生 factory/controller 直接自检，以及临时数据和一次性工作区中的浏览器主路径；核对底部与右侧文件同时显示、快捷键开关、标签关闭、收起保留与拖动高度。沿用 `test/codex-rspack-cache.test.mjs` 和 `test/codex-rspack-revisions.test.mjs` 的适配集成检查。上述为验证范围，执行结果由本次交付记录；未承诺原生 App 重启后的布局和会话恢复。
+- 用户说明：中英文 README、`docs/fork-capabilities.md#bottom-terminal-layout`；发布记录：中文 `CHANGELOG.md` 的“未发布”。来源：本次变更，提交后用 `git log -S'createBottomTerminalRuntime' -- scripts/codex-terminal-runtime.mjs` 定位。合并时保持原生会话关闭路径及底部/右侧状态隔离；原生重新提供等价底部终端后评估移除。
+
 ## 会话快捷短语（2026-11-05，长期保留）
 
 - 目的：实现用户确认的“轻量列表” demo，在会话右侧项目摘要下方直接发送常用短语。

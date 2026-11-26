@@ -2958,6 +2958,16 @@
     nativeNavigator.push({ pathname, search, hash }, { ...state, [PANEL_ROUTE_STATE]: false });
   }
 
+  function onBottomTerminalKeyDown(event) {
+    const mac = /Mac/i.test(navigator.userAgentData?.platform ?? navigator.platform);
+    if (active || event.defaultPrevented || event.isComposing || event.repeat || event.altKey || event.shiftKey
+      || event.key.toLowerCase() !== "j" || (mac ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey)
+      || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
+    if (!window.__codexPanelBottomTerminalV1__?.toggleActive()) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
   function scheduleRefresh() {
     if (destroyed) return;
     syncUsageBannerVisibility();
@@ -4668,6 +4678,7 @@
     pendingThreadAssociation = null;
     document.removeEventListener("DOMContentLoaded", mount);
     document.removeEventListener("click", onDocumentClick, true);
+    document.removeEventListener("keydown", onBottomTerminalKeyDown, true);
     document.removeEventListener("click", markPendingThreadAssociationSubmitted, true);
     document.removeEventListener("keydown", markPendingThreadAssociationSubmitted, true);
     window.removeEventListener("message", onFrameMessage);
@@ -4718,6 +4729,7 @@
   window.addEventListener("message", onUsageNotification);
   window.addEventListener("resize", scheduleRefresh);
   document.addEventListener("click", onDocumentClick, true);
+  document.addEventListener("keydown", onBottomTerminalKeyDown, true);
   document.addEventListener("click", markPendingThreadAssociationSubmitted, true);
   document.addEventListener("keydown", markPendingThreadAssociationSubmitted, true);
   if (document.documentElement) mount();

@@ -15,8 +15,9 @@ import { buildCodexUpdateBindings, findCodexRspackRequire } from './codex-update
 import { getCodexRspackRevisions } from './codex-rspack-revisions.mjs';
 import { createRepositoryBranchPrefixRuntime, rewriteRspackRepositoryBranchPrefix } from './codex-repository-branch-prefix.mjs';
 import { createSettingsPresentationRuntime, rewriteRspackSettingsPresentation } from './codex-settings-presentation.mjs';
+import { createBottomTerminalRuntime, rewriteRspackTerminal } from './codex-rspack-terminal.mjs';
 
-const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltrafast, dot: rewriteRspackDot, tabs: rewriteRspackThreadTabs, queue: rewriteRspackQueue, pets: rewriteRspackPets, projectlessChat: rewriteRspackProjectlessChat, repositoryBranchPrefix: rewriteRspackRepositoryBranchPrefix, settingsPresentation: rewriteRspackSettingsPresentation };
+const transformers = { quota: rewriteRspackQuota, ultrafast: rewriteRspackUltrafast, dot: rewriteRspackDot, tabs: rewriteRspackThreadTabs, queue: rewriteRspackQueue, pets: rewriteRspackPets, projectlessChat: rewriteRspackProjectlessChat, repositoryBranchPrefix: rewriteRspackRepositoryBranchPrefix, settingsPresentation: rewriteRspackSettingsPresentation, terminal: rewriteRspackTerminal };
 const responsePatches = new WeakMap();
 const preparedPlans = new Map();
 const preparedFeatures = new Map();
@@ -29,6 +30,7 @@ const featureTerms = {
   projectlessChat: ['canStartProjectlessChat', 'startNewConversation'],
   repositoryBranchPrefix: ['branchPrefix', 'startConversation', 'readDeveloperInstructions'],
   settingsPresentation: ['3561799561'],
+  terminal: ['toggleTerminalPanel', 'panelId', 'MainContentLayout', 'bottom-panel', 'data-app-shell-tab-panel-controller'],
 };
 
 export function rewriteRspackQueue(source, context) {
@@ -562,6 +564,7 @@ export async function prepareCodexRspack(cdp, appPath, preferencesFile, report =
     const settingsPresentation=globalThis.__codexPanelSettingsPresentationV1__??=(${createSettingsPresentationRuntime})(${JSON.stringify(preferences.nativeSettingsMode ?? 'system')});
     settingsPresentation.setMode(${JSON.stringify(preferences.nativeSettingsMode ?? 'system')});
     ${plan.prepared.repositoryBranchPrefix ? `globalThis.__codexPanelRepositoryBranchPrefixV1__??=(${createRepositoryBranchPrefixRuntime})();` : ''}
+    ${plan.prepared.terminal ? `globalThis.__codexPanelBottomTerminalV1__??=(${createBottomTerminalRuntime})();` : ''}
     ${petSource}
     const plan=${JSON.stringify(plan)};
     if(globalThis.__codexPanelRspack__){globalThis.__codexPanelRspack__.mergeDescriptors?.(plan);return;}

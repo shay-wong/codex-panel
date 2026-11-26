@@ -84,6 +84,8 @@ const runtimeScriptNames = [
   "codex-rspack-pets.mjs",
   "codex-repository-branch-prefix.mjs",
   "codex-settings-presentation.mjs",
+  "codex-rspack-terminal.mjs",
+  "codex-terminal-runtime.mjs",
   "pet-animations.mjs",
   "codex-provider-quota.mjs",
   "codex-provider-ultrafast.mjs",
