@@ -314,17 +314,29 @@
       .codex-panel-phrases-dialog footer button { padding: 7px 14px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 8px; background: transparent; color: inherit; font: inherit; }
       .codex-panel-phrases-dialog button[type="submit"] { background: var(--color-token-foreground, CanvasText); color: var(--color-token-main-surface-primary, Canvas); }
       .codex-panel-repository-prefix-entry { display: block; margin-top: 10px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+      .codex-panel-repository-prefix { box-sizing: border-box; width: min(640px, calc(100vw - 32px)); }
       .codex-panel-repository-prefix select, .codex-panel-repository-prefix input { box-sizing: border-box; width: 100%; padding: 9px 11px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 8px; background: var(--color-token-main-surface-primary, Canvas); color: inherit; font: inherit; }
       .codex-panel-repository-prefix [hidden], .codex-panel-repository-prefix .codex-panel-phrases-status:empty { display: none; }
       .codex-panel-repository-prefix .codex-panel-repository-prefix-path { margin: 8px 0 0; color: var(--color-token-text-secondary, GrayText); font-size: 12px; overflow-wrap: anywhere; }
-      .codex-panel-prefix-list { display: grid; gap: 8px; max-height: 45vh; margin-top: 18px; overflow-y: auto; }
-      .codex-panel-prefix-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 10px; }
-      .codex-panel-prefix-copy { display: grid; flex: 1; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
-      .codex-panel-prefix-copy strong { font-size: 13px; font-weight: 500; }
-      .codex-panel-prefix-copy small { font-size: 11px; color: var(--color-token-text-secondary, GrayText); }
-      .codex-panel-repository-prefix .codex-panel-prefix-value { padding: 7px 9px; font-size: 12px; }
-      .codex-panel-prefix-actions { display: flex; gap: 4px; flex-shrink: 0; }
-      .codex-panel-prefix-add, .codex-panel-prefix-actions button { padding: 6px 9px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 7px; background: transparent; color: inherit; font: inherit; font-size: 12px; }
+      .codex-panel-prefix-list { max-height: 45vh; margin-top: 20px; overflow-y: auto; container-type: inline-size; }
+      .codex-panel-prefix-row { display: grid; grid-template-columns: minmax(0, 1fr) 176px 32px; align-items: center; gap: 12px; padding: 16px 0; }
+      .codex-panel-prefix-row + .codex-panel-prefix-row { border-top: 1px solid var(--color-token-border, light-dark(#ddd, #444)); }
+      .codex-panel-prefix-copy { display: grid; gap: 4px; min-width: 0; }
+      .codex-panel-prefix-copy strong { font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+      .codex-panel-prefix-copy small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; color: var(--color-token-text-secondary, GrayText); }
+      .codex-panel-prefix-copy small:focus { white-space: normal; overflow-wrap: anywhere; }
+      .codex-panel-repository-prefix .codex-panel-prefix-value { min-width: 0; padding: 9px 11px; font-size: 13px; }
+      .codex-panel-prefix-remove { display: grid; place-items: center; width: 32px; height: 32px; padding: 8px; border: 0; border-radius: 7px; background: transparent; color: var(--color-token-text-secondary, GrayText); }
+      .codex-panel-prefix-remove svg { width: 16px; height: 16px; }
+      .codex-panel-prefix-remove:hover { color: var(--color-token-text-error, light-dark(#c22, #ff8b8b)); background: var(--color-token-bg-tertiary, light-dark(#eee, #353535)); }
+      .codex-panel-prefix-remove:focus-visible, .codex-panel-prefix-copy small:focus-visible { outline: 2px solid var(--color-token-foreground, Highlight); outline-offset: 2px; }
+      .codex-panel-prefix-add { padding: 6px 9px; border: 1px solid var(--color-token-border, light-dark(#ddd, #444)); border-radius: 7px; background: transparent; color: inherit; font: inherit; font-size: 12px; }
+      @container (max-width: 470px) {
+        .codex-panel-prefix-row { grid-template-columns: minmax(0, 1fr) 32px; gap: 12px; }
+        .codex-panel-prefix-copy { grid-column: 1; grid-row: 1; }
+        .codex-panel-prefix-remove { grid-column: 2; grid-row: 1; }
+        .codex-panel-prefix-value { grid-column: 1 / -1; grid-row: 2; }
+      }
       .codex-panel-usage-number-text { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
       .codex-panel-usage-line { display: flex; align-items: center; justify-content: center; flex: none; }
       /* Keep present queues open when the native exit style remains applied. */
@@ -3087,25 +3099,25 @@
         prefix.addEventListener("keydown", event => {
           if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); prefix.blur(); }
         });
-        copy.append(name, prefix);
+        copy.append(name);
         if (project.workspacePath) {
           const path = document.createElement("small");
           path.textContent = project.workspacePath;
+          path.title = project.workspacePath;
+          path.tabIndex = 0;
           copy.append(path);
         }
-        const actions = document.createElement("div");
-        actions.className = "codex-panel-prefix-actions";
         const remove = document.createElement("button");
         remove.type = "button";
-        remove.textContent = hostText("删除", "Delete");
+        remove.className = "codex-panel-prefix-remove cursor-interaction";
+        remove.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg>';
         remove.title = hostText("删除配置，恢复全局设置", "Delete configuration and use the global setting");
         remove.setAttribute("aria-label", hostText(`删除 ${project.name} 的配置，恢复全局设置`, `Delete configuration for ${project.name} and use the global setting`));
         remove.addEventListener("click", () => {
           try { runtime().remove(project.id); status.textContent = ""; renderList(); }
           catch (error) { status.textContent = error.message; }
         });
-        actions.append(remove);
-        row.append(copy, actions);
+        row.append(copy, prefix, remove);
         list.append(row);
       }
       if (!configured.length) list.textContent = hostText("还没有单独配置的仓库，点击“添加”设置。", "No repository configurations yet. Choose Add to create one.");
