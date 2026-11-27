@@ -36,7 +36,7 @@ export type LauncherSnapshot = {
 };
 export type NativeSettingsMode = "system" | "dialog" | "page";
 export type TerminalLayout = "system" | "bottom" | "right";
-export type LauncherPreferences = { defaultProjectlessChat: boolean; sharedSessionBackend: boolean; autoConnectCodex: boolean; autoOpenPanel: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean; petSounds: boolean; nativeSettingsMode: NativeSettingsMode; terminalLayout: TerminalLayout };
+export type LauncherPreferences = { defaultProjectlessChat: boolean; sharedSessionBackend: boolean; autoConnectCodex: boolean; autoOpenPanel: boolean; autoDownloadUpdates: boolean; hideUsageBanner: boolean; showThreadUsage: boolean; threadUsageAboveComposer: boolean; usageDotMatrix: boolean; usageAnimationMode: "smooth" | "morph"; usageAnimationMinSpeed: number; usageAnimationMaxSpeed: number; customProviderQuotaFix: boolean; customProviderUltrafast: boolean; showCustomProviderDot: boolean; disableCodexAutoUpdate: boolean; petSounds: boolean; nativeSettingsMode: NativeSettingsMode; terminalLayout: TerminalLayout };
 export type LauncherState = {
   snapshot: LauncherSnapshot;
   preferences: LauncherPreferences;
@@ -605,6 +605,7 @@ export function App() {
             <Text as="p" size="2" color="gray">在 Codex 中管理任务与工作流。</Text>
             <Separator size="4" my="5" />
             <Flex justify="between" align="center" mb="3"><Heading as="h3" size="2">版本更新</Heading>{snapshot.updateAvailable && <Badge id="updateBadge">有新版本</Badge>}</Flex>
+            <Setting id="autoDownloadUpdates" title="自动下载" detail="发现 Panel 新版本后自动下载，安装前仍需确认。" checked={preferences?.autoDownloadUpdates ?? true} disabled={!state || savingPreference} onChange={enabled => void savePreference("autoDownloadUpdates", enabled)} />
             <Text as="p" size="2" color="gray" mb="4" id="updateMessage">{snapshot.updateMessage || "尚未检查更新。"}</Text>
             {snapshot.updateAvailable && <Box mb="4">
               <Heading as="h4" size="2" mb="2" id="updateNotesTitle">版本说明</Heading>
@@ -617,6 +618,7 @@ export function App() {
             </Box>}
             <Flex gap="2" wrap="wrap">
               <Button variant="soft" {...actionProps("check_for_updates")}>检查更新</Button>
+              {snapshot.updateAvailable && !snapshot.updateReady && preferences?.autoDownloadUpdates === false && <Button id="downloadUpdate" {...actionProps("download_available_update")}>下载更新</Button>}
               {snapshot.updateReady && <Button id="installUpdate" highContrast {...actionProps("install_available_update")}>安装并重启</Button>}
               {snapshot.updateAvailable && <Button id="openRelease" variant="soft" {...actionProps("open_available_release")}>查看发布说明</Button>}
             </Flex>

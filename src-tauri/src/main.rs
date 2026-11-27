@@ -279,6 +279,8 @@ impl LauncherWindowSize {
 struct LauncherPreferences {
     auto_connect_codex: bool,
     auto_open_panel: bool,
+    #[serde(default = "enabled_by_default")]
+    auto_download_updates: bool,
     #[serde(default)]
     hide_usage_banner: bool,
     #[serde(default = "enabled_by_default")]
@@ -331,6 +333,7 @@ impl Default for LauncherPreferences {
         Self {
             auto_connect_codex: true,
             auto_open_panel: true,
+            auto_download_updates: true,
             hide_usage_banner: false,
             show_thread_usage: true,
             thread_usage_above_composer: false,
@@ -3509,7 +3512,7 @@ async fn set_launcher_preference(
     enabled: bool,
     update_model_discovery: Option<bool>,
 ) -> Result<LauncherPreferences, String> {
-    if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel" | "hideUsageBanner" | "showThreadUsage" | "threadUsageAboveComposer" | "usageDotMatrix" | "customProviderQuotaFix" | "customProviderUltrafast" | "showCustomProviderDot" | "disableCodexAutoUpdate" | "sharedSessionBackend" | "defaultProjectlessChat" | "petSounds") {
+    if !matches!(key.as_str(), "autoConnectCodex" | "autoOpenPanel" | "autoDownloadUpdates" | "hideUsageBanner" | "showThreadUsage" | "threadUsageAboveComposer" | "usageDotMatrix" | "customProviderQuotaFix" | "customProviderUltrafast" | "showCustomProviderDot" | "disableCodexAutoUpdate" | "sharedSessionBackend" | "defaultProjectlessChat" | "petSounds") {
         return Err("未知的偏好设置".to_string());
     }
     if update_model_discovery == Some(true) {
@@ -3521,6 +3524,7 @@ async fn set_launcher_preference(
     let preferences = update_preferences(&state, |preferences| match key.as_str() {
         "autoConnectCodex" => preferences.auto_connect_codex = enabled,
         "autoOpenPanel" => preferences.auto_open_panel = enabled,
+        "autoDownloadUpdates" => preferences.auto_download_updates = enabled,
         "hideUsageBanner" => preferences.hide_usage_banner = enabled,
         "showThreadUsage" => preferences.show_thread_usage = enabled,
         "threadUsageAboveComposer" => preferences.thread_usage_above_composer = enabled,
@@ -3837,6 +3841,39 @@ async fn prepare_update(
 }
 
 #[tauri::command]
+async fn download_available_update(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+) -> Result<(), String> {
+    let state = Arc::clone(state.inner());
+    if state.update_flow_in_progress
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err()
+    {
+        return Err("更新正在准备中，请稍候。".into());
+    }
+    let url = state.snapshot.lock().unwrap().update_url.clone();
+    let tag = url.as_deref().and_then(|url| {
+        let tag = url.rsplit('/').next()?;
+        (PanelVersion::is_release_tag(tag) && trusted_release_url(url, tag)).then_some(tag)
+    });
+    let result = match tag {
+        Some(tag) => {
+            let result = prepare_update(&app, &state, tag).await;
+            if let Err(error) = &result {
+                append_log(&state, &format!("Update preparation failed: {error}"));
+                update_snapshot(&app, &state, |snapshot| {
+                    snapshot.update_message = format!("更新下载失败：{error}");
+                });
+            }
+            result
+        }
+        None => Err("当前没有已检查的更新版本，请先检查更新。".into()),
+    };
+    state.update_flow_in_progress.store(false, Ordering::SeqCst);
+    result
+}
+
+#[tauri::command]
 async fn install_available_update(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
@@ -3988,15 +4025,28 @@ async fn offer_update(
         }
         Ok(ReleaseCheckResult::Available { version, url, notes }) => {
             append_log(state, &format!("Fork release {version} is available"));
+            let auto_download = state.preferences.lock().unwrap().auto_download_updates;
+            let prepared = state.prepared_update.lock().unwrap().as_ref()
+                .is_some_and(|(update, _)| update.version == version.trim_start_matches('v'));
             update_snapshot(app, state, |snapshot| {
-                snapshot.update_message = format!("发现新版本 {version}，正在准备更新…");
                 snapshot.update_available = true;
-                snapshot.update_ready = false;
+                snapshot.update_message = if prepared {
+                    format!("{version} 已下载并通过签名验证，等待安装。")
+                } else if auto_download {
+                    format!("发现新版本 {version}，正在准备更新…")
+                } else {
+                    format!("发现新版本 {version}，等待手动下载。")
+                };
+                snapshot.update_ready = prepared;
                 snapshot.update_url = Some(url.clone());
                 snapshot.update_notes = notes.clone();
             });
             if show_result {
                 let _ = show_main_window(app);
+            }
+            if !auto_download {
+                state.update_flow_in_progress.store(false, Ordering::SeqCst);
+                return Ok(());
             }
             let result = match prepare_update(app, state, &version).await {
                 Err(error) => {
@@ -4092,6 +4142,7 @@ fn main() {
             github_auth_open,
             github_auth_logout,
             open_available_release,
+            download_available_update,
             install_available_update,
         ])
         .on_window_event(|window, event| {
@@ -4660,6 +4711,7 @@ mod tests {
         let path = root.join("preferences.json");
         let mut preferences = super::LauncherPreferences::default();
         assert!(preferences.window_size.is_none());
+        assert!(preferences.auto_download_updates);
         assert!(!preferences.disable_codex_auto_update);
         assert!(!preferences.shared_session_backend);
         assert!(!preferences.default_projectless_chat);
@@ -4668,6 +4720,7 @@ mod tests {
         let logical = tauri::PhysicalSize::new(1920, 1440).to_logical::<f64>(2.0);
         preferences.window_size = Some(super::LauncherWindowSize { width: logical.width, height: logical.height });
         preferences.auto_open_panel = false;
+        preferences.auto_download_updates = false;
         preferences.disable_codex_auto_update = true;
         preferences.shared_session_backend = true;
         preferences.default_projectless_chat = true;
@@ -4679,6 +4732,7 @@ mod tests {
         assert!(size.valid());
         assert_eq!((size.width, size.height), (960.0, 720.0));
         assert!(!restored.auto_open_panel);
+        assert!(!restored.auto_download_updates);
         assert!(restored.disable_codex_auto_update);
         assert!(restored.shared_session_backend);
         assert!(restored.default_projectless_chat);

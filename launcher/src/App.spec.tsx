@@ -76,7 +76,7 @@ it("keeps launcher feedback, live status and global preferences working through 
       updateMessage: "尚未检查更新。", updateNotes: null, updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false,
       appPath: "/disposable/Codex.app",
     },
-    preferences: { defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true, nativeSettingsMode: "system", terminalLayout: "bottom" },
+    preferences: { defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, autoDownloadUpdates: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true, nativeSettingsMode: "system", terminalLayout: "bottom" },
     autostart: true, dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
   };
   let statusListener!: (event: { payload: LauncherSnapshot }) => void;
@@ -358,7 +358,7 @@ it("keeps launcher feedback, live status and global preferences working through 
   expect(button("copySharedCliCommand")).toBeNull();
   selectTab("聊天");
   await click(screen.getByRole("switch", { name: "隐藏额度耗尽提示" }));
-  expect(current.preferences).toEqual({ defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: true, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true, nativeSettingsMode: "system", terminalLayout: "bottom" });
+  expect(current.preferences).toEqual({ defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, autoDownloadUpdates: true, hideUsageBanner: true, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true, nativeSettingsMode: "system", terminalLayout: "bottom" });
   selectTab("模型与高级");
   const quotaFix = screen.getByRole("switch", { name: "移除账号额度不足时 API 发送限制" });
   const restartCount = invoke.mock.calls.filter(([command]) => command === "reconnect_codex").length;
@@ -534,7 +534,7 @@ it("opens pets from its own navigation page and refreshes the real selection whe
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const state: LauncherState = {
     snapshot: { phase: "running", version: "test", message: "Ready", childPid: 1, embeddedVisible: true, threadTabsPhase: "ready", threadTabsMessage: "", nativeAdaptersPhase: "ready", nativeAdaptersMessage: "", nativeAdaptersFeatures: [], openRequestPending: false, updateMessage: "", updateNotes: null, updateAvailable: false, updateReady: false, codexUpdateReady: false, codexUpdateAvailable: false, codexUpdateDownloading: false, codexUpdatePhase: "", codexUpdateMessage: "", codexUpdateChecking: false, appPath: "/disposable/Codex.app" },
-    preferences: { defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true, nativeSettingsMode: "system", terminalLayout: "bottom" },
+    preferences: { defaultProjectlessChat: false, sharedSessionBackend: false, autoConnectCodex: true, autoOpenPanel: true, autoDownloadUpdates: true, hideUsageBanner: false, showThreadUsage: true, threadUsageAboveComposer: false, usageDotMatrix: true, usageAnimationMode: "smooth", usageAnimationMinSpeed: 5, usageAnimationMaxSpeed: 40, customProviderQuotaFix: false, customProviderUltrafast: false, showCustomProviderDot: false, disableCodexAutoUpdate: false, petSounds: true, nativeSettingsMode: "system", terminalLayout: "bottom" },
     autostart: false, dataDirectory: "/disposable/panel-data", logPath: "/disposable/panel.log",
   };
   let selected: string | null = "panel-lumi";

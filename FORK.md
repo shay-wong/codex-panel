@@ -217,7 +217,7 @@ Ultrafast 设置说明：`launcher/src/App.tsx` 分行展示适用服务商与�
 
 本次上游合并在 `1.1.22` 基线上吸收 Windows Store Codex 激活、Windows profile 路径匹配、随机 TCP CDP 和 injector 无控制台启动。Fork 保留 Jira 活动与正式会话、Panel 稳定剪贴板引用、桌面端签名与运行时完整性校验、停止 Panel 时不关闭 Codex，以及持久化自动认领队列；上游远程 Scheduled Task 自动化不重新成为 Fork 的执行入口。桌面端产品名仍为 `Codex Panel`，私有实例鉴权、bundle ID、包名和当前 `0.1.0` 应用版本保持不变。
 
-更新方式已按用户新决定采用上游“预下载并验签、确认后安装并重启”流程；发布源仍固定为 `shay-wong/codex-panel`，只信任 Fork 自己的更新签名公钥。旧的仅跳转发布页策略已废止。
+更新方式采用“下载并验签、确认后安装并重启”流程；“关于 → 版本更新 → 自动下载”开关默认开启，通过既有 `set_launcher_preference` 持久保存 `autoDownloadUpdates`，对启动、菜单及关于页检查生效。关闭后 `offer_update` 只保留版本与发布说明，手动 `download_available_update` 从已检查的可信 Fork Release 取得版本并复用 `prepare_update`；不重新读取 Release 列表。保存开关不启动或取消下载，已有验签包仍可安装。发布源固定为 `shay-wong/codex-panel`，只信任 Fork 自己的更新签名公钥，旧的仅跳转发布页策略已废止。代码为 `launcher/src/App.tsx`、`src-tauri/src/main.rs`，用户说明同步中英文 README、`docs/fork-capabilities.md#signed-in-app-updates`，发布记录在中文 `CHANGELOG.md` 未发布；本次能力用 `git log -S'autoDownloadUpdates' -- launcher/src/App.tsx` 定位。保留长期 Fork 更新策略；上游提供等价偏好与手动下载流程后评估吸收。
 
 `src-tauri/tauri.conf.json` 必须保留 `plugins.updater` 配置对象及空的 `pubkey` 占位，使本地构建也能正常启动；`prepare_update` 使用仓库内的 Fork 公钥，发布流水线可通过编译时 `CODEX_PANEL_UPDATER_PUBLIC_KEY` 覆盖它。自定义构建只有在替换为自己的签名源时才需要覆盖公钥。修改后需实际启动签名 App，确认无 `PluginInitialization("updater", ...)` 错误且服务就绪。
 
