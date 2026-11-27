@@ -916,7 +916,7 @@ pub fn queue_rail(source: &str) -> Result<Option<String>, ApiError> {
     )?))
 }
 
-pub fn rewrite_entry(source: &str, url: &url::Url) -> Result<String, ApiError> {
+pub fn rewrite_entry(source: &str, url: &url::Url, bootstrap: &str) -> Result<String, ApiError> {
     let ast = Ast::parse(source, false)?;
     let registrations = ast.all(ast.root, |id| {
         if ast.kind(id) != "AssignmentExpression" || ast.field(id, "operator") != "=" {
@@ -1038,7 +1038,8 @@ pub fn rewrite_entry(source: &str, url: &url::Url) -> Result<String, ApiError> {
             }
         }
     }
-    edits(source, changes)
+    // 主入口注册模块前必须已有完整适配计划，不能依赖新文档脚本与原生入口的执行顺序。
+    Ok(format!("{bootstrap}\n{}", edits(source, changes)?))
 }
 
 #[cfg(test)]

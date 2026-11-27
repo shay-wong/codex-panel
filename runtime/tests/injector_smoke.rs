@@ -36,6 +36,7 @@ struct Page {
     script_identifier: Option<String>,
     native_revision: Option<String>,
     native_prepared: Value,
+    native_entry_wrapped: bool,
     reloads: usize,
     reload_delay_ms: u64,
     reloading: bool,
@@ -137,7 +138,7 @@ async fn websocket(State(state): State<Fake>, upgrade: WebSocketUpgrade) -> impl
                 "Fetch.disable"=>{let mut page=state.page.lock().unwrap();page.fetch_enabled=false;page.fetch_disables+=1;json!({})},
                 "Fetch.fulfillRequest"=>{
                     let source=base64::engine::general_purpose::STANDARD.decode(request["params"]["body"].as_str().unwrap()).unwrap();
-                    let delay={let mut page=state.page.lock().unwrap();page.fulfilled_scripts+=1;page.rewritten_entry=String::from_utf8(source).unwrap().contains("wrapFactories");page.reload_delay_ms};
+                    let delay={let mut page=state.page.lock().unwrap();page.fulfilled_scripts+=1;let source=String::from_utf8(source).unwrap();page.rewritten_entry=source.contains("wrapFactories");page.native_entry_wrapped=source.find("const plan=").zip(source.find("?.wrapFactories(")).is_some_and(|(bootstrap,registration)|bootstrap<registration);page.reload_delay_ms};
                     let loaded=loaded.clone();tokio::spawn(async move{tokio::time::sleep(Duration::from_millis(delay)).await;loaded.notify_one();});
                     json!({})
                 },
@@ -165,7 +166,7 @@ async fn websocket(State(state): State<Fake>, upgrade: WebSocketUpgrade) -> impl
                     }else{false};
                     let value=if expression.contains("readyState:document.readyState"){json!({"readyState":"complete","href":"app://-/index.html"})}
                     else if expression.contains("document.querySelectorAll('script[type=\"module\"][src]')"){json!(["app://-/assets/main.js"])}
-                    else if expression.contains("sourceHash: window.__codexPanelInjection__"){json!({"sourceHash":page.hash,"startupToken":page.startup,"entryMounted":page.mounted,"heartbeatAt":page.heartbeat,"pageVisible":page.visible,"frameReady":page.visible&&page.csp_bypassed,"scriptIdentifier":page.script_identifier,"nativeAdaptersRevision":page.native_revision,"nativeAdaptersPrepared":page.native_prepared,"threadTabsReady":true})}
+                    else if expression.contains("sourceHash: window.__codexPanelInjection__"){json!({"sourceHash":page.hash,"startupToken":page.startup,"entryMounted":page.mounted,"heartbeatAt":page.heartbeat,"pageVisible":page.visible,"frameReady":page.visible&&page.csp_bypassed,"scriptIdentifier":page.script_identifier,"nativeAdaptersRevision":page.native_revision,"nativeAdaptersEntryWrapped":page.native_entry_wrapped,"nativeAdaptersPrepared":page.native_prepared,"threadTabsReady":true})}
                     else if expression.contains("__codexPanelInjection__"){json!(true)}else{Value::Null};
                     if waiting_for_navigation{json!({"exceptionDetails":{"exception":{"description":"Error: 无法连接 Codex 原生导航，请等待页面加载后重试"}}})}
                     else{json!({"result":{"type":"object","value":value}})}
@@ -502,6 +503,7 @@ async fn verify_adapters(child: &mut Child, state: &Fake, descriptor: &Path, log
             "the served entry must wrap native module factories"
         );
         assert!(page.fetch_enabled);
+        assert!(page.native_entry_wrapped, "the complete plan must precede native module registration");
         assert_eq!(page.fetch_disables, 0);
         page.native_revision
             .clone()
@@ -513,7 +515,7 @@ async fn verify_adapters(child: &mut Child, state: &Fake, descriptor: &Path, log
     wait_adapters(child, log, 2).await;
     let status = exchange(descriptor, "status").await.unwrap();
     assert_eq!(status["ready"], true);
-    let page = state.page.lock().unwrap();
+    let mut page = state.page.lock().unwrap();
     assert_eq!(page.connections, 2, "fixture must reconnect exactly once");
     assert_eq!(page.native_revision.as_deref(), Some(revision.as_str()));
     assert_eq!(
@@ -525,6 +527,14 @@ async fn verify_adapters(child: &mut Child, state: &Fake, descriptor: &Path, log
         "the new connection must install its Fetch handler"
     );
     assert!(page.fetch_enabled);
+    // 同一版本只完成计划初始化、入口未接管时，重连仍须重载修复。
+    page.native_entry_wrapped = false;
+    drop(page);
+    state.disconnect.notify_one();
+    wait_adapters(child, log, 3).await;
+    let page = state.page.lock().unwrap();
+    assert_eq!(page.reloads, 2, "an unwrapped entry must not reuse the prepared revision");
+    assert!(page.native_entry_wrapped);
 }
 
 async fn exchange(

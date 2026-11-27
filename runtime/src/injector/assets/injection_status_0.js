@@ -8,6 +8,7 @@
       quotaApplied: window.__codexPanelProviderQuotaV1__?.applied === true,
       providerModulesPrepared: window.__codexPanelProviderQuotaV1__?.prepared === true,
       nativeAdaptersRevision: window.__codexPanelNativeAdaptersRevision__ || null,
+      nativeAdaptersEntryWrapped: window.__codexPanelRspack__ ? window.__codexPanelRspack__.entryWrapped === true : null,
       nativeAdaptersPrepared: window.__codexPanelNativeAdaptersPrepared__ || window.__codexPanelRspack__?.prepared || {},
       threadTabsReady: globalThis.__codexPanelThreadTabsReady__ === true,
       scriptIdentifier: window["__CODEX_PANEL_SCRIPT_IDENTIFIER__"] || null,

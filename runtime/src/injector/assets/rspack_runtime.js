@@ -1,10 +1,11 @@
 function createCodexRspackRuntime(plan) {
-  let nativeRequire;
+  let nativeRequire, entryWrapped = false;
   const runtime = {
     prepared: plan.prepared,
     nativeUpdate: plan.nativeUpdate,
     nativeServices: plan.nativeServices,
     get require() { return nativeRequire; },
+    get entryWrapped() { return entryWrapped; },
     mergeDescriptors(next, require) {
       Object.assign(plan.patches, next.patches);
       Object.assign(plan.prepared, next.prepared);
@@ -40,6 +41,8 @@ function createCodexRspackRuntime(plan) {
         return patchedFactory;
       };
       for (const id of Object.keys(table)) table[id] = adapt(id, table[id]);
+      // 服务接口可提前取得 require；只有真正接管模块注册才能复用页面的适配状态。
+      entryWrapped = true;
       return new Proxy(table, { set(target, id, value) { target[id] = adapt(id, value); return true; } });
     },
     async loadModule(id) {

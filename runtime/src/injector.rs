@@ -880,6 +880,7 @@ async fn native_adapters(
     let mut handler: Option<AbortTask> = None;
     retry.notified().await;
     loop {
+        let mut awaiting_tabs = false;
         adapting.store(true, Ordering::SeqCst);
         let mut features = BTreeMap::new();
         publish_adapter_progress(
@@ -917,7 +918,7 @@ async fn native_adapters(
             if let Some(identifier) = previous["scriptIdentifier"].as_str() {
                 let _ = connection.send("Page.removeScriptToEvaluateOnNewDocument", json!({"identifier":identifier})).await;
             }
-            if previous["nativeAdaptersRevision"] != prepared.revision {
+            if previous["nativeAdaptersRevision"] != prepared.revision || previous["nativeAdaptersEntryWrapped"] == false {
                 applying.store(true, Ordering::SeqCst);
                 publish_adapter_progress("applying", "正在统一应用适配，刷新 Codex 界面一次…", &features, None);
                 reload_renderer(&connection).await?;
@@ -939,7 +940,8 @@ async fn native_adapters(
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             } else { false };
-            emit("threadTabsStatus", json!({"phase":if tabs {"ready"} else if tabs_prepared {"prepared"} else {"failed"},"message":if tabs {"标签页和分栏菜单已加载"} else if tabs_prepared {"菜单已准备，等待页面加载"} else {"原生会话菜单尚未准备成功"}}));
+            awaiting_tabs = tabs_prepared && !tabs;
+            emit("threadTabsStatus", json!({"phase":if tabs {"ready"} else {"failed"},"message":if tabs {"标签页和分栏菜单已加载"} else if tabs_prepared {"原生会话菜单或侧栏未生效，请重试加载"} else {"原生会话菜单尚未准备成功"}}));
             Ok::<_, ApiError>(())
         }.await;
         applying.store(false, Ordering::SeqCst);
@@ -947,7 +949,16 @@ async fn native_adapters(
         if let Err(error) = result {
             publish_adapter_progress("failed", &error.message, &features, None);
         }
-        tokio::select! { _ = retry.notified() => {}, _ = async { while !connection.is_closed() { tokio::time::sleep(Duration::from_secs(1)).await; } } => break }
+        tokio::select! { _ = retry.notified() => {}, _ = async {
+            while !connection.is_closed() {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                // 侧栏可能延迟挂载；失败后仍回读真实状态，恢复时同步更新启动器。
+                if awaiting_tabs && bridge::status(&connection).await.is_ok_and(|status| status["threadTabsReady"] == true) {
+                    emit("threadTabsStatus", json!({"phase":"ready","message":"标签页和分栏菜单已加载"}));
+                    awaiting_tabs = false;
+                }
+            }
+        } => break }
     }
     drop(handler);
 }

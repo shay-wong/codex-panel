@@ -1234,7 +1234,6 @@ async fn prepare_mode(
                 "Codex main module URL does not match archive",
             )
         })?;
-    let rewritten = source_ast::rewrite_entry(&catalog.main_source, &url)?;
     let preferences = match &environment.preferences_file {
         Some(path) => tokio::fs::read(path)
             .await
@@ -1252,6 +1251,7 @@ async fn prepare_mode(
         (Value::Null, Value::Null)
     };
     let source = browser_source(&plan, &preferences, &pet_packs, &builtin);
+    let rewritten = source_ast::rewrite_entry(&catalog.main_source, &url, &source)?;
     let mut events = cdp.events();
     let connection = cdp.clone();
     let expected = url.to_string();
@@ -1316,6 +1316,36 @@ mod tests {
         assert_ne!(application_revision(&plan, &["before"]), application_revision(&plan, &["after"]));
         let source = browser_source(&plan, &json!({}), &json!([]), &Value::Null);
         assert!(source.contains(&format!("globalThis.__codexPanelNativeAdaptersRevision__={};", json!(plan_revision(&plan)))));
+    }
+
+    #[test]
+    fn browser_entry_initializes_plan_before_native_factories() {
+        let before = "function(m,e,r){m.exports='original'}";
+        let mut plan = empty_plan();
+        plan["prepared"]["tabs"] = json!(true);
+        for id in ["menu", "sidebar"] {
+            plan["patches"][id] = json!([{
+                "before": before,
+                "after": format!("function(m,e,r){{m.exports='adapted';globalThis.__codexPanelRspackTabsV1__.mark('{id}')}}"),
+                "features": ["tabs"],
+            }]);
+        }
+        let bootstrap = format!("globalThis.window=globalThis;globalThis.top=globalThis;{}", browser_source(&plan, &json!({}), &json!([]), &Value::Null));
+        // 不预先执行文档注入，直接启动入口；同时验证初始模块和后续加载模块。
+        let main = format!(r#"
+            const table={{menu:{before}}},cache={{}};
+            function load(id){{if(cache[id])return cache[id].exports;const m=cache[id]={{exports:null}};table[id](m,m.exports,load);return m.exports}}
+            load.m=table;load.c=cache;
+            if(load('menu')!=='adapted')throw Error('initial factory was not patched');
+            table.sidebar={before};
+            if(load('sidebar')!=='adapted')throw Error('lazy factory was not patched');
+            if(!globalThis.__codexPanelThreadTabsReady__)throw Error('tabs are not ready');
+            if(!globalThis.__codexPanelRspack__.entryWrapped)throw Error('entry was not wrapped');
+            export{{load as __webpack_require__}};
+        "#);
+        let entry = source_ast::rewrite_entry(&main, &url::Url::parse("app://-/assets/main.js").unwrap(), &bootstrap).unwrap();
+        let output = std::process::Command::new("node").args(["--input-type=module", "--eval", &entry]).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     }
 
     fn fixture_archive(directory: &Path) -> PathBuf {
@@ -1610,7 +1640,8 @@ mod tests {
             .unwrap()
             .join(&catalog.main_url_path)
             .unwrap();
-        let entry = source_ast::rewrite_entry(&catalog.main_source, &url).unwrap();
+        let bootstrap = browser_source(&plan, &json!({}), &json!([]), &Value::Null);
+        let entry = source_ast::rewrite_entry(&catalog.main_source, &url, &bootstrap).unwrap();
         Ast::parse(&entry, false).unwrap();
         let revision = plan_revision(&plan);
         let digest = catalog.digest.clone();
