@@ -455,6 +455,10 @@ Automatic scans queue waiting local issues that are not linked to Jira. A Jira-l
 
 Automatic scan and Jira queue sources exclude issues labeled `ssh-import` or `no-auto-claim`, with case and surrounding whitespace ignored. The same filter runs before dispatch, so adding a label to an already queued automatic issue holds it without deleting its queue entry; removing the label restores eligibility. Manual and resume sources, including retries of already started work, retain their existing rules. Adding a label does not cancel running work.
 
+New projects include `no-auto-claim` as an available label; it is not automatically assigned to issues. Existing projects can create it in the label picker. `ssh-import` remains a manually created label for historical import records.
+
+新建项目默认提供可选的 `no-auto-claim` 标签，不会自动给 Issue 打标签；已有项目可在标签选择器中创建。`ssh-import` 仍按历史导入记录的实际需要手动创建。
+
 Preparation selects the project and run location before filling the composer. Pending manual drafts pause native automatic dispatch so the queue cannot overwrite the draft. Manual preparation errors leave the issue unchanged; automatic dispatch errors say that startup was not confirmed, while failures of a running attempt remain execution failures.
 
 During manual execution, the detail action shares the board's conversation activity: **Processing · Open conversation** while running, or **In progress · Open conversation** otherwise. Clicking opens the saved conversation without preparing another execution. Returning the task to waiting restores **Prepare execution**. For local tasks, **Open in new conversation** remains available even with a saved conversation: Panel actively opens a new composer in the selected repository, waits for it to appear, and inserts the task and latest handoff without reading the old conversation. The first manual send updates the task binding. Continue planning and Prepare execution still reuse the saved conversation; SSH and Jira-specific entries retain their existing lifecycle.

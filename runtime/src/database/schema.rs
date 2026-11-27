@@ -6,6 +6,7 @@ pub(super) fn labels() -> Value {
         "特性",
         "for-claude",
         "hold",
+        "no-auto-claim",
         "改进",
         "phase-1",
         "phase-2",

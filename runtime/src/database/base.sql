@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS projects (
         name TEXT NOT NULL,
         issue_key TEXT NOT NULL,
         workspace_path TEXT,
-        labels TEXT NOT NULL DEFAULT '["缺陷","特性","for-claude","hold","改进","phase-1","phase-2","phase-3","phase-4","phase-5","phase-6"]',
+        labels TEXT NOT NULL DEFAULT '["缺陷","特性","for-claude","hold","no-auto-claim","改进","phase-1","phase-2","phase-3","phase-4","phase-5","phase-6"]',
         next_task_number INTEGER NOT NULL DEFAULT 1 CHECK (next_task_number > 0),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
