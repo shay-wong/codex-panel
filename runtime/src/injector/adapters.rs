@@ -1160,6 +1160,8 @@ pub fn browser_source(
 
 fn plan_revision(plan: &Value) -> String {
     let mut sources = vec![
+        // 入口初始化方式变化也需要刷新，不能仅依据补丁内容复用旧页面。
+        "entry-bootstrap-v1",
         include_str!("assets/rspack_runtime.js"),
         include_str!("assets/preference_runtime.js"),
         include_str!("assets/settings_runtime.js"),
