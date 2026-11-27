@@ -1252,6 +1252,8 @@ async fn prepare_mode(
         (Value::Null, Value::Null)
     };
     let source = browser_source(&plan, &preferences, &pet_packs, &builtin);
+    // 模块注册必须先于原生入口执行，不能依赖新文档脚本是否已在该渲染上下文运行。
+    let rewritten = format!("{source}\n{rewritten}");
     let mut events = cdp.events();
     let connection = cdp.clone();
     let expected = url.to_string();
@@ -1316,6 +1318,25 @@ mod tests {
         assert_ne!(application_revision(&plan, &["before"]), application_revision(&plan, &["after"]));
         let source = browser_source(&plan, &json!({}), &json!([]), &Value::Null);
         assert!(source.contains(&format!("globalThis.__codexPanelNativeAdaptersRevision__={};", json!(plan_revision(&plan)))));
+    }
+
+    #[test]
+    fn entry_bootstrap_applies_quota_without_a_new_document_script() {
+        let original = "function(module){module.exports='blocked'}";
+        let mut plan = empty_plan();
+        plan["patches"]["composer"] = json!([{
+            "before": original,
+            "after": "function(module){module.exports='sendable'}",
+            "features": ["quota"]
+        }]);
+        plan["prepared"]["quota"] = json!(true);
+        let source = browser_source(&plan, &json!({"customProviderQuotaFix":true}), &json!([]), &Value::Null);
+        let entry = format!("let table={{composer:{original}}};function load(id){{let module={{}};table[id](module);return module.exports}}load.m=table;globalThis.result=load('composer');");
+        let rewritten = source_ast::rewrite_entry(&entry, &url::Url::parse("app://-/assets/main.js").unwrap()).unwrap();
+        // 不执行任何 new-document 脚本，复现入口先加载时的发送限制。
+        let script = format!("const before={{}};before.window=before;before.top=before;require('node:vm').runInNewContext({},before);require('node:assert/strict').equal(before.result,'blocked');globalThis.window=globalThis;globalThis.top=globalThis;{source}\n{rewritten}\nrequire('node:assert/strict').equal(result,'sendable');require('node:assert/strict').equal(__codexPanelProviderQuotaV1__.applied,true);", json!(rewritten));
+        let output = std::process::Command::new("node").args(["-e", &script]).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     }
 
     fn fixture_archive(directory: &Path) -> PathBuf {
