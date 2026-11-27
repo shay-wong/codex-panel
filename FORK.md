@@ -147,6 +147,7 @@ Free 侧边栏兼容（等待上游吸收）：没有插件、宠物及 destinat
 - 本次同步 `origin/main` 的 `18c07bcb765af573a771b85aadd9f178e283ec16` 属于 Fork 分支整合，不改变下述精确上游基线或独立版本。底部终端、终端布局偏好、适配刷新连接保留、逐模块缓存与并发进度，以及目录失败隔离和自动队列标签过滤均移植到 Rust 主路径；这些人工功能修改连同对应文档应放在机械合并之后的独立功能提交，不埋入合并提交。
 
 - 新增、修改或移除 Fork 行为时，必须在同一提交中同步对应条目。
+- 吸收上游默认执行真实 `git merge`，在合并提交中保留已核对的上游父节点；逐项解决冲突并记录等价覆盖、适配或不采用的原因。手动移植只表示代码已吸收，不能代替祖先关系或推进已合并基线。后续先用 `git merge-base HEAD upstream/main` 确认续接节点，再检查其后的上游提交。
 - 对外可见的能力在满足仓库的用户确认和测试授权规则后，必须在同一提交中同步功能代码、已授权的针对性测试、中英文 README 入口、英文详细用户文档及索引、`FORK.md` 和中文 `CHANGELOG.md`。测试未获授权或无法执行时，应如实记录，不得擅自补充。
 - 仅面向维护者、构建、合并或内部兼容性的差异只记录在本文档中，除非仓库规则要求其他内部文档。
 - 当上游行为和回归覆盖已经等价时，移除对应条目。
@@ -202,18 +203,26 @@ Ultrafast 设置说明：`launcher/src/App.tsx` 分行展示适用服务商与�
 - 权威上游：`chuspeeism/dashi-taskboard`
 - 上游默认分支：`main`
 - GitHub Fork 创建时间：`2026-08-03T14:40:11Z`
-- 本次合并的上游父提交：`bc25451c5c49a14abb6c4e8250b62c626b007f8a`
-- 精确已合并上游基线：`bc25451c5c49a14abb6c4e8250b62c626b007f8a`
-- 比较范围：`bc25451c5c49a14abb6c4e8250b62c626b007f8a..HEAD`
+- 本次合并的上游父提交：`74ef777fb5975371814e60d2345f15332fdface5`
+- 精确已合并上游基线：`74ef777fb5975371814e60d2345f15332fdface5`
+- 比较范围：`74ef777fb5975371814e60d2345f15332fdface5..HEAD`
 
-本轮合入上游 PR #460：本地 Codex CLI 缺失导致 `ENOENT` 时，`GET /api/local/ai/catalog` 返回 HTTP 200、`available:false` 和空模型/Skill/命令目录；工作区无效等其他错误保留原状态。同步 `AI_SANDBOX_MODES`、类型声明和隔离服务端/浏览器测试。机械冲突解决保留 Fork 的 app-server 模型分页、独立 Skill 目录与去重、远端执行、现有 `ApiError` 和引用模块路径；不改变创建对话的 CLI 前提。上次合入的 E2E/CI 与 Fork 隔离适配继续保留。本次不改变 Fork 发布版本，用户说明见中英文 README、`docs/fork-capabilities.md#local-ai-catalog-availability` 和未发布更新日志。
+此前合入上游 PR #460：本地 Codex CLI 缺失导致 `ENOENT` 时，`GET /api/local/ai/catalog` 返回 HTTP 200、`available:false` 和空模型/Skill/命令目录；工作区无效等其他错误保留原状态。同步 `AI_SANDBOX_MODES`、类型声明和隔离服务端/浏览器测试。机械冲突解决保留 Fork 的 app-server 模型分页、独立 Skill 目录与去重、远端执行、现有 `ApiError` 和引用模块路径；不改变创建对话的 CLI 前提。上次合入的 E2E/CI 与 Fork 隔离适配继续保留。本次不改变 Fork 发布版本，用户说明见中英文 README、`docs/fork-capabilities.md#local-ai-catalog-availability` 和未发布更新日志。
 
 
-本次选择性移植（2026-11-24）只吸收 `0bf90db15c295c69f68431e8202b674b38b36dd4` 的可选 AI 目录失败隔离、`574b1605b919f96f92f6a8454e710cbb7918df42` 的旧 renderer fetch 拒绝清理，并参考 `eb88067695cc360540bce24ceaa9435a0cf1b7de` 的标签规则适配 Fork 持久化队列；不是完整合并 PR #471/#472，不引入 capnweb，不改变版本。精确已合并上游基线仍为 `bc25451c5c49a14abb6c4e8250b62c626b007f8a`。
+此前选择性移植（2026-11-24）吸收 `0bf90db15c295c69f68431e8202b674b38b36dd4` 的可选 AI 目录失败隔离、`574b1605b919f96f92f6a8454e710cbb7918df42` 的旧 renderer fetch 拒绝清理，并参考 `eb88067695cc360540bce24ceaa9435a0cf1b7de` 的标签规则适配 Fork 持久化队列。当时只移植代码，Git 祖先仍停在 `bc25451c5c49a14abb6c4e8250b62c626b007f8a`；本轮真实合并将该段上游历史纳入祖先关系，不重复改写已等价覆盖的功能。
 
 - 可选目录（沿用本地 AI 目录能力）：`server/ai-chat-catalog.mjs` 的 `discoverAiCatalog` / `discoverAppServerAiCatalog` 仅将 Skill、commands 各自失败降级为空列表；models 仍必需，保留模型全分页元数据、符号链接 Skill 补齐，以及独立 Skill/工作流查询的严格失败语义。合并时不得将模型失败一并吞掉。Rust 主路径为 `runtime/src/server/ai.rs`，对应 `runtime/tests/ai_runtime_contract.rs` 的可选 Skill 失败及模型严格失败检查已通过；原 `test/ai-chat-runner.test.mjs` 保留为 Node 目录参考。
 - 旧 fetch 兼容（等待上游吸收）：`inject/codex-panel.user.js` 的 `requestNativeFetch` 在旧 IPC 异步拒绝时立即完成并清除监听器和定时器，仅明确包含 HTTP fetch service 的失效才记住停用旧回退；原生 catalog/roots 仍先于该标记查询，之后热就绪可直接恢复，不改其他错误语义。验证入口：`test/inject.test.mjs` 的 native project fetch 与服务就绪路径；原生提供等价稳定目录接口后随旧回退评估移除。
 - 队列标签（沿用持久化自动执行生命周期）：只把上游标签意图适配到 Fork scan/jira 自动来源，不采用其远端自动化执行核心；入队及派发两处均过滤，保留手动、恢复、已开始任务重试、正在运行和可逆标签切换。Rust 主路径为 `runtime/src/database/claims.rs`，`runtime/src/database/tests.rs` 已验证自动入队及派发过滤、手动/恢复与删标签恢复资格；原 `test/claim-queue.test.mjs` 保留为 Node 参考。用户说明同步中英文 README、`docs/fork-capabilities.md` 的目录、注入和队列章节及中文 `CHANGELOG.md`；本次文档核对不代替隔离代码测试或真实 App 验收。
+
+本轮真实合并（2026-11-27）：上游父节点为 `74ef777fb5975371814e60d2345f15332fdface5`，覆盖 PR #471、#472、#473、#476；上游版本仍为 `1.1.27`，Fork 版本不变。默认 `no-auto-claim` 标签及 Rust/新库对应列表已由紧邻合并前的独立功能提交 `ae4b7de0afb99e043516263241f57f13e17d625a` 实现，功能、说明和直接验证不埋入本合并提交。
+
+- 可选 AI 目录与旧 fetch 拒绝清理沿用上述已吸收实现，保留模型分页、原生目录服务和失败边界。
+- 项目切换保留 `inject/codex-panel.user.js` 的原生服务/路由及项目、主机、路径精确核对，不采用上游仅尾目录名相同即放行；也不引入未经本 Fork 现场确认的强制退搜索/活动页、首页跳转和将 iframe 移到 `body` 的遮挡绕行。旧 `codex-taskboard.user.js` 不恢复。
+- 自动执行保留 Panel 持久化队列及现有原生 `localAutomations` 服务直连，不引入 capnweb 或恢复上游 SSH Scheduled Task 执行核心；因此不携带 capnweb bundle、复制清单项及只针对旧核心的测试。已更名的 `shared/panel-automation.mjs` 和对应测试保留其旧兼容用途，不改为当前队列入口。
+- 上游 `no-auto-claim`/`ssh-import` 的说明按 Fork 的 scan/Jira 实际过滤范围保留在中英文 README 和能力指南，不复制上游“仅 SSH、不适用本地”的描述。默认标签只影响新项目的可选列表，已有项目配置不覆盖。
+- 本次合并逐项核对十三条上游变更路径；冲突按既有 Fork 决策解决。合并后的产品源码与已验证的 `ae4b7de0` 一致，合并提交仅更新基线和取舍说明；直接功能验证沿用同一源码树的新项目/空 Issue 标签、旧项目保留和真实 LabelPicker 选择结果，补充相关源文件语法检查。
 
 持续移动的 `upstream/main` 只有在祖先关系证明它与上述 SHA 相同时才是本文档基线；后续新提交仍属于待合并候选。合并提交本身的 Fork 侧父提交不是比较基线。
 
