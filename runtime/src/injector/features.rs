@@ -1264,6 +1264,15 @@ pub fn ultrafast(
                 }
             }
         }
+        for node in ast.all(ast.root, |node| ast.kind(node) == "LogicalExpression" && ast.field(node, "operator") == "||") {
+            let Some(right) = ast.child(node, "right") else { continue; };
+            if ast.name(right).as_deref() != Some("ultrafastDescription") { continue; }
+            let Some(left) = ast.child(node, "left") else { continue; };
+            let value = ast.text(left);
+            // 目录自带的标准英文会覆盖默认翻译；仅将这句回退到本地化描述，自定义文案保留。
+            changes.push(Edit { start: ast.start(left), end: ast.end(left),
+                text: format!("(/^zh(?:-|$)/i.test(globalThis.document?.documentElement?.lang??'')&&['The fastest available responses for latency-sensitive work','The fastest available responses for latency-sensitive work.'].includes({value})?null:{value})") });
+        }
         if !changes.is_empty() { return Ok(Some(edits(source, changes)?)); }
     }
     if !source.contains("serviceTierSettings")
@@ -1527,11 +1536,11 @@ mod tests {
     }
     #[test]
     fn ultrafast_description_uses_chinese_only_for_chinese_ui() {
-        let source = "function(m){m.exports={id:'serviceTier.ultrafast.description',defaultMessage:'The fastest available responses for latency-sensitive work'}}";
+        let source = "function(m){const messages={ultrafastDescription:{id:'serviceTier.ultrafast.description',defaultMessage:'The fastest available responses for latency-sensitive work'}};m.exports={message:messages.ultrafastDescription,describe:e=>e?.description||messages.ultrafastDescription}}";
         let catalog = catalog(vec![("description", source.into())]);
         let context = Context::new(&catalog);
         let rewritten = ultrafast(source, "description", &context).unwrap().unwrap();
-        let script = format!(r#"const assert=require('node:assert/strict'),vm=require('node:vm');for(const [lang,expected] of [['zh-CN','以最快速度响应对延迟敏感的任务'],['zh-TW','以最快速度响应对延迟敏感的任务'],['en-US','The fastest available responses for latency-sensitive work']]){{const m={{}};const document={{documentElement:{{lang:'en-US'}}}};vm.runInNewContext('('+{}+')',{{document}})(m);document.documentElement.lang=lang;assert.equal(m.exports.defaultMessage,expected);}}"#, json!(rewritten));
+        let script = format!(r#"const assert=require('node:assert/strict'),vm=require('node:vm');for(const [lang,expected] of [['zh-CN','以最快速度响应对延迟敏感的任务'],['zh-TW','以最快速度响应对延迟敏感的任务'],['en-US','The fastest available responses for latency-sensitive work']]){{const m={{}};const document={{documentElement:{{lang:'en-US'}}}};vm.runInNewContext('('+{}+')',{{document}})(m);document.documentElement.lang=lang;assert.equal(m.exports.message.defaultMessage,expected);for(const ending of ['', '.']){{const text='The fastest available responses for latency-sensitive work'+ending;const result=m.exports.describe({{description:text}});assert.equal(typeof result==='string'?result:result.defaultMessage,lang.startsWith('zh')?expected:text);}}assert.equal(m.exports.describe({{description:'Provider-specific description'}}),'Provider-specific description');}}"#, json!(rewritten));
         let result = std::process::Command::new("node").args(["-e", &script]).output().unwrap();
         assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     }
