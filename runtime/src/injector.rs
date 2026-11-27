@@ -964,11 +964,11 @@ async fn managed_status(
         }
         if let Ok(status) = bridge::status(&target.connection).await {
             if bridge::ready(&status, hash, startup) {
-                return Ok(json!({"ready":true,"status":status,"targetId":id,"applyingNativeAdapters":applying}));
+                return Ok(json!({"ready":true,"pageVisible":status["pageVisible"]==true,"status":status,"targetId":id,"applyingNativeAdapters":applying}));
             }
         }
     }
-    Ok(json!({"ready":false,"applyingNativeAdapters":applying}))
+    Ok(json!({"ready":false,"pageVisible":false,"applyingNativeAdapters":applying}))
 }
 
 async fn open_panel(
@@ -1315,7 +1315,7 @@ async fn update_action(
             json!({"ready":native["ready"],"available":result["status"]=="available","downloading":native["downloading"],"checking":result.is_null()&&native["ready"]!=true&&native["downloading"]!=true,"message":message,"versions":if native["ready"]==true||native["downloading"]==true{json!([])}else{result["versions"].clone()}})
         }
     };
-    let mut response = json!({"ready":true,"codexUpdateReady":status["ready"],"codexUpdateAvailable":status["available"],"codexUpdateDownloading":status["downloading"],"codexUpdatePhase":status.get("phase").cloned().unwrap_or(json!("")),"codexUpdateMessage":status["message"],"codexUpdateChecking":status.get("checking").cloned().unwrap_or(json!(false)),"codexUpdateVersions":status.get("versions").cloned().unwrap_or(json!([]))});
+    let mut response = json!({"ready":true,"codexUpdateReady":status["ready"],"codexUpdateAvailable":status["available"],"codexUpdateDownloading":status["downloading"],"codexUpdatePhase":status.get("phase").cloned().unwrap_or(json!("")),"codexUpdateMessage":status["message"],"codexUpdateChecking":status.get("checking").cloned().unwrap_or(json!(false)),"codexUpdateVersions":status["versions"].as_array().cloned().unwrap_or_default()});
     if action == "codex-update-status" {
         let native = match targets
             .values()
@@ -1805,6 +1805,49 @@ pub async fn run(args: &[String]) -> Result<(), ApiError> {
 mod tests {
     use super::*;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn connected_status_keeps_launcher_fields_when_update_check_has_no_versions() {
+        let (client, server) = tokio::io::duplex(16384);
+        let (reader, writer) = tokio::io::split(client);
+        let connection = cdp::Connection::pipe(reader, writer);
+        let peer = tokio::spawn(async move {
+            let (reader, mut writer) = tokio::io::split(server);
+            let mut reader = BufReader::new(reader);
+            loop {
+                let mut bytes = Vec::new();
+                if reader.read_until(0, &mut bytes).await.unwrap() == 0 { break; }
+                bytes.pop();
+                let request: Value = serde_json::from_slice(&bytes).unwrap();
+                let expression = request["params"]["expression"].as_str().unwrap();
+                let value = if expression.contains("window.__codexPanelInjection__") {
+                    json!({"sourceHash":"fixture","startupToken":null,"entryMounted":true,"pageVisible":true,"heartbeatAt":chrono::Utc::now().timestamp_millis()})
+                } else { json!({"needsNativeUpdateBinding":true}) };
+                writer.write_all(format!("{}\0", json!({"id":request["id"],"result":{"result":{"value":value}}})).as_bytes()).await.unwrap();
+            }
+        });
+        let target = Target {
+            connection: connection.clone(),
+            _events: AbortTask(tokio::spawn(async {})), patches: None,
+            retry: Arc::new(tokio::sync::Notify::new()),
+            applying: Arc::new(AtomicBool::new(false)), adapting: Arc::new(AtomicBool::new(false)),
+        };
+        let targets = BTreeMap::from([("fixture".into(), target)]);
+        let directory = tempfile::tempdir().unwrap();
+        let updates = crate::codex_update::UpdateManager::new(directory.path().join("Codex.app"), directory.path().join("data"), directory.path().join("assets"));
+        for result in [None, Some(json!({"status":"error","error":"Native update binding unavailable"})), Some(json!({"status":"up_to_date","versions":[]}))] {
+            let checks = Arc::new(tokio::sync::Mutex::new(UpdateCheck { started: Some(Instant::now()), result, working: false }));
+            let status = control_action(&json!({"action":"status"}), &targets, "fixture", None, &updates, &checks).await.unwrap();
+            assert_eq!(status["ready"], true);
+            assert_eq!(status["pageVisible"], true);
+            assert_eq!(status["status"]["pageVisible"], true);
+            assert_eq!(status["codexUpdateVersions"], json!([]));
+        }
+        assert_eq!(managed_status(&BTreeMap::new(), "fixture", None).await.unwrap()["pageVisible"], false);
+        connection.close();
+        peer.await.unwrap();
+    }
 
     #[tokio::test]
     async fn live_adapter_applications_do_not_block_each_other_or_progress() {
