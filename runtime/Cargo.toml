@@ -1,6 +1,6 @@
 [package]
 name = "codex-panel-runtime"
-version = "0.7.0-fork"
+version = "0.7.1-fork"
 edition = "2021"
 rust-version = "1.88"
 publish = false
