@@ -551,6 +551,10 @@ Local Codex composers show response-text receive rate and cache hit rate through
 
 ## Codex updates through Panel
 
+Connection notifications keep the most recent update result visible. Only a full update-status query replaces that result; a real disconnect still resets the update controls. The connection heartbeat does not trigger additional update checks.
+
+连接通知保留最近的更新结果，由完整更新状态查询替换；真实断连仍重置更新控件。连接心跳不会额外触发更新检查。
+
 The macOS update card lists upgrade targets with a direct delta from the installed build. When available, the newest build marked **已验证源码适配** is selected by default. That label records source adapter checks for the exact version, build, and architecture. The installation confirmation names the selected version. If Codex's own updater is downloading or waiting to install, Panel asks the user to resolve the conflict before quitting Codex.
 
 macOS 更新卡片列出有适用官方增量包的目标。默认优先选择「已验证源码适配」中的最新构建。该标记对应明确的版本、构建号和架构。安装确认框显示所选版本，若 Codex 自带更新与选定版本冲突，Panel 会在退出 Codex 前提示。

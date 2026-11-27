@@ -1894,19 +1894,22 @@ fn apply_native_adapters_status(
     snapshot.native_adapters_progress = progress;
 }
 
-fn apply_renderer_status(snapshot: &mut LauncherSnapshot, pid: u32, status: RendererStatus) {
+fn apply_renderer_status(snapshot: &mut LauncherSnapshot, pid: u32, status: RendererStatus, include_updates: bool) {
     snapshot.embedded_visible = status.ready && status.page_visible;
     // 同一受管 CDP 连接应用适配时会短暂重载；连接失效后不再带此标记。
     if !status.ready && status.applying_native_adapters {
         return;
     }
-    snapshot.codex_update_ready = status.ready && status.codex_update_ready;
-    snapshot.codex_update_available = status.ready && status.codex_update_available;
-    snapshot.codex_update_downloading = status.ready && status.codex_update_downloading;
-    snapshot.codex_update_phase = if status.ready { status.codex_update_phase } else { String::new() };
-    snapshot.codex_update_message = status.codex_update_message;
-    snapshot.codex_update_checking = status.ready && status.codex_update_checking;
-    snapshot.codex_update_versions = if status.ready { status.codex_update_versions } else { Vec::new() };
+    // 连接事件不携带更新字段；只有完整查询或真实断连才能替换更新状态。
+    if include_updates || !status.ready {
+        snapshot.codex_update_ready = status.ready && status.codex_update_ready;
+        snapshot.codex_update_available = status.ready && status.codex_update_available;
+        snapshot.codex_update_downloading = status.ready && status.codex_update_downloading;
+        snapshot.codex_update_phase = if status.ready { status.codex_update_phase } else { String::new() };
+        snapshot.codex_update_message = status.codex_update_message;
+        snapshot.codex_update_checking = status.ready && status.codex_update_checking;
+        snapshot.codex_update_versions = if status.ready { status.codex_update_versions } else { Vec::new() };
+    }
     if status.ready {
         snapshot.phase = "running".into();
         snapshot.message = "Codex 连接和 Panel 注入已就绪。".into();
@@ -2020,7 +2023,7 @@ fn monitor_renderer_readiness(
                             snapshot.phase = "waiting".into();
                             apply_waiting_for_codex(snapshot);
                         }
-                        apply_renderer_status(snapshot, pid, status.clone());
+                        apply_renderer_status(snapshot, pid, status.clone(), true);
                     }
                 }
             });
@@ -2415,7 +2418,7 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                         {
                             *state.renderer_status.lock().unwrap() = Some((Instant::now(), status.clone()));
                         }
-                        apply_renderer_status(snapshot, pid, status.clone());
+                        apply_renderer_status(snapshot, pid, status.clone(), false);
                     }
                     LauncherEvent::Injected => {
                         apply_renderer_status(
@@ -2423,19 +2426,10 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                             pid,
                             RendererStatus {
                                 ready: true,
-                                applying_native_adapters: false,
                                 page_visible: snapshot.embedded_visible,
-                                codex_update_native_ready: false,
-                                codex_update_native_downloading: false,
-                                codex_update_staged_build: None,
-                                codex_update_ready: snapshot.codex_update_ready,
-                                codex_update_available: snapshot.codex_update_available,
-                                codex_update_downloading: snapshot.codex_update_downloading,
-                                codex_update_phase: snapshot.codex_update_phase.clone(),
-                                codex_update_message: snapshot.codex_update_message.clone(),
-                                codex_update_checking: snapshot.codex_update_checking,
-                                codex_update_versions: snapshot.codex_update_versions.clone(),
+                                ..RendererStatus::default()
                             },
+                            false,
                         );
                     }
                 }
@@ -4859,9 +4853,10 @@ mod tests {
             &mut snapshot,
             42,
             serde_json::from_str(
-                r#"{"ready":true,"pageVisible":false,"codexUpdateVersions":[{"version":"26.1117.31558","build":"29513","verified":true}]}"#,
+                r#"{"ready":true,"pageVisible":false,"codexUpdateMessage":"当前已是最新版","codexUpdateVersions":[{"version":"26.1117.31558","build":"29513","verified":true}]}"#,
             )
             .unwrap(),
+            true,
         );
         let versions = serde_json::to_value(&snapshot).unwrap()["codexUpdateVersions"].clone();
         assert_eq!(versions[0]["build"], "29513");
@@ -4869,6 +4864,18 @@ mod tests {
         assert_eq!(snapshot.phase, "running");
         assert_eq!(snapshot.open_signal_pid, Some(42));
         assert!(!snapshot.embedded_visible);
+        let heartbeat = serde_json::from_str::<super::LauncherEvent>(
+            r#"{"launcherEvent":"managedStatus","panelManagedStatus":{"ready":true,"pageVisible":true}}"#,
+        ).unwrap();
+        let super::LauncherEvent::ManagedStatus { status } = heartbeat else {
+            panic!("expected connection status");
+        };
+        for _ in 0..3 {
+            apply_renderer_status(&mut snapshot, 42, status.clone(), false);
+            assert_eq!(snapshot.codex_update_message, "当前已是最新版");
+            assert_eq!(snapshot.codex_update_versions.len(), 1);
+            assert!(snapshot.embedded_visible);
+        }
         let connection_message = snapshot.message.clone();
         let progress = serde_json::from_str::<super::LauncherEvent>(
             r#"{"launcherEvent":"nativeAdaptersStatus","phase":"adapting","message":"正在适配 Codex 模块 42 · 2/10","features":[{"feature":"quota","phase":"loading","message":"模块 42 · 2/10"},{"feature":"tabs","phase":"loading","message":"模块 75 · 3/10"}],"progress":12.5}"#,
@@ -4889,13 +4896,13 @@ mod tests {
         let applying = serde_json::from_str::<RendererStatus>(
             r#"{"ready":false,"pageVisible":false,"applyingNativeAdapters":true}"#,
         ).unwrap();
-        apply_renderer_status(&mut snapshot, 42, applying);
+        apply_renderer_status(&mut snapshot, 42, applying, false);
         assert_eq!(snapshot.phase, "running");
         assert_eq!(snapshot.open_signal_pid, Some(42));
         assert_eq!(snapshot.native_adapters_phase, "applying");
         assert_eq!(snapshot.native_adapters_features.len(), 2);
         assert_eq!(snapshot.codex_update_versions.len(), 1);
-        apply_renderer_status(&mut snapshot, 42, RendererStatus::default());
+        apply_renderer_status(&mut snapshot, 42, RendererStatus::default(), false);
         assert!(snapshot.codex_update_versions.is_empty());
         assert_eq!(snapshot.phase, "waiting");
         assert_eq!(snapshot.open_signal_pid, None);
@@ -4909,7 +4916,7 @@ mod tests {
         assert_eq!(snapshot.phase, "restart_required");
         assert_eq!(status_menu_label(&snapshot.phase), "运行状态：需要重启 Codex");
         apply_waiting_for_codex(&mut snapshot);
-        apply_renderer_status(&mut snapshot, 42, RendererStatus::default());
+        apply_renderer_status(&mut snapshot, 42, RendererStatus::default(), false);
         assert_eq!(snapshot.phase, "restart_required");
         assert_eq!(snapshot.message, "Codex 已经更新，请点击下方按钮重新启动");
         assert_eq!(snapshot.open_signal_pid, None);
@@ -4931,6 +4938,7 @@ mod tests {
                 codex_update_checking: false,
                 codex_update_versions: Vec::new(),
             },
+            true,
         );
         assert_eq!(snapshot.phase, "running");
         assert!(snapshot.embedded_visible);
