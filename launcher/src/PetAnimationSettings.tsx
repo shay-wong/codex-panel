@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Badge, Box, Button, Card, Flex, Heading, Switch, Tabs, Text, TextField } from "@radix-ui/themes";
+import { LinearIcon } from "../../web/src/components/LinearIcon";
 
 type PetPreview = { spritesheetUrl: string; columns: number; rows: number; frame: number; aspectRatio: number };
 type PetAnimation = { petId: string; name: string; states: string[]; hasLookFrames: boolean; preview: PetPreview; builtinLumi: boolean; selectable: boolean };
@@ -75,10 +76,13 @@ function CommunityPets({ animations, disabled, onInstall }: {
       <search role="search" aria-label="筛选在线宠物">
         <Flex direction="column" gap="1">
           <Text as="label" htmlFor="petCatalogSource" size="1">下载平台</Text>
-        <select id="petCatalogSource" className="pet-catalog-source" value={request.source}
-          onChange={event => loadPage({ ...request, source: event.target.value, page: 1 })}>
-          {communitySources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}
-        </select>
+          <div className="pet-catalog-source">
+            <select id="petCatalogSource" value={request.source}
+              onChange={event => loadPage({ ...request, source: event.target.value, page: 1 })}>
+              {communitySources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}
+            </select>
+            <LinearIcon name="chevronDown" />
+          </div>
         </Flex>
         <Flex className="pet-catalog-search" asChild align="end" gap="2">
           <form onSubmit={event => {
