@@ -1,6 +1,6 @@
 # Fork 维护说明
 
-Rust 会话菜单初始化顺序修复（2026-11-27，等待上游吸收）：完整适配计划直接随改写后的原生入口初始化，保证先于 factory 注册执行，不再只依赖新文档脚本。`entryWrapped` 区分已准备计划与真正接管入口；同版本重连发现入口未接管时仍刷新一次。菜单等待 15 秒仍未执行会明确失败，后续侧栏真正执行时恢复就绪。代码在 `runtime/src/injector/{source_ast.rs,adapters.rs}`、`runtime/src/injector.rs` 及运行时资产；验证覆盖无预注入的初始/延迟模块执行、同版本有效重连与失效重连恢复。用户说明见中英文 README、中文 `CHANGELOG.md` 和会话标签能力索引。上游提供同等初始化与状态确认后可移除此差异。
+Rust 会话菜单初始化顺序修复（2026-11-27，等待上游吸收）：完整适配计划直接随改写后的原生入口初始化，保证先于 factory 注册执行，不再只依赖新文档脚本。`entryWrapped` 区分已准备计划与真正接管入口；同版本重连发现入口未接管时仍刷新一次。菜单等待 15 秒仍未执行会明确失败，后续侧栏真正执行时恢复就绪；启动器从周期状态与主动查询同步菜单，避免首次通知遗漏后继续等待。代码在 `runtime/src/injector/{source_ast.rs,adapters.rs}`、`runtime/src/injector.rs` 及运行时资产；验证覆盖无预注入的初始/延迟模块执行、同版本有效重连与失效重连恢复。用户说明见中英文 README、中文 `CHANGELOG.md` 和会话标签能力索引。上游提供同等初始化与状态确认后可移除此差异。
 
 更新状态与连接通知隔离（2026-11-27，等待上游吸收）：`runtime/src/injector.rs` 的周期 `managedStatus` 仅携带连接信息，`src-tauri/src/main.rs` 的 `apply_renderer_status` 由调用方区分连接通知和完整控制查询；已连接的通知不清空 `codexUpdate*`，完整查询继续更新结果，真实断连仍清理，受控适配重载沿用早退。不增加更新请求，也不改变缓存或检查频率。`renderer_readiness_downgrades_without_losing_a_pending_open` 覆盖完整查询后连续连接通知保留结果、页面可见性更新及真实断连；隔离复放修前失败、修后通过。来源用 `git log -S'include_updates' -- src-tauri/src/main.rs` 定位；合并时保留事件职责边界，上游具备等价隔离及验证后移除。用户说明同步中英文 README、`docs/fork-capabilities.md#codex-updates-through-panel` 与中文 `CHANGELOG.md` 未发布；已安装 App 的现场效果单独验收。
 

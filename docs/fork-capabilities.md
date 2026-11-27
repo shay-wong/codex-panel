@@ -129,7 +129,7 @@ The real injection script was verified in an isolated browser with a local nativ
 
 ## Conversation tabs and split view
 
-The Rust runtime initializes the complete adapter plan inside the native entry before registering modules. Reconnecting repairs an entry that was prepared but never wrapped. If the menu or sidebar still has not executed after 15 seconds, the launcher reports a load failure instead of waiting indefinitely; a later successful mount updates it to ready.
+The Rust runtime initializes the complete adapter plan inside the native entry before registering modules. Reconnecting repairs an entry that was prepared but never wrapped. If the menu or sidebar still has not executed after 15 seconds, the launcher reports a load failure instead of waiting indefinitely; a later successful mount updates it to ready. Periodic status checks also synchronize menu readiness if the initial notification was missed.
 
 Codex **26.1106.51428 / build 26605** removed the active-conversation helper previously used by this adapter. Panel now resolves the current route and its native scope directly, restoring the menu actions after `Native thread factory missing: open-page-on-right`. It also reads the separate native full-width flag so a full-width tab offers **Open side by side** and a split pane offers **Open in new tab**. This compatibility change is specific to conversation menus; it does not establish support for every other adapter on that build.
 
