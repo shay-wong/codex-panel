@@ -237,7 +237,7 @@ dependencies = [
 
 [[package]]
 name = "codex-panel-runtime"
-version = "0.6.6-fork"
+version = "0.7.0-fork"
 dependencies = [
  "axum",
  "base64 0.22.1",
