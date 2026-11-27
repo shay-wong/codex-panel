@@ -28,13 +28,15 @@ The macOS and Windows launcher offers **Preferences → Models & advanced → Ap
 
 ## Bottom terminal layout
 
-Open the **Preferences → General → 终端布局** (Terminal layout) dropdown and choose **跟随 Codex** (Follow Codex), **底部** (Bottom, default), or **右侧** (Right). Bottom restores an independent terminal below the conversation on Codex builds that only provide a right-side terminal; Follow Codex uses the native layout. Save the choice and reopen Codex to apply it. Use the native terminal action or your existing terminal shortcut to open or hide the panel; Panel preserves native and user-defined keybindings. Builds that already provide a native bottom terminal keep that implementation.
+Open the **Preferences → General → 终端布局** (Terminal layout) dropdown and choose **跟随 Codex** (Follow Codex), **底部** (Bottom, default), or **右侧** (Right). Bottom restores an independent terminal below the conversation on Codex builds that only provide a right-side terminal; Follow Codex uses the native layout. While connected and the terminal adapter is ready, the saved choice applies on the next host heartbeat, normally within two seconds. Changing this preference needs no Codex restart, page refresh or adapter analysis; existing terminal tabs, session IDs and tab state move to the selected layout. Follow Codex retains its native default and capability limits. Use the native terminal action or your existing terminal shortcut to open or hide the panel; Panel preserves native and user-defined keybindings. Builds that already provide a native bottom terminal keep that implementation.
+
+连接且终端适配就绪后，保存布局通过下一次心跳生效，通常在两秒内，无需重启、刷新页面或重新分析适配；已有终端标签、会话 ID 和标签状态随布局移动。“跟随 Codex”保留原生默认位置及能力限制。
 
 The bottom terminal can remain open while you view files in the right sidebar. It uses native terminal sessions and tab controls: open and close terminal tabs as usual, and drag the upper edge to adjust the panel height. Hiding the panel keeps its sessions; closing a tab follows Codex's native close behavior.
 
 Packaged builds retain the connection when the main window briefly disappears during an adaptation reload, preventing the terminal from staying on the right despite choosing Bottom.
 
-The **底部终端** (Bottom terminal) node shows its state in the adaptation graph and shares the per-module cache contract below. Packaged builds use the Rust adapter and embedded renderer resources; Node sources remain for development checks. Installed-App behavior, real terminal sessions and session restoration after restarting Codex remain separate verification steps.
+The **底部终端** (Bottom terminal) node shows its state in the adaptation graph and shares the per-module cache contract below. Packaged builds use the Rust adapter and embedded renderer resources; Node sources remain for development checks. Isolated replays of native build 30866 and build 27194 factories retain terminal sessions and tab state through layout switches without closing sessions. Installed-App behavior, real PTYs, cross-platform device checks and session restoration after restarting Codex remain separate verification steps.
 
 ## Rspack-based Codex builds
 

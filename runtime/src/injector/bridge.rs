@@ -203,12 +203,15 @@ pub async fn heartbeat(
         "usageAnimationMaxSpeed":preferences.get("usageAnimationMaxSpeed").cloned().unwrap_or(json!(40)),
         "customProviderQuotaFix":preferences["customProviderQuotaFix"]==true,"customProviderUltrafast":preferences["customProviderUltrafast"]==true,
         "showCustomProviderDot":preferences["showCustomProviderDot"]==true,"defaultProjectlessChat":preferences["defaultProjectlessChat"]==true,
-        "nativeSettingsMode":"system"});
+        "nativeSettingsMode":"system","terminalLayout":"bottom"});
     if matches!(
         preferences["nativeSettingsMode"].as_str(),
         Some("dialog" | "page")
     ) {
         message["nativeSettingsMode"] = preferences["nativeSettingsMode"].clone();
+    }
+    if matches!(preferences["terminalLayout"].as_str(), Some("system" | "bottom" | "right")) {
+        message["terminalLayout"] = preferences["terminalLayout"].clone();
     }
     cdp.evaluate(
         &format!("window.postMessage({},window.location.origin)", message),

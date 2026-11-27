@@ -3583,13 +3583,10 @@ fn set_native_settings_mode(
 
 #[tauri::command]
 fn set_terminal_layout(
-    app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
     layout: TerminalLayout,
 ) -> Result<LauncherPreferences, String> {
-    let preferences = update_preferences(&state, |preferences| preferences.terminal_layout = layout)?;
-    mark_codex_restart_required(&app, &state, "终端布局")?;
-    Ok(preferences)
+    update_preferences(&state, |preferences| preferences.terminal_layout = layout)
 }
 
 #[tauri::command]

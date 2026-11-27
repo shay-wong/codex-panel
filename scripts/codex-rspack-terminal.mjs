@@ -32,15 +32,40 @@ function legacy(context) {
 }
 
 function legacyTerminalPatch(ast) {
-  const launch = ast.exports().get('terminalLaunchPanel$');
+  const exports = ast.exports(), launch = exports.get('terminalLaunchPanel$');
   if (!launch) return null;
   const signal = unwrap(ast.value(launch));
   const callback = unique(signal?.arguments?.filter(isFunction) ?? [], 'Native terminal layout reader is unavailable');
   const result = returnValue(callback);
   if (!result) throw new Error('Native terminal layout setting is unavailable');
+  const scope = propertyValue(callback.params[0], 'scope'), get = propertyValue(callback.params[0], 'get');
+  if (scope?.type !== 'Identifier' || get?.type !== 'Identifier') throw new Error('Native terminal layout scope is unavailable');
+  const visibility = name => {
+    const init = unwrap(ast.value(exports.get(name)));
+    const read = unique(init?.arguments?.filter(isFunction) ?? [], 'Native terminal visibility reader is unavailable');
+    const readGet = propertyValue(read.params[0], 'get');
+    const reads = ast.all(node => node.type === 'CallExpression' && same(ast, unwrap(node.callee), readGet) && unwrap(node.arguments[0])?.type === 'MemberExpression', read);
+    const active = unique(reads.filter(node => propertyName(unwrap(node.arguments[0])) === 'activeTab$'), 'Native terminal controller is unavailable');
+    const open = unique(reads.filter(node => node !== active), 'Native terminal visibility signal is unavailable');
+    return { controller: unwrap(active.arguments[0]).object, open: open.arguments[0] };
+  };
+  const bottom = visibility('terminalBottomPanelOpen$'), right = visibility('terminalRightPanelOpen$');
+  const namespace = unwrap(signal.callee)?.object;
+  const atom = unique(ast.all(node => node.type === 'CallExpression' && node.arguments.length === 2 && literal(node.arguments[1], false)
+    && unwrap(node.callee)?.type === 'MemberExpression' && same(ast, unwrap(node.callee).object, namespace)), 'Native terminal layout signal is unavailable');
+  const show = unique(ast.all(node => node.type === 'CallExpression' && literal(node.arguments[1], 'bottom') && property(node.arguments[2], 'allowEmpty'), ast.value(exports.get('openTerminalBottomPanelWhenReady'))), 'Native terminal show action is unavailable');
+  const hide = unique(ast.all(node => node.type === 'CallExpression' && node.arguments.length === 2 && literal(node.arguments[1], 'bottom'), ast.value(exports.get('toggleTerminalBottomPanel'))), 'Native terminal hide action is unavailable');
+  const terminal = ast.value(exports.get('terminalTabType'));
+  const open = ast.value(propertyValue(unwrap(terminal)?.arguments?.[0], 'open'));
+  if (!isFunction(open) || open.params[0]?.type !== 'Identifier') throw new Error('Native terminal session action is unavailable');
   // Keep native capability gates; override only the default location preference.
   const target = result.type === 'ConditionalExpression' && literal(result.consequent, 'right') ? result.alternate : result;
-  return applyEdits(ast.source, [{ start: target.start, end: target.end, text: `(${runtime}.layout==="system"?${ast.text(target)}:${runtime}.layout)` }]);
+  const configure = `${runtime}.configureLegacy({signal:${ast.text(unwrap(atom.callee))},routeScope:${ast.text(atom.arguments[0])},bottomController:${ast.text(bottom.controller)},rightController:${ast.text(right.controller)},bottomOpen$:${ast.text(bottom.open)},rightOpen$:${ast.text(right.open)},showPanel:(scope,panel)=>(${ast.text(unwrap(show.callee))})(scope,panel),hidePanel:(scope,panel)=>(${ast.text(unwrap(hide.callee))})(scope,panel),getLayout:scope=>scope.get(${ast.text(launch)}),isTerminalTab:tab=>tab.tabType.kind===${ast.text(exports.get('terminalTabType'))}.kind});`;
+  return applyEdits(ast.source, [
+    { start: target.start, end: target.end, text: `${runtime}.legacyLayout(${ast.text(scope)},${ast.text(get)},${ast.text(target)})` },
+    { start: bodyStart(open), end: bodyStart(open), text: `${runtime}.trackScope(${ast.text(open.params[0])});` },
+    { start: ast.factory.body.end - 1, end: ast.factory.body.end - 1, text: `;${configure}` },
+  ]);
 }
 
 function controllerPatch(ast) {
@@ -65,6 +90,9 @@ function controllerPatch(ast) {
   const focusRead = unique(focusReads.filter(read => ast.all(node => node.type === 'ConditionalExpression' && ast.all(child => child === read, node.test).length, close).length), 'Native panel focus signal is unavailable');
   const signalCalls = ast.all(node => node.type === 'CallExpression' && node.arguments.length === 2 && unwrap(node.arguments[1])?.type === 'ArrayExpression' && unwrap(node.arguments[1]).elements.length === 0 && unwrap(node.callee)?.type === 'MemberExpression', builder);
   const signal = unique(signalCalls.filter(call => ast.parent(call)?.type === 'VariableDeclarator' && ast.text(ast.parent(call).id) === ast.text(propertyValue(controller, 'tabIds$'))), 'Native panel signals are unavailable');
+  const rightOptions = construction.arguments.find(arg => literal(propertyValue(arg, 'panelId'), 'right'));
+  const rightController = ast.enclosing(construction, node => node.type === 'VariableDeclarator')?.id;
+  if (!rightController) throw new Error('Native right panel controller is unavailable');
   let panelText = 'panelTerminalPanelId';
   while (ast.all(node => node.type === 'Identifier' && node.name === panelText).length) panelText += '_';
   const guard = `${panelText}==="right"`;
@@ -94,7 +122,7 @@ function controllerPatch(ast) {
   }
   edits.push({ start: bodyStart(close), end: bodyStart(close), text: `if(${panelText}!=="right"){${ast.text(setOpen)}(${ast.text(close.params[0])},false);return;}` });
   const patchedBuilder = applyEdits(ast.text(builder), edits.map(edit => ({ ...edit, start: edit.start - builder.start, end: edit.end - builder.start })));
-  const configure = `${runtime}.configureController({createController:panelTerminalCreateController,signal:${ast.text(unwrap(signal.callee))},routeScope:${ast.text(signal.arguments[0])},focus:(scope,area)=>(0,${ast.text(focusCallee)})(scope,area),getFocus:scope=>scope.get(${ast.text(focusRead.arguments[0])})});`;
+  const configure = `${runtime}.configureController({createController:panelTerminalCreateController,rightController:${ast.text(rightController)},rightOpen$:(${ast.text(propertyValue(rightOptions, 'getPanelOpenSignal'))})(),rightSetOpen:${ast.text(propertyValue(rightOptions, 'setPanelOpen'))},signal:${ast.text(unwrap(signal.callee))},routeScope:${ast.text(signal.arguments[0])},focus:(scope,area)=>(0,${ast.text(focusCallee)})(scope,area),getFocus:scope=>scope.get(${ast.text(focusRead.arguments[0])})});`;
   return applyEdits(ast.source, [
     { start: builder.start, end: builder.end, text: `(panelTerminalCreateController=${patchedBuilder})` },
     { start: bodyStart(ast.factory), end: bodyStart(ast.factory), text: 'let panelTerminalCreateController;' },
@@ -105,8 +133,7 @@ function controllerPatch(ast) {
 function terminalPatch(ast) {
   const exports = ast.exports();
   if (!exports.has('toggleTerminalPanel') || !exports.has('terminalTabType')) return null;
-  const start = bodyStart(ast.factory);
-  const edits = [{ start, end: start, text: `if(!${runtime}.enabled)return (${ast.source}).apply(this,arguments);` }];
+  const edits = [];
   const replace = (node, text) => edits.push({ start: node.start, end: node.end, text });
   const toggle = ast.value(exports.get('toggleTerminalPanel'));
   if (!isFunction(toggle)) throw new Error('Native terminal action is unavailable');
@@ -127,8 +154,13 @@ function terminalPatch(ast) {
   const openCalls = calls.filter(call => call.arguments.length === 3 && ast.all(node => node.type === 'Property' && propertyName(node) === 'onUndoClose', call.arguments[2]).length && literal(propertyValue(call.arguments[2], 'target'), 'right'));
   const openCall = unique(openCalls, 'Native terminal tab creation is unavailable');
   replace(openCall.callee, `${runtime}.controller.openTab`);
-  replace(propertyValue(openCall.arguments[2], 'target'), '"bottom"');
+  replace(propertyValue(openCall.arguments[2], 'target'), `${runtime}.panelId`);
   const derived = ast.value(exports.get('terminalRightPanelOpen$'));
+  const visibilityCallback = unique(derived.arguments.filter(isFunction), 'Native terminal visibility reader is unavailable');
+  const scopePattern = visibilityCallback.params[0];
+  const scopeName = 'panelTerminalScope';
+  edits.push({ start: scopePattern.end - 1, end: scopePattern.end - 1, text: `,scope:${scopeName}` });
+  edits.push({ start: bodyStart(visibilityCallback), end: bodyStart(visibilityCallback), text: `${runtime}.readLayout(${scopeName},${ast.text(propertyValue(scopePattern, 'get'))});` });
   const read = unique(ast.all(node => node.type === 'CallExpression' && callName(node) !== 'get' && node.arguments.length === 1 && unwrap(node.callee)?.type === 'Identifier' && unwrap(node.arguments[0])?.type === 'MemberExpression', derived).filter(call => !['activeTab$', 'tabs$'].includes(propertyName(unwrap(call.arguments[0])))), 'Native terminal visibility signal is unavailable');
   const rightSignal = read.arguments[0];
   for (const node of ast.all(node => node.type === 'MemberExpression' && same(ast, node.object, rightSignal.object) && propertyName(node) === propertyName(rightSignal))) replace(node, `${runtime}.open$`);
@@ -144,8 +176,8 @@ function terminalPatch(ast) {
       replace(call.arguments[1], 'false');
     }
   }
-  for (const node of ast.all(node => literal(node, 'right-panel'))) replace(node, '"bottom-panel"');
-  for (const template of ast.all(node => node.type === 'TemplateLiteral' && node.quasis.some(part => part.value.cooked?.includes('data-app-shell-tab-panel-controller="right"')))) replace(template, ast.text(template).replace('data-app-shell-tab-panel-controller="right"', 'data-app-shell-tab-panel-controller="bottom"'));
+  for (const node of ast.all(node => literal(node, 'right-panel'))) replace(node, `(${runtime}.panelId+"-panel")`);
+  for (const template of ast.all(node => node.type === 'TemplateLiteral' && node.quasis.some(part => part.value.cooked?.includes('data-app-shell-tab-panel-controller="right"')))) replace(template, ast.text(template).replace('data-app-shell-tab-panel-controller="right"', `data-app-shell-tab-panel-controller="\${${runtime}.panelId}"`));
   const visibilityReads = calls.filter(call => callName(call) === 'get' && unwrap(call.arguments[0])?.type === 'MemberExpression'
     && same(ast, call.arguments[0].object, rightSignal.object) && propertyName(call.arguments[0]) === propertyName(rightSignal));
   const focusActions = calls.filter(call => {
@@ -158,7 +190,8 @@ function terminalPatch(ast) {
     const visibility = unique(visibilityReads.filter(call => fnOf(ast, call) === fn), 'Native terminal focus scope is unavailable');
     replace(action, `${runtime}.focus(${ast.text(unwrap(visibility.callee).object)})`);
   }
-  edits.push({ start: ast.factory.body.end - 1, end: ast.factory.body.end - 1, text: `;${runtime}.registerLaunch(${ast.text(openFunction.id ?? propertyValue(unwrap(terminal).arguments[0], 'open'))},${ast.text(exports.get('canOpenTerminalPanelTab'))});` });
+  edits.push({ start: bodyStart(openFunction), end: bodyStart(openFunction), text: `${runtime}.trackScope(${ast.text(openFunction.params[0])});` });
+  edits.push({ start: ast.factory.body.end - 1, end: ast.factory.body.end - 1, text: `;${runtime}.registerLaunch(${ast.text(openFunction.id ?? propertyValue(unwrap(terminal).arguments[0], 'open'))},${ast.text(exports.get('canOpenTerminalPanelTab'))},${ast.text(exports.get('terminalTabType'))});` });
   return applyEdits(ast.source, edits);
 }
 

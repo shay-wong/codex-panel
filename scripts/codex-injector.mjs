@@ -2378,6 +2378,7 @@ function installPanelHostBinding(
           let showCustomProviderDot = false;
           let defaultProjectlessChat = false;
           let nativeSettingsMode = "system";
+          let terminalLayout = "bottom";
           const preferencesFile = panelEnvironment("PREFERENCES_FILE");
           if (preferencesFile) {
             try {
@@ -2394,6 +2395,7 @@ function installPanelHostBinding(
               showCustomProviderDot = preferences.showCustomProviderDot === true;
               defaultProjectlessChat = preferences.defaultProjectlessChat === true;
               nativeSettingsMode = ["dialog", "page"].includes(preferences.nativeSettingsMode) ? preferences.nativeSettingsMode : "system";
+              terminalLayout = ["system", "bottom", "right"].includes(preferences.terminalLayout) ? preferences.terminalLayout : "bottom";
             } catch {}
           }
           await cdp.send("Runtime.evaluate", {
@@ -2414,6 +2416,7 @@ function installPanelHostBinding(
               showCustomProviderDot: ${JSON.stringify(showCustomProviderDot)},
               defaultProjectlessChat: ${JSON.stringify(defaultProjectlessChat)},
               nativeSettingsMode: ${JSON.stringify(nativeSettingsMode)},
+              terminalLayout: ${JSON.stringify(terminalLayout)},
               startupToken: ${JSON.stringify(startupToken)}
             }, window.location.origin)`,
             returnByValue: true,

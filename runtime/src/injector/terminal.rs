@@ -137,7 +137,8 @@ fn legacy(context: &Context) -> Result<bool, ApiError> {
     Ok(found)
 }
 fn legacy_terminal(ast: &Ast) -> Result<Option<String>, ApiError> {
-    let Some(launch) = ast.exports().get("terminalLaunchPanel$").copied() else {
+    let exports = ast.exports();
+    let Some(launch) = exports.get("terminalLaunchPanel$").copied() else {
         return Ok(None);
     };
     let signal = ast.value(launch);
@@ -152,6 +153,138 @@ fn legacy_terminal(ast: &Ast) -> Result<Option<String>, ApiError> {
         ast.return_value(callback),
         "Native terminal layout setting is unavailable",
     )?;
+    let params = need(
+        ast.array(callback, "params").first().copied(),
+        "Native terminal layout scope is unavailable",
+    )?;
+    let scope = need(
+        ast.property_value(params, "scope"),
+        "Native terminal layout scope is unavailable",
+    )?;
+    let get = need(
+        ast.property_value(params, "get"),
+        "Native terminal layout scope is unavailable",
+    )?;
+    if ast.kind(scope) != "Identifier" || ast.kind(get) != "Identifier" {
+        return Err(failure("Native terminal layout scope is unavailable"));
+    }
+    let visibility = |name: &str| -> Result<(Id, Id), ApiError> {
+        let init = ast.value(need(
+            exports.get(name).copied(),
+            "Native terminal visibility reader is unavailable",
+        )?);
+        let read = unique(
+            ast.array(init, "arguments")
+                .into_iter()
+                .filter(|node| ast.is_function(*node))
+                .collect(),
+            "Native terminal visibility reader is unavailable",
+        )?;
+        let params = need(
+            ast.array(read, "params").first().copied(),
+            "Native terminal visibility reader is unavailable",
+        )?;
+        let get = need(
+            ast.property_value(params, "get"),
+            "Native terminal visibility reader is unavailable",
+        )?;
+        let reads = calls(ast, read)
+            .into_iter()
+            .filter(|node| {
+                callee(ast, *node).is_some_and(|node| ast.same_binding(node, get))
+                    && argument(ast, *node, 0)
+                        .is_some_and(|node| ast.kind(ast.unwrap(node)) == "MemberExpression")
+            })
+            .collect::<Vec<_>>();
+        let active = unique(
+            reads
+                .iter()
+                .copied()
+                .filter(|node| {
+                    argument(ast, *node, 0).is_some_and(|node| member(ast, node, "activeTab$"))
+                })
+                .collect(),
+            "Native terminal controller is unavailable",
+        )?;
+        let open = unique(
+            reads.into_iter().filter(|node| *node != active).collect(),
+            "Native terminal visibility signal is unavailable",
+        )?;
+        Ok((
+            need(
+                ast.child(ast.unwrap(argument(ast, active, 0).unwrap()), "object"),
+                "Native terminal controller is unavailable",
+            )?,
+            argument(ast, open, 0).unwrap(),
+        ))
+    };
+    let (bottom_controller, bottom_open) = visibility("terminalBottomPanelOpen$")?;
+    let (right_controller, right_open) = visibility("terminalRightPanelOpen$")?;
+    let namespace = need(
+        ast.child(callee(ast, signal).unwrap(), "object"),
+        "Native terminal layout signal is unavailable",
+    )?;
+    let atom = unique(
+        calls(ast, ast.root)
+            .into_iter()
+            .filter(|node| {
+                ast.array(*node, "arguments").len() == 2
+                    && argument(ast, *node, 1).is_some_and(|node| literal(ast, node, &json!(false)))
+                    && callee(ast, *node)
+                        .and_then(|node| ast.child(node, "object"))
+                        .is_some_and(|node| ast.same_binding(node, namespace))
+            })
+            .collect(),
+        "Native terminal layout signal is unavailable",
+    )?;
+    let show = unique(
+        calls(
+            ast,
+            ast.value(need(
+                exports.get("openTerminalBottomPanelWhenReady").copied(),
+                "Native terminal show action is unavailable",
+            )?),
+        )
+        .into_iter()
+        .filter(|node| {
+            argument(ast, *node, 1).is_some_and(|node| literal(ast, node, &json!("bottom")))
+                && argument(ast, *node, 2)
+                    .is_some_and(|node| ast.property(node, "allowEmpty").is_some())
+        })
+        .collect(),
+        "Native terminal show action is unavailable",
+    )?;
+    let hide = unique(
+        calls(
+            ast,
+            ast.value(need(
+                exports.get("toggleTerminalBottomPanel").copied(),
+                "Native terminal hide action is unavailable",
+            )?),
+        )
+        .into_iter()
+        .filter(|node| {
+            ast.array(*node, "arguments").len() == 2
+                && argument(ast, *node, 1).is_some_and(|node| literal(ast, node, &json!("bottom")))
+        })
+        .collect(),
+        "Native terminal hide action is unavailable",
+    )?;
+    let terminal = need(
+        exports.get("terminalTabType").copied(),
+        "Native terminal session action is unavailable",
+    )?;
+    let open = ast.value(need(
+        argument(ast, ast.value(terminal), 0).and_then(|node| ast.property_value(node, "open")),
+        "Native terminal session action is unavailable",
+    )?);
+    let open_scope = need(
+        ast.array(open, "params").first().copied(),
+        "Native terminal session action is unavailable",
+    )?;
+    if !ast.is_function(open) || ast.kind(open_scope) != "Identifier" {
+        return Err(failure("Native terminal session action is unavailable"));
+    }
     // Preserve native capability gates; override only the default location preference.
     let target = if ast.kind(result) == "ConditionalExpression"
         && ast
@@ -165,16 +298,33 @@ fn legacy_terminal(ast: &Ast) -> Result<Option<String>, ApiError> {
     } else {
         result
     };
+    let configure = format!("{RUNTIME}.configureLegacy({{signal:{},routeScope:{},bottomController:{},rightController:{},bottomOpen$:{},rightOpen$:{},showPanel:(scope,panel)=>({})(scope,panel),hidePanel:(scope,panel)=>({})(scope,panel),getLayout:scope=>scope.get({}),isTerminalTab:tab=>tab.tabType.kind==={}.kind}});", ast.text(callee(ast, atom).unwrap()), ast.text(argument(ast, atom, 0).unwrap()), ast.text(bottom_controller), ast.text(right_controller), ast.text(bottom_open), ast.text(right_open), ast.text(callee(ast, show).unwrap()), ast.text(callee(ast, hide).unwrap()), ast.text(launch), ast.text(terminal));
+    let open_start = body_start(ast, open)?;
+    let factory_end = ast.end(ast.child(ast.root, "body").unwrap()) - 1;
     Ok(Some(edits(
         &ast.source,
-        vec![replace(
-            ast,
-            target,
-            format!(
-                "({RUNTIME}.layout===\"system\"?{}:{RUNTIME}.layout)",
-                ast.text(target)
+        vec![
+            replace(
+                ast,
+                target,
+                format!(
+                    "{RUNTIME}.legacyLayout({},{},{})",
+                    ast.text(scope),
+                    ast.text(get),
+                    ast.text(target)
+                ),
             ),
-        )],
+            Edit {
+                start: open_start,
+                end: open_start,
+                text: format!("{RUNTIME}.trackScope({});", ast.text(open_scope)),
+            },
+            Edit {
+                start: factory_end,
+                end: factory_end,
+                text: format!(";{configure}"),
+            },
+        ],
     )?))
 }
 
@@ -323,6 +473,18 @@ fn controller(ast: &Ast) -> Result<Option<String>, ApiError> {
             .collect(),
         "Native panel signals are unavailable",
     )?;
+    let right_options = need(
+        ast.array(construction, "arguments").into_iter().find(|arg| {
+            ast.property_value(*arg, "panelId")
+                .is_some_and(|node| literal(ast, node, &json!("right")))
+        }),
+        "Native right panel options are unavailable",
+    )?;
+    let right_controller = need(
+        ast.enclosing(construction, |node| ast.kind(node) == "VariableDeclarator")
+            .and_then(|node| ast.child(node, "id")),
+        "Native right panel controller is unavailable",
+    )?;
     let mut panel_name = "panelTerminalPanelId".to_owned();
     while !ast
         .all(ast.root, |node| {
@@ -419,7 +581,7 @@ fn controller(ast: &Ast) -> Result<Option<String>, ApiError> {
             })
             .collect(),
     )?;
-    let configure = format!("{RUNTIME}.configureController({{createController:panelTerminalCreateController,signal:{},routeScope:{},focus:(scope,area)=>(0,{})(scope,area),getFocus:scope=>scope.get({})}});", ast.text(callee(ast, signal).unwrap()), ast.text(argument(ast, signal, 0).unwrap()), ast.text(focus_callee), ast.text(argument(ast, focus_read, 0).unwrap()));
+    let configure = format!("{RUNTIME}.configureController({{createController:panelTerminalCreateController,rightController:{},rightOpen$:({})(),rightSetOpen:{},signal:{},routeScope:{},focus:(scope,area)=>(0,{})(scope,area),getFocus:scope=>scope.get({})}});", ast.text(right_controller), ast.text(ast.property_value(right_options, "getPanelOpenSignal").unwrap()), ast.text(ast.property_value(right_options, "setPanelOpen").unwrap()), ast.text(callee(ast, signal).unwrap()), ast.text(argument(ast, signal, 0).unwrap()), ast.text(focus_callee), ast.text(argument(ast, focus_read, 0).unwrap()));
     let start = body_start(ast, ast.root)?;
     let end = ast.end(ast.child(ast.root, "body").unwrap()) - 1;
     Ok(Some(edits(
@@ -452,15 +614,7 @@ fn terminal_api(ast: &Ast) -> Result<Option<String>, ApiError> {
     ) else {
         return Ok(None);
     };
-    let start = body_start(ast, ast.root)?;
-    let mut changes = vec![Edit {
-        start,
-        end: start,
-        text: format!(
-            "if(!{RUNTIME}.enabled)return ({}).apply(this,arguments);",
-            ast.source
-        ),
-    }];
+    let mut changes = Vec::new();
     let toggle = ast.value(*toggle);
     if !ast.is_function(toggle) {
         return Err(failure("Native terminal action is unavailable"));
@@ -561,13 +715,40 @@ fn terminal_api(ast: &Ast) -> Result<Option<String>, ApiError> {
         ast,
         ast.property_value(argument(ast, open_call, 2).unwrap(), "target")
             .unwrap(),
-        "\"bottom\"".into(),
+        format!("{RUNTIME}.panelId"),
     ));
     let derived = need(
         exports.get("terminalRightPanelOpen$").copied(),
         "Native terminal visibility signal is unavailable",
     )?;
     let derived = ast.value(derived);
+    let visibility_callback = unique(
+        ast.array(derived, "arguments")
+            .into_iter()
+            .filter(|node| ast.is_function(*node))
+            .collect(),
+        "Native terminal visibility reader is unavailable",
+    )?;
+    let scope_pattern = need(
+        ast.array(visibility_callback, "params").first().copied(),
+        "Native terminal visibility reader is unavailable",
+    )?;
+    let get = need(
+        ast.property_value(scope_pattern, "get"),
+        "Native terminal visibility reader is unavailable",
+    )?;
+    let scope_name = "panelTerminalScope";
+    changes.push(Edit {
+        start: ast.end(scope_pattern) - 1,
+        end: ast.end(scope_pattern) - 1,
+        text: format!(",scope:{scope_name}"),
+    });
+    let visibility_start = body_start(ast, visibility_callback)?;
+    changes.push(Edit {
+        start: visibility_start,
+        end: visibility_start,
+        text: format!("{RUNTIME}.readLayout({scope_name},{});", ast.text(get)),
+    });
     let read = unique(
         calls
             .iter()
@@ -654,7 +835,7 @@ fn terminal_api(ast: &Ast) -> Result<Option<String>, ApiError> {
         }
     }
     for node in ast.all(ast.root, |node| literal(ast, node, &json!("right-panel"))) {
-        changes.push(replace(ast, node, "\"bottom-panel\"".into()));
+        changes.push(replace(ast, node, format!("({RUNTIME}.panelId+\"-panel\")")));
     }
     for template in ast.all(ast.root, |node| {
         ast.kind(node) == "TemplateLiteral"
@@ -671,7 +852,7 @@ fn terminal_api(ast: &Ast) -> Result<Option<String>, ApiError> {
             template,
             ast.text(template).replace(
                 "data-app-shell-tab-panel-controller=\"right\"",
-                "data-app-shell-tab-panel-controller=\"bottom\"",
+                &format!("data-app-shell-tab-panel-controller=\"${{{RUNTIME}.panelId}}\""),
             ),
         ));
     }
@@ -735,14 +916,25 @@ fn terminal_api(ast: &Ast) -> Result<Option<String>, ApiError> {
             format!("{RUNTIME}.focus({})", ast.text(scope)),
         ));
     }
+    let open_start = body_start(ast, open_function)?;
+    let open_scope = need(
+        ast.array(open_function, "params").first().copied(),
+        "Native terminal session scope is unavailable",
+    )?;
+    changes.push(Edit {
+        start: open_start,
+        end: open_start,
+        text: format!("{RUNTIME}.trackScope({});", ast.text(open_scope)),
+    });
     let end = ast.end(ast.child(ast.root, "body").unwrap()) - 1;
     changes.push(Edit {
         start: end,
         end,
         text: format!(
-            ";{RUNTIME}.registerLaunch({},{});",
+            ";{RUNTIME}.registerLaunch({},{},{});",
             ast.text(ast.child(open_function, "id").unwrap_or(opener)),
-            ast.text(available)
+            ast.text(available),
+            ast.text(*tab_type)
         ),
     });
     Ok(Some(edits(&ast.source, changes)?))

@@ -282,8 +282,6 @@ export function App() {
     try {
       const next = await window.__TAURI__.core.invoke<LauncherPreferences>("set_terminal_layout", { layout });
       setState(current => current && ({ ...current, preferences: next }));
-      acceptState(await window.__TAURI__.core.invoke<LauncherState>("launcher_ui_state"));
-      setRestartReminderDismissed(false);
     } catch (cause) { setError(String(cause)); }
     finally { setSavingPreference(false); }
   }
@@ -523,7 +521,7 @@ export function App() {
                     </Flex>
                     <Separator size="4" />
                     <Flex className="preference-row" align="center" justify="between" gap="4">
-                      <Box><Text as="div" size="2" weight="medium">终端布局</Text><Text as="p" size="1" color="gray" mt="1" id="terminalLayoutDetail">选择终端的显示位置；重新打开 Codex 后生效。</Text></Box>
+                      <Box><Text as="div" size="2" weight="medium">终端布局</Text><Text as="p" size="1" color="gray" mt="1" id="terminalLayoutDetail">切换后即时生效，保留已打开的终端会话。</Text></Box>
                       <Select.Root value={preferences?.terminalLayout ?? "bottom"} disabled={!state || savingPreference} onValueChange={value => void saveTerminalLayout(value as TerminalLayout)}>
                         <Select.Trigger id="terminalLayout" aria-label="终端布局" aria-describedby="terminalLayoutDetail" />
                         <Select.Content><Select.Item value="system">跟随 Codex</Select.Item><Select.Item value="bottom">底部</Select.Item><Select.Item value="right">右侧</Select.Item></Select.Content>
