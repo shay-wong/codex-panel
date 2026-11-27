@@ -13,7 +13,7 @@
 .native-adapter-node:focus-visible { outline: 1px solid var(--blue-9); outline-offset: 3px; }
 .native-adapter-node-name { position: absolute; top: 25px; left: 50%; transform: translateX(-50%); white-space: nowrap; padding: 0 4px; border-radius: 4px; background: var(--adapter-background); font-size: 11px; pointer-events: none; }
 .native-adapter-graph [data-phase="waiting"] { --adapter-state: var(--gray-11); }
-.native-adapter-graph [data-phase="loading"] { --adapter-state: var(--blue-11); }
+.native-adapter-graph [data-phase="loading"], .native-adapter-graph [data-phase="applying"] { --adapter-state: var(--blue-11); }
 .native-adapter-graph [data-phase="prepared"] { --adapter-state: var(--amber-11); }
 .native-adapter-graph [data-phase="ready"] { --adapter-state: var(--green-11); }
 .native-adapter-graph [data-phase="failed"] { --adapter-state: var(--red-11); }

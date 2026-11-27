@@ -21,7 +21,7 @@ const featureLabels: Record<string, string> = {
   terminal: "底部终端",
 };
 const phaseLabels: Record<string, string> = {
-  waiting: "等待适配", loading: "适配中", prepared: "待应用", ready: "已启用", failed: "适配失败",
+  waiting: "等待适配", loading: "适配中", applying: "启用中", prepared: "待应用", ready: "已启用", failed: "适配失败",
 };
 const activePhases = new Set(["reading", "adapting", "prepared", "applying"]);
 const stageLabels: Record<string, string> = {
@@ -50,7 +50,7 @@ export function NativeAdapterGraph({ enabled, phase, message, progress, features
   }, [features]);
   const highlighted = hovered ?? selected;
   const visibleLabels = useMemo(() => {
-    const priorities: Record<string, number> = { failed: 1, loading: 2, prepared: 3, waiting: 4, ready: 5 };
+    const priorities: Record<string, number> = { failed: 1, loading: 2, applying: 2, prepared: 3, waiting: 4, ready: 5 };
     const priority = (module: AdapterFeature) => module.feature === highlighted ? 0 : priorities[module.phase] ?? 4;
     return new Set([...modules].sort((left, right) => priority(left) - priority(right)).slice(0, 10).map(module => module.feature));
   }, [modules, highlighted]);
@@ -182,7 +182,7 @@ export function NativeAdapterGraph({ enabled, phase, message, progress, features
       }
       for (const point of projected) {
         const { module, index, x, y, depth, scale } = point;
-        const loading = module.phase === "loading";
+        const loading = module.phase === "loading" || module.phase === "applying";
         const color = module.phase === "ready" ? colors[1] : module.phase === "failed" ? colors[5] : module.phase === "prepared" ? colors[3] : loading ? colors[0] : colors[2];
         const bend = (index % 2 === 0 ? 1 : -1) * .19;
         const controlX = (width / 2 + x) / 2 - (y - height / 2) * bend;
@@ -266,7 +266,7 @@ export function NativeAdapterGraph({ enabled, phase, message, progress, features
 
   if (!visible) return null;
   const selectedModule = modules.find(module => module.feature === (hovered ?? selected));
-  const loading = modules.filter(module => module.phase === "loading");
+  const loading = modules.filter(module => module.phase === "loading" || module.phase === "applying");
   const completed = modules.filter(module => module.phase === "ready").length;
   const stage = presentation === "collecting" ? "正在汇合结果" : presentation === "success" ? "适配成功" : stageLabels[phase] ?? phase;
   const detail = selectedModule ? `${selectedModule.label} · ${phaseLabels[selectedModule.phase] ?? selectedModule.phase}${selectedModule.message ? ` · ${selectedModule.message}` : ""}` : loading.map(module => `${module.label} · ${module.message || phaseLabels[module.phase]}`).join("；");
@@ -281,7 +281,7 @@ export function NativeAdapterGraph({ enabled, phase, message, progress, features
       <span className="native-adapter-core-label">{presentation === "success" ? "适配成功" : "适配核心"}</span>
     </div>
     <div className="native-adapter-graph-footer"><span>已启用 {completed} / {modules.length}</span><span>拖动旋转 · 选择节点查看详情</span></div>
-    <div className="native-adapter-legend" aria-label="适配状态图例">{Object.entries(phaseLabels).map(([phase, label]) => <span key={phase} data-phase={phase}><i aria-hidden="true" />{label}</span>)}</div>
+    <div className="native-adapter-legend" aria-label="适配状态图例">{Object.entries(phaseLabels).filter(([phase]) => phase !== "applying").map(([phase, label]) => <span key={phase} data-phase={phase}><i aria-hidden="true" />{label}</span>)}</div>
     <div id="nativeAdapterSelection" className="native-adapter-selection" title={detail}>{detail || "各模块独立适配，完成后统一应用"}</div>
     <div className="native-adapter-progress-copy">{progress == null ? stage : `${stage} · 阶段进度 ${Math.round(progress)}%`}</div>
     <Progress value={progress ?? null} size="2" aria-label="Codex 当前阶段适配进度" />

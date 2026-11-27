@@ -34,7 +34,8 @@ use base64::Engine;
 use config::{Environment, Options};
 use futures_util::{
     future::{BoxFuture, Shared},
-    FutureExt,
+    stream::FuturesUnordered,
+    FutureExt, StreamExt,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -770,10 +771,11 @@ async fn apply_native_descriptors(
         .collect())
 }
 
-async fn consume_adapter_progress(
-    connection: &cdp::Connection,
+fn consume_adapter_progress<'a>(
+    connection: &'a cdp::Connection,
     event: Value,
     features: &mut BTreeMap<String, Value>,
+    applications: &mut FuturesUnordered<BoxFuture<'a, (String, Result<Vec<String>, ApiError>)>>,
 ) {
     let phase = event["phase"].as_str().unwrap_or("");
     let feature = event["feature"].as_str().unwrap_or("");
@@ -787,17 +789,10 @@ async fn consume_adapter_progress(
         };
         features.insert(feature.into(), json!({"feature":feature,"phase":if prepared{"prepared"}else{"failed"},"message":if prepared{"已适配，等待统一应用"}else{event["plan"]["errors"][feature].as_str().unwrap_or("未找到兼容的原生模块")}}));
         if prepared && matches!(feature, "nativeUpdate" | "nativeServices") {
-            match apply_native_descriptors(connection, &event["plan"]).await {
-                Ok(applied) => {
-                    for name in applied {
-                        features.insert(
-                            name.clone(),
-                            json!({"feature":name,"phase":"ready","message":"已启用"}),
-                        );
-                    }
-                }
-                Err(error) => eprintln!("Panel live native services: {}", error.message),
-            }
+            let plan = event["plan"].clone();
+            let name = feature.to_owned();
+            applications.push(async move { (name, apply_native_descriptors(connection, &plan).await) }.boxed());
+            features.insert(feature.into(), json!({"feature":feature,"phase":"applying","message":"正在启用，其他模块继续适配"}));
         }
         publish_adapter_progress(
             "adapting",
@@ -857,6 +852,22 @@ async fn consume_adapter_progress(
     );
 }
 
+fn complete_adapter_application(
+    (feature, result): (String, Result<Vec<String>, ApiError>),
+    features: &mut BTreeMap<String, Value>,
+) {
+    features.insert(feature.clone(), json!({"feature":feature,"phase":"prepared","message":"已适配，等待统一应用"}));
+    match result {
+        Ok(applied) => {
+            for name in applied {
+                features.insert(name.clone(), json!({"feature":name,"phase":"ready","message":"已启用"}));
+            }
+            publish_adapter_progress("adapting", "已完成的原生服务已启用，其余模块继续适配。", features, None);
+        }
+        Err(error) => eprintln!("Panel live native services: {}", error.message),
+    }
+}
+
 async fn native_adapters(
     connection: cdp::Connection,
     base: String,
@@ -883,15 +894,18 @@ async fn native_adapters(
             let progress: adapters::ProgressCallback = Arc::new(move |event| { let _ = send.send(event); });
             let preparation = adapters::prepare_with_progress(&connection, &options.app_path, &environment, progress);
             tokio::pin!(preparation);
+            let mut applications = FuturesUnordered::new();
             let prepared = loop {
                 tokio::select! {
                     result = &mut preparation => {
-                        while let Ok(event) = receive.try_recv() { consume_adapter_progress(&connection, event, &mut features).await; }
+                        while let Ok(event) = receive.try_recv() { consume_adapter_progress(&connection, event, &mut features, &mut applications); }
                         break result?;
                     }
-                    Some(event) = receive.recv() => consume_adapter_progress(&connection, event, &mut features).await,
+                    Some(event) = receive.recv() => consume_adapter_progress(&connection, event, &mut features, &mut applications),
+                    Some(result) = applications.next(), if !applications.is_empty() => complete_adapter_application(result, &mut features),
                 }
             };
+            while let Some(result) = applications.next().await { complete_adapter_application(result, &mut features); }
             let prepared = match prepared { Some(prepared) => prepared, None => legacy::prepare(&connection, &options.app_path, &environment).await? };
             for feature in prepared.status["features"].as_array().into_iter().flatten() {
                 let name = feature["feature"].as_str().or_else(|| feature["id"].as_str()).unwrap_or("");
@@ -1791,6 +1805,52 @@ pub async fn run(args: &[String]) -> Result<(), ApiError> {
 mod tests {
     use super::*;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    #[tokio::test]
+    async fn live_adapter_applications_do_not_block_each_other_or_progress() {
+        let (client, server) = tokio::io::duplex(16384);
+        let (reader, writer) = tokio::io::split(client);
+        let connection = cdp::Connection::pipe(reader, writer);
+        let (first_sent, first_received) = tokio::sync::oneshot::channel();
+        let peer = tokio::spawn(async move {
+            let mut first_sent = Some(first_sent);
+            let (reader, mut writer) = tokio::io::split(server);
+            let mut reader = BufReader::new(reader);
+            let mut requests = Vec::new();
+            for index in 0..2 {
+                let mut bytes = Vec::new();
+                reader.read_until(0, &mut bytes).await.unwrap();
+                bytes.pop();
+                requests.push(serde_json::from_slice::<Value>(&bytes).unwrap());
+                if index == 0 { first_sent.take().unwrap().send(()).unwrap(); }
+            }
+            for (request, feature) in requests.into_iter().zip(["nativeServices", "nativeUpdate"]).rev() {
+                assert_eq!(request["method"], "Runtime.evaluate");
+                let mut response = json!({"id":request["id"],"result":{"result":{"value":[feature]}}}).to_string().into_bytes();
+                response.push(0);
+                writer.write_all(&response).await.unwrap();
+            }
+        });
+        let mut applications = FuturesUnordered::new();
+        let mut features = BTreeMap::new();
+        consume_adapter_progress(&connection, json!({"phase":"feature","feature":"nativeServices","plan":{"nativeServices":{"desktopServices":{"id":"services"}},"nativeUpdate":{},"chunks":{}}}), &mut features, &mut applications);
+        tokio::pin!(first_received);
+        tokio::select! {
+            result = &mut first_received => result.unwrap(),
+            _ = applications.next() => panic!("application must remain pending before its CDP response"),
+        }
+        consume_adapter_progress(&connection, json!({"phase":"adapt","feature":"terminal","completed":1,"total":2}), &mut features, &mut applications);
+        assert_eq!(features["terminal"]["phase"], "loading");
+        assert_eq!(features["nativeServices"]["phase"], "applying");
+        consume_adapter_progress(&connection, json!({"phase":"feature","feature":"nativeUpdate","plan":{"nativeServices":{},"nativeUpdate":{"updater":{"id":"update"}},"chunks":{}}}), &mut features, &mut applications);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while let Some(result) = applications.next().await { complete_adapter_application(result, &mut features); }
+        }).await.expect("both CDP requests must be sent before either response is returned");
+        assert_eq!(features["nativeServices"]["phase"], "ready");
+        assert_eq!(features["nativeUpdate"]["phase"], "ready");
+        connection.close();
+        peer.await.unwrap();
+    }
 
     #[tokio::test]
     async fn applying_reload_retains_a_temporarily_missing_target() {
