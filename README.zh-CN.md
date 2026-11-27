@@ -241,6 +241,8 @@ Panel 每次启动时检查 Fork 的 GitHub Releases；有效的成功结果缓�
 
 在 **关于 → 版本更新 → GitHub 账号** 中点击 **登录 GitHub**，复制显示的授权码，在 GitHub 官方授权页确认；成功后显示 `@账号`，可点击 **退出登录**。登录可选，仅用于认证读取公开发布信息，令牌保存在系统凭据库；Linux 需要已安装 `secret-tool` 且 Secret Service 已解锁。登录或退出会清除旧检查缓存，不会自动检查或下载更新。详见[GitHub 更新登录](docs/fork-capabilities.md#github-login-for-update-checks)。
 
+打开“关于”只读取本地账号信息，不读取钥匙串。旧登录尚未保存账号名时显示“已保存 GitHub 登录”，检查更新读取凭据后补齐。安装不同的 ad-hoc 构建后，实际检查更新或登录、退出时仍可能需要系统授权。
+
 发现新版本后，**关于 → 版本更新** 会显示该版本的说明，支持 Markdown 标题、列表、行内格式和长内容滚动。没有说明时显示“该版本暂无版本说明。”；“查看发布说明”仍可打开 GitHub 发行版。下载并通过签名验证后，安装确认框只显示目标版本、确认提示和“稍后 / 安装并重启”按钮，不再重复展示版本日志。
 
 App bundle 内包含原生 Rust Panel runtime、`panelctl`、两个 Panel Skills 和构建后的网页界面，不再打包 Node.js 或主机侧 JavaScript 依赖。网页界面与 Codex 渲染器中的注入逻辑继续使用 JavaScript。macOS 安装器依次使用 `CODEX_PANEL_CODESIGN_IDENTITY`（允许 `-` 表示 ad-hoc）、`APPLE_SIGNING_IDENTITY`、可复用的匹配本机证书；都不可用时使用 ad-hoc 签名。Windows 的 Authenticode 签名可选：配置证书与 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` 时签名，全部留空时生成未签名的 NSIS 安装包；两种模式都保留 Tauri 更新包签名。macOS 与 Windows 并行打包，等待两边结束后统一发布成功平台的产物。

@@ -3702,7 +3702,7 @@ async fn github_auth_logout(state: State<'_, Arc<LauncherState>>) -> Result<gith
     tauri::async_runtime::spawn_blocking(move || {
         state.github_auth.logout()?;
         clear_release_check_cache(&state)?;
-        Ok(github_auth::AuthStatus { login: None })
+        Ok(github_auth::AuthStatus { login: None, enabled: false })
     }).await.map_err(|_| "无法退出 GitHub 登录。".to_string())?
 }
 

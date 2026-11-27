@@ -307,6 +307,10 @@ The loading error page offers **Reload**, which retries service readiness and pa
 
 ## GitHub login for update checks
 
+The About page reads the saved username and login-enabled flag from local metadata without accessing the system credential store. Existing empty login markers remain signed in and show **已保存 GitHub 登录** until a credential-backed update check fills the username. Tokens stay in the credential store. Installing another ad-hoc build can still require system authorization when credentials are actually used for checking updates or signing in/out.
+
+“关于”页只读取本地账号名及登录标记，不访问系统凭据库；旧空标记显示“已保存 GitHub 登录”，实际检查更新读取凭据后补齐账号名。令牌继续保存在系统凭据库，安装不同 ad-hoc 构建后，检查更新或登录、退出时仍可能需要系统授权。
+
 Login is optional and off until you choose it. Open **About → Version updates → GitHub 账号** and select **登录 GitHub**. Copy the displayed authorization code, open the official GitHub authorization page, and confirm the code there. Panel waits at GitHub's polling interval; canceling or leaving the page stops the pending login. Successful authorization shows your `@username`, with **退出登录** to remove Panel's stored credentials. The application requests no OAuth scopes and reads public release information. Signing in or out clears the old update-check cache so the next check uses the new account state; it does not start a check or download automatically.
 
 Update checks use Panel's account first. When Panel is not signed in, they retain the locally authenticated `gh` CLI path, then anonymous GitHub API access. An invalid Panel token produces a sign-in-again message rather than silently falling back to anonymous access. Manual checks can bypass successful cached results, while every update entry honors an active rate-limit cache until GitHub's reset time.

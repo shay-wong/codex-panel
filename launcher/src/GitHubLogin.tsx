@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Box, Button, Callout, Flex, Text } from "@radix-ui/themes";
 
-type AuthStatus = { login: string | null };
+type AuthStatus = { login: string | null; enabled: boolean };
 type DeviceLogin = { userCode: string; verificationUri: string; interval: number; expiresAt: number };
 type LoginResult = { status: "pending" | "connected"; interval: number; login: string | null };
 
 export function GitHubLogin() {
   const [login, setLogin] = useState<string | null>(null);
+  const [enabled, setEnabled] = useState(false);
   const [device, setDevice] = useState<DeviceLogin | null>(null);
   const [busy, setBusy] = useState("status");
   const [error, setError] = useState("");
@@ -20,7 +21,7 @@ export function GitHubLogin() {
     mounted.current = true;
     let cancelled = false;
     window.__TAURI__.core.invoke<AuthStatus>("github_auth_status").then(status => {
-      if (!cancelled) setLogin(status.login);
+      if (!cancelled) { setLogin(status.login); setEnabled(status.enabled); }
     }).catch(cause => { if (!cancelled) setError(String(cause)); })
       .finally(() => { if (!cancelled) setBusy(""); });
     return () => {
@@ -48,6 +49,7 @@ export function GitHubLogin() {
             pending.current = false;
             setDevice(null);
             setLogin(result.login);
+            setEnabled(true);
             setConnected(true);
           } else schedule(result.interval);
         } catch (cause) {
@@ -97,7 +99,7 @@ export function GitHubLogin() {
     setError("");
     try {
       const status = await window.__TAURI__.core.invoke<AuthStatus>("github_auth_logout");
-      if (mounted.current) { setLogin(status.login); setConnected(false); }
+      if (mounted.current) { setLogin(status.login); setEnabled(status.enabled); setConnected(false); }
     } catch (cause) { if (mounted.current) setError(String(cause)); }
     finally { if (mounted.current) setBusy(""); }
   }
@@ -119,9 +121,9 @@ export function GitHubLogin() {
     <Flex align="center" justify="between" gap="3" wrap="wrap">
       <Box>
         <Text as="div" size="2" weight="medium">GitHub 账号</Text>
-        <Text as="p" size="1" color="gray" mt="1" role="status" aria-live="polite">{busy === "status" ? "正在读取登录状态…" : login ? `已登录 @${login}` : "登录后使用个人 API 额度检查更新"}</Text>
+        <Text as="p" size="1" color="gray" mt="1" role="status" aria-live="polite">{busy === "status" ? "正在读取登录状态…" : login ? `已登录 @${login}` : enabled ? "已保存 GitHub 登录" : "登录后使用个人 API 额度检查更新"}</Text>
       </Box>
-      {login
+      {enabled
         ? <Button variant="soft" size="2" loading={busy === "logout"} disabled={Boolean(busy)} onClick={() => { void logout(); }}>退出登录</Button>
         : !device && <Button variant="soft" size="2" loading={busy === "start"} disabled={Boolean(busy)} onClick={() => { void start(); }}>登录 GitHub</Button>}
     </Flex>

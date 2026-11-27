@@ -13,7 +13,7 @@ it("signs in at the server polling interval, signs out and cancels pending autho
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   let pollCount = 0;
   const invoke = vi.fn(async (command: string) => {
-    if (command === "github_auth_status" || command === "github_auth_logout") return { login: null };
+    if (command === "github_auth_status" || command === "github_auth_logout") return { login: null, enabled: false };
     if (command === "github_auth_start") return { userCode: "ABCD-EFGH", verificationUri: "https://github.com/login/device", interval: 2, expiresAt: Date.now() / 1000 + 900 };
     if (command === "github_auth_poll") return ++pollCount === 1
       ? { status: "pending", interval: 4, login: null }
@@ -63,5 +63,19 @@ it("signs in at the server polling interval, signs out and cancels pending autho
   } finally {
     if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
     else Reflect.deleteProperty(navigator, "clipboard");
+  }
+});
+
+it("shows saved login metadata when reopening without requesting credentials", async () => {
+  for (const login of ["panel-user", null]) {
+    const invoke = vi.fn(async () => ({ login, enabled: true }));
+    vi.stubGlobal("__TAURI__", { core: { invoke } });
+    const view = render(<Theme><GitHubLogin /></Theme>);
+    await act(async () => {});
+    expect(screen.getByText(login ? `已登录 @${login}` : "已保存 GitHub 登录")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "退出登录" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "登录 GitHub" })).toBeNull();
+    expect(invoke.mock.calls).toEqual([["github_auth_status"]]);
+    view.unmount();
   }
 });

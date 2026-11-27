@@ -16,6 +16,7 @@ const VERIFICATION_URI: &str = "https://github.com/login/device";
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct AuthStatus {
+    pub enabled: bool,
     pub login: Option<String>,
 }
 
@@ -203,23 +204,30 @@ impl GitHubAuth {
 
     fn store_token(&self, token: &StoredToken) -> Result<(), String> {
         save_token(token)?;
+        self.store_login(&token.login)
+    }
+
+    fn store_login(&self, login: &str) -> Result<(), String> {
         if let Some(path) = &self.credential_marker {
-            // This marker contains no credentials and keeps optional keychains off the anonymous path.
-            fs::write(path, b"").map_err(|_| "无法保存 GitHub 登录状态，请重试。")?;
+            // Keep account display independent of system credential access.
+            fs::write(path, login).map_err(|_| "无法保存 GitHub 登录状态，请重试。")?;
         }
         Ok(())
     }
 
     pub fn status(&self) -> Result<AuthStatus, String> {
         let _guard = self.inner.lock().unwrap();
-        if !self.credentials_enabled() { return Ok(AuthStatus { login: None }); }
-        let now = now_seconds();
-        let login = read_token()?
-            .filter(|token| {
-                token.expires_at.is_none_or(|expiry| expiry > now) || token.can_refresh(now)
-            })
-            .map(|token| token.login);
-        Ok(AuthStatus { login })
+        let Some(path) = &self.credential_marker else {
+            return Ok(AuthStatus { enabled: false, login: None });
+        };
+        let login = match fs::read_to_string(path) {
+            Ok(login) => login,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(AuthStatus { enabled: false, login: None });
+            }
+            Err(_) => return Err("无法读取 GitHub 登录状态，请重试。".into()),
+        };
+        Ok(AuthStatus { enabled: true, login: (!login.is_empty()).then_some(login) })
     }
 
     pub async fn start(&self) -> Result<DeviceLogin, String> {
@@ -441,7 +449,11 @@ impl GitHubAuth {
         if !self.credentials_enabled() { return Ok(None); }
         let (generation, token) = {
             let inner = self.inner.lock().unwrap();
-            (inner.generation, read_token()?)
+            let token = read_token()?;
+            if let Some(token) = &token {
+                let _ = self.store_login(&token.login);
+            }
+            (inner.generation, token)
         };
         let Some(token) = token else {
             return Ok(None);
@@ -492,6 +504,25 @@ mod tests {
         assert!(auth.status().unwrap().login.is_none());
         assert!(tauri::async_runtime::block_on(auth.access_token()).unwrap().is_none());
         auth.logout().unwrap();
+    }
+
+    #[test]
+    fn account_status_reads_only_local_login_metadata() {
+        let directory = std::env::temp_dir().join(format!("panel-github-status-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let auth = GitHubAuth::new(directory.clone());
+        let status = auth.status().unwrap();
+        assert!(!status.enabled);
+        assert!(status.login.is_none());
+        fs::write(directory.join("github-login-enabled"), b"").unwrap();
+        let status = auth.status().unwrap();
+        assert!(status.enabled);
+        assert!(status.login.is_none());
+        auth.store_login("octocat").unwrap();
+        let status = auth.status().unwrap();
+        assert!(status.enabled);
+        assert_eq!(status.login.as_deref(), Some("octocat"));
+        fs::remove_dir_all(directory).unwrap();
     }
 
     fn pending(auth: &GitHubAuth, now: Instant) {
@@ -577,9 +608,10 @@ mod tests {
         assert!(stored.can_refresh(100));
         assert!(!stored.can_refresh(15897700));
         let status = serde_json::to_string(&AuthStatus {
+            enabled: true,
             login: Some(stored.login),
         })
         .unwrap();
-        assert_eq!(status, r#"{"login":"octocat"}"#);
+        assert_eq!(status, r#"{"enabled":true,"login":"octocat"}"#);
     }
 }
