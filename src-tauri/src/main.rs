@@ -176,6 +176,8 @@ struct CodexUpdateVersion {
 struct RendererStatus {
     ready: bool,
     #[serde(default)]
+    thread_tabs_ready: bool,
+    #[serde(default)]
     applying_native_adapters: bool,
     page_visible: bool,
     #[serde(default)]
@@ -1911,6 +1913,11 @@ fn apply_renderer_status(snapshot: &mut LauncherSnapshot, pid: u32, status: Rend
         snapshot.codex_update_versions = if status.ready { status.codex_update_versions } else { Vec::new() };
     }
     if status.ready {
+        // 周期回读也同步菜单，避免启动时错过一次性通知后一直显示等待。
+        if status.thread_tabs_ready {
+            snapshot.thread_tabs_phase = "ready".into();
+            snapshot.thread_tabs_message = "标签页和分栏菜单已加载".into();
+        }
         snapshot.phase = "running".into();
         snapshot.message = "Codex 连接和 Panel 注入已就绪。".into();
         snapshot.open_signal_pid = Some(pid);
@@ -1997,6 +2004,7 @@ fn monitor_renderer_readiness(
             } else if status.ready {
                 snapshot.phase != "running"
                     || snapshot.open_signal_pid != Some(pid)
+                    || (status.thread_tabs_ready && snapshot.thread_tabs_phase != "ready")
                     || snapshot.embedded_visible != status.page_visible
                     || snapshot.codex_update_ready != status.codex_update_ready
                     || snapshot.codex_update_available != status.codex_update_available
@@ -2104,6 +2112,7 @@ fn send_injector_control_request(
     if response.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
         let result = response.get("result");
         let status = RendererStatus {
+            thread_tabs_ready: result.and_then(|value| value.get("threadTabsReady")).and_then(serde_json::Value::as_bool).unwrap_or(false),
             ready: result
                 .and_then(|value| value.get("ready"))
                 .and_then(serde_json::Value::as_bool)
@@ -4865,7 +4874,7 @@ mod tests {
         assert_eq!(snapshot.open_signal_pid, Some(42));
         assert!(!snapshot.embedded_visible);
         let heartbeat = serde_json::from_str::<super::LauncherEvent>(
-            r#"{"launcherEvent":"managedStatus","panelManagedStatus":{"ready":true,"pageVisible":true}}"#,
+            r#"{"launcherEvent":"managedStatus","panelManagedStatus":{"ready":true,"pageVisible":true,"threadTabsReady":true}}"#,
         ).unwrap();
         let super::LauncherEvent::ManagedStatus { status } = heartbeat else {
             panic!("expected connection status");
@@ -4875,6 +4884,8 @@ mod tests {
             assert_eq!(snapshot.codex_update_message, "当前已是最新版");
             assert_eq!(snapshot.codex_update_versions.len(), 1);
             assert!(snapshot.embedded_visible);
+            assert_eq!(snapshot.thread_tabs_phase, "ready");
+            assert_eq!(snapshot.thread_tabs_message, "标签页和分栏菜单已加载");
         }
         let connection_message = snapshot.message.clone();
         let progress = serde_json::from_str::<super::LauncherEvent>(
@@ -4926,6 +4937,7 @@ mod tests {
             42,
             RendererStatus {
                 ready: true,
+                thread_tabs_ready: true,
                 applying_native_adapters: false,
                 page_visible: true,
                 codex_update_native_ready: false,

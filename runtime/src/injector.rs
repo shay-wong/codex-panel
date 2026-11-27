@@ -975,7 +975,7 @@ async fn managed_status(
         }
         if let Ok(status) = bridge::status(&target.connection).await {
             if bridge::ready(&status, hash, startup) {
-                return Ok(json!({"ready":true,"pageVisible":status["pageVisible"]==true,"status":status,"targetId":id,"applyingNativeAdapters":applying}));
+                return Ok(json!({"ready":true,"pageVisible":status["pageVisible"]==true,"threadTabsReady":status["threadTabsReady"]==true,"status":status,"targetId":id,"applyingNativeAdapters":applying}));
             }
         }
     }
@@ -1833,7 +1833,7 @@ mod tests {
                 let request: Value = serde_json::from_slice(&bytes).unwrap();
                 let expression = request["params"]["expression"].as_str().unwrap();
                 let value = if expression.contains("window.__codexPanelInjection__") {
-                    json!({"sourceHash":"fixture","startupToken":null,"entryMounted":true,"pageVisible":true,"heartbeatAt":chrono::Utc::now().timestamp_millis()})
+                    json!({"sourceHash":"fixture","startupToken":null,"entryMounted":true,"pageVisible":true,"threadTabsReady":true,"heartbeatAt":chrono::Utc::now().timestamp_millis()})
                 } else { json!({"needsNativeUpdateBinding":true}) };
                 writer.write_all(format!("{}\0", json!({"id":request["id"],"result":{"result":{"value":value}}})).as_bytes()).await.unwrap();
             }
@@ -1852,6 +1852,7 @@ mod tests {
             let status = control_action(&json!({"action":"status"}), &targets, "fixture", None, &updates, &checks).await.unwrap();
             assert_eq!(status["ready"], true);
             assert_eq!(status["pageVisible"], true);
+            assert_eq!(status["threadTabsReady"], true);
             assert_eq!(status["status"]["pageVisible"], true);
             assert_eq!(status["codexUpdateVersions"], json!([]));
         }
