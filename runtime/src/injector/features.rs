@@ -1251,6 +1251,20 @@ pub fn ultrafast(
     module: &str,
     context: &Context,
 ) -> Result<Option<String>, ApiError> {
+    if source.contains("serviceTier.ultrafast.description") {
+        let ast = context.ast(module)?;
+        let mut changes = Vec::new();
+        for object in ast.all(ast.root, |node| ast.kind(node) == "ObjectExpression") {
+            if ast.property_value(object, "id").is_some_and(|id| ast.field(id, "value") == "serviceTier.ultrafast.description") {
+                if let Some(message) = ast.property_value(object, "defaultMessage") {
+                    // 只补中文缺失的翻译，其余语言继续使用原生消息目录。
+                    changes.push(Edit { start: ast.start(message), end: ast.end(message),
+                        text: format!("(/^zh(?:-|$)/i.test(globalThis.document?.documentElement?.lang??'')?'以最快速度响应对延迟敏感的任务':{})", ast.text(message)) });
+                }
+            }
+        }
+        if !changes.is_empty() { return Ok(Some(edits(source, changes)?)); }
+    }
     if !source.contains("serviceTierSettings")
         || source.contains("panelSpeedEnabled")
         || source.contains("panelServiceTierAccess")
@@ -1510,6 +1524,17 @@ mod tests {
             json!(rewritten)
         ));
     }
+    #[test]
+    fn ultrafast_description_uses_chinese_only_for_chinese_ui() {
+        let source = "function(m){m.exports={id:'serviceTier.ultrafast.description',defaultMessage:'The fastest available responses for latency-sensitive work'}}";
+        let catalog = catalog(vec![("description", source.into())]);
+        let context = Context::new(&catalog);
+        let rewritten = ultrafast(source, "description", &context).unwrap().unwrap();
+        let script = format!(r#"const assert=require('node:assert/strict'),vm=require('node:vm');for(const [lang,expected] of [['zh-CN','以最快速度响应对延迟敏感的任务'],['zh-TW','以最快速度响应对延迟敏感的任务'],['en-US','The fastest available responses for latency-sensitive work']]){{const m={{}};vm.runInNewContext('('+{}+')',{{document:{{documentElement:{{lang}}}}}})(m);assert.equal(m.exports.defaultMessage,expected);}}"#, json!(rewritten));
+        let result = std::process::Command::new("node").args(["-e", &script]).output().unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    }
+
     #[test]
     fn ultrafast_keeps_provider_and_model_scope() {
         let file = include_str!("../../../test/codex-rspack-capabilities.test.mjs");

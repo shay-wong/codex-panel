@@ -140,21 +140,12 @@ impl CatalogAdapter {
             }
             active = false;
         }
-        let official_active = active && provider == "openai";
+        // 文件目录复用已存在的可恢复副本流程，不覆盖用户原始 JSON。
+        let official_active = active && (provider == "openai" || config["model_catalog_json"].is_string());
         active = active && !official_active;
         let official = self.inner.lock().await.state["official"].clone();
         let owns_official =
             official["path"].is_string() && config["model_catalog_json"] == official["path"];
-        if active
-            && !config["model_catalog_json"].is_null()
-            && !(owns_official && official["restoreValue"].is_null())
-        {
-            return Err(ApiError::new(
-                409,
-                "MODEL_CONFIGURATION",
-                "Ultrafast requires service_tiers in your existing model_catalog_json",
-            ));
-        }
         if active {
             let origin = &response["origins"]
                 [format!("model_providers.{provider}.model_catalog_url")]["name"];
@@ -530,10 +521,11 @@ mod tests {
 
     #[tokio::test]
     async fn official_catalog_preserves_auth_metadata_and_restores_owned_global_setting() {
-        for (auth, explicit_provider, external) in [
-            ("chatgpt", false, false),
-            ("apiKey", true, false),
-            ("chatgpt", true, true),
+        for (auth, explicit_provider, external, custom) in [
+            ("chatgpt", false, false, false),
+            ("apiKey", true, false, false),
+            ("chatgpt", true, true, false),
+            ("apiKey", true, true, true),
         ] {
             let directory = tempfile::tempdir().unwrap();
             let root = directory.path();
@@ -558,7 +550,8 @@ mod tests {
             let mut config =
                 json!({"auth_mode":auth,"cli_auth_credentials_store":"keyring","unrelated":"keep"});
             if explicit_provider {
-                config["model_provider"] = json!("openai");
+                config["model_provider"] = json!(if custom { "custom" } else { "openai" });
+                if custom { config["model_providers"] = json!({"custom":{"base_url":"https://fixture.invalid/v1"}}); }
             }
             if external {
                 config["model_catalog_json"] = json!(original);
@@ -580,7 +573,7 @@ mod tests {
             assert_ne!(generated, original);
             assert_eq!(active["config"]["auth_mode"], auth);
             assert_eq!(active["config"]["model_provider"], config["model_provider"]);
-            assert!(active["config"].get("model_providers").is_none());
+            assert_eq!(active["config"]["model_providers"], config["model_providers"]);
             let output = read(&generated, Value::Null).await.unwrap();
             assert_eq!(output["source"], source["source"]);
             assert_eq!(

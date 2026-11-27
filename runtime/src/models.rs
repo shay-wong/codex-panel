@@ -747,8 +747,7 @@ async fn context_settings_inner(
     let adapter = read_json(&data.join("ultrafast-catalog.json"), Value::Null).await?;
     let saved = &adapter["providers"][provider];
     let official_state = &adapter["official"];
-    let owns_official = provider == "openai"
-        && official_state["path"].is_string()
+    let owns_official = official_state["path"].is_string()
         && config["model_catalog_json"] == official_state["path"];
     let source_url = if !saved.is_null() && saved["url"].as_str() == provider_url {
         saved["originalUrl"].as_str()

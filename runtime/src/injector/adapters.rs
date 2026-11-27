@@ -789,7 +789,7 @@ const IMPLEMENTED_FEATURES: [&str; 10] = [
 fn candidate(feature: &str, source: &str) -> bool {
     match feature {
         "quota" => source.contains("data-codex-composer-root"),
-        "ultrafast" => source.contains("serviceTierSettings"),
+        "ultrafast" => source.contains("serviceTierSettings") || source.contains("serviceTier.ultrafast.description"),
         "dot" => source.contains("isCapable"),
         "tabs" => ["paneItems", "dataAttributes", "navigationState"]
             .iter()
@@ -1369,6 +1369,14 @@ mod tests {
         let script = format!("const before={{}};before.window=before;before.top=before;require('node:vm').runInNewContext({},before);require('node:assert/strict').equal(before.result,'blocked');globalThis.window=globalThis;globalThis.top=globalThis;{initialized}\nrequire('node:assert/strict').equal(result,'sendable');require('node:assert/strict').equal(__codexPanelProviderQuotaV1__.applied,true);", json!(rewritten));
         let output = std::process::Command::new("node").args(["-e", &script]).output().unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    #[test]
+    fn status_prefers_current_rspack_preparation_over_legacy_flags() {
+        let source = include_str!("assets/injection_status_0.js");
+        let script = format!(r#"const assert=require('node:assert/strict'),vm=require('node:vm');const state={{document:{{getElementById:()=>null}},__codexPanelRspack__:{{prepared:{{quota:true,dot:true,ultrafast:true}}}}}};state.window=state;const read=()=>vm.runInNewContext({},state);let value=read();for(const key of ['quotaBootstrapPrepared','providerModulesPrepared','dotBootstrapPrepared','ultrafastBootstrapPrepared'])assert.equal(value[key],true);state.__codexPanelRspack__.prepared.quota=false;state.__codexPanelQuotaBootstrapPrepared__=true;assert.equal(read().quotaBootstrapPrepared,false);delete state.__codexPanelRspack__;assert.equal(read().quotaBootstrapPrepared,true);"#, json!(source));
+        let result = std::process::Command::new("node").args(["-e", &script]).output().unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     }
 
     fn fixture_archive(directory: &Path) -> PathBuf {
