@@ -14,9 +14,15 @@ The built-in ID is `panel-lumi`. Selection uses Codex’s native local setting, 
 
 Lumi’s hover dance uses a continuous excerpt of Phao’s **2 Phút Hơn (KAIZ Remix)**, from 3.1896–21.0021 seconds of the supplied official preview. The music plays throughout the 2.813-second preparation. At the original 128 BPM, fourteen dance loops cover 28 beats and a closing gesture follows the remaining four beats, completing the 32-beat music phrase. Music fades over the final beat and ends at 17.8125 seconds; the complete action lasts 18.75 seconds including the final resting pose. Frames follow the audio playback position so rendering delays do not accumulate into beat drift. When muted, animation continues on an elapsed-time clock. Pointer leave or another state change stops playback. The audio is bundled locally; playback needs no network.
 
+## Install a community pet
+
+Open **宠物 → 在线宠物**, choose **Petdex** or **Codex Pets Gallery** under **下载平台**, and browse the cards. Enter a name and click **搜索**, or use the page controls. Click **一键安装** to save a pet to **我的宠物**, where you can use it once Codex is connected. The installed card shows **已安装** in the online catalog.
+
+Panel downloads the community manifest and sprite sheet, then saves the pet in its local animation registry. Supported Codex sheets contain nine states in v1 or nine states and sixteen look directions in v2. Browse and install require network access. Installed resources are stored locally.
+
 ## Import a custom pack
 
-In Codex Panel, open **宠物 → 导入宠物包** and select a JSON manifest. Place its PNG or static WebP sprite sheet and any optional audio beside it. Panel copies the resources into its data directory, so moving the original files afterward does not break the import. Each imported card uses its own sprite sheet and first idle frame for its preview, shows its source and pet ID, and displays **正在使用** when that pet is selected or **已导入** otherwise.
+In Codex Panel, open **宠物 → 我的宠物 → 导入宠物包** and select a JSON manifest. Place its PNG or static WebP sprite sheet and any optional audio beside it. Panel copies the resources into its data directory, so moving the original files afterward does not break the import. Each imported card uses its own sprite sheet and first idle frame for its preview, shows its source and pet ID, and displays **正在使用** when that pet is selected or **已导入** otherwise.
 
 A new `petId`, such as `panel-fox`, adds a local pet. Click **使用 {name}** on its card to select it; **取消使用** restores the default Codex pet. Importing alone leaves your current selection unchanged. Reimporting the same ID replaces that pet’s resources. **移除宠物** first cancels it if selected, then removes its managed resources. IDs starting with `pet_` or `custom:` refer to existing native pets: these packs replace their animations and remain selectable through Codex’s native picker. Choose **移除动画** on those cards to restore native playback. For built-in Lumi use `panel-lumi`. A different custom animation imported for `panel-lumi` is managed in the Lumi card: **恢复内置动画** removes that custom override and restores the bundled sequence. This action appears only for a custom animation that differs from the bundled resource. Source files and Codex application files are left intact.
 
@@ -82,6 +88,6 @@ The current native adapter was checked against Codex **26.1106.51428 / build 266
 
 ## 中文说明
 
-在 **宠物 → 导入宠物包** 选择 JSON 清单，将图集及可选音乐放在同一目录。使用新的 `petId`（例如 `panel-fox`）即可新增本地宠物，导入后点击卡片的“使用”；“取消使用”恢复默认 Codex。导入本身不自动切换宠物，同 ID 再次导入会替换资源；移除正在使用的本地宠物会先取消选择。新宠物缺少动作或方向时使用自身待机动画。`pet_`、`custom:` 开头的 ID 对应已有原生宠物，仅替换其动画，从 Codex 原生选择器选用，移除动画后恢复原样。本地新增项和音乐不会上传到官方账号。
+在 **宠物 → 我的宠物 → 导入宠物包** 选择 JSON 清单，将图集及可选音乐放在同一目录。使用新的 `petId`（例如 `panel-fox`）即可新增本地宠物，导入后点击卡片的“使用”；“取消使用”恢复默认 Codex。导入本身不自动切换宠物，同 ID 再次导入会替换资源；移除正在使用的本地宠物会先取消选择。新宠物缺少动作或方向时使用自身待机动画。`pet_`、`custom:` 开头的 ID 对应已有原生宠物，仅替换其动画，从 Codex 原生选择器选用，移除动画后恢复原样。本地新增项和音乐不会上传到官方账号。
 
 动作可配置 `audio`，填写同目录 M4A、MP3、WAV 或 Ogg 文件名，每个文件不超过 16 MiB。音乐随动作开始，动作结束、鼠标移开或切换宠物时停止。宠物页的“播放宠物声音”默认开启，关闭后立即静音且动画继续。内置 Lumi 使用用户指定的《2 Phút Hơn（KAIZ Remix）》官方试听文件 3.1896～21.0021 秒的连续片段：前奏期间用 2.813 秒完成举臂、比心、落臂准备，再以原有 128 BPM 的 28 拍配合 14 轮舞步，跟随最后四拍完成收势，放完完整 32 拍乐句。音乐在末拍渐出，第 17.8125 秒结束，含归位停留的完整动作 18.75 秒。画面按音频播放位置推进，避免渲染延迟逐帧积累；静音时按经过时间继续动作。资源随包保存，播放无需联网。

@@ -1,3 +1,5 @@
+mod community;
+
 use crate::ApiError;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Map, Value};
@@ -512,12 +514,22 @@ pub async fn remove(data: &Path, root: &Path, id: &str) -> Result<Value, ApiErro
 }
 pub async fn import(data: &Path, root: &Path, path: &Path) -> Result<Value, ApiError> {
     let path = std::path::absolute(path)?;
-    let mut manifest = validate_manifest(&serde_json::from_slice(
+    let manifest = validate_manifest(&serde_json::from_slice(
         &limited(&path, 1024 * 1024).await?,
     )?)?;
     let source = path.parent().ok_or_else(|| invalid("清单路径无效"))?;
     let image = image(source, &manifest).await?;
     let audio = audio(source, &manifest).await?;
+    save(data, root, manifest, image, audio).await
+}
+
+async fn save(
+    data: &Path,
+    root: &Path,
+    mut manifest: Value,
+    image: Vec<u8>,
+    audio: Audio,
+) -> Result<Value, ApiError> {
     let builtin = builtin(root).await?;
     if manifest["petId"] == builtin.manifest["petId"]
         && matches(&manifest, &image, &audio, &builtin)
@@ -594,7 +606,19 @@ pub async fn run(args: &[String]) -> Result<Value, ApiError> {
                 .to_owned()
         });
     let value = args.get(2).map(String::as_str);
+    let argument = |index: usize| {
+        args.get(index)
+            .map(String::as_str)
+            .ok_or_else(|| invalid("缺少社区目录参数"))
+    };
     match operation {
+        "list-community" => {
+            let page = argument(4)?
+                .parse::<usize>()
+                .map_err(|_| invalid("社区目录页码无效"))?;
+            community::list(argument(2)?, argument(3)?, page).await
+        }
+        "install-community" => community::install(&data, &root, argument(2)?, argument(3)?).await,
         "list" => list(&data, &root).await,
         "import" => {
             import(

@@ -92,6 +92,29 @@ button, input { font: inherit; }
 .pet-preview { max-width: 100%; background-repeat: no-repeat; flex-shrink: 0; }
 .pet-card-copy { min-height: 58px; overflow-wrap: anywhere; }
 .pet-card-action { align-self: flex-start; margin-top: auto; }
+.pet-catalog-source {
+  min-height: calc(32px * var(--scaling));
+  padding-inline: var(--space-2);
+  color: var(--gray-12);
+  background: var(--color-surface);
+  border: 1px solid var(--gray-7);
+  border-radius: var(--radius-2);
+  font: inherit;
+  font-size: var(--font-size-2);
+}
+.pet-catalog-search { flex: 1 1 220px; }
+.pet-catalog-search-field { min-width: 0; flex: 1; }
+.pet-catalog-grid .pet-card { padding: 14px; gap: 10px; }
+.pet-catalog-grid .pet-preview-stage { height: 156px; }
+.pet-catalog-grid .rt-Heading { overflow-wrap: anywhere; }
+.pet-catalog-thumbnail { width: 132px; height: 140px; max-width: 100%; object-fit: contain; }
+.pet-catalog-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
 .runtime-details { margin-top: 22px; padding-top: 12px; border-top: 1px solid var(--gray-5); color: var(--gray-11); }
 .runtime-details summary { width: fit-content; cursor: pointer; font-size: 12px; }
 .runtime-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; margin-top: 14px; }

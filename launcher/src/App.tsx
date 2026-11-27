@@ -369,7 +369,7 @@ export function App() {
       </aside>
     <main key={workflowUrl ? "workflow" : view} className={`launcher-main${workflowUrl ? " workflow-page" : ""}`} style={modelContextOpen || usageSettingsOpen ? { overflowY: "hidden" } : undefined}>
       {!workflowUrl && <header className={`page-heading${view === "preferences" ? " preference-heading" : ""}`}>
-        <Box><Heading as="h2" size="5">{view === "overview" ? "运行概览" : view === "preferences" ? "偏好设置" : view === "pets" ? "宠物" : "关于"}</Heading><Text as="p" size="1" color="gray" mt="1">{view === "overview" ? "管理本机服务与 Codex 连接" : view === "preferences" ? "管理 Codex Panel 的连接与使用偏好" : view === "pets" ? "选择内置伙伴，导入新宠物与动画音乐" : "应用信息与版本更新"}</Text></Box>
+        <Box><Heading as="h2" size="5">{view === "overview" ? "运行概览" : view === "preferences" ? "偏好设置" : view === "pets" ? "宠物" : "关于"}</Heading><Text as="p" size="1" color="gray" mt="1">{view === "overview" ? "管理本机服务与 Codex 连接" : view === "preferences" ? "管理 Codex Panel 的连接与使用偏好" : view === "pets" ? "管理本地宠物，浏览并安装社区宠物" : "应用信息与版本更新"}</Text></Box>
         <Flex className="page-heading-actions" align="center" gap="2">
           {iconAction("refresh", "launcher_ui_state", "刷新状态", <span className="refresh-icon" aria-hidden="true">↻</span>)}
           {iconAction("browserPanel", "open_browser_panel", "在浏览器中打开", <LinearIcon name="openExternal" />, !hasProcess)}

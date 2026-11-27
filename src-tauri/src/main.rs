@@ -558,6 +558,7 @@ struct LauncherState {
     github_update_generation: Mutex<u64>,
     generation: AtomicU64,
     lifecycle: Mutex<()>,
+    pet_animation_registry: Mutex<()>,
     preferences: Mutex<LauncherPreferences>,
     preferences_path: PathBuf,
     restart_reminder_guard: Mutex<()>,
@@ -628,6 +629,7 @@ impl LauncherState {
             github_update_generation: Mutex::new(0),
             generation: AtomicU64::new(0),
             lifecycle: Mutex::new(()),
+            pet_animation_registry: Mutex::new(()),
             preferences: Mutex::new(preferences),
             preferences_path,
             restart_reminder_guard: Mutex::new(()),
@@ -3387,32 +3389,57 @@ struct PetAnimationPreview {
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct CommunityPet {
+    id: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thumbnail_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<PetAnimationPreview>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CommunityPetPage {
+    pets: Vec<CommunityPet>,
+    total: u32,
+    total_pages: u32,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PetSelection {
     pet_id: Option<String>,
 }
 
 async fn run_pet_animation_command<T: serde::de::DeserializeOwned + Send + 'static>(
     app: AppHandle,
-    data_directory: PathBuf,
+    state: State<'_, Arc<LauncherState>>,
     operation: &'static str,
-    argument: Option<std::ffi::OsString>,
+    arguments: Vec<OsString>,
 ) -> Result<T, String> {
+    let state = Arc::clone(state.inner());
     tauri::async_runtime::spawn_blocking(move || {
         let resources = app.path().resource_dir().map_err(|error| error.to_string())?;
         let resources = dunce::simplified(&resources);
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-        let node = executable.parent().ok_or("无法定位 App 可执行文件目录")?
+        let runtime = executable.parent().ok_or("无法定位 App 可执行文件目录")?
             .join(if cfg!(target_os = "windows") { "codex-panel-runtime.exe" } else { "codex-panel-runtime" });
-        verify_launcher_runtime(resources, &node)?;
-        let mut command = StdCommand::new(node);
+        verify_launcher_runtime(resources, &runtime)?;
+        let mut command = StdCommand::new(runtime);
         #[cfg(target_os = "windows")]
         command.creation_flags(CREATE_NO_WINDOW.0);
         command.arg("pet-animations").env("CODEX_PANEL_APP_ROOT", resources.join("app"))
-            .arg(operation).arg(data_directory)
+            .arg(operation).arg(&state.data_directory).args(arguments)
             .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        if let Some(argument) = argument {
-            command.arg(argument);
-        }
+        // 导入和移除使用同一份本地清单，读取也需避开旧资源清理。
+        let _registry = if matches!(operation, "list" | "import" | "remove" | "install-community") {
+            Some(state.pet_animation_registry.lock().map_err(|_| "无法锁定宠物清单")?)
+        } else {
+            None
+        };
         let output = command.output().map_err(|error| error.to_string())?;
         if !output.status.success() {
             return Err(format!("宠物动画操作失败：{}", String::from_utf8_lossy(&output.stderr).trim()));
@@ -3426,7 +3453,30 @@ async fn list_pet_animations(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
 ) -> Result<Vec<PetAnimationSummary>, String> {
-    run_pet_animation_command(app, state.data_directory.clone(), "list", None).await
+    run_pet_animation_command(app, state, "list", vec![]).await
+}
+
+#[tauri::command]
+async fn list_community_pets(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+    source: String,
+    query: String,
+    page: u32,
+) -> Result<CommunityPetPage, String> {
+    run_pet_animation_command(
+        app, state, "list-community", vec![source.into(), query.into(), page.to_string().into()],
+    ).await
+}
+
+#[tauri::command]
+async fn install_community_pet(
+    app: AppHandle,
+    state: State<'_, Arc<LauncherState>>,
+    source: String,
+    pet_id: String,
+) -> Result<Vec<PetAnimationSummary>, String> {
+    run_pet_animation_command(app, state, "install-community", vec![source.into(), pet_id.into()]).await
 }
 
 #[tauri::command]
@@ -3434,7 +3484,7 @@ async fn read_pet_selection(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
 ) -> Result<PetSelection, String> {
-    run_pet_animation_command(app, state.data_directory.clone(), "pet-selection", None).await
+    run_pet_animation_command(app, state, "pet-selection", vec![]).await
 }
 
 #[tauri::command]
@@ -3442,7 +3492,7 @@ async fn use_builtin_lumi(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
 ) -> Result<PetSelection, String> {
-    run_pet_animation_command(app, state.data_directory.clone(), "use-lumi", None).await
+    run_pet_animation_command(app, state, "use-lumi", vec![]).await
 }
 
 #[tauri::command]
@@ -3450,7 +3500,7 @@ async fn cancel_builtin_lumi(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
 ) -> Result<PetSelection, String> {
-    run_pet_animation_command(app, state.data_directory.clone(), "cancel-lumi", None).await
+    run_pet_animation_command(app, state, "cancel-lumi", vec![]).await
 }
 
 #[tauri::command]
@@ -3459,7 +3509,7 @@ async fn use_imported_pet(
     state: State<'_, Arc<LauncherState>>,
     pet_id: String,
 ) -> Result<PetSelection, String> {
-    run_pet_animation_command(app, state.data_directory.clone(), "use-pet", Some(pet_id.into())).await
+    run_pet_animation_command(app, state, "use-pet", vec![pet_id.into()]).await
 }
 
 #[tauri::command]
@@ -3468,7 +3518,7 @@ async fn cancel_imported_pet(
     state: State<'_, Arc<LauncherState>>,
     pet_id: String,
 ) -> Result<PetSelection, String> {
-    run_pet_animation_command(app, state.data_directory.clone(), "cancel-pet", Some(pet_id.into())).await
+    run_pet_animation_command(app, state, "cancel-pet", vec![pet_id.into()]).await
 }
 
 #[tauri::command]
@@ -3483,7 +3533,7 @@ async fn import_pet_animation(
         .await.map_err(|error| error.to_string())?;
     let Some(selected) = selected else { return Ok(None) };
     let path = selected.into_path().map_err(|error| error.to_string())?;
-    run_pet_animation_command(app, state.data_directory.clone(), "import", Some(path.into_os_string()))
+    run_pet_animation_command(app, state, "import", vec![path.into_os_string()])
         .await.map(Some)
 }
 
@@ -3493,7 +3543,7 @@ async fn remove_pet_animation(
     state: State<'_, Arc<LauncherState>>,
     pet_id: String,
 ) -> Result<Vec<PetAnimationSummary>, String> {
-    run_pet_animation_command(app, state.data_directory.clone(), "remove", Some(pet_id.into())).await
+    run_pet_animation_command(app, state, "remove", vec![pet_id.into()]).await
 }
 
 #[tauri::command]
@@ -4120,6 +4170,8 @@ fn main() {
             reveal_data,
             read_model_discovery,
             list_pet_animations,
+            list_community_pets,
+            install_community_pet,
             read_pet_selection,
             use_builtin_lumi,
             cancel_builtin_lumi,
