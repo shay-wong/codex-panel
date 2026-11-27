@@ -76,9 +76,13 @@ test("native preparation packages only assets and hashes the built sidecar", { s
   const codesign = path.join(root, "fixture-bin/codesign");
   await writeFile(codesign, '#!/bin/sh\nprintf "%s\\n" "$@" > "$PWD/signing-arguments"\n');
   await chmod(codesign, 0o755);
+  const lipo = path.join(root, "fixture-bin/lipo");
+  await writeFile(lipo, `#!${process.execPath}\nconst fs=require('node:fs'),args=process.argv.slice(2);fs.copyFileSync(args[1],args[args.indexOf('-output')+1]);\n`);
+  await chmod(lipo, 0o755);
   await writeFile(path.join(root, "scripts/prepare-rust-app.mjs"),
     (await readFile(new URL("../scripts/prepare-rust-app.mjs", import.meta.url), "utf8"))
-      .replace('"/usr/bin/codesign"', JSON.stringify(codesign)));
+      .replace('"/usr/bin/codesign"', JSON.stringify(codesign))
+      .replace('"/usr/bin/lipo"', JSON.stringify(lipo)));
   await writeFile(path.join(root, "fixture-tool"), "fixture tool");
   await writeFile(path.join(root, "fixture-license"), "fixture license");
   await writeFile(path.join(root, "scripts/prepare-codex-delta.mjs"),
@@ -92,13 +96,19 @@ const target=args[args.indexOf('--target')+1],directory=path.join(process.cwd(),
 fs.mkdirSync(directory,{recursive:true});fs.writeFileSync(path.join(directory,'codex-panel-runtime'),'native fixture');
 `);
   await chmod(cargo, 0o755);
-  const result = spawnSync(process.execPath, ["scripts/prepare-rust-app.mjs"], {
+  const targets = process.platform === "darwin" ? ["--target", "universal-apple-darwin"] : [];
+  const result = spawnSync(process.execPath, ["scripts/prepare-rust-app.mjs", ...targets], {
     cwd: root, encoding: "utf8", env: { ...process.env, CODEX_PANEL_CODESIGN_IDENTITY: "-", APPLE_SIGNING_IDENTITY: "", GITHUB_ACTIONS: "",
       CARGO_TARGET_DIR: "", PATH: `${path.dirname(cargo)}${path.delimiter}${process.env.PATH}` },
   });
   assert.equal(result.status, 0, result.stderr);
   if (process.platform === "darwin") {
     assert.match(await readFile(path.join(root, "signing-arguments"), "utf8"), /--sign\n-\n/);
+    const binaries = path.join(root, "src-tauri/binaries");
+    const universal = await readFile(path.join(binaries, "codex-panel-runtime-universal-apple-darwin"));
+    for (const triple of ["aarch64-apple-darwin", "x86_64-apple-darwin"]) {
+      assert.deepEqual(await readFile(path.join(binaries, `codex-panel-runtime-${triple}`)), universal);
+    }
   }
   const resources = path.join(root, "src-tauri/resources");
   assert.deepEqual((await readdir(path.join(resources, "app"))).sort(),

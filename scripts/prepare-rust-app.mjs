@@ -47,6 +47,10 @@ const signingIdentity = process.env.CODEX_PANEL_CODESIGN_IDENTITY?.trim()
 if (process.platform === "darwin") {
   run("/usr/bin/codesign", ["--force", "--options", "runtime", "--sign", signingIdentity, output]);
 }
+// Tauri 分别编译双架构时按各自后缀找 sidecar，仍须使用同一份已签名通用文件。
+if (triples.length === 2) {
+  for (const triple of triples) await copyFile(output, path.join(binaries, `codex-panel-runtime-${triple}`));
+}
 
 // 资源目录重新生成，避免上一次 Node 构建的运行时或依赖残留在原生包内。
 await rm(resources, { recursive: true, force: true });

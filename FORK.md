@@ -141,6 +141,7 @@ Free 侧边栏兼容（等待上游吸收）：没有插件、宠物及 destinat
 - 默认路径为 Tauri → `codex-panel-runtime inject`，服务、SQLite、CDP 注入、模型配置、宠物、更新、共享会话与自动化均由 Rust 执行。前端及 Codex 渲染器脚本保留 JavaScript；构建工具和旧实现差分测试仍可使用 Node。交接 Skill 的发布器改为 `panelctl handoff publish`，原临时文档逐字入评论、失败保留文档、禁止向归档议题发布的不变量不变。
 - 代码：`runtime/`、`src-tauri/src/main.rs`、默认 Tauri 配置、`scripts/prepare-rust-app.mjs`、安装/预检/包内 CLI 验收脚本和 `skills/handoff-panel/`。数据目录与数据库沿用原规则，测试只访问临时目录及模拟服务，不执行生产数据迁移。
 - 本地签名沿用 Fork 规则：安装器优先显式 `CODEX_PANEL_CODESIGN_IDENTITY`（允许 `-`）、其次 `APPLE_SIGNING_IDENTITY`、再复用匹配证书，无可用证书时使用 ad-hoc。资源准备和 `app:sign` 均接受 `-`，未指定身份时也使用 ad-hoc；构建与最终签名使用同一身份，原生 runtime 先签名再计算完整性清单，最终只签 launcher 与 App，不重新改写 runtime。发布签名与更新验签策略不变。
+- macOS 通用版准备完成后，将已签名的通用 runtime 同步到 ARM 与 Intel 的架构后缀入口，供 Tauri 分别编译时查找；三个入口内容一致，最终仍只打包一份通用 runtime，完整性清单继续使用该文件摘要。验证：`test/native-runtime-package.test.mjs`；来源定位 `git log -S'if (triples.length === 2)' -- scripts/prepare-rust-app.mjs`。
 - 验证：`cargo test --manifest-path runtime/Cargo.toml -- --test-threads=1`；数据库旧/新实现差分；模拟 Codex app-server/CDP；`node scripts/verify-packaged-taskctl.mjs <App.app>`。构建、签名、跨平台与真实 Codex 交互是不同验收项目，未执行的项目不得以静态测试代替。开发说明见 `runtime/README.md`；用户运行时说明同步中英文 README 和 `docs/fork-capabilities.md`。
 - 私有嵌入页加载：每次安装 CDP 桥接先恢复 `Page.setBypassCSP`，再注入页面，避免继承 Codex CSP 后阻止 JS/CSS、页面握手超时；原生导航暂未挂载时在同一连接内限时重试。偏好文件首次尚未创建时，共享会话使用启动器默认开关。zzy 的真实失败现场已确认仅启用 CSP 放行并重载 Panel 后恢复 `frameReady`，JS/CSS 与任务、项目接口均成功；不据此认定其他原生适配均已验收。针对性验证为 `runtime/tests/injector_smoke.rs` 和 `shared_session` 测试。
 - 来源：`codex/rust-runtime-migration`。合并时保持资源清单、原生 CLI 包装器、启动入口和全部平台打包入口一致；若上游提供等价原生运行时，再评估移除本差异。
