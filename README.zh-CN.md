@@ -247,7 +247,7 @@ Panel 每次启动时检查 Fork 的 GitHub Releases；有效的成功结果缓�
 
 发现新版本后，**关于 → 版本更新** 会显示该版本的说明，支持 Markdown 标题、列表、行内格式和长内容滚动。没有说明时显示“该版本暂无版本说明。”；“查看发布说明”仍可打开 GitHub 发行版。下载并通过签名验证后，安装确认框只显示目标版本、确认提示和“稍后 / 安装并重启”按钮，不再重复展示版本日志。
 
-App bundle 内包含原生 Rust Panel runtime、`panelctl`、两个 Panel Skills 和构建后的网页界面，不再打包 Node.js 或主机侧 JavaScript 依赖。网页界面与 Codex 渲染器中的注入逻辑继续使用 JavaScript。macOS 安装器依次使用 `CODEX_PANEL_CODESIGN_IDENTITY`（允许 `-` 表示 ad-hoc）、`APPLE_SIGNING_IDENTITY`、可复用的匹配本机证书；都不可用时使用 ad-hoc 签名。Windows 的 Authenticode 签名可选：配置证书与 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` 时签名，全部留空时生成未签名的 NSIS 安装包；两种模式都保留 Tauri 更新包签名。macOS 与 Windows 并行打包，等待两边结束后统一发布成功平台的产物。
+App bundle 内包含原生 Rust Panel runtime、`panelctl`、两个 Panel Skills 和构建后的网页界面，不再打包 Node.js 或主机侧 JavaScript 依赖。网页界面与 Codex 渲染器中的注入逻辑继续使用 JavaScript。macOS 安装器依次使用 `CODEX_PANEL_CODESIGN_IDENTITY`（允许 `-` 表示 ad-hoc）、`APPLE_SIGNING_IDENTITY`、可复用的匹配本机证书；都不可用时使用 ad-hoc 签名。Windows 的 Authenticode 签名可选：配置证书与 `CODEX_PANEL_WINDOWS_CERTIFICATE_THUMBPRINT` 时签名，全部留空时生成未签名的 NSIS 安装包；两种模式都保留 Tauri 更新包签名。macOS 与 Windows 并行打包，两边均成功且六项发布资产通过校验后才发布。
 
 连接前，应用会先校验自身 App 签名和打包 runtime，再按 OpenAI 的 Identifier 和 Team ID 校验官方 `ChatGPT.app` 及其内置 Codex 可执行文件，拒绝符号链接，并从子进程环境中移除 Node、shell 和动态加载器注入变量。Windows 始终在执行前校验编译进 launcher、覆盖原生运行时和全部 Panel 资源文件的 SHA-256 清单；配置了 Authenticode 证书的构建还会校验 launcher 的签名者。Panel 服务通过启动器持有的监听器和私有实例 token 仅绑定回环地址。如果正在运行的 Codex 已暴露有效 CDP，包括旧 Swift 启动器留下的端口，新 injector 会接管真实端口；否则通过 macOS LaunchServices 使用随机私有 CDP 端口启动官方应用。已经在无 CDP 模式下运行的 Codex 仍需完全退出后才能重新以 CDP 启动。运行状态、打开和停止请求在 macOS 使用受启动 token 保护且仅当前用户可访问的 Unix socket，在 Windows 使用启动器持有的子进程控制管道；Windows 上的 Panel 生命周期操作通过受启动 token 认证的 named pipe 中断 native Codex turn。停止或退出 Tauri 只会等待自己负责的 injector 和 Panel 服务退出，官方 ChatGPT/Codex 应用继续运行。应用不会修改 `ChatGPT.app` 或 `app.asar`。
 

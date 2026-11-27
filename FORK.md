@@ -415,7 +415,7 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 
 ### Fork 签名的应用内更新
 
-并行打包与可选 Windows 签名（本次变更，沿用本节生命周期）：`.github/workflows/release-macos.yml` 使用互不依赖的 `build-macos` 和 `build-windows`；`release` 在两者结束后以 `always()` 执行，按实际成功产物生成清单、发布文件及通知。全失败不创建空版本。`scripts/merge-windows-updater.mjs` 允许无 macOS 产物时创建 Windows 清单；Windows 缺 Authenticode 证书可构建并启动，显式 unsigned 入口忽略残留证书配置；配置存在时继续严格验证，Tauri 更新签名和 runtime 完整性校验不降级。验证：`test/release-workflow.test.mjs`、`test/merge-windows-updater.test.mjs`、`test/build-windows-app.test.mjs`、`test/telegram-release-channel.test.mjs`。用户文档：中英文 README、中文 `CHANGELOG.md` 及 `docs/fork-capabilities.md#signed-in-app-updates`；来源定位：`git log -S'Prepare available release assets' -- .github/workflows/release-macos.yml`。合并时保留等待双方结束、部分成功发布及两类签名的职责区别；上游等价实现后移除此补充。
+并行打包与可选 Windows 签名（沿用本节生命周期）：`.github/workflows/release-macos.yml` 使用互不依赖的 `build-macos` 和 `build-windows`，macOS 编译后由 `package-macos` 独立打包；`release` 仅在 `package-macos` 和 `build-windows` 均成功时执行，六项资产全部通过校验后才发布。`scripts/merge-windows-updater.mjs` 仍允许单独创建 Windows 清单，但正式发布流程要求两个平台齐备。Windows 缺 Authenticode 证书可构建并启动，显式 unsigned 入口忽略残留证书配置；配置存在时继续严格验证，Tauri 更新签名和 runtime 完整性校验不降级。验证：`test/release-workflow.test.mjs`、`test/merge-windows-updater.test.mjs`、`test/build-windows-app.test.mjs`、`test/telegram-release-channel.test.mjs`。用户文档：中英文 README、中文 `CHANGELOG.md` 及 `docs/fork-capabilities.md#signed-in-app-updates`；来源定位：`git log -S'package-macos' -- .github/workflows/release-macos.yml`。合并时保留双平台发布门槛、资产完整性和两类签名的职责区别；上游等价实现后移除此补充。
 
 #### Agent 发布配置与操作
 
@@ -427,11 +427,11 @@ Fork 使用独立的 `X.Y.Z-fork` 版本，从 `0.0.1-fork` 开始，发布标�
 - 发布成功后，`release-macos.yml` 的 `sync-version` job 从最新 main 检出，用同一脚本更新 package.json、package-lock.json、src-tauri/Cargo.toml、src-tauri/Cargo.lock、tauri.conf.json、runtime/Cargo.toml、runtime/Cargo.lock，同时按发布标签快照将中文 `CHANGELOG.md` 的已发布条目归档到版本标题下；历史积压按最早包含该条目的可达 Fork 标签归档，标签创建后 main 新增条目继续保留在未发布段。仅提交 7 个版本文件和单份 `CHANGELOG.md`，并以 GitHub Actions bot 自动提交回 main，提交包含 `[skip ci]`，不重复打包。各版本回写串行，旧发布重跑不降级，已一致不重复提交；并发 main 推进导致普通 push 拒绝时报告失败，不强推。使用工作流自带 GITHUB_TOKEN，不额外配置密钥；分支保护必须允许该回写，否则需维护者处理权限。
 - 版本回写测试的子进程必须将 `GITHUB_ENV` 指向隔离临时文件，不能继承真实 Actions 环境输出路径；否则模拟版本会覆盖后续打包使用的产物名称。`test/prepare-fork-release.test.mjs` 核验模拟环境输出，并在带外层发布环境文件的隔离验证中确认外层内容不变。
 - 该版本同步约定长期保留，不再要求手动版本提交；拉取包含自动回写提交的 main 后，本地编译和重装获得发布版本。发布标签和其源代码快照不改写；回写失败不撤销已发布资产。验证：版本准备测试、隔离 Git 仓库执行实际回写脚本、工作流语法检查。来源定位 `git log -S'sync-version:' -- .github/workflows/release-macos.yml`。
-- 按 Git 授权规则推送产品提交和 `vX.Y.Z-fork` 标签，触发 Release macOS and Windows；保留 main 祖先检查、Tauri 签名验证与资产完整性检查。两个平台并行打包；统一发布任务通过 `always()` 等待两边结束，再收集成功平台的产物，某一平台失败不得跳过发布阶段。两边均失败时明确报错，不发布空 Release；更新清单与通知只包含实际发布的平台。
+- 按 Git 授权规则推送产品提交和 `vX.Y.Z-fork` 标签，触发 Release macOS and Windows；保留 main 祖先检查、Tauri 签名验证与资产完整性检查。两个平台并行打包；统一发布任务要求 `package-macos` 和 `build-windows` 均成功，收集并验证全部六项资产后才发布，任一平台失败均不发布。
 - 完成后核实标签目标、工作流结果、DMG，以及 `.app.tar.gz`、`.sig` 和 `latest.json`；在隔离环境验证安装，不覆盖用户已安装 App。上传失败可能留下 Draft Release，先核实失败原因和已有资产，不强制移动已发布标签。
 
 
-- 本次发布流程：按用户确认采用免费 ad-hoc App 签名，不依赖 Developer ID 或 Apple 公证，保留 Node 官方签名与独立 Tauri 更新验签。`.github/workflows/release-macos.yml` 仅响应本 Fork 的 `v*-fork` 标签并核实版本、main 祖先关系；构建通用 App、验证打包 CLI、生成 DMG 与更新资产，资产上传完成后发布。公钥来自 Actions Variable，私钥来自 Secret。用户安装说明：中英文 README、`docs/fork-capabilities.md` 和更新日志；发布配置维护于本节；验证：`actionlint .github/workflows/release-macos.yml`、现有发布元数据和验签检查、实际 Actions 构建。来源定位：`git log -S'Ad-hoc sign and verify App' -- .github/workflows/release-macos.yml`。合并时不得恢复上游付费签名、公证和 Beta 版本前置条件；获得证书后按新的明确要求调整。
+- 本次发布流程：按用户确认采用免费 ad-hoc App 签名，不依赖 Developer ID 或 Apple 公证，保留 runtime 完整性校验与独立 Tauri 更新验签。`.github/workflows/release-macos.yml` 仅响应本 Fork 的 `v*-fork` 标签并核实版本、main 祖先关系；构建通用 App、验证打包 CLI、生成 DMG 与更新资产，资产上传完成后发布。公钥来自 Actions Variable，私钥来自 Secret。用户安装说明：中英文 README、`docs/fork-capabilities.md` 和更新日志；发布配置维护于本节；验证：`actionlint .github/workflows/release-macos.yml`、现有发布元数据和验签检查、实际 Actions 构建。来源定位：`git log -S'Ad-hoc sign and verify App' -- .github/workflows/release-macos.yml`。合并时不得恢复上游付费签名、公证和 Beta 版本前置条件；获得证书后按新的明确要求调整。
 
 - 生命周期：`长期保留`。
 - 原始目的：采用上游下载、验签、用户确认安装与重启流程，同时只更新 Fork 自身。
