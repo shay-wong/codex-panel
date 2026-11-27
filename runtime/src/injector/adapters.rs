@@ -1160,6 +1160,8 @@ pub fn browser_source(
 
 fn plan_revision(plan: &Value) -> String {
     let mut sources = vec![
+        // 入口初始化方式变化也需要刷新，不能仅依据补丁内容复用旧页面。
+        "entry-bootstrap-v1",
         include_str!("assets/rspack_runtime.js"),
         include_str!("assets/preference_runtime.js"),
         include_str!("assets/settings_runtime.js"),
@@ -1345,6 +1347,27 @@ mod tests {
         "#);
         let entry = source_ast::rewrite_entry(&main, &url::Url::parse("app://-/assets/main.js").unwrap(), &bootstrap).unwrap();
         let output = std::process::Command::new("node").args(["--input-type=module", "--eval", &entry]).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    #[test]
+    fn entry_bootstrap_applies_quota_without_a_new_document_script() {
+        let original = "function(module){module.exports='blocked'}";
+        let mut plan = empty_plan();
+        plan["patches"]["composer"] = json!([{
+            "before": original,
+            "after": "function(module){module.exports='sendable'}",
+            "features": ["quota"]
+        }]);
+        plan["prepared"]["quota"] = json!(true);
+        let source = browser_source(&plan, &json!({"customProviderQuotaFix":true}), &json!([]), &Value::Null);
+        let entry = format!("let table={{composer:{original}}};function load(id){{let module={{}};table[id](module);return module.exports}}load.m=table;globalThis.result=load('composer');");
+        let url = url::Url::parse("app://-/assets/main.js").unwrap();
+        let rewritten = source_ast::rewrite_entry(&entry, &url, "").unwrap();
+        let initialized = source_ast::rewrite_entry(&entry, &url, &source).unwrap();
+        // 不执行任何 new-document 脚本，复现入口先加载时的发送限制。
+        let script = format!("const before={{}};before.window=before;before.top=before;require('node:vm').runInNewContext({},before);require('node:assert/strict').equal(before.result,'blocked');globalThis.window=globalThis;globalThis.top=globalThis;{initialized}\nrequire('node:assert/strict').equal(result,'sendable');require('node:assert/strict').equal(__codexPanelProviderQuotaV1__.applied,true);", json!(rewritten));
+        let output = std::process::Command::new("node").args(["-e", &script]).output().unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     }
 
