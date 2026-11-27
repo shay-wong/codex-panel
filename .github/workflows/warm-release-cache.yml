@@ -1,0 +1,53 @@
+name: Warm release build cache
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  warm:
+    if: github.repository == 'shay-wong/codex-panel' && github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+            target: universal-apple-darwin
+            cache-key: macos-universal
+          - runner: windows-2025
+            targets: x86_64-pc-windows-msvc
+            target: x86_64-pc-windows-msvc
+            cache-key: windows-x86_64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          targets: ${{ matrix.targets }}
+      - if: runner.os == 'macOS'
+        run: rustup toolchain uninstall stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        id: cache
+        with:
+          workspaces: |
+            src-tauri -> target
+            runtime -> target
+          shared-key: ${{ matrix.cache-key }}
+          cache-bin: false
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: npm ci
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: npm run app:prepare -- --target ${{ matrix.target }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: npm run tauri -- build --target ${{ matrix.target }} --no-bundle --no-sign --ci
